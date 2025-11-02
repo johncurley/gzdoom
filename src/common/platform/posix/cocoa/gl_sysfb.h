@@ -35,6 +35,7 @@
 #define COCOA_GL_SYSFB_H_INCLUDED
 
 #include "v_video.h"
+#include "cocoa_native_handle.h"
 
 #ifdef __OBJC__
 @class NSCursor;
@@ -66,6 +67,9 @@ public:
 	static void SetWindowTitle(const char* title);
 
 	void SetWindow(CocoaWindow* window) { m_window = window; }
+
+	// Get native Cocoa handle for Metal renderer integration (macOS 10.13+)
+	virtual CocoaNativeHandle GetNativeHandle() const;
 
 protected:
 	SystemBaseFrameBuffer() {}

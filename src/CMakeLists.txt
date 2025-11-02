@@ -463,7 +463,19 @@ elseif( APPLE )
 	set( SYSTEM_SOURCES ${SYSTEM_SOURCES} ${PLAT_POSIX_SOURCES} ${PLAT_OSX_SOURCES} )
 
 	set_source_files_properties( posix/osx/zdoom.icns PROPERTIES MACOSX_PACKAGE_LOCATION Resources )
-	set_source_files_properties( common/platform/posix/osx/iwadpicker_cocoa.mm PROPERTIES COMPILE_FLAGS -fobjc-exceptions )
+
+	# Enable ARC for all Objective-C++ files (macOS 10.13+)
+	set( OBJCXX_COCOA_FILES
+		common/platform/posix/osx/iwadpicker_cocoa.mm
+		common/platform/posix/osx/i_specialpaths.mm
+		common/platform/posix/cocoa/i_input.mm
+		common/platform/posix/cocoa/i_main.mm
+		common/platform/posix/cocoa/i_system.mm
+		common/platform/posix/cocoa/i_video.mm
+		common/platform/posix/cocoa/st_console.mm
+		common/platform/posix/cocoa/st_start.mm
+	)
+	set_source_files_properties( ${OBJCXX_COCOA_FILES} PROPERTIES COMPILE_FLAGS "-fobjc-arc -fobjc-exceptions" )
 else()
 	option (SYSTEMINSTALL "Set global progdir based on CMake Install Dir" OFF)
 

@@ -387,7 +387,6 @@ void FConsoleWindow::SetProgressBar(const bool visible)
 		ExpandTextView(PROGRESS_BAR_HEIGHT);
 
 		[m_progressBar removeFromSuperview];
-		[m_progressBar release];
 		m_progressBar = nil;
 	}
 }
@@ -521,10 +520,9 @@ void FConsoleWindow::NetDone()
 		ExpandTextView(NET_VIEW_HEIGHT);
 
 		[m_netView removeFromSuperview];
-		[m_netView release];
 		m_netView = nil;
 
-		// Released by m_netView
+		// Managed by ARC
 		m_netMessageText = nil;
 		m_netCountText = nil;
 		m_netProgressBar = nil;
