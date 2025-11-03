@@ -1,0 +1,364 @@
+GZDOOM VULKAN RENDERER ARCHITECTURE ANALYSIS
+==============================================
+
+LOCATION: /Users/johncurley/Projects/opensource/gzdoom2/src/common/rendering/vulkan/
+
+COMPREHENSIVE DOCUMENTATION GENERATED
+======================================
+
+Three detailed documents have been created to blueprint a Metal renderer:
+
+1. VULKAN_ARCHITECTURE_ANALYSIS.md (1,157 lines)
+   - Complete architectural breakdown
+   - All 10 core classes with full descriptions
+   - Class relationships and responsibilities
+   - Initialization sequence
+   - Frame rendering pipeline
+   - Resource binding strategy
+   - Integration points with engine
+   - Design patterns and optimizations
+
+2. VULKAN_QUICK_REFERENCE.md
+   - Executive summary of key systems
+   - Critical files to study (ranked priority)
+   - Execution flow diagrams
+   - Data structure definitions
+   - Key patterns and optimizations
+   - Metal implementation mapping table
+
+3. VULKAN_KEY_CODE_SNIPPETS.md
+   - 12 critical code sections with line numbers
+   - From initialization to command submission
+   - Actual code from source files
+   - Annotated with implementation details
+   - Guidance for Metal adaptation
+
+DIRECTORY STRUCTURE
+====================
+
+vulkan/
+├── system/
+│   ├── vk_renderdevice.h/cpp       (Main orchestrator, manager factory)
+│   ├── vk_commandbuffer.h/cpp      (GPU work submission, synchronization)
+│   ├── vk_buffer.h/cpp             (Vertex/index/data buffer management)
+│   └── vk_hwbuffer.h/cpp           (Hardware buffer abstractions)
+│
+├── renderer/
+│   ├── vk_renderstate.h/cpp        (State machine, draw dispatcher - 606 lines)
+│   ├── vk_renderpass.h/cpp         (Pipeline and render pass management)
+│   ├── vk_descriptorset.h/cpp      (Resource binding, 3-tier strategy)
+│   ├── vk_streambuffer.h/cpp       (Dynamic data buffering)
+│   ├── vk_postprocess.h/cpp        (Post-processing effects)
+│   └── vk_raytrace.h/cpp           (Ray tracing support)
+│
+├── shaders/
+│   ├── vk_shader.h/cpp             (Shader compilation, management)
+│   └── vk_ppshader.h/cpp           (Post-process shaders)
+│
+└── textures/
+    ├── vk_hwtexture.h/cpp          (GPU texture representation)
+    ├── vk_texture.h/cpp            (Texture manager)
+    ├── vk_samplers.h/cpp           (Sampler caching)
+    ├── vk_renderbuffers.h/cpp      (Render target management)
+    ├── vk_framebuffer.h/cpp        (Framebuffer objects)
+    └── vk_imagetransition.h/cpp    (Image layout transitions)
+
+KEY ARCHITECTURAL PATTERNS
+===========================
+
+1. MANAGER FACTORY PATTERN
+   - VulkanRenderDevice owns all subsystem managers
+   - Single instance per renderer
+   - Managers store back-reference: VulkanRenderDevice* fb
+
+2. LAZY EVALUATION
+   - State changes queued, applied when needed
+   - Apply() method batches pending changes
+   - Reduces command buffer recording overhead
+
+3. RING BUFFER PATTERN
+   - Circular allocation for dynamic per-draw data
+   - MatrixBuffer: model/texture matrices
+   - StreamBuffer: per-vertex data
+   - Avoids GPU stalls through wrapping
+
+4. DESCRIPTOR SET POOLING
+   - Multiple pools with lazy expansion
+   - Backpressure: GPU stall if pool exhausted
+   - Deferred deletion: freed after GPU finishes
+
+5. PIPELINE CACHING
+   - Lazy compilation on first use
+   - Cached in std::map<VkPipelineKey, VulkanPipeline*>
+   - Persistent disk cache across runs
+
+6. DEFERRED DELETION
+   - GPU resources queued for deletion
+   - Freed only after GPU finishes processing
+   - Prevents use-after-free, GPU stalls
+
+7. DYNAMIC DESCRIPTOR OFFSETS
+   - Avoids rebinding descriptor sets
+   - Three dynamic offsets for HW buffers
+   - Per-draw offset updates only
+
+CRITICAL COMPONENTS
+====================
+
+VulkanRenderDevice
+  - Constructor: Creates VulkanDevice with surface
+  - InitializeState: Creates 12 subsystems in specific order
+  - Update: Per-frame flow coordination
+  - Accessors: Get* methods for all managers
+  - Factory methods: CreateHardwareTexture, CreateMaterial, etc.
+
+VkRenderState (606 lines - MOST CRITICAL)
+  - Manages ALL GPU render state
+  - Lazy state tracking and application
+  - Apply() method: Core rendering logic
+  - ApplyStreamData, ApplyMatrices, ApplyRenderPass
+  - ApplyScissor, ApplyViewport, ApplyPushConstants
+  - ApplyVertexBuffers, ApplyMaterial, ApplyHWBufferSet
+  - VkRenderStateMolten variant for macOS
+
+VkCommandBufferManager
+  - Dual command buffers: transfer + graphics
+  - Circular queue of 8 concurrent submits
+  - Fence/semaphore synchronization
+  - Deferred deletion lists
+  - BeginFrame, FlushCommands, WaitForCommands
+
+VkRenderPassManager
+  - Pipeline creation and caching
+  - Render pass object management
+  - VkPipelineKey: 13 components identify unique pipeline
+  - VkRenderPassKey: 4 components identify render pass
+  - Lazy pipeline compilation
+
+VkDescriptorSetManager
+  - Three-tier resource binding:
+    - Set 0 (Fixed): Shadowmap, Lightmap, RTX
+    - Set 1 (HW Buffers): UBO/SSBO with dynamic offsets
+    - Set 2 (Material): Texture layers (variable count)
+  - Per-frame updates to fixed/HW buffer sets
+  - Material descriptor set caching
+
+VkBufferManager
+  - Creates vertex, index, data buffers
+  - Ring buffers: MatrixBuffer, StreamBuffer
+  - Special buffers: ViewpointUBO, LightBufferSSO, BoneBufferSSO
+  - FanToTrisIndexBuffer for topology conversion
+
+VkShaderManager
+  - Incremental shader compilation
+  - Four compile states:
+    - State 0: Material shaders
+    - State 1: NAT (no alpha test) variants
+    - State 2: User custom shaders
+    - State 3: Effect shaders
+  - Per-pass-type compilation
+
+INITIALIZATION SEQUENCE
+=======================
+
+1. VulkanRenderDevice constructor
+   └─ Create VulkanDevice (GPU, queues, extensions)
+
+2. InitializeState() called
+   ├─ VkCommandBufferManager
+   │  └─ Command pool, semaphores, fences
+   ├─ VkSamplerManager
+   │  └─ Sampler cache
+   ├─ VkTextureManager
+   ├─ VkFramebufferManager
+   ├─ VkBufferManager
+   │  ├─ UBO buffers
+   │  └─ Ring buffers
+   ├─ VkRenderBuffers (screen + save)
+   │  ├─ Scene color/depth/normal
+   │  └─ Pipeline images
+   ├─ VkPostprocess
+   ├─ VkDescriptorSetManager
+   │  ├─ Layouts
+   │  └─ Pools
+   ├─ VkRenderPassManager
+   │  └─ Pipeline cache
+   ├─ VkRaytrace
+   ├─ Vertex/light/bone data (CPU-side)
+   ├─ VkShaderManager
+   │  └─ Begin incremental compilation
+   └─ VkRenderState (or VkRenderStateMolten)
+
+FRAME RENDERING FLOW
+====================
+
+VulkanRenderDevice::Update()
+├─ Reset 2D state
+├─ SetActiveRenderTarget() for post-process
+├─ Draw2D() render HUD
+├─ EndRenderPass()
+├─ EndFrame() reset per-frame state
+├─ WaitForCommands(true) block until GPU done
+├─ UpdateGpuStats()
+└─ Super::Update() platform-specific present
+
+Per-Draw Call:
+VkRenderState::Draw(int dt, int index, int count, bool apply)
+├─ Apply(dt) if state changed
+│  ├─ ApplyStreamData()
+│  ├─ ApplyMatrices()
+│  ├─ ApplyRenderPass(dt)
+│  ├─ ApplyScissor/Viewport/StencilRef/DepthBias/PushConstants
+│  ├─ ApplyVertexBuffers()
+│  ├─ ApplyMaterial() [bind texture set]
+│  └─ ApplyHWBufferSet() [bind uniform set]
+└─ mCommandBuffer->draw()
+
+RESOURCE BINDING
+================
+
+Material Texture Binding:
+├─ VkMaterial::GetDescriptorSet(state)
+│  └─ Cache by clampmode + remap
+├─ ApplyMaterial()
+│  └─ bindDescriptorSet(Set 2)
+└─ Shader samples from Set 2 textures
+
+Uniform Buffer Binding:
+├─ ApplyHWBufferSet()
+│  ├─ Dynamic offset: ViewpointOffset
+│  ├─ Dynamic offset: MatrixOffset
+│  ├─ Dynamic offset: StreamDataOffset
+│  └─ bindDescriptorSet(Set 1, offsets)
+└─ Shader reads via Set 1 buffers
+
+Fixed Resources (per-frame):
+├─ UpdateFixedSet()
+│  ├─ Shadowmap
+│  ├─ Lightmap
+│  └─ RTX acceleration structure
+├─ bindDescriptorSet(Set 0)
+└─ Shader reads from Set 0
+
+SHADER SYSTEM
+=============
+
+Categories:
+├─ Material Shaders
+│  ├─ mMaterialShaders[passType]: With alpha test
+│  ├─ mMaterialShadersNAT[passType]: Without alpha test
+│  └─ User custom shaders
+├─ Effect Shaders
+│  └─ mEffectShaders[passType]: Special effects
+└─ Post-Process Shaders
+   └─ VkPPShader wrappers
+
+Push Constants:
+├─ uTextureMode, uAlphaThreshold, uClipSplit
+├─ uLightLevel, uFogDensity, uLightFactor, uLightDist
+├─ uFogEnabled, uLightIndex
+├─ uSpecularMaterial, uBoneIndexBase
+├─ uDataIndex
+└─ 128 bytes total
+
+INTEGRATION POINTS
+==================
+
+Platform Integration:
+├─ Base: SystemBaseFrameBuffer (gl_sysfb.h)
+├─ macOS: Cocoa window integration
+├─ VulkanSurface from CocoaWindow
+└─ VkRenderStateMolten for MoltenVK
+
+Hardware Renderer Abstraction:
+├─ Implements FRenderState interface
+├─ Implements IHardwareTexture interface
+├─ Implements IVertexBuffer, IIndexBuffer, IDataBuffer
+└─ Game engine calls abstract interfaces
+
+Game Loop Integration:
+├─ Called from v_video.cpp
+├─ SetMaterial(FMaterial*) → ApplyMaterial()
+├─ SetVertexBuffer/SetIndexBuffer
+└─ Draw/DrawIndexed → vkCmdDraw
+
+PERFORMANCE OPTIMIZATIONS
+==========================
+
+1. Batched Submissions
+   - Flush every 1000 draw calls (vk_submit_size)
+   - Reduces submission overhead
+
+2. Dynamic Offsets
+   - Avoids descriptor set rebinding
+   - 3 dynamic offsets per draw
+
+3. Pipeline Caching
+   - Persistent disk cache
+   - Lazy compilation on first use
+
+4. Ring Buffers
+   - Circular allocation
+   - Avoids GPU stalls
+
+5. Deferred Deletion
+   - Prevents GPU stalls on destruction
+   - Freed after GPU finishes
+
+6. MSAA Support
+   - Configurable sample counts
+   - VkSampleCountFlagBits tracking
+
+METAL IMPLEMENTATION STRATEGY
+=============================
+
+Class Mapping:
+VulkanRenderDevice → MetalRenderDevice
+VkRenderState → MetRenderState
+VkCommandBufferManager → MetCommandBufferManager
+VkRenderPassManager → MetPipelineManager
+VkDescriptorSetManager → MetArgumentBufferManager
+VkBufferManager → MetBufferManager
+VkShaderManager → MetShaderManager
+VkSamplerManager → MetSamplerManager
+VkTextureManager → MetTextureManager
+
+Keep Same Patterns:
+├─ Manager factory architecture
+├─ Lazy state application
+├─ Ring buffer patterns
+├─ Three-tier binding strategy
+├─ Deferred resource cleanup
+└─ MSAA support
+
+Adapt for Metal:
+├─ Use immediate encoding (vs. deferred recording)
+├─ MTLArgumentBuffer (vs. descriptor sets)
+├─ MTLRenderPipelineState (vs. VkPipeline)
+├─ MTLRenderPassDescriptor per operation
+├─ Command buffer completion handlers (vs. fences)
+└─ Autoreleasepool for timing deletions
+
+KEY FILES FOR STUDY (Prioritized)
+==================================
+
+MUST READ (Foundation):
+1. vk_renderdevice.h/cpp - Device orchestration
+2. vk_renderstate.h/cpp - State machine (606 lines)
+3. vk_commandbuffer.h/cpp - GPU submission
+
+CRITICAL (Pipeline):
+4. vk_renderpass.h/cpp - Pipeline management
+5. vk_descriptorset.h/cpp - Resource binding
+6. vk_streambuffer.h/cpp - Dynamic data
+
+IMPORTANT (Resources):
+7. vk_buffer.h/cpp - Buffer management
+8. vk_shader.h/cpp - Shader compilation
+9. vk_hwtexture.h/cpp - Texture abstraction
+
+CONTEXT (Integration):
+10. gl_sysfb.h - Platform integration
+11. hw_renderstate.h - Abstract interfaces
+12. vk_renderbuffers.h - Render targets
+
