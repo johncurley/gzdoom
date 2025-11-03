@@ -355,6 +355,15 @@ if (HAVE_VULKAN)
 	add_subdirectory( libraries/ZVulkan )
 endif()
 
+# Shader translator library (SPIR-V → MSL/HLSL) for Metal/D3D12 renderers
+if( APPLE )
+	# Metal renderer support (macOS 10.13+)
+	set(SHADERTRANSLATOR_BUILD_EXAMPLES OFF CACHE INTERNAL "" FORCE)
+	set(SHADERTRANSLATOR_ENABLE_MSL ON CACHE INTERNAL "" FORCE)
+	set(SHADERTRANSLATOR_ENABLE_HLSL OFF CACHE INTERNAL "" FORCE)
+	add_subdirectory( libraries/shader-translator )
+endif()
+
 set(ZWIDGET_BUILD_EXAMPLE OFF CACHE INTERNAL "" FORCE)
 add_subdirectory( libraries/ZWidget )
 
