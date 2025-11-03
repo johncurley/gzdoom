@@ -12,5 +12,6 @@ pull() {
 	fi
 }
 
-pull "$1" 'zwidget' 'libraries/ZWidget' 'https://github.com/dpjudas/ZWidget' 'master'
-pull "$1" 'zmusic'  'libraries/ZMusic'  'https://github.com/ZDoom/ZMusic'    'master'
+pull "$1" 'zwidget'     'libraries/ZWidget'                       'https://github.com/dpjudas/ZWidget'            'master'
+pull "$1" 'zmusic'      'libraries/ZMusic'                        'https://github.com/ZDoom/ZMusic'               'master'
+pull "$1" 'spirv-cross' 'libraries/ZVulkan/src/SPIRV-Cross'       'https://github.com/KhronosGroup/SPIRV-Cross'   'main'
