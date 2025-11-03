@@ -178,26 +178,56 @@ namespace
 // ---------------------------------------------------------------------------
 
 
-@interface OpenGLCocoaView : NSOpenGLView
+// Modern OpenGL view implementation without deprecated NSOpenGLView (removed in macOS 12+)
+// Uses manual NSOpenGLContext management for macOS 10.13+ compatibility
+//
+// Key changes from NSOpenGLView:
+// - Inherits from NSView instead of NSOpenGLView
+// - Manually creates and manages NSOpenGLContext
+// - Uses layer-backed rendering (wantsLayer = YES)
+// - HiDPI scaling via layer.contentsScale instead of setWantsBestResolutionOpenGLSurface
+//
+// This approach is compatible with modern macOS SDKs while maintaining OpenGL support
+@interface OpenGLCocoaView : NSView
 {
 	NSCursor* m_cursor;
+	NSOpenGLContext* m_context;
+	NSOpenGLPixelFormat* m_pixelFormat;
 }
 
+- (instancetype)initWithFrame:(NSRect)frameRect pixelFormat:(NSOpenGLPixelFormat*)format;
 - (void)setCursor:(NSCursor*)cursor;
+- (NSOpenGLContext*)openGLContext;
 
 @end
 
 
 @implementation OpenGLCocoaView
 
+- (instancetype)initWithFrame:(NSRect)frameRect pixelFormat:(NSOpenGLPixelFormat*)format
+{
+	self = [super initWithFrame:frameRect];
+	if (self)
+	{
+		m_pixelFormat = format;
+		m_context = [[NSOpenGLContext alloc] initWithFormat:m_pixelFormat shareContext:nil];
+		m_cursor = nil;
+
+		// Use layer-backed rendering for better performance
+		self.wantsLayer = YES;
+		self.layer.backgroundColor = NSColor.blackColor.CGColor;
+
+		// Attach context to this view
+		[m_context setView:self];
+	}
+	return self;
+}
+
 - (void)drawRect:(NSRect)dirtyRect
 {
-	if ([NSGraphicsContext currentContext])
-	{
-		[NSColor.blackColor setFill];
-		NSRectFill(dirtyRect);
-	}
-	else if (self.layer != nil)
+	// OpenGL rendering is handled by the renderer, not here
+	// This just ensures we have a black background
+	if (self.layer != nil)
 	{
 		self.layer.backgroundColor = CGColorGetConstantColor(kCGColorBlack);
 	}
@@ -220,12 +250,49 @@ namespace
 	m_cursor = cursor;
 }
 
+- (NSOpenGLContext*)openGLContext
+{
+	return m_context;
+}
+
+- (BOOL)isOpaque
+{
+	return YES;
+}
+
+- (BOOL)acceptsFirstResponder
+{
+	return YES;
+}
+
+- (void)update
+{
+	// Update context when view size changes
+	if (m_context != nil)
+	{
+		[m_context update];
+	}
+}
+
+- (void)reshape
+{
+	[super reshape];
+	[self update];
+}
+
 @end
 
 
 // ---------------------------------------------------------------------------
 
 
+// Vulkan/Metal view implementation using CAMetalLayer
+// Compatible with MoltenVK (Vulkan on Metal) and future native Metal renderer
+//
+// Metal 2 Requirements (macOS 10.13+):
+// - CAMetalLayer automatically uses Metal 2 on compatible hardware
+// - Graceful degradation to Metal 1.2 on older GPUs (10.11-10.12 era hardware)
+// - MoltenVK handles Vulkan to Metal translation
 @interface VulkanCocoaView : NSView
 {
 	NSCursor* m_cursor;
@@ -255,6 +322,7 @@ namespace
 	m_cursor = cursor;
 }
 
+// Use CAMetalLayer for Metal rendering (Metal 2 on macOS 10.13+)
 +(Class) layerClass
 {
 	return NSClassFromString(@"CAMetalLayer");
@@ -646,13 +714,20 @@ void SystemBaseFrameBuffer::SetWindowedMode()
 
 void SystemBaseFrameBuffer::SetMode(const bool fullscreen, const bool hiDPI)
 {
+	// Set HiDPI scaling for both OpenGL and Vulkan views
+	// Modern approach using layer.contentsScale (works for all NSView subclasses)
 	if ([m_window.contentView isKindOfClass:[OpenGLCocoaView class]])
 	{
-		NSOpenGLView* const glView = [m_window contentView];
-		[glView setWantsBestResolutionOpenGLSurface:hiDPI];
+		// OpenGL view: update context surface resolution
+		OpenGLCocoaView* const glView = (OpenGLCocoaView*)[m_window contentView];
+		assert(m_window.screen != nil);
+		assert([glView layer] != nil);
+		[glView layer].contentsScale = hiDPI ? m_window.screen.backingScaleFactor : 1.0;
+		[[glView openGLContext] update]; // Update context with new scaling
 	}
 	else
     {
+		// Vulkan or other view types
 		assert(m_window.screen != nil);
 		assert([m_window.contentView layer] != nil);
 		[m_window.contentView layer].contentsScale = hiDPI ? m_window.screen.backingScaleFactor : 1.0;
@@ -774,8 +849,12 @@ void SystemGLFrameBuffer::SetVSync(bool vsync)
 
 void SystemGLFrameBuffer::SetMode(const bool fullscreen, const bool hiDPI)
 {
-	NSOpenGLView* const glView = [m_window contentView];
-	[glView setWantsBestResolutionOpenGLSurface:hiDPI];
+	// Set HiDPI scaling using modern layer.contentsScale approach
+	OpenGLCocoaView* const glView = (OpenGLCocoaView*)[m_window contentView];
+	assert(m_window.screen != nil);
+	assert([glView layer] != nil);
+	[glView layer].contentsScale = hiDPI ? m_window.screen.backingScaleFactor : 1.0;
+	[[glView openGLContext] update]; // Update context with new scaling
 
 	if (vid_nativefullscreen && fullscreen != m_fullscreen)
 	{
