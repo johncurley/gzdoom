@@ -3,12 +3,12 @@
 #include "gl_sysfb.h"
 #include "engineerrors.h"
 
-#ifdef __OBJC__
-#import <Metal/Metal.h>
-#else
-// Forward declare Metal types for C++ code
-typedef void* id;
-#endif
+// Forward declarations (no Metal headers in public interface unless needed)
+namespace MTL
+{
+	class Device;
+	class CommandQueue;
+}
 
 struct FRenderViewpoint;
 class MtSamplerManager;
@@ -26,16 +26,11 @@ class MtRenderBuffers;
 class MtPostprocess;
 class SWSceneDrawer;
 
-// Metal device wrapper (C++ compatible)
+// Metal device wrapper
 struct MetalDevice
 {
-#ifdef __OBJC__
-	id<MTLDevice> device;
-	id<MTLCommandQueue> commandQueue;
-#else
-	void* device;
-	void* commandQueue;
-#endif
+	MTL::Device* device;
+	MTL::CommandQueue* commandQueue;
 };
 
 class MetalRenderDevice : public SystemBaseFrameBuffer
