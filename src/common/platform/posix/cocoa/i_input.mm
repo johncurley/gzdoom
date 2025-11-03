@@ -401,6 +401,18 @@ unsigned char GetCharacterFromNSEvent(NSEvent* theEvent, unichar *realchar)
 	return character;
 }
 
+// Process keyboard events for menu/console/chat input
+//
+// This function posts TWO types of events for different purposes:
+// 1. Key events (EV_GUI_KeyDown/Up) - for key binding and menu navigation
+// 2. Character events (EV_GUI_Char) - for text input (console, chat)
+//
+// For key binding in the options menu:
+// - The menu should only listen to EV_GUI_KeyDown (initial press)
+// - It should ignore EV_GUI_KeyRepeat (held key repeats)
+// - It should ignore EV_GUI_Char (character input events)
+//
+// This fixes a bug where keys were registered multiple times when binding hotkeys
 void ProcessKeyboardEventInMenu(NSEvent* theEvent)
 {
 	event_t event = {};
@@ -411,7 +423,10 @@ void ProcessKeyboardEventInMenu(NSEvent* theEvent)
 	event.data2   = GetCharacterFromNSEvent(theEvent, &realchar);
 	event.data3   = ModifierFlagsToGUIKeyModifiers(theEvent);
 
-	if (EV_GUI_KeyDown == event.subtype && [theEvent isARepeat])
+	// Handle key repeats - convert to EV_GUI_KeyRepeat for menu navigation
+	// Note: Key binding should ignore repeats to prevent double-registration
+	const bool isRepeat = [theEvent isARepeat];
+	if (EV_GUI_KeyDown == event.subtype && isRepeat)
 	{
 		event.subtype = EV_GUI_KeyRepeat;
 	}
@@ -449,6 +464,8 @@ void ProcessKeyboardEventInMenu(NSEvent* theEvent)
 			break;
 	}
 
+	// Post the key event (for key binding and menu navigation)
+	// This is the primary event that should be used for key binding
 	if (event.data1 < 128)
 	{
 		event.data1 = toupper(event.data1);
@@ -456,8 +473,12 @@ void ProcessKeyboardEventInMenu(NSEvent* theEvent)
 		D_PostEvent(&event);
 	}
 
+	// Post a separate character event for text input (console, chat, etc.)
+	// Note: This should NOT be used for key binding, only for text entry
+	// Skip this for KeyUp events and control characters
 	if (!iscntrl(event.data2)
 		&& EV_GUI_KeyUp != event.subtype
+		&& EV_GUI_KeyRepeat != event.subtype  // Don't send char events for repeats
 		&& ShouldGenerateGUICharEvent(theEvent))
 	{
 		event.subtype = EV_GUI_Char;
