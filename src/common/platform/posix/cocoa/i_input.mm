@@ -33,7 +33,40 @@
 
 #include "i_common.h"
 
-#import <Carbon/Carbon.h>
+// macOS Virtual Key Codes (kVK_* constants)
+// These were previously from Carbon.h which is deprecated
+// Defining them locally for modern macOS compatibility (10.13+)
+// Values are standardized and documented in IOKit/hidsystem/IOLLEvent.h
+enum : unsigned short
+{
+	kVK_ANSI_A              = 0x00,
+	kVK_ANSI_F              = 0x03,
+	kVK_Return              = 0x24,
+	kVK_Tab                 = 0x30,
+	kVK_Delete              = 0x33,
+	kVK_Escape              = 0x35,
+	kVK_F1                  = 0x7A,
+	kVK_F2                  = 0x78,
+	kVK_F3                  = 0x63,
+	kVK_F4                  = 0x76,
+	kVK_F5                  = 0x60,
+	kVK_F6                  = 0x61,
+	kVK_F7                  = 0x62,
+	kVK_F8                  = 0x64,
+	kVK_F9                  = 0x65,
+	kVK_F10                 = 0x6D,
+	kVK_F11                 = 0x67,
+	kVK_F12                 = 0x6F,
+	kVK_Home                = 0x73,
+	kVK_PageUp              = 0x74,
+	kVK_ForwardDelete       = 0x75,
+	kVK_End                 = 0x77,
+	kVK_PageDown            = 0x79,
+	kVK_LeftArrow           = 0x7B,
+	kVK_RightArrow          = 0x7C,
+	kVK_DownArrow           = 0x7D,
+	kVK_UpArrow             = 0x7E
+};
 
 #include "c_console.h"
 #include "c_cvars.h"
@@ -236,7 +269,9 @@ namespace
 const size_t KEY_COUNT = 128;
 
 
-// See Carbon -> HIToolbox -> Events.h for kVK_ constants
+// macOS Virtual Key Code to DirectInput Key mapping
+// Translates NSEvent keycodes (0x00-0x7F) to GZDoom DIK_ constants
+// Based on standard macOS keyboard layout
 
 const uint8_t KEYCODE_TO_DIK[KEY_COUNT] =
 {
