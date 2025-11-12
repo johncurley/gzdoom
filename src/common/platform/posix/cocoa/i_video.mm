@@ -921,7 +921,7 @@ bool I_CreateVulkanSurface(VkInstance instance, VkSurfaceKHR *surface)
 		surfaceCreateInfo.sType = VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT;
 		surfaceCreateInfo.pNext = nullptr;
 		surfaceCreateInfo.flags = 0;
-		surfaceCreateInfo.pLayer = static_cast<CAMetalLayer*>(layer);
+		surfaceCreateInfo.pLayer = (__bridge const void *)static_cast<CAMetalLayer*>(layer);
 
 		const VkResult result = vkCreateMetalSurfaceEXT(instance, &surfaceCreateInfo, nullptr, surface);
 		return result == VK_SUCCESS;
@@ -932,7 +932,7 @@ bool I_CreateVulkanSurface(VkInstance instance, VkSurfaceKHR *surface)
 	windowCreateInfo.sType = VK_STRUCTURE_TYPE_MACOS_SURFACE_CREATE_INFO_MVK;
 	windowCreateInfo.pNext = nullptr;
 	windowCreateInfo.flags = 0;
-	windowCreateInfo.pView = view;
+	windowCreateInfo.pView = (__bridge const void *)view;
 
 	const VkResult result = vkCreateMacOSSurfaceMVK(instance, &windowCreateInfo, nullptr, surface);
 	return result == VK_SUCCESS;
