@@ -384,7 +384,7 @@ static void RestartWithParameters(const WadStuff& wad, NSString* parameters)
 {
 	assert(nil != parameters);
 
-	NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
+	@autoreleasepool {
 
 	@try
 	{
@@ -432,13 +432,13 @@ static void RestartWithParameters(const WadStuff& wad, NSString* parameters)
 		NSLog(@"Cannot restart: %@", [e reason]);
 	}
 
-	[pool release];
+	}
 }
 
 // Simple wrapper so we can call this from outside.
 int I_PickIWad_Cocoa (WadStuff *wads, int numwads, bool showwin, int defaultiwad)
 {
-	NSAutoreleasePool* pool = [[NSAutoreleasePool alloc] init];
+	@autoreleasepool {
 
 	IWADPicker *picker = [IWADPicker alloc];
 	int ret = [picker pickIWad:wads num:numwads showWindow:showwin defaultWad:defaultiwad];
@@ -453,7 +453,6 @@ int I_PickIWad_Cocoa (WadStuff *wads, int numwads, bool showwin, int defaultiwad
 		}
 	}
 
-	[pool release];
-
 	return ret;
+	}
 }

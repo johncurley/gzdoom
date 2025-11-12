@@ -825,7 +825,7 @@ CUSTOM_CVAR(Bool, vid_hidpi, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINI
 
 bool I_SetCursor(FGameTexture *cursorpic)
 {
-	NSAutoreleasePool* pool = [[NSAutoreleasePool alloc] init];
+	@autoreleasepool {
 	NSCursor* cursor = nil;
 
 	if (NULL != cursorpic && cursorpic->isValid())
@@ -866,7 +866,7 @@ bool I_SetCursor(FGameTexture *cursorpic)
 		// Create image from representation and set it as cursor
 
 		NSData* imageData = [bitmapImageRep representationUsingType:NSPNGFileType
-														 properties:[NSDictionary dictionary]];
+														 properties:@{}];  // Modern dictionary literal
 		NSImage* cursorImage = [[NSImage alloc] initWithData:imageData];
 
 		cursor = [[NSCursor alloc] initWithImage:cursorImage
@@ -875,9 +875,8 @@ bool I_SetCursor(FGameTexture *cursorpic)
 
 	SystemBaseFrameBuffer::SetCursor(cursor);
 
-	[pool release];
-
 	return true;
+	}
 }
 
 

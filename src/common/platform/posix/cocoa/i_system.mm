@@ -157,15 +157,13 @@ bool I_PickIWad(bool showwin, FStartupSelectionInfo& info)
 
 void I_PutInClipboard(const char* const string)
 {
-	NSPasteboard* const pasteBoard = [NSPasteboard generalPasteboard];
-	NSPasteboardType stringType = NSPasteboardTypeString;  // Modern API
-	NSArray* const types = [NSArray arrayWithObjects:stringType, nil];
-	NSString* const content = [NSString stringWithUTF8String:string];
+	NSPasteboard* pasteBoard = [NSPasteboard generalPasteboard];
+	NSPasteboardType stringType = NSPasteboardTypeString;
+	NSArray* types = @[stringType];  // Modern array literal
+	NSString* content = [NSString stringWithUTF8String:string];
 
-	[pasteBoard declareTypes:types
-					   owner:nil];
-	[pasteBoard setString:content
-				  forType:stringType];
+	[pasteBoard declareTypes:types owner:nil];
+	[pasteBoard setString:content forType:stringType];
 }
 
 FString I_GetFromClipboard(bool returnNothing)

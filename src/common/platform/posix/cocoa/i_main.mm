@@ -373,27 +373,25 @@ extern bool AppActive;
 {
 	ZD_UNUSED(timer);
 
-	NSAutoreleasePool* pool = [[NSAutoreleasePool alloc] init];
-
-	while (true)
-	{
-		NSEvent* event = [NSApp nextEventMatchingMask:NSEventMaskAny
-											untilDate:[NSDate dateWithTimeIntervalSinceNow:0]
-											   inMode:NSDefaultRunLoopMode
-											  dequeue:YES];
-		if (nil == event)
+	@autoreleasepool {
+		while (true)
 		{
-			break;
+			NSEvent* event = [NSApp nextEventMatchingMask:NSEventMaskAny
+												untilDate:[NSDate dateWithTimeIntervalSinceNow:0]
+												   inMode:NSDefaultRunLoopMode
+												  dequeue:YES];
+			if (nil == event)
+			{
+				break;
+			}
+
+			I_ProcessEvent(event);
+
+			[NSApp sendEvent:event];
 		}
 
-		I_ProcessEvent(event);
-
-		[NSApp sendEvent:event];
+		[NSApp updateWindows];
 	}
-
-	[NSApp updateWindows];
-
-	[pool release];
 }
 
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender
@@ -550,7 +548,7 @@ int main(int argc, char** argv)
 		s_argv.Push(argument);
 	}
 
-	NSAutoreleasePool* pool = [[NSAutoreleasePool alloc] init];
+	@autoreleasepool {
 
 	[NSApplication sharedApplication];
 
@@ -569,7 +567,6 @@ int main(int argc, char** argv)
 	[NSApp setDelegate:appCtrl];
 	[NSApp run];
 
-	[pool release];
-
 	return EXIT_SUCCESS;
+	}
 }
