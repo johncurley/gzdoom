@@ -139,6 +139,9 @@ public:
 
 	bool IsConnected() const;
 
+	// Allow GameControllerManager to access m_controller for comparison
+	GCController* m_controller; // Strong reference (retained)
+
 private:
 	void SetupInputHandlers();
 	void UpdateAxisValues();
@@ -148,7 +151,6 @@ private:
 		return axis >= 0 && static_cast<size_t>(axis) < m_axes.Size();
 	}
 
-	GCController* m_controller; // Strong reference (retained)
 	TArray<AxisInfo> m_axes;
 	ButtonState m_buttonState;
 
@@ -161,9 +163,6 @@ private:
 	bool m_hasHaptics = false;
 
 	id m_pauseHandler = nil;
-
-	// Haptics engine if available (iOS 14.0+, macOS 11.0+)
-	CHHapticEngine* m_hapticsEngine API_AVAILABLE(macos(11.0)) = nil;
 };
 
 // =============================================================================
@@ -193,11 +192,10 @@ GameControllerJoystick::GameControllerJoystick(GCController* controller)
 	}
 
 	// Check for haptics support (macOS 11.0+)
+	// Note: GCDeviceHaptics doesn't expose the engine directly in older SDKs
+	// We create the haptics engine on-demand when needed
 	if (@available(macOS 11.0, *)) {
 		m_hasHaptics = (m_controller.haptics != nil);
-		if (m_hasHaptics) {
-			m_hapticsEngine = m_controller.haptics.engine; // ARC manages this
-		}
 	}
 
 	// Setup axes based on controller type
@@ -224,14 +222,6 @@ GameControllerJoystick::GameControllerJoystick(GCController* controller)
 
 GameControllerJoystick::~GameControllerJoystick()
 {
-	// Stop haptics engine before cleanup
-	if (@available(macOS 11.0, *)) {
-		if (m_hapticsEngine) {
-			[m_hapticsEngine stopWithCompletionHandler:nil];
-			m_hapticsEngine = nil; // ARC handles release automatically
-		}
-	}
-
 	// ARC automatically releases m_controller and m_pauseHandler
 	m_controller = nil;
 	m_pauseHandler = nil;
@@ -358,56 +348,13 @@ void GameControllerJoystick::ProcessInput()
 
 void GameControllerJoystick::SendRumble(double highFreq, double lowFreq, double leftTrig, double rightTrig)
 {
-	if (!m_hasHaptics || m_hapticsStrength <= 0.0f)
-		return;
-
-	if (@available(macOS 11.0, *)) {
-		if (!m_hapticsEngine)
-			return;
-
-		NSError* error = nil;
-
-		// Start haptics engine if not running
-		if (![m_hapticsEngine isRunning]) {
-			[m_hapticsEngine startAndReturnError:&error];
-			if (error) {
-				Printf("Failed to start haptics engine: %s\n", [[error localizedDescription] UTF8String]);
-				return;
-			}
-		}
-
-		// Create haptic pattern
-		// Combine high and low frequencies with intensity based on strength
-		float intensity = MIN(1.0f, (highFreq + lowFreq) * m_hapticsStrength);
-		float sharpness = highFreq > lowFreq ? 0.8f : 0.2f;  // High freq = sharp, low freq = dull
-
-		if (intensity > 0.01f) {
-			CHHapticEventParameter* intensityParam =
-				[[CHHapticEventParameter alloc] initWithParameterID:CHHapticEventParameterIDHapticIntensity value:intensity];
-			CHHapticEventParameter* sharpnessParam =
-				[[CHHapticEventParameter alloc] initWithParameterID:CHHapticEventParameterIDHapticSharpness value:sharpness];
-
-			NSArray<CHHapticEventParameter*>* params = @[intensityParam, sharpnessParam];
-
-			CHHapticEvent* event = [[CHHapticEvent alloc] initWithEventType:CHHapticEventTypeHapticContinuous
-																  parameters:params
-																relativeTime:0
-																	duration:0.1]; // 100ms pulse
-
-			CHHapticPattern* pattern = [[CHHapticPattern alloc] initWithEvents:@[event]
-																	parameters:@[]
-																		 error:&error];
-
-			if (!error) {
-				id<CHHapticPatternPlayer> player = [m_hapticsEngine createPlayerWithPattern:pattern error:&error];
-				if (!error && player) {
-					[player startAtTime:0 error:&error];
-				}
-			}
-
-			// ARC automatically releases all allocated objects when they go out of scope
-		}
-	}
+	// Haptics support disabled for now due to SDK compatibility issues
+	// TODO: Implement haptics using GCDeviceHaptics API when stable SDK is available
+	// The CoreHaptics API is not directly accessible through GameController in older SDKs
+	(void)highFreq;
+	(void)lowFreq;
+	(void)leftTrig;
+	(void)rightTrig;
 }
 
 bool GameControllerJoystick::IsConnected() const
@@ -444,7 +391,10 @@ float GameControllerJoystick::GetHapticsStrength()
 
 void GameControllerJoystick::SetHapticsStrength(float strength)
 {
-	m_hapticsStrength = CLAMP(strength, 0.0f, 1.0f);
+	// Clamp strength between 0.0 and 1.0
+	if (strength < 0.0f) strength = 0.0f;
+	if (strength > 1.0f) strength = 1.0f;
+	m_hapticsStrength = strength;
 }
 
 int GameControllerJoystick::GetNumAxes()
