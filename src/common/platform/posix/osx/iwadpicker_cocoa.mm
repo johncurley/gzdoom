@@ -74,7 +74,7 @@ static const char* const tableHeaders[NUM_COLUMNS] = { "IWAD", "Game" };
 
 - (IWADTableData *)init:(WadStuff *) wads num:(int) numwads
 {
-	data = [[NSMutableArray alloc] initWithCapacity:numwads];
+	self.data = [[NSMutableArray alloc] initWithCapacity:numwads];
 
 	for(int i = 0;i < numwads;i++)
 	{
@@ -86,7 +86,7 @@ static const char* const tableHeaders[NUM_COLUMNS] = { "IWAD", "Game" };
 			filename++;
 		[record setObject:[NSString stringWithUTF8String:filename] forKey:[NSString stringWithUTF8String:tableHeaders[COLUMN_IWAD]]];
 		[record setObject:[NSString stringWithUTF8String:wads[i].Name.GetChars()] forKey:[NSString stringWithUTF8String:tableHeaders[COLUMN_GAME]]];
-		[data addObject:record];
+		[self.data addObject:record];
 		// ARC handles memory management automatically
 	}
 
@@ -95,13 +95,13 @@ static const char* const tableHeaders[NUM_COLUMNS] = { "IWAD", "Game" };
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)aTableView
 {
-	return [data count];
+	return [self.data count];
 }
 
 - (id)tableView:(NSTableView *)aTableView objectValueForTableColumn:(NSTableColumn *)aTableColumn row:(NSInteger)rowIndex
 {
-	NSParameterAssert(rowIndex >= 0 && (unsigned int) rowIndex < [data count]);
-	NSMutableDictionary *record = [data objectAtIndex:rowIndex];
+	NSParameterAssert(rowIndex >= 0 && (unsigned int) rowIndex < [self.data count]);
+	NSMutableDictionary *record = [self.data objectAtIndex:rowIndex];
 	return [record objectForKey:[aTableColumn identifier]];
 }
 
