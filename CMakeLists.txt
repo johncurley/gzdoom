@@ -231,9 +231,11 @@ if( APPLE AND NOT NO_OPENAL )
 	if( HOMEBREW_OPENAL_FOUND )
 		# Explicitly set OpenAL paths to prevent CMake from using deprecated system framework
 		# CMake's FindOpenAL prioritizes the system framework, so we must force these paths
-		set( OPENAL_INCLUDE_DIR "${HOMEBREW_OPENAL_PATH}/include" CACHE PATH "OpenAL include directory" FORCE )
+		# OpenAL-Soft headers are in include/AL/al.h, so we point to include/AL for direct includes
+		set( OPENAL_INCLUDE_DIR "${HOMEBREW_OPENAL_PATH}/include/AL" CACHE PATH "OpenAL include directory" FORCE )
 		set( OPENAL_LIBRARY "${HOMEBREW_OPENAL_PATH}/lib/libopenal.dylib" CACHE FILEPATH "OpenAL library" FORCE )
 		message( STATUS "Forcing OpenAL to use homebrew: ${OPENAL_LIBRARY}" )
+		message( STATUS "OpenAL include directory: ${OPENAL_INCLUDE_DIR}" )
 	endif()
 endif()
 
