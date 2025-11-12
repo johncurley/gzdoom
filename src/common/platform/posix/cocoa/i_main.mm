@@ -514,13 +514,12 @@ void CreateMenu()
 
 void ReleaseApplicationController()
 {
-	if (NULL != appCtrl)
+	if (appCtrl)
 	{
 		[NSApp setDelegate:nil];
 		[NSApp deactivate];
 
-		[appCtrl release];
-		appCtrl = NULL;
+		appCtrl = nil; // ARC releases automatically
 	}
 }
 

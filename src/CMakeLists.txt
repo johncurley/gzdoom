@@ -464,7 +464,16 @@ elseif( APPLE )
 	set( SYSTEM_SOURCES ${SYSTEM_SOURCES} ${PLAT_POSIX_SOURCES} ${PLAT_OSX_SOURCES} )
 
 	set_source_files_properties( posix/osx/zdoom.icns PROPERTIES MACOSX_PACKAGE_LOCATION Resources )
-	set_source_files_properties( common/platform/posix/osx/iwadpicker_cocoa.mm PROPERTIES COMPILE_FLAGS -fobjc-exceptions )
+
+	# Enable ARC (Automatic Reference Counting) for all Objective-C/Objective-C++ files
+	set_source_files_properties( common/platform/posix/osx/iwadpicker_cocoa.mm PROPERTIES COMPILE_FLAGS "-fobjc-exceptions -fobjc-arc" )
+	set_source_files_properties( common/platform/posix/cocoa/i_input.mm PROPERTIES COMPILE_FLAGS -fobjc-arc )
+	set_source_files_properties( common/platform/posix/cocoa/i_joystick_gc.mm PROPERTIES COMPILE_FLAGS -fobjc-arc )
+	set_source_files_properties( common/platform/posix/cocoa/i_main.mm PROPERTIES COMPILE_FLAGS -fobjc-arc )
+	set_source_files_properties( common/platform/posix/cocoa/i_system.mm PROPERTIES COMPILE_FLAGS -fobjc-arc )
+	set_source_files_properties( common/platform/posix/cocoa/i_video.mm PROPERTIES COMPILE_FLAGS -fobjc-arc )
+	set_source_files_properties( common/platform/posix/cocoa/st_console.mm PROPERTIES COMPILE_FLAGS -fobjc-arc )
+	set_source_files_properties( common/platform/posix/cocoa/st_start.mm PROPERTIES COMPILE_FLAGS -fobjc-arc )
 else()
 	option (SYSTEMINSTALL "Set global progdir based on CMake Install Dir" OFF)
 

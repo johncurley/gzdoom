@@ -59,11 +59,9 @@ static const char* const tableHeaders[NUM_COLUMNS] = { "IWAD", "Game" };
 
 // Class to convert the IWAD data into a form that Cocoa can use.
 @interface IWADTableData : NSObject<NSTableViewDataSource>
-{
-	NSMutableArray *data;
-}
 
-- (void)dealloc;
+@property (nonatomic, strong) NSMutableArray *data;
+
 - (IWADTableData *)init:(WadStuff *) wads num:(int) numwads;
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)aTableView;
@@ -72,12 +70,7 @@ static const char* const tableHeaders[NUM_COLUMNS] = { "IWAD", "Game" };
 
 @implementation IWADTableData
 
-- (void)dealloc
-{
-	[data release];
-
-	[super dealloc];
-}
+// dealloc not needed with ARC - memory management is automatic
 
 - (IWADTableData *)init:(WadStuff *) wads num:(int) numwads
 {
@@ -94,7 +87,7 @@ static const char* const tableHeaders[NUM_COLUMNS] = { "IWAD", "Game" };
 		[record setObject:[NSString stringWithUTF8String:filename] forKey:[NSString stringWithUTF8String:tableHeaders[COLUMN_IWAD]]];
 		[record setObject:[NSString stringWithUTF8String:wads[i].Name.GetChars()] forKey:[NSString stringWithUTF8String:tableHeaders[COLUMN_GAME]]];
 		[data addObject:record];
-		[record release];
+		// ARC handles memory management automatically
 	}
 
 	return self;
@@ -265,7 +258,7 @@ static NSArray* GetKnownExtensions()
 	NSTextField *description = [[NSTextField alloc] initWithFrame:NSMakeRect(18, 384, 402, 50)];
 	[self makeLabel:description withString:GAMENAME " found more than one IWAD\nSelect from the list below to determine which one to use:"];
 	[[window contentView] addSubview:description];
-	[description release];
+	// ARC handles memory management automatically
 
 	NSScrollView *iwadScroller = [[NSScrollView alloc] initWithFrame:NSMakeRect(20, 135, 402, 256)];
 	NSTableView *iwadTable = [[NSTableView alloc] initWithFrame:[iwadScroller bounds]];
@@ -279,7 +272,7 @@ static NSArray* GetKnownExtensions()
 		[column setEditable:NO];
 		[column setResizingMask:NSTableColumnAutoresizingMask];
 		[iwadTable addTableColumn:column];
-		[column release];
+		// ARC handles memory management automatically
 	}
 	[iwadScroller setDocumentView:iwadTable];
 	[iwadScroller setHasVerticalScroller:YES];
@@ -289,11 +282,11 @@ static NSArray* GetKnownExtensions()
 	[iwadTable setTarget:self];
 	NSIndexSet *selection = [[NSIndexSet alloc] initWithIndex:defaultiwad];
 	[iwadTable selectRowIndexes:selection byExtendingSelection:NO];
-	[selection release];
+	// ARC handles memory management automatically
 	[iwadTable scrollRowToVisible:defaultiwad];
 	[[window contentView] addSubview:iwadScroller];
-	[iwadTable release];
-	[iwadScroller release];
+	// ARC handles memory management automatically
+	// ARC handles memory management automatically
 
 	NSTextField *additionalParametersLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(18, 108, 144, 17)];
 	[self makeLabel:additionalParametersLabel withString:"Additional Parameters:"];
@@ -340,10 +333,10 @@ static NSArray* GetKnownExtensions()
 
 	[center removeObserver:self name:NSMenuDidSendActionNotification object:nil];
 
-	[window release];
-	[okButton release];
-	[cancelButton release];
-	[browseButton release];
+	// ARC handles memory management automatically
+	// ARC handles memory management automatically
+	// ARC handles memory management automatically
+	// ARC handles memory management automatically
 
 	return cancelled ? -1 : [iwadTable selectedRow];
 }

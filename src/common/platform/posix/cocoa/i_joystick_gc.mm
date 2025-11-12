@@ -166,7 +166,7 @@ private:
 // =============================================================================
 
 GameControllerJoystick::GameControllerJoystick(GCController* controller)
-	: m_controller([controller retain]) // Manual retain since we're not using ARC
+	: m_controller(controller) // ARC handles memory management automatically
 {
 	if (!m_controller)
 		return;
@@ -187,7 +187,7 @@ GameControllerJoystick::GameControllerJoystick(GCController* controller)
 	if (@available(macOS 11.0, *)) {
 		m_hasHaptics = (m_controller.haptics != nil);
 		if (m_hasHaptics) {
-			m_hapticsEngine = [m_controller.haptics.engine retain];
+			m_hapticsEngine = m_controller.haptics.engine; // ARC manages this
 		}
 	}
 
@@ -215,23 +215,17 @@ GameControllerJoystick::GameControllerJoystick(GCController* controller)
 
 GameControllerJoystick::~GameControllerJoystick()
 {
-	if (m_pauseHandler) {
-		[m_pauseHandler release];
-		m_pauseHandler = nil;
-	}
-
+	// Stop haptics engine before cleanup
 	if (@available(macOS 11.0, *)) {
 		if (m_hapticsEngine) {
 			[m_hapticsEngine stopWithCompletionHandler:nil];
-			[m_hapticsEngine release];
-			m_hapticsEngine = nil;
+			m_hapticsEngine = nil; // ARC handles release automatically
 		}
 	}
 
-	if (m_controller) {
-		[m_controller release];
-		m_controller = nil;
-	}
+	// ARC automatically releases m_controller and m_pauseHandler
+	m_controller = nil;
+	m_pauseHandler = nil;
 }
 
 void GameControllerJoystick::SetupInputHandlers()
@@ -402,10 +396,7 @@ void GameControllerJoystick::SendRumble(double highFreq, double lowFreq, double 
 				}
 			}
 
-			[intensityParam release];
-			[sharpnessParam release];
-			[event release];
-			[pattern release];
+			// ARC automatically releases all allocated objects when they go out of scope
 		}
 	}
 }
@@ -624,7 +615,7 @@ GameControllerManager::GameControllerManager()
 
 	__block GameControllerManager* weakSelf = this;
 
-	m_connectObserver = [[center addObserverForName:GCControllerDidConnectNotification
+	m_connectObserver = [center addObserverForName:GCControllerDidConnectNotification
 											 object:nil
 											  queue:nil
 										 usingBlock:^(NSNotification* note) {
@@ -632,9 +623,9 @@ GameControllerManager::GameControllerManager()
 		if (controller && weakSelf) {
 			weakSelf->OnControllerConnected(controller);
 		}
-	}] retain];
+	}]; // ARC retains automatically
 
-	m_disconnectObserver = [[center addObserverForName:GCControllerDidDisconnectNotification
+	m_disconnectObserver = [center addObserverForName:GCControllerDidDisconnectNotification
 												object:nil
 												 queue:nil
 											usingBlock:^(NSNotification* note) {
@@ -642,7 +633,7 @@ GameControllerManager::GameControllerManager()
 		if (controller && weakSelf) {
 			weakSelf->OnControllerDisconnected(controller);
 		}
-	}] retain];
+	}]; // ARC retains automatically
 
 	// Scan for already connected controllers
 	Rescan();
@@ -654,14 +645,12 @@ GameControllerManager::~GameControllerManager()
 
 	if (m_connectObserver) {
 		[center removeObserver:m_connectObserver];
-		[m_connectObserver release];
-		m_connectObserver = nil;
+		m_connectObserver = nil; // ARC releases automatically
 	}
 
 	if (m_disconnectObserver) {
 		[center removeObserver:m_disconnectObserver];
-		[m_disconnectObserver release];
-		m_disconnectObserver = nil;
+		m_disconnectObserver = nil; // ARC releases automatically
 	}
 
 	for (auto joy : m_joysticks) {
