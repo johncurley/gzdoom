@@ -33,7 +33,36 @@
 
 #include "i_common.h"
 
-#import <Carbon/Carbon.h>
+// macOS Virtual Key Codes - these are standard and never change
+// Replaces deprecated Carbon.framework dependency
+enum {
+	kVK_Return          = 0x24,
+	kVK_Tab             = 0x30,
+	kVK_Delete          = 0x33,
+	kVK_Escape          = 0x35,
+	kVK_ForwardDelete   = 0x75,
+	kVK_LeftArrow       = 0x7B,
+	kVK_RightArrow      = 0x7C,
+	kVK_DownArrow       = 0x7D,
+	kVK_UpArrow         = 0x7E,
+	kVK_Home            = 0x73,
+	kVK_End             = 0x77,
+	kVK_PageUp          = 0x74,
+	kVK_PageDown        = 0x79,
+	kVK_F1              = 0x7A,
+	kVK_F2              = 0x78,
+	kVK_F3              = 0x63,
+	kVK_F4              = 0x76,
+	kVK_F5              = 0x60,
+	kVK_F6              = 0x61,
+	kVK_F7              = 0x62,
+	kVK_F8              = 0x64,
+	kVK_F9              = 0x65,
+	kVK_F10             = 0x6D,
+	kVK_F11             = 0x67,
+	kVK_F12             = 0x6F,
+	kVK_ANSI_F          = 0x03
+};
 
 #include "c_console.h"
 #include "c_cvars.h"

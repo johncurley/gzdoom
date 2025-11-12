@@ -436,7 +436,7 @@ set( PLAT_OSX_SOURCES
 	posix/osx/zdoom.icns )
 set( PLAT_COCOA_SOURCES
 	common/platform/posix/cocoa/i_input.mm
-	common/platform/posix/cocoa/i_joystick.cpp
+	common/platform/posix/cocoa/i_joystick_gc.mm
 	common/platform/posix/cocoa/i_main.mm
 	common/platform/posix/cocoa/i_system.mm
 	common/platform/posix/cocoa/i_video.mm
@@ -1488,7 +1488,7 @@ if( DEM_CMAKE_COMPILER_IS_GNUCXX_COMPATIBLE )
 endif()
 
 if( APPLE )
-	set( LINK_FRAMEWORKS "-framework Cocoa -framework IOKit -framework OpenGL")
+	set( LINK_FRAMEWORKS "-framework Cocoa -framework IOKit -framework OpenGL -framework GameController")
 
 	if( HAVE_VULKAN )
 		set( LINK_FRAMEWORKS "${LINK_FRAMEWORKS} -framework QuartzCore" )
