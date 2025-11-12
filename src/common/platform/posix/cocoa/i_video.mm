@@ -128,12 +128,9 @@ namespace
 
 
 @interface CocoaWindow : NSWindow
-{
-	NSString* m_title;
-}
 
-- (BOOL)canBecomeKeyWindow;
-- (void)setTitle:(NSString*)title;
+@property (nonatomic, copy) NSString* customTitle;
+
 - (void)updateTitle;
 
 @end
@@ -143,24 +140,23 @@ namespace
 
 - (BOOL)canBecomeKeyWindow
 {
-	return true;
+	return YES;
 }
 
 - (void)setTitle:(NSString*)title
 {
-	m_title = title;
-
+	self.customTitle = title;
 	[self updateTitle];
 }
 
 - (void)updateTitle
 {
-	if (nil == m_title)
+	if (!self.customTitle)
 	{
-		m_title = [NSString stringWithFormat:@"%s %s", GAMENAME, GetVersionString()];
+		self.customTitle = [NSString stringWithFormat:@"%s %s", GAMENAME, GetVersionString()];
 	}
 
-	[super setTitle:m_title];
+	[super setTitle:self.customTitle];
 }
 
 - (void)frameDidChange:(NSNotification*)notification
@@ -179,11 +175,8 @@ namespace
 
 
 @interface OpenGLCocoaView : NSOpenGLView
-{
-	NSCursor* m_cursor;
-}
 
-- (void)setCursor:(NSCursor*)cursor;
+@property (nonatomic, strong) NSCursor* customCursor;
 
 @end
 
@@ -207,17 +200,13 @@ namespace
 {
 	[super resetCursorRects];
 
-	NSCursor* const cursor = nil == m_cursor
-		? [NSCursor arrowCursor]
-		: m_cursor;
-
-	[self addCursorRect:[self bounds]
-				 cursor:cursor];
+	NSCursor* cursor = self.customCursor ?: [NSCursor arrowCursor];
+	[self addCursorRect:self.bounds cursor:cursor];
 }
 
 - (void)setCursor:(NSCursor*)cursor
 {
-	m_cursor = cursor;
+	self.customCursor = cursor;
 }
 
 @end
@@ -227,11 +216,8 @@ namespace
 
 
 @interface VulkanCocoaView : NSView
-{
-	NSCursor* m_cursor;
-}
 
-- (void)setCursor:(NSCursor*)cursor;
+@property (nonatomic, strong) NSCursor* customCursor;
 
 @end
 
@@ -242,30 +228,26 @@ namespace
 {
 	[super resetCursorRects];
 
-	NSCursor* const cursor = nil == m_cursor
-		? [NSCursor arrowCursor]
-		: m_cursor;
-
-	[self addCursorRect:[self bounds]
-				 cursor:cursor];
+	NSCursor* cursor = self.customCursor ?: [NSCursor arrowCursor];
+	[self addCursorRect:self.bounds cursor:cursor];
 }
 
 - (void)setCursor:(NSCursor*)cursor
 {
-	m_cursor = cursor;
+	self.customCursor = cursor;
 }
 
-+(Class) layerClass
++ (Class)layerClass
 {
 	return NSClassFromString(@"CAMetalLayer");
 }
 
--(CALayer*) makeBackingLayer
+- (CALayer*)makeBackingLayer
 {
 	return [self.class.layerClass layer];
 }
 
--(BOOL) isOpaque
+- (BOOL)isOpaque
 {
 	return YES;
 }
@@ -348,7 +330,7 @@ void SetupOpenGLView(CocoaWindow* const window, const OpenGLProfile profile)
 {
 	NSOpenGLPixelFormat* pixelFormat = CreatePixelFormat(profile);
 
-	if (nil == pixelFormat)
+	if (!pixelFormat)
 	{
 		I_FatalError("Cannot create OpenGL pixel format, graphics hardware is not supported");
 	}
@@ -796,14 +778,14 @@ IVideo* Video;
 
 void I_ShutdownGraphics()
 {
-	if (NULL != screen)
+	if (screen)
 	{
 		delete screen;
-		screen = NULL;
+		screen = nullptr;
 	}
 
 	delete Video;
-	Video = NULL;
+	Video = nullptr;
 }
 
 void I_InitGraphics()
@@ -828,7 +810,7 @@ bool I_SetCursor(FGameTexture *cursorpic)
 	@autoreleasepool {
 	NSCursor* cursor = nil;
 
-	if (NULL != cursorpic && cursorpic->isValid())
+	if (cursorpic && cursorpic->isValid())
 	{
 		// Create bitmap image representation
 
