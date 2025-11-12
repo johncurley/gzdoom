@@ -921,9 +921,8 @@ bool I_CreateVulkanSurface(VkInstance instance, VkSurfaceKHR *surface)
 		surfaceCreateInfo.sType = VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT;
 		surfaceCreateInfo.pNext = nullptr;
 		surfaceCreateInfo.flags = 0;
-		// Cast to CAMetalLayer* first (Objective-C cast), then bridge to C (ARC)
-		CAMetalLayer* metalLayer = (CAMetalLayer*)layer;
-		surfaceCreateInfo.pLayer = (__bridge CAMetalLayer*)metalLayer;
+		// pLayer expects a const CAMetalLayer* (C type), just cast directly
+		surfaceCreateInfo.pLayer = (const CAMetalLayer*)layer;
 
 		const VkResult result = vkCreateMetalSurfaceEXT(instance, &surfaceCreateInfo, nullptr, surface);
 		return result == VK_SUCCESS;
@@ -934,7 +933,8 @@ bool I_CreateVulkanSurface(VkInstance instance, VkSurfaceKHR *surface)
 	windowCreateInfo.sType = VK_STRUCTURE_TYPE_MACOS_SURFACE_CREATE_INFO_MVK;
 	windowCreateInfo.pNext = nullptr;
 	windowCreateInfo.flags = 0;
-	windowCreateInfo.pView = (__bridge void *)view;
+	// pView expects a const void* (C type), just cast directly
+	windowCreateInfo.pView = (const void *)view;
 
 	const VkResult result = vkCreateMacOSSurfaceMVK(instance, &windowCreateInfo, nullptr, surface);
 	return result == VK_SUCCESS;
