@@ -37,6 +37,11 @@
 #import <GameController/GameController.h>
 #import <Foundation/Foundation.h>
 
+// CoreHaptics is required for haptic feedback support (macOS 11.0+)
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 110000
+#import <CoreHaptics/CoreHaptics.h>
+#endif
+
 #include "d_eventbase.h"
 #include "i_system.h"
 #include "m_argv.h"
@@ -178,10 +183,14 @@ GameControllerJoystick::GameControllerJoystick(GCController* controller)
 		m_name = "Game Controller";
 
 	// Create unique identifier
-	if (m_controller.productCategory)
-		m_identifier.Format("%s_%p", [m_controller.productCategory UTF8String], (void*)m_controller);
-	else
+	if (@available(macOS 10.15, *)) {
+		if (m_controller.productCategory)
+			m_identifier.Format("%s_%p", [m_controller.productCategory UTF8String], (void*)m_controller);
+		else
+			m_identifier.Format("controller_%p", (void*)m_controller);
+	} else {
 		m_identifier.Format("controller_%p", (void*)m_controller);
+	}
 
 	// Check for haptics support (macOS 11.0+)
 	if (@available(macOS 11.0, *)) {
