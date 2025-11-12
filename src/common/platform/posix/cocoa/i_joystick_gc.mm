@@ -163,6 +163,11 @@ private:
 	bool m_hasHaptics = false;
 
 	id m_pauseHandler = nil;
+
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 110000
+	// Haptics engine for macOS 11.0+ builds
+	CHHapticEngine* m_hapticsEngine API_AVAILABLE(macos(11.0)) = nil;
+#endif
 };
 
 // =============================================================================
@@ -192,10 +197,20 @@ GameControllerJoystick::GameControllerJoystick(GCController* controller)
 	}
 
 	// Check for haptics support (macOS 11.0+)
-	// Note: GCDeviceHaptics doesn't expose the engine directly in older SDKs
-	// We create the haptics engine on-demand when needed
 	if (@available(macOS 11.0, *)) {
 		m_hasHaptics = (m_controller.haptics != nil);
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 110000
+		if (m_hasHaptics) {
+			// Create haptics engine for controllers that support it
+			NSError* error = nil;
+			m_hapticsEngine = [m_controller.haptics createEngineWithLocality:GCHapticsLocalityDefault error:&error];
+			if (error) {
+				Printf("Warning: Failed to create haptics engine: %s\n", [[error localizedDescription] UTF8String]);
+				m_hasHaptics = false;
+				m_hapticsEngine = nil;
+			}
+		}
+#endif
 	}
 
 	// Setup axes based on controller type
@@ -222,6 +237,16 @@ GameControllerJoystick::GameControllerJoystick(GCController* controller)
 
 GameControllerJoystick::~GameControllerJoystick()
 {
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 110000
+	// Stop and release haptics engine
+	if (@available(macOS 11.0, *)) {
+		if (m_hapticsEngine) {
+			[m_hapticsEngine stopWithCompletionHandler:nil];
+			m_hapticsEngine = nil;
+		}
+	}
+#endif
+
 	// ARC automatically releases m_controller and m_pauseHandler
 	m_controller = nil;
 	m_pauseHandler = nil;
@@ -348,13 +373,66 @@ void GameControllerJoystick::ProcessInput()
 
 void GameControllerJoystick::SendRumble(double highFreq, double lowFreq, double leftTrig, double rightTrig)
 {
-	// Haptics support disabled for now due to SDK compatibility issues
-	// TODO: Implement haptics using GCDeviceHaptics API when stable SDK is available
-	// The CoreHaptics API is not directly accessible through GameController in older SDKs
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 110000
+	// Full haptics support for macOS 11.0+ builds
+	if (!m_hasHaptics || m_hapticsStrength <= 0.0f)
+		return;
+
+	if (@available(macOS 11.0, *)) {
+		if (!m_hapticsEngine)
+			return;
+
+		NSError* error = nil;
+
+		// Start haptics engine if not running
+		if (![m_hapticsEngine isRunning]) {
+			[m_hapticsEngine startAndReturnError:&error];
+			if (error) {
+				Printf("Failed to start haptics engine: %s\n", [[error localizedDescription] UTF8String]);
+				return;
+			}
+		}
+
+		// Create haptic pattern combining high and low frequency rumble
+		float intensity = fmin(1.0f, (highFreq + lowFreq) * m_hapticsStrength);
+		float sharpness = highFreq > lowFreq ? 0.8f : 0.2f;  // High freq = sharp, low freq = dull
+
+		if (intensity > 0.01f) {
+			CHHapticEventParameter* intensityParam =
+				[[CHHapticEventParameter alloc] initWithParameterID:CHHapticEventParameterIDHapticIntensity value:intensity];
+			CHHapticEventParameter* sharpnessParam =
+				[[CHHapticEventParameter alloc] initWithParameterID:CHHapticEventParameterIDHapticSharpness value:sharpness];
+
+			NSArray<CHHapticEventParameter*>* params = @[intensityParam, sharpnessParam];
+
+			CHHapticEvent* event = [[CHHapticEvent alloc] initWithEventType:CHHapticEventTypeHapticContinuous
+																  parameters:params
+																relativeTime:0
+																	duration:0.1]; // 100ms pulse
+
+			CHHapticPattern* pattern = [[CHHapticPattern alloc] initWithEvents:@[event]
+																	parameters:@[]
+																		 error:&error];
+
+			if (!error) {
+				id<CHHapticPatternPlayer> player = [m_hapticsEngine createPlayerWithPattern:pattern error:&error];
+				if (!error && player) {
+					[player startAtTime:0 error:&error];
+				}
+			}
+
+			if (error) {
+				Printf("Haptics playback error: %s\n", [[error localizedDescription] UTF8String]);
+			}
+		}
+	}
+#else
+	// Stub for older deployment targets (macOS < 11.0)
 	(void)highFreq;
 	(void)lowFreq;
 	(void)leftTrig;
 	(void)rightTrig;
+#endif
 }
 
 bool GameControllerJoystick::IsConnected() const
