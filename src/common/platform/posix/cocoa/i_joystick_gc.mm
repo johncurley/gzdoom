@@ -201,13 +201,17 @@ GameControllerJoystick::GameControllerJoystick(GCController* controller)
 		m_hasHaptics = (m_controller.haptics != nil);
 #if __MAC_OS_X_VERSION_MAX_ALLOWED >= 110000
 		if (m_hasHaptics) {
-			// Create haptics engine for controllers that support it
-			NSError* error = nil;
-			m_hapticsEngine = [m_controller.haptics createEngineWithLocality:GCHapticsLocalityDefault error:&error];
-			if (error) {
-				Printf("Warning: Failed to create haptics engine: %s\n", [[error localizedDescription] UTF8String]);
+			// Try to get the haptics engine using runtime selector check
+			// GCDeviceHaptics.engine property may not be available in all SDK versions
+			id haptics = m_controller.haptics;
+			if ([haptics respondsToSelector:@selector(engine)]) {
+				m_hapticsEngine = [haptics performSelector:@selector(engine)];
+				if (!m_hapticsEngine) {
+					m_hasHaptics = false;
+				}
+			} else {
+				// SDK doesn't support engine property
 				m_hasHaptics = false;
-				m_hapticsEngine = nil;
 			}
 		}
 #endif
@@ -384,8 +388,13 @@ void GameControllerJoystick::SendRumble(double highFreq, double lowFreq, double 
 
 		NSError* error = nil;
 
-		// Start haptics engine if not running
-		if (![m_hapticsEngine isRunning]) {
+		// Check if engine supports the running property, start if needed
+		BOOL isRunning = NO;
+		if ([m_hapticsEngine respondsToSelector:@selector(isRunning)]) {
+			isRunning = [(id)m_hapticsEngine isRunning];
+		}
+
+		if (!isRunning) {
 			[m_hapticsEngine startAndReturnError:&error];
 			if (error) {
 				Printf("Failed to start haptics engine: %s\n", [[error localizedDescription] UTF8String]);
