@@ -97,7 +97,7 @@ public:
 	void OnWindowCreated(WaylandDisplayWindow* window);
 	void OnWindowDestroyed(WaylandDisplayWindow* window);
 
-	void SetCursor(StandardCursor cursor);
+	void SetCursor(StandardCursor cursor, std::shared_ptr<CustomCursor> custom);
 	void ShowCursor(bool enable);
 	bool GetKeyState(InputKey key);
 
@@ -126,6 +126,7 @@ public:
 	wayland::data_device_manager_t m_DataDeviceManager;
 	wayland::xdg_wm_base_t m_XDGWMBase;
 	wayland::zwp_pointer_constraints_v1_t m_PointerConstraints;
+	// TODO: XDG_Activation seems to be for activating OTHER XDG_Toplevels. Do we need this?
 	wayland::xdg_activation_v1_t m_XDGActivation;
 	wayland::zxdg_decoration_manager_v1_t m_XDGDecorationManager;
 	wayland::fractional_scale_manager_v1_t m_FractionalScaleManager;
@@ -150,8 +151,8 @@ public:
 
 	std::map<InputKey, bool> inputKeyStates; // True when the key is pressed, false when isn't
 
-	bool IsMouseLocked() { return hasMouseLock; }
-	void SetMouseLocked(bool val) { hasMouseLock = val; }
+	void SetMouseLockOwnerWindow(WaylandDisplayWindow* owner) { m_MouseLockOwnerWindow = owner; }
+	WaylandDisplayWindow* GetMouseLockOwnerWindow() const { return m_MouseLockOwnerWindow; }
 
 private:
 	void CheckNeedsUpdate();
@@ -179,7 +180,8 @@ private:
 
 	bool hasKeyboard = false;
 	bool hasPointer = false;
-	bool hasMouseLock = false;
+
+	WaylandDisplayWindow* m_MouseLockOwnerWindow = nullptr;
 
 	ZTimer::TimePoint m_previousTime;
 	ZTimer::TimePoint m_currentTime;

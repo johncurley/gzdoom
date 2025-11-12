@@ -35,7 +35,7 @@ void InitWidgetResources(const char* filename)
 
 	if (use_dark)
 	{
-		WidgetTheme::SetTheme(std::unique_ptr<WidgetTheme>(new WidgetTheme{{
+		WidgetTheme::SetTheme(std::make_unique<SimpleTheme>(SimpleTheme::ThemeColors{
 			Colorf::fromRgb(0x2A2A2A), // background
 			Colorf::fromRgb(0xE2DFDB), //
 			Colorf::fromRgb(0x212121), // headers / inputs
@@ -48,11 +48,11 @@ void InitWidgetResources(const char* filename)
 			Colorf::fromRgb(0x000000), //
 			Colorf::fromRgb(0x646464), // around elements
 			Colorf::fromRgb(0x555555)  // between elements
-		}}));
+		}));
 	}
 	else
 	{
-		WidgetTheme::SetTheme(std::unique_ptr<WidgetTheme>(new WidgetTheme{{
+		WidgetTheme::SetTheme(std::make_unique<SimpleTheme>(SimpleTheme::ThemeColors{
 			Colorf::fromRgb(0xeee8d5), // background
 			Colorf::fromRgb(0x000000), // text
 			Colorf::fromRgb(0xfdf6e3), // headers / inputs
@@ -65,7 +65,7 @@ void InitWidgetResources(const char* filename)
 			Colorf::fromRgb(0x000000), // click text
 			Colorf::fromRgb(0x586e75), // around elements
 			Colorf::fromRgb(0xbdb8a7)  // between elements
-		}}));
+		}));
 	}
 }
 

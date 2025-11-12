@@ -2,14 +2,19 @@
 
 #include <memory>
 #include <vector>
+#include <list>
 
 #ifdef __OBJC__
 #import <Metal/Metal.h>
 #else
-typedef void* id;
 #endif
 
 class MetalRenderDevice;
+class MtHardwareDataBuffer;
+class MtStreamBuffer;
+class IIndexBuffer;
+class IVertexBuffer;
+class IDataBuffer;
 
 // Buffer manager - handles buffer allocation and ring buffers
 class MtBufferManager
@@ -17,6 +22,9 @@ class MtBufferManager
 public:
 	MtBufferManager(MetalRenderDevice* fb);
 	~MtBufferManager();
+
+	void Init();
+	void Deinit();
 
 	// Create buffers
 #ifdef __OBJC__
@@ -26,6 +34,10 @@ public:
 	void* CreateBuffer(size_t size, unsigned int options);
 	void* CreateBufferWithData(const void* data, size_t size, unsigned int options);
 #endif
+
+	IVertexBuffer* CreateVertexBuffer();
+	IIndexBuffer* CreateIndexBuffer();
+	IDataBuffer* CreateDataBuffer(int bindingpoint, bool ssbo, bool needsresize);
 
 	// Ring buffer allocation (for dynamic data)
 	struct RingBufferAllocation
@@ -48,7 +60,22 @@ public:
 	// Statistics
 	size_t GetAllocatedMemory() const { return mAllocatedMemory; }
 
+	// Uniform buffers (exposed for resource binding)
+	MtHardwareDataBuffer* ViewpointUBO = nullptr;
+	MtHardwareDataBuffer* LightBufferSSO = nullptr;
+	MtHardwareDataBuffer* LightNodes = nullptr;
+	MtHardwareDataBuffer* LightLines = nullptr;
+	MtHardwareDataBuffer* LightList = nullptr;
+	MtHardwareDataBuffer* BoneBufferSSO = nullptr;
+
+	std::unique_ptr<MtStreamBuffer> MatrixBuffer;
+	std::unique_ptr<MtStreamBuffer> StreamBuffer;
+
+	std::unique_ptr<IIndexBuffer> FanToTrisIndexBuffer;
+
 private:
+	void CreateFanToTrisIndexBuffer();
+
 	MetalRenderDevice* fb = nullptr;
 	size_t mAllocatedMemory = 0;
 

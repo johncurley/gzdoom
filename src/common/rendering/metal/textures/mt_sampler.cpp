@@ -5,7 +5,7 @@
 
 #include <Metal/Metal.hpp>
 #include "mt_sampler.h"
-#include "mt_renderdevice.h"
+#include "metal/system/mt_renderdevice.h"
 
 bool MtSamplerKey::operator==(const MtSamplerKey& other) const
 {
@@ -41,7 +41,7 @@ MtSamplerManager::~MtSamplerManager()
 	ClearCache();
 }
 
-MTL::SamplerState* MtSamplerManager::GetSamplerState(const MtSamplerKey& key)
+void* MtSamplerManager::GetSamplerState(const MtSamplerKey& key)
 {
 	// Check cache
 	auto it = mSamplerCache.find(key);
@@ -82,7 +82,7 @@ void MtSamplerManager::ClearCache()
 	for (auto& pair : mSamplerCache)
 	{
 		if (pair.second)
-			pair.second->release();
+			((MTL::SamplerState*)pair.second)->release();
 	}
 	mSamplerCache.clear();
 }

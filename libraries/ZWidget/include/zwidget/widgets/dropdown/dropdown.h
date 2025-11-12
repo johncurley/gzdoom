@@ -20,6 +20,7 @@ class Dropdown : public Widget
 {
 public:
 	Dropdown(Widget* parent);
+	~Dropdown();
 
 	void AddItem(const std::string& text, int index = -1);
 	bool UpdateItem(const std::string& text, int index);
@@ -33,8 +34,8 @@ public:
 	int GetSelectedItem() const { return selectedItem; }
 	void SetSelectedItem(int index);
 
-	double GetPreferredHeight() const;
-	double GetPreferredWidth() const;
+	double GetPreferredHeight() override;
+	double GetPreferredWidth() override;
 
 	std::function<void(int)> OnChanged;
 
@@ -61,6 +62,7 @@ private:
 	bool dropdownOpen = false;
 	Widget* dropdown = nullptr;
 	DropdownList* listView = nullptr;
+	Widget* pendingDeleteDropdown = nullptr; // Dropdown marked for deferred deletion
 
 	int maxDisplayItems = 0;
 	bool dropdownDirection = true;

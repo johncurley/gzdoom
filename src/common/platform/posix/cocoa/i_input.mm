@@ -32,6 +32,7 @@
  */
 
 #include "i_common.h"
+#include <cmath>
 
 // macOS Virtual Key Codes (kVK_* constants)
 // These were previously from Carbon.h which is deprecated

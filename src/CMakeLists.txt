@@ -324,7 +324,8 @@ add_custom_target( revision_check ALL
 # required libraries
 
 set( PROJECT_LIBRARIES ${PROJECT_LIBRARIES} miniz "${BZIP2_LIBRARIES}" "${CMAKE_DL_LIBS}" "${DRPC_LIBRARIES}")
-if (HAVE_VULKAN)
+# Add zvulkan for Vulkan renderer OR Metal renderer (both need glslang for shader compilation)
+if (HAVE_VULKAN OR APPLE)
 	list( APPEND PROJECT_LIBRARIES "zvulkan" )
 endif()
 
@@ -465,8 +466,8 @@ elseif( APPLE )
 	set_source_files_properties( posix/osx/zdoom.icns PROPERTIES MACOSX_PACKAGE_LOCATION Resources )
 
 	# Enable ARC for all Objective-C++ files (macOS 10.13+)
+	# Note: iwadpicker_cocoa.mm uses manual reference counting, so it's excluded
 	set( OBJCXX_COCOA_FILES
-		common/platform/posix/osx/iwadpicker_cocoa.mm
 		common/platform/posix/osx/i_specialpaths.mm
 		common/platform/posix/cocoa/i_input.mm
 		common/platform/posix/cocoa/i_main.mm
@@ -476,6 +477,9 @@ elseif( APPLE )
 		common/platform/posix/cocoa/st_start.mm
 	)
 	set_source_files_properties( ${OBJCXX_COCOA_FILES} PROPERTIES COMPILE_FLAGS "-fobjc-arc -fobjc-exceptions" )
+
+	# iwadpicker uses manual memory management (no ARC)
+	set_source_files_properties( common/platform/posix/osx/iwadpicker_cocoa.mm PROPERTIES COMPILE_FLAGS "-fno-objc-arc -fobjc-exceptions" )
 else()
 	option (SYSTEMINSTALL "Set global progdir based on CMake Install Dir" OFF)
 
@@ -602,6 +606,11 @@ file( GLOB HEADER_FILES
 	common/rendering/vulkan/renderer/*.h
 	common/rendering/vulkan/shaders/*.h
 	common/rendering/vulkan/textures/*.h
+	common/rendering/metal/*.h
+	common/rendering/metal/system/*.h
+	common/rendering/metal/renderer/*.h
+	common/rendering/metal/shaders/*.h
+	common/rendering/metal/textures/*.h
 	common/scripting/core/*h
 	common/scripting/vm/*h
 	common/scripting/dap/*.h
@@ -762,6 +771,23 @@ set (VULKAN_SOURCES
 	common/rendering/vulkan/textures/vk_framebuffer.cpp
 )
 
+# Metal renderer (macOS only)
+set (METAL_SOURCES
+	common/rendering/metal/system/mt_renderdevice.cpp
+	common/rendering/metal/system/mt_commandbuffer.cpp
+	common/rendering/metal/system/mt_buffer.cpp
+	common/rendering/metal/system/mt_hwbuffer.cpp
+	common/rendering/metal/renderer/mt_renderstate.cpp
+	common/rendering/metal/renderer/mt_pipelinestate.cpp
+	common/rendering/metal/renderer/mt_streambuffer.cpp
+	common/rendering/metal/renderer/mt_renderbuffers.cpp
+	common/rendering/metal/renderer/mt_postprocess.cpp
+	common/rendering/metal/renderer/mt_resourcebinding.cpp
+	common/rendering/metal/shaders/mt_shader.cpp
+	common/rendering/metal/textures/mt_texture.cpp
+	common/rendering/metal/textures/mt_sampler.cpp
+)
+
 if (HAVE_GLES2)
 	set (GLES_SOURCES
 		common/rendering/gles/gles_system.cpp
@@ -784,6 +810,10 @@ endif()
 
 if (HAVE_VULKAN)
 	list (APPEND FASTMATH_SOURCES ${VULKAN_SOURCES})
+endif()
+
+if (HAVE_METAL)
+	list (APPEND FASTMATH_SOURCES ${METAL_SOURCES})
 endif()
 
 set (FASTMATH_SOURCES ${FASTMATH_SOURCES})
@@ -1368,9 +1398,11 @@ include_directories(
 	rendering
 	launcher
 	../libraries/ZVulkan/include
+	../libraries/ZVulkan/src
 	../libraries/ZWidget/include
 	../libraries/webp/include
 	../libraries/range_map/include
+	../libraries/metal-cpp
 	${SYSTEM_SOURCES_DIR}
 )
 
@@ -1505,6 +1537,10 @@ if( APPLE )
 		set( LINK_FRAMEWORKS "${LINK_FRAMEWORKS} -framework QuartzCore" )
 	endif()
 
+	if( HAVE_METAL )
+		set( LINK_FRAMEWORKS "${LINK_FRAMEWORKS} -framework Metal -framework QuartzCore" )
+	endif()
+
 	set_target_properties(zdoom PROPERTIES
 		LINK_FLAGS "${LINK_FRAMEWORKS}"
 		MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/posix/osx/zdoom-info.plist"
@@ -1608,6 +1644,10 @@ source_group("Common\\Rendering\\Vulkan Renderer\\System" REGULAR_EXPRESSION "^$
 source_group("Common\\Rendering\\Vulkan Renderer\\Renderer" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_DIR}/common/rendering/vulkan/renderer/.+")
 source_group("Common\\Rendering\\Vulkan Renderer\\Shaders" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_DIR}/common/rendering/vulkan/shaders/.+")
 source_group("Common\\Rendering\\Vulkan Renderer\\Textures" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_DIR}/common/rendering/vulkan/textures/.+")
+source_group("Common\\Rendering\\Metal Renderer\\System" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_DIR}/common/rendering/metal/system/.+")
+source_group("Common\\Rendering\\Metal Renderer\\Renderer" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_DIR}/common/rendering/metal/renderer/.+")
+source_group("Common\\Rendering\\Metal Renderer\\Shaders" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_DIR}/common/rendering/metal/shaders/.+")
+source_group("Common\\Rendering\\Metal Renderer\\Textures" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_DIR}/common/rendering/metal/textures/.+")
 source_group("Common\\Models" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_DIR}/common/models/.+")
 source_group("Common\\Textures" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_DIR}/common/textures/.+")
 source_group("Common\\Textures\\Hires" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_DIR}/common/textures/hires/.+")

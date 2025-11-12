@@ -4,14 +4,67 @@
 #include <vector>
 #include <memory>
 #include <unordered_map>
+#include "matrix.h"
+#include "hw_renderstate.h"
 
 #ifdef __OBJC__
 #import <Metal/Metal.h>
 #else
-typedef void* id;
 #endif
 
 class MetalRenderDevice;
+
+// Shader uniform structures (matching Vulkan)
+struct MatricesUBO
+{
+	VSMatrix ModelMatrix;
+	VSMatrix NormalModelMatrix;
+	VSMatrix TextureMatrix;
+};
+
+// Push constants structure (small frequently-updated uniforms)
+//
+// Terminology note:
+// - Vulkan: "Push Constants" (vkCmdPushConstants)
+// - Metal: "Inline Buffers" via setVertexBytes/setFragmentBytes
+// - NOT to be confused with Metal "Function Constants" which are compile-time specialization
+//
+// Metal implementation: passed via setVertexBytes/setFragmentBytes (< 4KB inline data)
+struct PushConstants
+{
+	int uTextureMode;
+	float uAlphaThreshold;
+	FVector2 uClipSplit;
+
+	// Lighting + Fog
+	float uLightLevel;
+	float uFogDensity;
+	float uLightFactor;
+	float uLightDist;
+	int uFogEnabled;
+
+	// Dynamic lights
+	int uLightIndex;
+
+	// Blinn glossiness and specular level
+	FVector2 uSpecularMaterial;
+
+	// Bone animation
+	int uBoneIndexBase;
+
+	// Stream data index
+	int uDataIndex;
+
+	// Padding to align to 16 bytes
+	int padding[2];
+};
+
+#define MAX_STREAM_DATA ((int)(65536 / sizeof(StreamData)))
+
+struct StreamUBO
+{
+	StreamData data[MAX_STREAM_DATA];
+};
 
 // Shader compilation result
 struct MtShaderModule

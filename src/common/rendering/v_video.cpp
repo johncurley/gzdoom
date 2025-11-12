@@ -109,10 +109,12 @@ CUSTOM_CVAR(Int, vid_preferbackend, 1, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_N
 
 	switch(self)
 	{
-#ifdef HAVE_GLES2
+#ifdef HAVE_METAL
 	case 3:
-		self = 2;
-		return; // beware of recursions here. Assigning to 'self' will recursively call this handler again.
+		Printf("Selecting Metal backend...\n");
+		break;
+#endif
+#ifdef HAVE_GLES2
 	case 2:
 		Printf("Selecting OpenGLES 2.0 backend...\n");
 		break;
@@ -132,8 +134,18 @@ CUSTOM_CVAR(Int, vid_preferbackend, 1, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_N
 int V_GetBackend()
 {
 	int v = vid_preferbackend;
-	if (v == 3) vid_preferbackend = v = 2;
-	else if (v < 0 || v > 3) v = 0;
+#ifndef HAVE_METAL
+	// If Metal not available, backend 3 falls back to OpenGLES2 or OpenGL
+	if (v == 3)
+	{
+#ifdef HAVE_GLES2
+		vid_preferbackend = v = 2;
+#else
+		vid_preferbackend = v = 0;
+#endif
+	}
+#endif
+	if (v < 0 || v > 3) v = 0;
 	return v;
 }
 

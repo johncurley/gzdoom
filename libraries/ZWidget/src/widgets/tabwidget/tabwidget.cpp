@@ -6,6 +6,8 @@
 
 TabWidget::TabWidget(Widget* parent) : Widget(parent)
 {
+	SetStretching(true);
+
 	Bar = new TabBar(this);
 	PageStack = new TabWidgetStack(this);
 
@@ -28,6 +30,18 @@ int TabWidget::AddTab(Widget* page, const std::shared_ptr<Image>& icon, const st
 		PageStack->SetCurrentWidget(page);
 	}
 	return pageIndex;
+}
+
+double TabWidget::GetPreferredHeight()
+{
+	double maxHeight = 0.0;
+
+	for (const auto page: Pages)
+	{
+		maxHeight = std::max(maxHeight, page->GetPreferredHeight());
+	}
+
+	return Bar->GetPreferredHeight() + maxHeight;
 }
 
 void TabWidget::SetTabText(int index, const std::string& text)
@@ -158,10 +172,14 @@ void TabBar::SetCurrentIndex(int pageIndex)
 	if (CurrentIndex != pageIndex)
 	{
 		if (CurrentIndex != -1)
+		{
 			Tabs[CurrentIndex]->SetCurrent(false);
+		}
 		CurrentIndex = pageIndex;
 		if (CurrentIndex != -1)
+		{
 			Tabs[CurrentIndex]->SetCurrent(true);
+		}
 	}
 }
 
@@ -172,7 +190,9 @@ void TabBar::OnTabClicked(TabBarTab* tab)
 	{
 		SetCurrentIndex(pageIndex);
 		if (OnCurrentChanged)
+		{
 			OnCurrentChanged();
+		}
 	}
 }
 
@@ -266,7 +286,7 @@ void TabBarTab::SetCurrent(bool value)
 	}
 }
 
-double TabBarTab::GetPreferredWidth() const
+double TabBarTab::GetPreferredWidth()
 {
 	double x = Icon ? 32.0 + 5.0 : 0.0;
 	if (Label) x += Label->GetPreferredWidth();
@@ -300,7 +320,9 @@ void TabBarTab::OnMouseMove(const Point& pos)
 bool TabBarTab::OnMouseDown(const Point& pos, InputKey key)
 {
 	if (OnClick)
+	{
 		OnClick();
+	}
 	return true;
 }
 

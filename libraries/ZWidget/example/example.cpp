@@ -1,4 +1,7 @@
 #include <iostream>
+#include <fstream>
+#include <stdexcept>
+#include <vector>
 #include <zwidget/core/widget.h>
 #include <zwidget/core/resourcedata.h>
 #include <zwidget/core/image.h>
@@ -7,19 +10,19 @@
 #include <zwidget/widgets/dropdown/dropdown.h>
 #include <zwidget/widgets/textedit/textedit.h>
 #include <zwidget/widgets/mainwindow/mainwindow.h>
+#include <zwidget/widgets/layout/vboxlayout.h>
+#include <zwidget/widgets/layout/hboxlayout.h>
 #include <zwidget/widgets/listview/listview.h>
 #include <zwidget/widgets/imagebox/imagebox.h>
 #include <zwidget/widgets/textlabel/textlabel.h>
 #include <zwidget/widgets/pushbutton/pushbutton.h>
 #include <zwidget/widgets/checkboxlabel/checkboxlabel.h>
-#include "picopng.h"
+#include <zwidget/widgets/lineedit/lineedit.h>
 #include <zwidget/widgets/tabwidget/tabwidget.h>
 
 // ************************************************************
 // Prototypes
 // ************************************************************
-
-static std::vector<uint8_t> ReadAllBytes(const std::string& filename);
 
 class LauncherWindowTab1 : public Widget
 {
@@ -34,7 +37,6 @@ class LauncherWindowTab2 : public Widget
 {
 public:
 	LauncherWindowTab2(Widget parent);
-	void OnGeometryChanged() override;
 private:
 	TextLabel* WelcomeLabel = nullptr;
 	TextLabel* VersionLabel = nullptr;
@@ -76,6 +78,8 @@ private:
 	LauncherWindowTab1* Tab1 = nullptr;
 	LauncherWindowTab2* Tab2 = nullptr;
 	LauncherWindowTab3* Tab3 = nullptr;
+
+	std::shared_ptr<CustomCursor> Cursor;
 };
 
 // ************************************************************
@@ -97,6 +101,23 @@ LauncherWindow::LauncherWindow(): Widget(nullptr, WidgetType::Window)
 			Image::LoadResource("surreal-engine-icon-128.png"),
 			Image::LoadResource("surreal-engine-icon-256.png")
 			});
+
+		Cursor = CustomCursor::Create({
+			CustomCursorFrame(Image::LoadResource("Pentagram01.png"), 0.2),
+			CustomCursorFrame(Image::LoadResource("Pentagram02.png"), 0.2),
+			CustomCursorFrame(Image::LoadResource("Pentagram03.png"), 0.2),
+			CustomCursorFrame(Image::LoadResource("Pentagram04.png"), 0.2),
+			CustomCursorFrame(Image::LoadResource("Pentagram05.png"), 0.2),
+			CustomCursorFrame(Image::LoadResource("Pentagram06.png"), 0.2),
+			CustomCursorFrame(Image::LoadResource("Pentagram07.png"), 0.2),
+			CustomCursorFrame(Image::LoadResource("Pentagram08.png"), 0.2),
+			CustomCursorFrame(Image::LoadResource("Pentagram09.png"), 0.2),
+			CustomCursorFrame(Image::LoadResource("Pentagram10.png"), 0.2),
+			CustomCursorFrame(Image::LoadResource("Pentagram11.png"), 0.2),
+			CustomCursorFrame(Image::LoadResource("Pentagram12.png"), 0.2),
+			CustomCursorFrame(Image::LoadResource("Pentagram13.png"), 0.2),
+			CustomCursorFrame(Image::LoadResource("Pentagram14.png"), 0.2)
+			}, Point(16, 16));
 	}
 	catch (...)
 	{
@@ -105,6 +126,8 @@ LauncherWindow::LauncherWindow(): Widget(nullptr, WidgetType::Window)
 	Logo = new ImageBox(this);
 	ExitButton = new PushButton(this);
 	Pages = new TabWidget(this);
+
+	Logo->SetCursor(Cursor);
 
 	Tab1 = new LauncherWindowTab1(this);
 	Tab2 = new LauncherWindowTab2(this);
@@ -122,14 +145,7 @@ LauncherWindow::LauncherWindow(): Widget(nullptr, WidgetType::Window)
 
 	try
 	{
-		auto filedata = ReadAllBytes("banner.png");
-		std::vector<unsigned char> pixels;
-		unsigned long width = 0, height = 0;
-		int result = decodePNG(pixels, width, height, (const unsigned char*)filedata.data(), filedata.size(), true);
-		if (result == 0)
-		{
-			Logo->SetImage(Image::Create(width, height, ImageFormat::R8G8B8A8, pixels.data()));
-		}
+		Logo->SetImage(Image::LoadResource("banner.png"));
 	}
 	catch (...)
 	{
@@ -169,7 +185,7 @@ LauncherWindowTab1::LauncherWindowTab1(Widget parent): Widget(nullptr)
 
 void LauncherWindowTab1::OnGeometryChanged()
 {
-	Text->SetFrameGeometry(0, 10, GetWidth(), GetHeight());
+	Text->SetFrameGeometry(0, 10, GetWidth(), GetHeight() - 20);
 }
 
 LauncherWindowTab2::LauncherWindowTab2(Widget parent): Widget(nullptr)
@@ -186,6 +202,11 @@ LauncherWindowTab2::LauncherWindowTab2(Widget parent): Widget(nullptr)
 	BrightmapsCheckbox = new CheckboxLabel(this);
 	WidescreenCheckbox = new CheckboxLabel(this);
 	GamesList = new ListView(this);
+
+	auto label = new TextLabel();
+	label->SetText("Label:");
+	label->SetFixedWidth(100.0);
+	auto lineedit = new LineEdit(nullptr);
 
 	WelcomeLabel->SetText("Welcome to VKDoom");
 	VersionLabel->SetText("Version 0xdeadbabe.");
@@ -207,50 +228,38 @@ LauncherWindowTab2::LauncherWindowTab2(Widget parent): Widget(nullptr)
 	LightsCheckbox->SetText("Lights");
 	BrightmapsCheckbox->SetText("Brightmaps");
 	WidescreenCheckbox->SetText("Widescreen");
-}
 
-void LauncherWindowTab2::OnGeometryChanged()
-{
-	double y = 0, h;
+	auto layout = new VBoxLayout(this);
+	layout->AddWidget(WelcomeLabel);
+	layout->AddWidget(VersionLabel);
+	layout->AddWidget(SelectLabel);
+	layout->AddWidget(GamesList);
 
-	h = WelcomeLabel->GetPreferredHeight();
-	WelcomeLabel->SetFrameGeometry(20, y, GetWidth() - 40, h);
-	y += h;
+	auto line = new HBoxLayout();
+	line->AddWidget(label);
+	line->AddWidget(lineedit);
+	layout->AddLayout(line);
 
-	h = VersionLabel->GetPreferredHeight();
-	VersionLabel->SetFrameGeometry(20, y, GetWidth() - 40, h);
-	y += h + 10;
+	auto leftPanel = new VBoxLayout();
+	leftPanel->AddWidget(FullscreenCheckbox);
+	leftPanel->AddWidget(DisableAutoloadCheckbox);
+	leftPanel->AddWidget(DontAskAgainCheckbox);
 
-	h = SelectLabel->GetPreferredHeight();
-	SelectLabel->SetFrameGeometry(20, y, GetWidth() - 40, h);
-	y += h;
+	auto rightPanel = new VBoxLayout();
+	rightPanel->AddWidget(LightsCheckbox);
+	rightPanel->AddWidget(BrightmapsCheckbox);
+	rightPanel->AddWidget(WidescreenCheckbox);
 
-	double listViewTop = y + 10, listViewBottom;
+	auto panelLine = new HBoxLayout();
+	panelLine->AddLayout(leftPanel);
+	panelLine->AddLayout(rightPanel);
 
-	y = GetHeight();
+	layout->AddWidget(ExtrasLabel);
+	layout->AddLayout(panelLine);
 
-	h = DontAskAgainCheckbox->GetPreferredHeight();
-	y -= h;
-	DontAskAgainCheckbox->SetFrameGeometry(20, y, 190, h);
-	WidescreenCheckbox->SetFrameGeometry(GetWidth() - 170, y, 150, WidescreenCheckbox->GetPreferredHeight());
+	//layout->AddStretch();
 
-	h = DisableAutoloadCheckbox->GetPreferredHeight();
-	y -= h;
-	DisableAutoloadCheckbox->SetFrameGeometry(20, y, 190, h);
-	BrightmapsCheckbox->SetFrameGeometry(GetWidth() - 170, y, 150, BrightmapsCheckbox->GetPreferredHeight());
-
-	h = FullscreenCheckbox->GetPreferredHeight();
-	y -= h;
-	FullscreenCheckbox->SetFrameGeometry(20, y, 190, h);
-	LightsCheckbox->SetFrameGeometry(GetWidth() - 170, y, 150, LightsCheckbox->GetPreferredHeight());
-
-	h = GeneralLabel->GetPreferredHeight();
-	y -= h;
-	GeneralLabel->SetFrameGeometry(20, y, 190, GeneralLabel->GetPreferredHeight());
-	ExtrasLabel->SetFrameGeometry(GetWidth() - 170, y, 150, ExtrasLabel->GetPreferredHeight());
-
-	listViewBottom = y - 10;
-	GamesList->SetFrameGeometry(20, listViewTop, GetWidth() - 40, std::max<double>(listViewBottom - listViewTop, 0));
+	SetLayout(layout);
 }
 
 LauncherWindowTab3::LauncherWindowTab3(Widget parent): Widget(nullptr)
@@ -302,18 +311,6 @@ void LauncherWindowTab3::OnGeometryChanged()
 // Shared code
 // ************************************************************
 
-std::vector<SingleFontData> LoadWidgetFontData(const std::string& name)
-{
-	return {
-		{std::move(ReadAllBytes("OpenSans.ttf")), ""}
-	};
-}
-
-std::vector<uint8_t> LoadWidgetData(const std::string& name)
-{
-	return ReadAllBytes(name);
-}
-
 enum class Backend
 {
 	Default, Win32, SDL2, X11, Wayland
@@ -324,8 +321,46 @@ enum class Theme
 	Default, Light, Dark
 };
 
+class ExampleResourceLoader : public ResourceLoader
+{
+public:
+	std::vector<SingleFontData> LoadFont(const std::string& name) override
+	{
+		if (name == "system" || name == "monospace")
+		{
+			SingleFontData fontdata;
+			fontdata.fontdata = ReadAllBytes("OpenSans.ttf");
+			return { std::move(fontdata) };
+		}
+		else
+		{
+			SingleFontData fontdata;
+			fontdata.fontdata = ReadAllBytes(name + ".ttf");
+			return { std::move(fontdata) };
+		}
+	}
+	
+	std::vector<uint8_t> ReadAllBytes(const std::string& filename) override
+	{
+		std::ifstream file(filename, std::ios::binary | std::ios::ate);
+		if (!file)
+			throw std::runtime_error("Could not open: " + filename);
+
+		std::streamsize size = file.tellg();
+		file.seekg(0, std::ios::beg);
+
+		std::vector<uint8_t> buffer(size);
+		if (!file.read(reinterpret_cast<char*>(buffer.data()), size))
+			throw std::runtime_error("Could not read: " + filename);
+
+		return buffer;
+	}
+};
+
 int example(Backend backend = Backend::Default, Theme theme = Theme::Default)
 {
+	ResourceLoader::Set(std::make_unique<ExampleResourceLoader>());
+
 	// just for testing themes
 	switch (theme)
 	{
@@ -359,56 +394,9 @@ int example(Backend backend = Backend::Default, Theme theme = Theme::Default)
 
 #ifdef WIN32
 
-#define WIN32_MEAN_AND_LEAN
-#define NOMINMAX
 #include <Windows.h>
-#include <stdexcept>
 
 #pragma comment(linker,"/manifestdependency:\"type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
-
-static std::wstring to_utf16(const std::string& str)
-{
-	if (str.empty()) return {};
-	int needed = MultiByteToWideChar(CP_UTF8, 0, str.data(), (int)str.size(), nullptr, 0);
-	if (needed == 0)
-		throw std::runtime_error("MultiByteToWideChar failed");
-	std::wstring result;
-	result.resize(needed);
-	needed = MultiByteToWideChar(CP_UTF8, 0, str.data(), (int)str.size(), &result[0], (int)result.size());
-	if (needed == 0)
-		throw std::runtime_error("MultiByteToWideChar failed");
-	return result;
-}
-
-static std::vector<uint8_t> ReadAllBytes(const std::string& filename)
-{
-	HANDLE handle = CreateFile(to_utf16(filename).c_str(), FILE_READ_ACCESS, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
-	if (handle == INVALID_HANDLE_VALUE)
-		throw std::runtime_error("Could not open " + filename);
-
-	LARGE_INTEGER fileSize;
-	BOOL result = GetFileSizeEx(handle, &fileSize);
-	if (result == FALSE)
-	{
-		CloseHandle(handle);
-		throw std::runtime_error("GetFileSizeEx failed");
-	}
-
-	std::vector<uint8_t> buffer(fileSize.QuadPart);
-
-	DWORD bytesRead = 0;
-	result = ReadFile(handle, buffer.data(), (DWORD)buffer.size(), &bytesRead, nullptr);
-	if (result == FALSE || bytesRead != buffer.size())
-	{
-		CloseHandle(handle);
-		throw std::runtime_error("ReadFile failed");
-	}
-
-	CloseHandle(handle);
-
-	return buffer;
-}
-
 
 int APIENTRY WinMain(HINSTANCE hInst, HINSTANCE hInstPrev, PSTR cmdline, int cmdshow)
 {
@@ -423,22 +411,6 @@ int APIENTRY WinMain(HINSTANCE hInst, HINSTANCE hInstPrev, PSTR cmdline, int cmd
 #include <string>
 #include <stdexcept>
 
-static std::vector<uint8_t> ReadAllBytes(const std::string& filename)
-{
-	std::ifstream file(filename, std::ios::binary | std::ios::ate);
-	if (!file)
-		throw std::runtime_error("ReadFile failed");
-
-	std::streamsize size = file.tellg();
-	file.seekg(0, std::ios::beg);
-
-	std::vector<uint8_t> buffer(size);
-	if (!file.read(reinterpret_cast<char*>(buffer.data()), size))
-		throw std::runtime_error("ReadFile failed ");
-
-	return buffer;
-}
-
 int main(int argc, const char** argv)
 {
 	Backend backend = Backend::Default;
@@ -447,8 +419,6 @@ int main(int argc, const char** argv)
 	for (auto i = 1; i < argc; i++)
 	{
 		std::string s = argv[i];
-		std::transform(s.begin(), s.end(), s.begin(),
-			[](unsigned char c){ return std::tolower(c); });
 
 		if (s == "light") { theme = Theme::Light; continue; }
 		if (s == "dark")  { theme = Theme::Dark;  continue; }

@@ -6,7 +6,6 @@
 #ifdef __OBJC__
 #import <Metal/Metal.h>
 #else
-typedef void* id;
 #endif
 
 class MetalRenderDevice;
@@ -52,6 +51,9 @@ public:
 
 	// Reset for new frame
 	void BeginFrame();
+
+	// Clear material texture bindings (called when switching materials)
+	void ClearMaterialTextures();
 
 private:
 	MetalRenderDevice* fb = nullptr;

@@ -63,6 +63,12 @@
 bool I_CreateVulkanSurface(VkInstance instance, VkSurfaceKHR *surface);
 #endif
 
+#ifdef HAVE_METAL
+#include "metal/system/mt_renderdevice.h"
+#import <Metal/Metal.h>
+#import <QuartzCore/CAMetalLayer.h>
+#endif
+
 extern bool ToggleFullscreen;
 
 @implementation NSWindow(ExitAppOnClose)
@@ -276,7 +282,8 @@ namespace
 
 - (void)reshape
 {
-	[super reshape];
+	// Note: NSView doesn't have reshape, only NSOpenGLView does
+	// Since we inherit from NSView, we just call update directly
 	[self update];
 }
 
@@ -527,17 +534,57 @@ public:
 		}
 		else
 #endif
-
-		SetupOpenGLView(ms_window, OpenGLProfile::Core);
+		// Only set up OpenGL view if not using Metal backend
+		if (V_GetBackend() != 3)
+		{
+			SetupOpenGLView(ms_window, OpenGLProfile::Core);
+		}
 
 		if (fb == nullptr)
 		{
-#ifdef HAVE_GLES2
-			if(V_GetBackend() != 0)
-				fb = new OpenGLESRenderer::OpenGLFrameBuffer(0, vid_fullscreen);
-			else
+// TEMPORARILY DISABLED: Metal renderer disabled for testing Cocoa window changes
+#if 0 // def HAVE_METAL
+			// Try Metal renderer on macOS 10.13+
+			if (V_GetBackend() == 3)
+			{
+				// Ensure the window's view has a Metal layer before initializing Metal renderer
+				NSView* contentView = [ms_window contentView];
+				if (contentView != nil)
+				{
+					// Create Metal layer for the view
+					CAMetalLayer* metalLayer = [CAMetalLayer layer];
+					[contentView setLayer:metalLayer];
+					[contentView setWantsLayer:YES];
+
+					// Set initial Metal layer properties
+					metalLayer.pixelFormat = MTLPixelFormatBGRA8Unorm;
+					metalLayer.framebufferOnly = NO; // Allow reading back (for screenshots, etc.)
+
+					Printf("Created Metal layer for window\n");
+				}
+
+				try
+				{
+					fb = new MetalRenderDevice(nullptr, vid_fullscreen);
+					Printf("Metal renderer initialized successfully\n");
+				}
+				catch (std::exception const& error)
+				{
+					Printf(TEXTCOLOR_RED "Metal renderer initialization failed: %s\n", error.what());
+					Printf("Falling back to OpenGL renderer\n");
+					fb = nullptr;
+				}
+			}
 #endif
-				fb = new OpenGLRenderer::OpenGLFrameBuffer(0, vid_fullscreen);
+			if (fb == nullptr)
+			{
+#ifdef HAVE_GLES2
+				if(V_GetBackend() != 0)
+					fb = new OpenGLESRenderer::OpenGLFrameBuffer(0, vid_fullscreen);
+				else
+#endif
+					fb = new OpenGLRenderer::OpenGLFrameBuffer(0, vid_fullscreen);
+			}
 		}
 
 		fb->SetWindow(ms_window);
@@ -814,13 +861,13 @@ CocoaNativeHandle SystemBaseFrameBuffer::GetNativeHandle() const
 		handle.nsWindow = m_window;
 		handle.nsView = [m_window contentView];
 
-		// Get Metal layer if available (for Vulkan or future Metal renderer)
+		// Get Metal layer if available (for Vulkan or Metal renderer)
 		if ([handle.nsView isKindOfClass:[NSView class]])
 		{
 			CALayer* layer = [handle.nsView layer];
-			if ([layer isKindOfClass:NSClassFromString(@"CAMetalLayer")])
+			if (layer != nil && [layer isKindOfClass:[CAMetalLayer class]])
 			{
-				handle.metalLayer = (CAMetalLayer*)layer;
+				handle.metalLayer = (__bridge void*)layer;
 			}
 		}
 	}
@@ -1052,7 +1099,7 @@ bool I_CreateVulkanSurface(VkInstance instance, VkSurfaceKHR *surface)
 	windowCreateInfo.sType = VK_STRUCTURE_TYPE_MACOS_SURFACE_CREATE_INFO_MVK;
 	windowCreateInfo.pNext = nullptr;
 	windowCreateInfo.flags = 0;
-	windowCreateInfo.pView = view;
+	windowCreateInfo.pView = (__bridge const void*)view;
 
 	const VkResult result = vkCreateMacOSSurfaceMVK(instance, &windowCreateInfo, nullptr, surface);
 	return result == VK_SUCCESS;

@@ -3939,8 +3939,11 @@ void SignalHandler(int signal)
 int GameMain()
 {
 	// On Windows, prefer the native win32 backend.
+	// On macOS, prefer the native Cocoa backend.
 	// On other platforms, use SDL until the other backends are more mature.
 	auto zwidget = DisplayBackend::TryCreateWin32();
+	if (!zwidget)
+		zwidget = DisplayBackend::TryCreateCocoa();
 	if (!zwidget)
 		zwidget = DisplayBackend::TryCreateSDL2();
 	if (!zwidget)

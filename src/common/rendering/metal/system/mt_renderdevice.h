@@ -103,6 +103,7 @@ private:
 	void RenderTextureView(FCanvasTexture* tex, std::function<void(IntRect&)> renderFunc) override;
 	void PrintStartupLog();
 	void CopyScreenToBuffer(int w, int h, uint8_t* data) override;
+	void PresentFrame(void* drawable);
 
 	// Manager instances (following Vulkan pattern)
 	std::unique_ptr<MtCommandBufferManager> mCommands;

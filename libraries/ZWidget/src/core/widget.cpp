@@ -2,9 +2,12 @@
 #include "core/timer.h"
 #include "core/colorf.h"
 #include "core/theme.h"
+#include "core/layout.h"
+#include "debug_log.h"
 #include <stdexcept>
 #include <cmath>
 #include <algorithm>
+#include <typeinfo>
 
 Widget::Widget(Widget* parent, WidgetType type, RenderAPI renderAPI) : Type(type)
 {
@@ -33,6 +36,13 @@ Widget::Widget(Widget* parent, WidgetType type, RenderAPI renderAPI) : Type(type
 
 Widget::~Widget()
 {
+	// Release cursor lock if this widget has it
+	Widget* window = Window();
+	if (window && window->CursorLockWidget == this)
+	{
+		window->CursorLockWidget = nullptr;
+	}
+
 	for (auto subscription: Subscriptions)
 		subscription->Subscribers.erase(this);
 
@@ -98,6 +108,12 @@ void Widget::SetParent(Widget* newParent)
 	}
 }
 
+void Widget::SetLayout(Layout* layout)
+{
+	m_Layout = layout;
+	m_Layout->SetParent(this);
+}
+
 void Widget::MoveBefore(Widget* sibling)
 {
 	if (sibling && sibling->ParentObj != ParentObj) throw std::runtime_error("Invalid sibling passed to Widget.MoveBefore");
@@ -133,8 +149,10 @@ void Widget::DetachFromParent()
 	{
 		if (cur->FocusWidget == this)
 			cur->FocusWidget = nullptr;
-		if (cur->CaptureWidget == this)
-			cur->CaptureWidget = nullptr;
+		if (cur->KeyboardLockWidget == this)
+			cur->KeyboardLockWidget = nullptr;
+		if (cur->CursorLockWidget == this)
+			cur->CursorLockWidget = nullptr;
 		if (cur->HoverWidget == this)
 			cur->HoverWidget = nullptr;
 
@@ -185,6 +203,16 @@ void Widget::SetWindowIcon(const std::vector<std::shared_ptr<Image>>& images)
 		DispWindow->SetWindowIcon(WindowIcon);
 }
 
+double Widget::GetPreferredWidth()
+{
+	return m_Layout ? m_Layout->GetPreferredWidth() : 0.0;
+}
+
+double Widget::GetPreferredHeight()
+{
+	return m_Layout ? m_Layout->GetPreferredHeight() : 0.0;
+}
+
 Size Widget::GetSize() const
 {
 	return ContentGeometry.size();
@@ -228,6 +256,10 @@ void Widget::SetFrameGeometry(const Rect& geometry)
 		right = GridFitPoint(right);
 		bottom = GridFitPoint(bottom);
 		ContentGeometry = Rect::ltrb(left, top, right, bottom);
+
+		if (m_Layout)
+			m_Layout->OnGeometryChanged();
+
 		OnGeometryChanged();
 	}
 	else
@@ -375,12 +407,16 @@ void Widget::Update()
 void Widget::Repaint()
 {
 	Widget* w = Window();
-	if (w->DispCanvas)
-	{
-		w->DispCanvas->begin(w->WindowBackground);
-		w->Paint(w->DispCanvas.get());
-		w->DispCanvas->end();
-	}
+	if (!w)
+		return;
+
+	if (!w->DispCanvas)
+		return;
+
+	Canvas* canvas = w->DispCanvas.get();
+	canvas->begin(w->WindowBackground);
+	w->Paint(canvas);
+	canvas->end();
 }
 
 void Widget::Paint(Canvas* canvas)
@@ -398,7 +434,9 @@ void Widget::Paint(Canvas* canvas)
 	for (Widget* w = FirstChild(); w != nullptr; w = w->NextSibling())
 	{
 		if (w->Type == WidgetType::Child && !w->HiddenFlag)
+		{
 			w->Paint(canvas);
+		}
 	}
 	canvas->setOrigin(oldOrigin);
 	canvas->popClip();
@@ -464,12 +502,32 @@ void Widget::SetEnabled(bool value)
 {
 }
 
+void Widget::LockKeyboard()
+{
+	Widget* w = Window();
+	if (w && w->KeyboardLockWidget != this)
+	{
+		w->KeyboardLockWidget = this;
+		w->DispWindow->LockKeyboard();
+	}
+}
+
+void Widget::UnlockKeyboard()
+{
+	Widget* w = Window();
+	if (w && w->KeyboardLockWidget != nullptr)
+	{
+		w->KeyboardLockWidget = nullptr;
+		w->DispWindow->UnlockKeyboard();
+	}
+}
+
 void Widget::LockCursor()
 {
 	Widget* w = Window();
-	if (w && w->CaptureWidget != this)
+	if (w && w->CursorLockWidget != this)
 	{
-		w->CaptureWidget = this;
+		w->CursorLockWidget = this;
 		w->DispWindow->LockCursor();
 	}
 }
@@ -477,9 +535,9 @@ void Widget::LockCursor()
 void Widget::UnlockCursor()
 {
 	Widget* w = Window();
-	if (w && w->CaptureWidget != nullptr)
+	if (w && w->CursorLockWidget != nullptr)
 	{
-		w->CaptureWidget = nullptr;
+		w->CursorLockWidget = nullptr;
 		w->DispWindow->UnlockCursor();
 	}
 }
@@ -489,12 +547,28 @@ void Widget::SetCursor(StandardCursor cursor)
 	if (CurrentCursor != cursor)
 	{
 		CurrentCursor = cursor;
-		if (HoverWidget == this || CaptureWidget == this)
+		if (HoverWidget == this || CursorLockWidget == this)
 		{
 			Widget* w = Window();
 			if (w)
 			{
-				w->DispWindow->SetCursor(CurrentCursor);
+				w->DispWindow->SetCursor(CurrentCursor, CurrentCustomCursor);
+			}
+		}
+	}
+}
+
+void Widget::SetCursor(std::shared_ptr<CustomCursor> cursor)
+{
+	if (CurrentCustomCursor != cursor)
+	{
+		CurrentCustomCursor = cursor;
+		if (HoverWidget == this || CursorLockWidget == this)
+		{
+			Widget* w = Window();
+			if (w)
+			{
+				w->DispWindow->SetCursor(CurrentCursor, CurrentCustomCursor);
 			}
 		}
 	}
@@ -503,9 +577,9 @@ void Widget::SetCursor(StandardCursor cursor)
 void Widget::SetPointerCapture()
 {
 	Widget* w = Window();
-	if (w && w->CaptureWidget != this)
+	if (w && w->CursorLockWidget != this)
 	{
-		w->CaptureWidget = this;
+		w->CursorLockWidget = this;
 		w->DispWindow->CaptureMouse();
 	}
 }
@@ -513,9 +587,9 @@ void Widget::SetPointerCapture()
 void Widget::ReleasePointerCapture()
 {
 	Widget* w = Window();
-	if (w && w->CaptureWidget != nullptr)
+	if (w && w->CursorLockWidget != nullptr)
 	{
-		w->CaptureWidget = nullptr;
+		w->CursorLockWidget = nullptr;
 		w->DispWindow->ReleaseMouseCapture();
 	}
 }
@@ -523,18 +597,18 @@ void Widget::ReleasePointerCapture()
 void Widget::SetModalCapture()
 {
 	Widget* w = Window();
-	if (w && w->CaptureWidget != this)
+	if (w && w->CursorLockWidget != this)
 	{
-		w->CaptureWidget = this;
+		w->CursorLockWidget = this;
 	}
 }
 
 void Widget::ReleaseModalCapture()
 {
 	Widget* w = Window();
-	if (w && w->CaptureWidget != nullptr)
+	if (w && w->CursorLockWidget != nullptr)
 	{
-		w->CaptureWidget = nullptr;
+		w->CursorLockWidget = nullptr;
 	}
 }
 
@@ -571,7 +645,19 @@ Canvas* Widget::GetCanvas() const
 		if (w->DispCanvas)
 			return w->DispCanvas.get();
 	}
-	return nullptr;
+
+	struct DummyCanvas
+	{
+		DummyCanvas()
+		{
+			canvas = Canvas::create();
+			canvas->attach(nullptr);
+		}
+		std::unique_ptr<Canvas> canvas;
+	};
+
+	static DummyCanvas dummy;
+	return dummy.canvas.get();
 }
 
 bool Widget::IsParent(const Widget* w) const
@@ -608,11 +694,19 @@ Widget* Widget::ChildAt(const Point& pos)
 Point Widget::MapFrom(const Widget* parent, const Point& pos) const
 {
 	Point p = pos;
+	int iterations = 0;
 	for (const Widget* cur = this; cur != nullptr; cur = cur->Parent())
 	{
+		iterations++;
 		if (cur == parent)
+		{
 			return p;
+		}
 		p -= cur->ContentGeometry.topLeft();
+		if (iterations > 100)
+		{
+			throw std::runtime_error("MapFrom: infinite loop detected");
+		}
 	}
 	throw std::runtime_error("MapFrom: not a parent of widget");
 }
@@ -664,10 +758,10 @@ void Widget::OnWindowPaint()
 
 void Widget::OnWindowMouseMove(const Point& pos)
 {
-	if (CaptureWidget)
+	if (CursorLockWidget)
 	{
-		DispWindow->SetCursor(CaptureWidget->CurrentCursor);
-		CaptureWidget->OnMouseMove(CaptureWidget->MapFrom(this, pos));
+		DispWindow->SetCursor(CursorLockWidget->CurrentCursor, CursorLockWidget->CurrentCustomCursor);
+		CursorLockWidget->OnMouseMove(CursorLockWidget->MapFrom(this, pos));
 	}
 	else
 	{
@@ -691,7 +785,7 @@ void Widget::OnWindowMouseMove(const Point& pos)
 			HoverWidget = widget;
 		}
 
-		DispWindow->SetCursor(widget->CurrentCursor);
+		DispWindow->SetCursor(widget->CurrentCursor, widget->CurrentCustomCursor);
 
 		do
 		{
@@ -717,20 +811,39 @@ void Widget::OnWindowMouseLeave()
 
 void Widget::OnWindowMouseDown(const Point& pos, InputKey key)
 {
-	if (CaptureWidget)
+	if (CursorLockWidget)
 	{
-		CaptureWidget->OnMouseDown(CaptureWidget->MapFrom(this, pos), key);
+		try
+		{
+			Point mappedPos = CursorLockWidget->MapFrom(this, pos);
+			CursorLockWidget->OnMouseDown(mappedPos, key);
+		}
+		catch (const std::exception& e)
+		{
+			// Silently handle MapFrom errors for cursor-locked widgets
+		}
 	}
 	else
 	{
 		Widget* widget = ChildAt(pos);
+
 		if (!widget)
 			widget = this;
+
 		while (widget)
 		{
-			bool stopPropagation = widget->OnMouseDown(widget->MapFrom(this, pos), key);
-			if (stopPropagation || widget == this)
+			try
+			{
+				Point mappedPos = widget->MapFrom(this, pos);
+				bool stopPropagation = widget->OnMouseDown(mappedPos, key);
+
+				if (stopPropagation || widget == this)
+					break;
+			}
+			catch (const std::exception& e)
+			{
 				break;
+			}
 			widget = widget->Parent();
 		}
 	}
@@ -738,9 +851,9 @@ void Widget::OnWindowMouseDown(const Point& pos, InputKey key)
 
 void Widget::OnWindowMouseDoubleclick(const Point& pos, InputKey key)
 {
-	if (CaptureWidget)
+	if (CursorLockWidget)
 	{
-		CaptureWidget->OnMouseDoubleclick(CaptureWidget->MapFrom(this, pos), key);
+		CursorLockWidget->OnMouseDoubleclick(CursorLockWidget->MapFrom(this, pos), key);
 	}
 	else
 	{
@@ -759,9 +872,17 @@ void Widget::OnWindowMouseDoubleclick(const Point& pos, InputKey key)
 
 void Widget::OnWindowMouseUp(const Point& pos, InputKey key)
 {
-	if (CaptureWidget)
+	if (CursorLockWidget)
 	{
-		CaptureWidget->OnMouseUp(CaptureWidget->MapFrom(this, pos), key);
+		try
+		{
+			Point mappedPos = CursorLockWidget->MapFrom(this, pos);
+			CursorLockWidget->OnMouseUp(mappedPos, key);
+		}
+		catch (const std::exception& e)
+		{
+			// Silently handle MapFrom errors for cursor-locked widgets
+		}
 	}
 	else
 	{
@@ -770,9 +891,17 @@ void Widget::OnWindowMouseUp(const Point& pos, InputKey key)
 			widget = this;
 		while (widget)
 		{
-			bool stopPropagation = widget->OnMouseUp(widget->MapFrom(this, pos), key);
-			if (stopPropagation || widget == this)
+			try
+			{
+				Point mappedPos = widget->MapFrom(this, pos);
+				bool stopPropagation = widget->OnMouseUp(mappedPos, key);
+				if (stopPropagation || widget == this)
+					break;
+			}
+			catch (const std::exception& e)
+			{
 				break;
+			}
 			widget = widget->Parent();
 		}
 	}
@@ -780,9 +909,9 @@ void Widget::OnWindowMouseUp(const Point& pos, InputKey key)
 
 void Widget::OnWindowMouseWheel(const Point& pos, InputKey key)
 {
-	if (CaptureWidget)
+	if (CursorLockWidget)
 	{
-		CaptureWidget->OnMouseWheel(CaptureWidget->MapFrom(this, pos), key);
+		CursorLockWidget->OnMouseWheel(CursorLockWidget->MapFrom(this, pos), key);
 	}
 	else
 	{
@@ -799,15 +928,19 @@ void Widget::OnWindowMouseWheel(const Point& pos, InputKey key)
 	}
 }
 
+void Widget::OnWindowRawKey(RawKeycode keycode, bool down)
+{
+	if (KeyboardLockWidget)
+	{
+		KeyboardLockWidget->OnRawKey(keycode, down);
+	}
+}
+
 void Widget::OnWindowRawMouseMove(int dx, int dy)
 {
-	if (CaptureWidget)
+	if (CursorLockWidget)
 	{
-		CaptureWidget->OnRawMouseMove(dx, dy);
-	}
-	else if (FocusWidget)
-	{
-		FocusWidget->OnRawMouseMove(dx, dy);
+		CursorLockWidget->OnRawMouseMove(dx, dy);
 	}
 }
 
@@ -845,6 +978,9 @@ void Widget::OnWindowGeometryChanged()
 	right = std::max(right, FrameGeometry.left());
 	bottom = std::max(bottom, FrameGeometry.top());
 	ContentGeometry = Rect::ltrb(left, top, right, bottom);
+
+	if (m_Layout)
+		m_Layout->OnGeometryChanged();
 
 	OnGeometryChanged();
 }
@@ -952,6 +1088,11 @@ void Widget::SetStyleColor(const std::string& propertyName, const Colorf& value)
 	StyleProperties[propertyName] = value;
 }
 
+void Widget::SetStyleImage(const std::string& propertyName, const std::shared_ptr<Image>& value)
+{
+	StyleProperties[propertyName] = value;
+}
+
 bool Widget::GetStyleBool(const std::string& propertyName) const
 {
 	auto it = StyleProperties.find(propertyName);
@@ -995,4 +1136,19 @@ Colorf Widget::GetStyleColor(const std::string& propertyName) const
 		return std::get<Colorf>(it->second);
 	WidgetStyle* style = WidgetTheme::GetTheme()->GetStyle(StyleClass);
 	return style ? style->GetColor(StyleState, propertyName) : Colorf::transparent();
+}
+
+std::shared_ptr<Image> Widget::GetStyleImage(const std::string& propertyName) const
+{
+	auto it = StyleProperties.find(propertyName);
+	if (it != StyleProperties.end())
+		return std::get<std::shared_ptr<Image>>(it->second);
+	WidgetStyle* style = WidgetTheme::GetTheme()->GetStyle(StyleClass);
+	return style ? style->GetImage(StyleState, propertyName) : std::shared_ptr<Image>();
+}
+
+std::shared_ptr<Font> Widget::GetFont() const
+{
+	WidgetStyle* style = WidgetTheme::GetTheme()->GetStyle(StyleClass);
+	return style ? style->GetFont(StyleState) : std::shared_ptr<Font>();
 }

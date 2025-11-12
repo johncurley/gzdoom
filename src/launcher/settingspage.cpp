@@ -61,7 +61,7 @@ SettingsPage::SettingsPage(LauncherWindow* launcher, const FStartupSelectionInfo
 
 	try
 	{
-		auto data = LoadWidgetData("menudef.txt");
+		auto data = ResourceData::ReadAllBytes("menudef.txt");
 		FScanner sc;
 		sc.OpenMem("menudef.txt", data);
 		while (sc.GetString())

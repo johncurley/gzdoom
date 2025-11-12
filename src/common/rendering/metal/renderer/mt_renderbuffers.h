@@ -5,7 +5,6 @@
 #ifdef __OBJC__
 #import <Metal/Metal.h>
 #else
-typedef void* id;
 #endif
 
 class MetalRenderDevice;
@@ -30,6 +29,8 @@ public:
 	int GetHeight() const { return mHeight; }
 
 private:
+	void CreateDepthStencilBuffer(int width, int height);
+
 	MetalRenderDevice* fb = nullptr;
 	std::unique_ptr<MtTextureImage> mColorBuffer;
 	std::unique_ptr<MtTextureImage> mDepthStencilBuffer;

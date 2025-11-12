@@ -1,12 +1,11 @@
 #pragma once
 
-#include "hw_databuffer.h"
+#include "hwrenderer/data/buffers.h"
 #include <cstdint>
 
 #ifdef __OBJC__
 #import <Metal/Metal.h>
 #else
-typedef void* id;
 #endif
 
 class MetalRenderDevice;
@@ -19,7 +18,6 @@ public:
 	~MtHardwareDataBuffer();
 
 	void BindRange(FRenderState* state, size_t start, size_t length) override;
-	void BindBase() override;
 
 #ifdef __OBJC__
 	id<MTLBuffer> GetBuffer() const { return mBuffer; }
@@ -33,6 +31,8 @@ protected:
 	void Resize(size_t newsize) override;
 	void Map() override;
 	void Unmap() override;
+	void* Lock(unsigned int size) override;
+	void Unlock() override;
 
 private:
 	void CreateBuffer(size_t size);
@@ -65,11 +65,18 @@ public:
 	void* GetBuffer() const { return mBuffer; }
 #endif
 
+	// Vertex format info (needed for binding)
+	size_t GetStride() const { return mStride; }
+	int GetBindingPoints() const { return mNumBindingPoints; }
+
 protected:
 	void SetData(size_t size, const void* data, BufferUsageType usage) override;
 	void SetSubData(size_t offset, size_t size, const void* data) override;
+	void Resize(size_t newsize) override;
 	void Map() override;
 	void Unmap() override;
+	void* Lock(unsigned int size) override;
+	void Unlock() override;
 
 private:
 	void CreateBuffer(size_t size);
@@ -80,6 +87,8 @@ private:
 	void* mBuffer = nullptr;
 #endif
 	size_t mBufferSize = 0;
+	size_t mStride = 0;
+	int mNumBindingPoints = 0;
 	MetalRenderDevice* fb = nullptr;
 	void* mMappedMemory = nullptr;
 };
@@ -100,8 +109,11 @@ public:
 protected:
 	void SetData(size_t size, const void* data, BufferUsageType usage) override;
 	void SetSubData(size_t offset, size_t size, const void* data) override;
+	void Resize(size_t newsize) override;
 	void Map() override;
 	void Unmap() override;
+	void* Lock(unsigned int size) override;
+	void Unlock() override;
 
 private:
 	void CreateBuffer(size_t size);

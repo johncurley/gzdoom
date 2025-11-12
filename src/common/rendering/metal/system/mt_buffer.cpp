@@ -6,6 +6,10 @@
 #include <Metal/Metal.hpp>
 #include "mt_buffer.h"
 #include "mt_renderdevice.h"
+#include "mt_hwbuffer.h"
+#include "metal/renderer/mt_streambuffer.h"
+#include "hwrenderer/data/shaderuniforms.h"
+#include "tarray.h"
 
 MtBufferManager::MtBufferManager(MetalRenderDevice* fb)
 	: fb(fb)
@@ -31,14 +35,14 @@ MtBufferManager::~MtBufferManager()
 	for (auto buffer : mRingBuffers)
 	{
 		if (buffer)
-			buffer->release();
+			((MTL::Buffer*)buffer)->release();
 	}
 	mRingBuffers.clear();
 }
 
-MTL::Buffer* MtBufferManager::CreateBuffer(size_t size, MTL::ResourceOptions options)
+void* MtBufferManager::CreateBuffer(size_t size, unsigned int options)
 {
-	MTL::Buffer* buffer = fb->device->device->newBuffer(size, options);
+	MTL::Buffer* buffer = fb->device->device->newBuffer(size, (MTL::ResourceOptions)options);
 	if (buffer)
 	{
 		mAllocatedMemory += size;
@@ -46,9 +50,9 @@ MTL::Buffer* MtBufferManager::CreateBuffer(size_t size, MTL::ResourceOptions opt
 	return buffer;
 }
 
-MTL::Buffer* MtBufferManager::CreateBufferWithData(const void* data, size_t size, MTL::ResourceOptions options)
+void* MtBufferManager::CreateBufferWithData(const void* data, size_t size, unsigned int options)
 {
-	MTL::Buffer* buffer = fb->device->device->newBuffer(data, size, options);
+	MTL::Buffer* buffer = fb->device->device->newBuffer(data, size, (MTL::ResourceOptions)options);
 	if (buffer)
 	{
 		mAllocatedMemory += size;
@@ -69,7 +73,7 @@ MtBufferManager::RingBufferAllocation MtBufferManager::AllocateRingBuffer(size_t
 	}
 
 	// Get current ring buffer
-	MTL::Buffer* buffer = mRingBuffers[mCurrentRingBuffer];
+	MTL::Buffer* buffer = (MTL::Buffer*)mRingBuffers[mCurrentRingBuffer];
 
 	// Check if we need to wrap around
 	if (mRingBufferOffset + size > kRingBufferSize)
@@ -77,7 +81,7 @@ MtBufferManager::RingBufferAllocation MtBufferManager::AllocateRingBuffer(size_t
 		// Move to next ring buffer
 		mCurrentRingBuffer = (mCurrentRingBuffer + 1) % mRingBuffers.size();
 		mRingBufferOffset = 0;
-		buffer = mRingBuffers[mCurrentRingBuffer];
+		buffer = (MTL::Buffer*)mRingBuffers[mCurrentRingBuffer];
 	}
 
 	// Allocate from current position
@@ -90,6 +94,78 @@ MtBufferManager::RingBufferAllocation MtBufferManager::AllocateRingBuffer(size_t
 	mRingBufferOffset += alignedSize;
 
 	return alloc;
+}
+
+void MtBufferManager::Init()
+{
+	// Create stream buffers for matrices and per-draw uniforms
+	MatrixBuffer.reset(new MtStreamBuffer(fb, sizeof(MatricesUBO)));
+	StreamBuffer.reset(new MtStreamBuffer(fb, sizeof(StreamUBO)));
+
+	// Create fan to triangle index buffer
+	CreateFanToTrisIndexBuffer();
+}
+
+void MtBufferManager::Deinit()
+{
+	// Clean up stream buffers
+	MatrixBuffer.reset();
+	StreamBuffer.reset();
+	FanToTrisIndexBuffer.reset();
+
+	// Clean up uniform buffers
+	if (ViewpointUBO) { delete ViewpointUBO; ViewpointUBO = nullptr; }
+	if (LightBufferSSO) { delete LightBufferSSO; LightBufferSSO = nullptr; }
+	if (LightNodes) { delete LightNodes; LightNodes = nullptr; }
+	if (LightLines) { delete LightLines; LightLines = nullptr; }
+	if (LightList) { delete LightList; LightList = nullptr; }
+	if (BoneBufferSSO) { delete BoneBufferSSO; BoneBufferSSO = nullptr; }
+}
+
+IVertexBuffer* MtBufferManager::CreateVertexBuffer()
+{
+	return new MtVertexBuffer(fb);
+}
+
+IIndexBuffer* MtBufferManager::CreateIndexBuffer()
+{
+	return new MtIndexBuffer(fb);
+}
+
+IDataBuffer* MtBufferManager::CreateDataBuffer(int bindingpoint, bool ssbo, bool needsresize)
+{
+	auto buffer = new MtHardwareDataBuffer(fb, bindingpoint, ssbo, needsresize);
+
+	// Store references to commonly used buffers
+	switch (bindingpoint)
+	{
+	case LIGHTBUF_BINDINGPOINT: LightBufferSSO = buffer; break;
+	case VIEWPOINT_BINDINGPOINT: ViewpointUBO = buffer; break;
+	case LIGHTNODES_BINDINGPOINT: LightNodes = buffer; break;
+	case LIGHTLINES_BINDINGPOINT: LightLines = buffer; break;
+	case LIGHTLIST_BINDINGPOINT: LightList = buffer; break;
+	case BONEBUF_BINDINGPOINT: BoneBufferSSO = buffer; break;
+	case POSTPROCESS_BINDINGPOINT: break;
+	default: break;
+	}
+
+	return buffer;
+}
+
+void MtBufferManager::CreateFanToTrisIndexBuffer()
+{
+	// Create index buffer for converting triangle fans to triangle lists
+	// Needed because Metal doesn't support triangle fans natively
+	TArray<uint32_t> data;
+	for (int i = 2; i < 1000; i++)
+	{
+		data.Push(0);
+		data.Push(i - 1);
+		data.Push(i);
+	}
+
+	FanToTrisIndexBuffer.reset(CreateIndexBuffer());
+	FanToTrisIndexBuffer->SetData(sizeof(uint32_t) * data.Size(), data.Data(), BufferUsageType::Static);
 }
 
 void MtBufferManager::BeginFrame()

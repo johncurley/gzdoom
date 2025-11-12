@@ -13,6 +13,13 @@ Dropdown::Dropdown(Widget* parent) : Widget(parent)
 		p->Subscribe(this);
 }
 
+Dropdown::~Dropdown()
+{
+	// Clean up any pending dropdown deletion
+	delete pendingDeleteDropdown;
+	pendingDeleteDropdown = nullptr;
+}
+
 DropdownList::DropdownList(Widget* parent, Dropdown* owner) : ListView(parent), owner(owner)
 {
 }
@@ -139,26 +146,26 @@ void Dropdown::SetSelectedItem(int index)
 	Update();
 }
 
-double Dropdown::GetPreferredHeight() const
+double Dropdown::GetPreferredHeight()
 {
-	return 20.0 + 2*5.0; // Text plus top/bottom padding
+	return 20.0 + 2 * 1.0; // Text plus top/bottom padding
 }
 
-double Dropdown::GetPreferredWidth() const
+double Dropdown::GetPreferredWidth()
 {
 	Canvas* canvas = GetCanvas();
 
 	double maxWidth = 0.0;
 	for (const auto& item : items)
 	{
-		auto width = canvas->measureText(item).width;
+		auto width = canvas->measureText(GetFont(), item).width;
 		if (width > maxWidth)
 		{
 			maxWidth = width;
 		}
 	}
 
-	return maxWidth + 2*10.0 + 16.0; // content, pad l/r, scrollbar from dropdown
+	return maxWidth + 2 * 5.0 + 16.0; // content, pad l/r, scrollbar from dropdown
 }
 
 void Dropdown::OnPaint(Canvas* canvas)
@@ -169,9 +176,9 @@ void Dropdown::OnPaint(Canvas* canvas)
 	double w = GetWidth();
 	double h = GetHeight();
 
-	auto vtp = canvas->verticalTextAlign();
+	auto vtp = canvas->verticalTextAlign(GetFont());
 	double textY = (h-(vtp.bottom-vtp.top))/2.0 + vtp.baseline;
-	canvas->drawText(Point(7.0, textY), textColor, text);
+	canvas->drawText(GetFont(), Point(7.0, textY), text, textColor);
 
 	double arrowS = 8.0;
 	double arrowX = w - 3.0; // rightmost point, aligned with scrollbar
@@ -299,12 +306,20 @@ void Dropdown::OnLostFocus()
 
 bool Dropdown::OpenDropdown()
 {
-	if (dropdownOpen || items.empty()) return false;
+	if (dropdownOpen || items.empty())
+	{
+		return false;
+	}
+
+	// Clean up any pending dropdown deletion from previous close
+	delete pendingDeleteDropdown;
+	pendingDeleteDropdown = nullptr;
 
 	dropdownOpen = true;
 
 	dropdown = new Widget(Window());
 	listView = new DropdownList(dropdown, this);
+
 	for (const auto& item : items)
 	{
 		listView->AddItem(item);
@@ -321,10 +336,9 @@ bool Dropdown::OpenDropdown()
 		GetWidth() + GetNoncontentLeft() + GetNoncontentRight(),
 		GetDisplayItems() * 20.0 + 20
 	);
+
 	OnGeometryChanged();
-
 	dropdown->Show();
-
 	listView->ScrollToItem(selectedItem);
 
 	return true;
@@ -332,12 +346,23 @@ bool Dropdown::OpenDropdown()
 
 bool Dropdown::CloseDropdown()
 {
-	if (!dropdownOpen || !dropdown) return false;
+	if (!dropdownOpen || !dropdown)
+	{
+		return false;
+	}
 
-	dropdown->Close();
+	// Hide the dropdown immediately and mark as closed
+	// This prevents it from receiving further mouse events
+	dropdown->SetVisible(false);
+	dropdownOpen = false;
+
+	// Mark dropdown for deferred deletion - we'll delete it when:
+	// 1. The Dropdown itself is destroyed
+	// 2. A new dropdown is opened
+	// This avoids deleting widgets during event processing
+	pendingDeleteDropdown = dropdown;
 	dropdown = nullptr;
 	listView = nullptr;
-	dropdownOpen = false;
 
 	Update();
 
@@ -348,8 +373,10 @@ void Dropdown::OnDropdownActivated()
 {
 	if (listView)
 	{
-		SetSelectedItem(listView->GetSelectedItem());
+		int selectedItem = listView->GetSelectedItem();
+		SetSelectedItem(selectedItem);
 	}
+
 	CloseDropdown();
 	SetFocus();
 }

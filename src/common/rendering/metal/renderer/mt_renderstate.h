@@ -13,7 +13,6 @@
 #import <Metal/Metal.h>
 #else
 // Forward declare Metal types for C++ code
-typedef void* id;
 #endif
 
 class MetalRenderDevice;

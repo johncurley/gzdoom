@@ -4,7 +4,7 @@
 */
 
 #include "mt_postprocess.h"
-#include "mt_renderdevice.h"
+#include "metal/system/mt_renderdevice.h"
 
 MtPostprocess::MtPostprocess(MetalRenderDevice* fb) : fb(fb) {}
 MtPostprocess::~MtPostprocess() {}

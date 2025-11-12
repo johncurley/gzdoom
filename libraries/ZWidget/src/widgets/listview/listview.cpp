@@ -3,6 +3,7 @@
 
 ListView::ListView(Widget* parent) : Widget(parent)
 {
+	SetStretching(true);
 	SetStyleClass("listview");
 
 	scrollbar = new Scrollbar(this);
@@ -97,7 +98,9 @@ void ListView::RemoveItem(int index)
 void ListView::Activate()
 {
 	if (OnActivated)
+	{
 		OnActivated();
+	}
 }
 
 void ListView::SetSelectedItem(int index)
@@ -105,8 +108,12 @@ void ListView::SetSelectedItem(int index)
 	if (selectedItem != index && index >= 0 && index < (int)items.size())
 	{
 		selectedItem = index;
-		if (OnChanged) OnChanged(selectedItem);
 		Update();
+
+		if (OnChanged)
+		{
+			OnChanged(selectedItem);
+		}
 	}
 }
 
@@ -169,7 +176,7 @@ void ListView::OnPaint(Canvas* canvas)
 			double cx = x;
 			for (size_t entry = 0u; entry < item.size(); ++entry)
 			{
-				canvas->drawText(Point(cx, y + 15.0), textColor, item[entry]);
+				canvas->drawText(GetFont(), Point(cx, y + 15.0), item[entry], textColor);
 				cx += columnwidths[entry];
 			}
 		}
@@ -186,11 +193,14 @@ bool ListView::OnMouseDown(const Point& pos, InputKey key)
 
 	if (key == InputKey::LeftMouse)
 	{
-		int index = (int)((pos.y - 5.0 + scrollbar->GetPosition()) / getItemHeight());
+		double itemHeight = getItemHeight();
+		double scrollPos = scrollbar->GetPosition();
+		int index = (int)((pos.y - 5.0 + scrollPos) / itemHeight);
+
 		if (index >= 0 && (size_t)index < items.size())
 		{
+			ScrollToItem(index);
 			SetSelectedItem(index);
-			ScrollToItem(selectedItem);
 		}
 	}
 	return true;
@@ -302,7 +312,7 @@ double ListView::GetPreferredWidth()
 			double wRow = 0.0;
 			for (const auto& cell : row)
 			{
-				wRow += canvas->measureText(cell).width;
+				wRow += canvas->measureText(GetFont(), cell).width;
 			}
 			if (wRow > total) total = wRow;
 		}
@@ -316,7 +326,7 @@ double ListView::GetPreferredHeight()
 	return items.size()*20.0 + 10.0*2; // Items plus top/bottom padding
 }
 
-double ListView::GetMinimumHeight() const
+double ListView::GetMinimumHeight()
 {
 	return 20.0 + 10.0*2; // One item plus top/bottom padding
 }

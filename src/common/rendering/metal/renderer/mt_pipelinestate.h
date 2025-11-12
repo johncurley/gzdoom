@@ -2,11 +2,11 @@
 
 #include <cstdint>
 #include <memory>
+#include <unordered_map>
 
 #ifdef __OBJC__
 #import <Metal/Metal.h>
 #else
-typedef void* id;
 #endif
 
 // Pipeline key for caching (similar to Vulkan)
@@ -68,6 +68,16 @@ public:
 	void ClearCache();
 
 private:
+	// Helper methods for pipeline creation
+#ifdef __OBJC__
+	id<MTLRenderPipelineState> CreateRenderPipelineState(const MtPipelineKey& key);
+	id<MTLDepthStencilState> CreateDepthStencilState(const MtPipelineKey& key);
+#else
+	void* CreateRenderPipelineState(const MtPipelineKey& key);
+	void* CreateDepthStencilState(const MtPipelineKey& key);
+#endif
+	void ConfigureBlendMode(void* colorAttachment, int blendMode);
+
 	class MetalRenderDevice* fb = nullptr;
 	std::unordered_map<MtPipelineKey, std::unique_ptr<MtPipelineState>> mPipelineCache;
 };

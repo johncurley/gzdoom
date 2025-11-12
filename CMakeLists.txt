@@ -234,6 +234,7 @@ endif()
 option (HAVE_VULKAN "Enable Vulkan support" ON)
 if( APPLE )
 	option (HAVE_GLES2 "Enable GLES2 support" OFF)
+	option (HAVE_METAL "Enable Metal support" ON)
 else()
 	option (HAVE_GLES2 "Enable GLES2 support" ON)
 endif()
@@ -261,6 +262,10 @@ if( MSVC )
 
 	if ( HAVE_GLES2 )
 		set( ALL_C_FLAGS "${ALL_C_FLAGS} /DHAVE_GLES2" )
+	endif()
+
+	if ( HAVE_METAL )
+		set( ALL_C_FLAGS "${ALL_C_FLAGS} /DHAVE_METAL" )
 	endif()
 
 	# Use SSE 2 as minimum always as the true color drawers needs it for __vectorcall
@@ -294,6 +299,10 @@ else()
 
 	if ( HAVE_GLES2 )
 		set( ALL_C_FLAGS "${ALL_C_FLAGS} -DHAVE_GLES2" )
+	endif()
+
+	if ( HAVE_METAL )
+		set( ALL_C_FLAGS "${ALL_C_FLAGS} -DHAVE_METAL" )
 	endif()
 
 	if ( UNIX )
@@ -352,16 +361,17 @@ option(FORCE_INTERNAL_CPPDAP "Use internal cppdap" ON)
 mark_as_advanced( FORCE_INTERNAL_ASMJIT )
 
 if (HAVE_VULKAN)
-	add_subdirectory( libraries/ZVulkan )
-endif()
+	# Configure shader translator (now part of ZVulkan)
+	if( APPLE )
+		# Metal renderer support (macOS 10.13+)
+		set(ZVULKAN_ENABLE_MSL ON CACHE INTERNAL "" FORCE)
+		set(ZVULKAN_ENABLE_HLSL OFF CACHE INTERNAL "" FORCE)
+	else()
+		set(ZVULKAN_ENABLE_MSL OFF CACHE INTERNAL "" FORCE)
+		set(ZVULKAN_ENABLE_HLSL OFF CACHE INTERNAL "" FORCE)
+	endif()
 
-# Shader translator library (SPIR-V → MSL/HLSL) for Metal/D3D12 renderers
-if( APPLE )
-	# Metal renderer support (macOS 10.13+)
-	set(SHADERTRANSLATOR_BUILD_EXAMPLES OFF CACHE INTERNAL "" FORCE)
-	set(SHADERTRANSLATOR_ENABLE_MSL ON CACHE INTERNAL "" FORCE)
-	set(SHADERTRANSLATOR_ENABLE_HLSL OFF CACHE INTERNAL "" FORCE)
-	add_subdirectory( libraries/shader-translator )
+	add_subdirectory( libraries/ZVulkan )
 endif()
 
 set(ZWIDGET_BUILD_EXAMPLE OFF CACHE INTERNAL "" FORCE)

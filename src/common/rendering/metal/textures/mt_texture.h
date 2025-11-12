@@ -7,7 +7,6 @@
 #ifdef __OBJC__
 #import <Metal/Metal.h>
 #else
-typedef void* id;
 #endif
 
 class MetalRenderDevice;
@@ -32,6 +31,10 @@ public:
 	int GetHeight() const { return mHeight; }
 	int GetFormat() const { return mFormat; }
 
+	void SetWidth(int width) { mWidth = width; }
+	void SetHeight(int height) { mHeight = height; }
+	void SetFormat(int format) { mFormat = format; }
+
 private:
 #ifdef __OBJC__
 	id<MTLTexture> mTexture = nil;
@@ -51,12 +54,13 @@ public:
 	MtHardwareTexture(MetalRenderDevice* fb, int numchannels);
 	~MtHardwareTexture();
 
-	void CreateTexture(unsigned char* buffer, int w, int h, int texunit, bool mipmap, const char* name) override;
+	// IHardwareTexture interface
 	void AllocateBuffer(int w, int h, int texelsize) override;
 	uint8_t* MapBuffer() override;
+	unsigned int CreateTexture(unsigned char* buffer, int w, int h, int texunit, bool mipmap, const char* name) override;
 
-	unsigned int CreateTexture(unsigned char* buffer, int w, int h, int texunit, bool mipmap, int translation, const char* name) override;
-	void Reset() override;
+	// Additional methods
+	void Reset();
 
 	MtTextureImage* GetImage() { return mImage.get(); }
 

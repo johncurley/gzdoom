@@ -16,21 +16,22 @@ MtCommandBufferManager::~MtCommandBufferManager()
 {
 }
 
-MTL::CommandBuffer* MtCommandBufferManager::GetRenderCommandBuffer()
+void* MtCommandBufferManager::GetRenderCommandBuffer()
 {
 	if (!mCurrentCommandBuffer)
 	{
-		mCurrentCommandBuffer = fb->device->commandQueue->commandBuffer();
-		if (!mCurrentCommandBuffer)
+		MTL::CommandBuffer* cmdBuf = fb->device->commandQueue->commandBuffer();
+		if (!cmdBuf)
 		{
 			throw CMetalError("Failed to create command buffer");
 		}
-		mCurrentCommandBuffer->retain(); // Keep alive
+		cmdBuf->retain(); // Keep alive
+		mCurrentCommandBuffer = cmdBuf;
 	}
 	return mCurrentCommandBuffer;
 }
 
-MTL::CommandBuffer* MtCommandBufferManager::GetBlitCommandBuffer()
+void* MtCommandBufferManager::GetBlitCommandBuffer()
 {
 	// For now, reuse the same command buffer
 	// In the future, we could optimize by using separate blit command encoders
@@ -41,8 +42,9 @@ void MtCommandBufferManager::FlushCommands()
 {
 	if (mCurrentCommandBuffer)
 	{
-		mCurrentCommandBuffer->commit();
-		mCurrentCommandBuffer->release();
+		MTL::CommandBuffer* cmdBuf = (MTL::CommandBuffer*)mCurrentCommandBuffer;
+		cmdBuf->commit();
+		cmdBuf->release();
 		mCurrentCommandBuffer = nullptr;
 	}
 }
@@ -51,11 +53,12 @@ void MtCommandBufferManager::WaitForCommands(bool finish)
 {
 	if (mCurrentCommandBuffer)
 	{
+		MTL::CommandBuffer* cmdBuf = (MTL::CommandBuffer*)mCurrentCommandBuffer;
 		if (finish)
 		{
-			mCurrentCommandBuffer->waitUntilCompleted();
+			cmdBuf->waitUntilCompleted();
 		}
-		mCurrentCommandBuffer->release();
+		cmdBuf->release();
 		mCurrentCommandBuffer = nullptr;
 	}
 }
@@ -67,12 +70,17 @@ void MtCommandBufferManager::BeginFrame()
 	// Create new command buffer for this frame
 	if (mCurrentCommandBuffer)
 	{
-		mCurrentCommandBuffer->release();
+		((MTL::CommandBuffer*)mCurrentCommandBuffer)->release();
 	}
-	mCurrentCommandBuffer = fb->device->commandQueue->commandBuffer();
-	if (mCurrentCommandBuffer)
+	MTL::CommandBuffer* cmdBuf = fb->device->commandQueue->commandBuffer();
+	if (cmdBuf)
 	{
-		mCurrentCommandBuffer->retain();
+		cmdBuf->retain();
+		mCurrentCommandBuffer = cmdBuf;
+	}
+	else
+	{
+		mCurrentCommandBuffer = nullptr;
 	}
 }
 
@@ -81,20 +89,21 @@ void MtCommandBufferManager::EndFrame()
 	// Commit the frame's command buffer
 	if (mCurrentCommandBuffer)
 	{
-		mCurrentCommandBuffer->commit();
+		((MTL::CommandBuffer*)mCurrentCommandBuffer)->commit();
 		// Don't release yet - let the next frame or wait handle it
 	}
 }
 
-void MtCommandBufferManager::AddCompletedHandler(MTL::CommandBuffer* cmdBuffer, std::function<void()> handler)
+void MtCommandBufferManager::AddCompletedHandler(void* cmdBuffer, std::function<void()> handler)
 {
 	if (!cmdBuffer || !handler)
 		return;
 
 	// Store handler and attach completion block
 	auto handlerPtr = new std::function<void()>(handler);
+	MTL::CommandBuffer* mtlCmdBuf = (MTL::CommandBuffer*)cmdBuffer;
 
-	cmdBuffer->addCompletedHandler(^(MTL::CommandBuffer* buffer) {
+	mtlCmdBuf->addCompletedHandler(^(MTL::CommandBuffer* buffer) {
 		(*handlerPtr)();
 		delete handlerPtr;
 	});

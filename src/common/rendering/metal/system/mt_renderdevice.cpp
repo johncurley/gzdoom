@@ -7,6 +7,14 @@
 **  arising from the use of this software.
 */
 
+// Include i_time.h BEFORE Metal headers to avoid TimeScale conflict
+// i_time.h declares: extern double TimeScale
+// MacTypes.h (included by Metal) declares: typedef SInt32 TimeScale
+#include "i_time.h"
+
+// Prevent MacTypes.h from defining TimeScale by defining it as a macro temporarily
+#define TimeScale TimeScale_GZDOOM
+
 // Define private implementation for metal-cpp (only in this file!)
 #define NS_PRIVATE_IMPLEMENTATION
 #define MTL_PRIVATE_IMPLEMENTATION
@@ -14,6 +22,9 @@
 
 #include <Metal/Metal.hpp>
 #include <QuartzCore/QuartzCore.hpp>
+
+// Restore TimeScale
+#undef TimeScale
 
 #include "mt_renderdevice.h"
 #include "mt_commandbuffer.h"
@@ -31,7 +42,7 @@
 #include "v_video.h"
 #include "m_png.h"
 #include "r_videoscale.h"
-#include "i_time.h"
+// i_time.h included earlier to avoid TimeScale conflict
 #include "v_text.h"
 #include "version.h"
 #include "v_draw.h"
@@ -88,23 +99,7 @@ MetalRenderDevice::MetalRenderDevice(void* hMonitor, bool fullscreen)
 		MetalError("Failed to create Metal command queue");
 	}
 
-	// Get the Metal layer from the native window handle
-#ifdef __APPLE__
-	CocoaNativeHandle nativeHandle = GetNativeHandle();
-	if (nativeHandle.metalLayer)
-	{
-		CA::MetalLayer* metalLayer = (CA::MetalLayer*)nativeHandle.metalLayer;
-		metalLayer->setDevice(device->device);
-		metalLayer->setPixelFormat(MTL::PixelFormatBGRA8Unorm);
-
-		// VSync will be set later via SetVSync()
-		metalLayer->setDisplaySyncEnabled(false);
-	}
-	else
-	{
-		MetalError("Failed to get Metal layer from window");
-	}
-#endif
+	// Note: Metal layer setup is deferred to InitializeState() after window is set
 }
 
 MetalRenderDevice::~MetalRenderDevice()
@@ -133,7 +128,11 @@ MetalRenderDevice::~MetalRenderDevice()
 	mShaderManager.reset();
 	mTextureManager.reset();
 	mSamplerManager.reset();
-	mBufferManager.reset();
+	if (mBufferManager)
+	{
+		mBufferManager->Deinit();
+		mBufferManager.reset();
+	}
 	mCommands.reset();
 
 	// Release Metal device objects
@@ -160,6 +159,26 @@ void MetalRenderDevice::InitializeState()
 		PrintStartupLog();
 		first = false;
 	}
+
+	// Set up Metal layer now that window is available
+#ifdef __APPLE__
+	CocoaNativeHandle nativeHandle = GetNativeHandle();
+	if (nativeHandle.metalLayer)
+	{
+		CA::MetalLayer* metalLayer = (CA::MetalLayer*)nativeHandle.metalLayer;
+		metalLayer->setDevice(device->device);
+		metalLayer->setPixelFormat(MTL::PixelFormatBGRA8Unorm);
+
+		// VSync will be set later via SetVSync()
+		metalLayer->setDisplaySyncEnabled(false);
+
+		Printf("Metal layer configured successfully\n");
+	}
+	else
+	{
+		MetalError("Failed to get Metal layer from window");
+	}
+#endif
 
 	// Set vendor string from device
 	const char* deviceName = device->device->name()->utf8String();
@@ -192,6 +211,7 @@ void MetalRenderDevice::InitializeState()
 
 	// 4. Buffer manager (with initialization)
 	mBufferManager.reset(new MtBufferManager(this));
+	mBufferManager->Init();
 	Printf("  - Buffer manager initialized\n");
 
 	// 5. Render buffers (screen and save)
@@ -236,11 +256,84 @@ void MetalRenderDevice::Update()
 	twoD.Reset();
 	Flush3D.Reset();
 
+	// Get the Metal layer and next drawable
+	CocoaNativeHandle nativeHandle = GetNativeHandle();
+	if (!nativeHandle.metalLayer)
+	{
+		Super::Update();
+		return;
+	}
+
+	CA::MetalLayer* metalLayer = (CA::MetalLayer*)nativeHandle.metalLayer;
+	CA::MetalDrawable* drawable = metalLayer->nextDrawable();
+
+	if (!drawable)
+	{
+		if (mt_debug)
+			Printf("Warning: Failed to get next Metal drawable\n");
+		Super::Update();
+		return;
+	}
+
+	// Get the drawable's texture and set it as our render target
+	MTL::Texture* drawableTexture = drawable->texture();
+	if (drawableTexture && mRenderState && mScreenBuffers)
+	{
+		int width = drawableTexture->width();
+		int height = drawableTexture->height();
+
+		// Ensure render buffers are sized correctly
+		mScreenBuffers->Resize(width, height);
+
+		// Get depth/stencil buffer
+		MtTextureImage* depthStencil = mScreenBuffers->GetDepthStencilBuffer();
+		void* depthStencilTexture = depthStencil ? depthStencil->GetTexture() : nullptr;
+
+		// Set render target to drawable texture with depth/stencil
+		mRenderState->SetRenderTarget(
+			(MtTextureImage*)drawableTexture,  // Color attachment
+			depthStencilTexture,  // Depth/stencil attachment
+			width,
+			height,
+			(int)MTL::PixelFormatBGRA8Unorm,
+			1  // No MSAA yet
+		);
+	}
+
 	Flush3D.Clock();
 	Draw2D();
 	Flush3D.Unclock();
 
+	// End the render pass (finishes encoding)
+	if (mRenderState)
+		mRenderState->EndRenderPass();
+
+	// Present the frame to screen
+	PresentFrame(drawable);
+
 	Super::Update();
+}
+
+void MetalRenderDevice::PresentFrame(void* drawablePtr)
+{
+	if (!drawablePtr)
+		return;
+
+	auto drawable = (CA::MetalDrawable*)drawablePtr;
+
+	// Get current command buffer
+	void* cmdBufPtr = mCommands->GetRenderCommandBuffer();
+	if (!cmdBufPtr)
+		return;
+
+	auto commandBuffer = (MTL::CommandBuffer*)cmdBufPtr;
+
+	// Present drawable when command buffer completes
+	commandBuffer->presentDrawable(drawable);
+
+	// Submit and wait for completion (TODO: optimize with semaphores for triple buffering)
+	commandBuffer->commit();
+	commandBuffer->waitUntilCompleted();
 }
 
 void MetalRenderDevice::BeginFrame()
@@ -326,7 +419,16 @@ void MetalRenderDevice::UpdateShadowMap() { if (mPostprocess) mPostprocess->Upda
 void MetalRenderDevice::SetSaveBuffers(bool yes) { mActiveRenderBuffers = yes ? mSaveBuffers.get() : mScreenBuffers.get(); }
 void MetalRenderDevice::ImageTransitionScene(bool unknown) { }
 void MetalRenderDevice::SetActiveRenderTarget() { }
-void MetalRenderDevice::Draw2D() { }
+void MetalRenderDevice::Draw2D()
+{
+	static int debugCount = 0;
+	if (debugCount++ < 5)
+	{
+		Printf("Draw2D: twod has %d vertices, %d indices, %d commands\n",
+			twod->mVertices.Size(), twod->mIndices.Size(), twod->mData.Size());
+	}
+	::Draw2D(twod, *mRenderState);
+}
 void MetalRenderDevice::RenderTextureView(FCanvasTexture* tex, std::function<void(IntRect&)> renderFunc) { }
 void MetalRenderDevice::CopyScreenToBuffer(int w, int h, uint8_t* data) { }
 FTexture* MetalRenderDevice::WipeStartScreen() { return nullptr; }
