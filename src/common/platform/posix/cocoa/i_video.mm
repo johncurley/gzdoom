@@ -161,7 +161,7 @@ namespace
 
 - (void)frameDidChange:(NSNotification*)notification
 {
-	const NSRect frame = [self frame];
+	const NSRect frame = self.frame;
 	win_x = frame.origin.x;
 	win_y = frame.origin.y;
 	win_w = frame.size.width;
@@ -337,12 +337,12 @@ void SetupOpenGLView(CocoaWindow* const window, const OpenGLProfile profile)
 
 	// Create OpenGL context and view
 
-	const NSRect contentRect = [window contentRectForFrameRect:[window frame]];
+	const NSRect contentRect = [window contentRectForFrameRect:window.frame];
 	OpenGLCocoaView* glView = [[OpenGLCocoaView alloc] initWithFrame:contentRect
 														 pixelFormat:pixelFormat];
-	[[glView openGLContext] makeCurrentContext];
+	[glView.openGLContext makeCurrentContext];
 
-	[window setContentView:glView];
+	window.contentView = glView;
 }
 
 } // unnamed namespace
@@ -678,7 +678,7 @@ void SystemBaseFrameBuffer::SetCursor(NSCursor* cursor)
 	if (frameBuffer != nullptr)
 	{
 		NSWindow* const window = frameBuffer->m_window;
-		id view = [window contentView];
+		id view = window.contentView;
 
 		[view setCursor:cursor];
 		[window invalidateCursorRectsForView:view];
@@ -864,8 +864,8 @@ bool I_SetCursor(FGameTexture *cursorpic)
 
 NSSize I_GetContentViewSize(const NSWindow* const window)
 {
-	const NSView* const view = [window contentView];
-	const NSSize frameSize   = [view frame].size;
+	NSView* view = window.contentView;
+	const NSSize frameSize = view.frame.size;
 
 	return (vid_hidpi)
 		? [view convertSizeToBacking:frameSize]

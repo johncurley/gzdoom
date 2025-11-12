@@ -309,15 +309,14 @@ extern bool AppActive;
 	// The following call resolves this issue
 	[NSApp activateIgnoringOtherApps:YES];
 
-	// Setup timer for custom event loop
+	// Setup timer for custom event loop using modern block-based API
 
-	NSTimer* timer = [NSTimer timerWithTimeInterval:0
-											 target:self
-										   selector:@selector(processEvents:)
-										   userInfo:nil
-											repeats:YES];
-	[[NSRunLoop currentRunLoop] addTimer:timer
-								 forMode:NSDefaultRunLoopMode];
+	__weak ApplicationController* weakSelf = self;
+	NSTimer* timer = [NSTimer scheduledTimerWithTimeInterval:0
+													  repeats:YES
+														block:^(NSTimer* _Nonnull timer) {
+		[weakSelf processEvents:timer];
+	}];
 
 	FConsoleWindow::CreateInstance();
 
