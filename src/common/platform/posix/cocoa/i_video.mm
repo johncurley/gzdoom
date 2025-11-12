@@ -921,8 +921,9 @@ bool I_CreateVulkanSurface(VkInstance instance, VkSurfaceKHR *surface)
 		surfaceCreateInfo.sType = VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT;
 		surfaceCreateInfo.pNext = nullptr;
 		surfaceCreateInfo.flags = 0;
-		// Cast to CAMetalLayer* first, then apply __bridge for ARC
-		surfaceCreateInfo.pLayer = (__bridge CAMetalLayer*)static_cast<CAMetalLayer*>(layer);
+		// Cast to CAMetalLayer* first (Objective-C cast), then bridge to C (ARC)
+		CAMetalLayer* metalLayer = (CAMetalLayer*)layer;
+		surfaceCreateInfo.pLayer = (__bridge CAMetalLayer*)metalLayer;
 
 		const VkResult result = vkCreateMetalSurfaceEXT(instance, &surfaceCreateInfo, nullptr, surface);
 		return result == VK_SUCCESS;
