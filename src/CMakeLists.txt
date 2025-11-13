@@ -1504,6 +1504,10 @@ if( APPLE )
 	# The code uses compile-time and runtime checks to avoid using it when unavailable
 	set( LINK_FRAMEWORKS "${LINK_FRAMEWORKS} -weak_framework CoreHaptics" )
 
+	# Add UniformTypeIdentifiers framework as weak link for modern file type handling
+	# Weak linking allows the app to run on macOS < 11.0 where UniformTypeIdentifiers doesn't exist
+	set( LINK_FRAMEWORKS "${LINK_FRAMEWORKS} -weak_framework UniformTypeIdentifiers" )
+
 	if( HAVE_VULKAN )
 		set( LINK_FRAMEWORKS "${LINK_FRAMEWORKS} -framework QuartzCore" )
 	endif()
