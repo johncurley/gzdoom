@@ -155,6 +155,7 @@ if( NOT NO_OPENAL )
 				set( PROJECT_LIBRARIES ${OPENAL_LIBRARY} ${PROJECT_LIBRARIES} )
 				if( APPLE )
 					set( PROJECT_LIBRARIES ${PROJECT_LIBRARIES} "-framework AudioUnit -framework CoreAudio -framework ApplicationServices -framework AudioToolbox -framework CoreFoundation" )
+					message( STATUS "Using OpenAL library: ${OPENAL_LIBRARY}" )
 				endif()
 			else()
 				set( NO_OPENAL ON )
@@ -436,7 +437,7 @@ set( PLAT_OSX_SOURCES
 	posix/osx/zdoom.icns )
 set( PLAT_COCOA_SOURCES
 	common/platform/posix/cocoa/i_input.mm
-	common/platform/posix/cocoa/i_joystick.cpp
+	common/platform/posix/cocoa/i_joystick_gc.mm
 	common/platform/posix/cocoa/i_main.mm
 	common/platform/posix/cocoa/i_system.mm
 	common/platform/posix/cocoa/i_video.mm
@@ -465,11 +466,12 @@ elseif( APPLE )
 
 	set_source_files_properties( posix/osx/zdoom.icns PROPERTIES MACOSX_PACKAGE_LOCATION Resources )
 
-	# Enable ARC for all Objective-C++ files (macOS 10.13+)
-	# Note: iwadpicker_cocoa.mm uses manual reference counting, so it's excluded
+	# Enable ARC (Automatic Reference Counting) for all Objective-C/Objective-C++ files
 	set( OBJCXX_COCOA_FILES
 		common/platform/posix/osx/i_specialpaths.mm
+		common/platform/posix/osx/iwadpicker_cocoa.mm
 		common/platform/posix/cocoa/i_input.mm
+		common/platform/posix/cocoa/i_joystick_gc.mm
 		common/platform/posix/cocoa/i_main.mm
 		common/platform/posix/cocoa/i_system.mm
 		common/platform/posix/cocoa/i_video.mm
@@ -477,9 +479,6 @@ elseif( APPLE )
 		common/platform/posix/cocoa/st_start.mm
 	)
 	set_source_files_properties( ${OBJCXX_COCOA_FILES} PROPERTIES COMPILE_FLAGS "-fobjc-arc -fobjc-exceptions" )
-
-	# iwadpicker uses manual memory management (no ARC)
-	set_source_files_properties( common/platform/posix/osx/iwadpicker_cocoa.mm PROPERTIES COMPILE_FLAGS "-fno-objc-arc -fobjc-exceptions" )
 else()
 	option (SYSTEMINSTALL "Set global progdir based on CMake Install Dir" OFF)
 
@@ -1531,7 +1530,16 @@ if( DEM_CMAKE_COMPILER_IS_GNUCXX_COMPATIBLE )
 endif()
 
 if( APPLE )
-	set( LINK_FRAMEWORKS "-framework Cocoa -framework IOKit -framework OpenGL")
+	set( LINK_FRAMEWORKS "-framework Cocoa -framework IOKit -framework OpenGL -framework GameController")
+
+	# Add CoreHaptics framework as weak link for haptic feedback support
+	# Weak linking allows the app to run on macOS < 11.0 where CoreHaptics doesn't exist
+	# The code uses compile-time and runtime checks to avoid using it when unavailable
+	set( LINK_FRAMEWORKS "${LINK_FRAMEWORKS} -weak_framework CoreHaptics" )
+
+	# Add UniformTypeIdentifiers framework as weak link for modern file type handling
+	# Weak linking allows the app to run on macOS < 11.0 where UniformTypeIdentifiers doesn't exist
+	set( LINK_FRAMEWORKS "${LINK_FRAMEWORKS} -weak_framework UniformTypeIdentifiers" )
 
 	if( HAVE_VULKAN )
 		set( LINK_FRAMEWORKS "${LINK_FRAMEWORKS} -framework QuartzCore" )

@@ -214,6 +214,31 @@ endmacro()
 
 option( NO_OPENAL "Disable OpenAL sound support" OFF )
 
+# On macOS, detect homebrew OpenAL-Soft and default to non-dynamic linking
+if( APPLE AND NOT NO_OPENAL )
+	# Check for homebrew OpenAL-Soft on both Intel (/usr/local) and ARM64 (/opt/homebrew)
+	set( HOMEBREW_OPENAL_FOUND FALSE )
+	if( EXISTS "/opt/homebrew/opt/openal-soft" )
+		set( HOMEBREW_OPENAL_PATH "/opt/homebrew/opt/openal-soft" )
+		set( HOMEBREW_OPENAL_FOUND TRUE )
+		message( STATUS "Found homebrew OpenAL-Soft (ARM64): ${HOMEBREW_OPENAL_PATH}" )
+	elseif( EXISTS "/usr/local/opt/openal-soft" )
+		set( HOMEBREW_OPENAL_PATH "/usr/local/opt/openal-soft" )
+		set( HOMEBREW_OPENAL_FOUND TRUE )
+		message( STATUS "Found homebrew OpenAL-Soft (Intel): ${HOMEBREW_OPENAL_PATH}" )
+	endif()
+
+	if( HOMEBREW_OPENAL_FOUND )
+		# Explicitly set OpenAL paths to prevent CMake from using deprecated system framework
+		# CMake's FindOpenAL prioritizes the system framework, so we must force these paths
+		# OpenAL-Soft headers are in include/AL/al.h, so we point to include/AL for direct includes
+		set( OPENAL_INCLUDE_DIR "${HOMEBREW_OPENAL_PATH}/include/AL" CACHE PATH "OpenAL include directory" FORCE )
+		set( OPENAL_LIBRARY "${HOMEBREW_OPENAL_PATH}/lib/libopenal.dylib" CACHE FILEPATH "OpenAL library" FORCE )
+		message( STATUS "Forcing OpenAL to use homebrew: ${OPENAL_LIBRARY}" )
+		message( STATUS "OpenAL include directory: ${OPENAL_INCLUDE_DIR}" )
+	endif()
+endif()
+
 find_package( BZip2 )
 find_package( VPX )
 if (NOT FORCE_INTERNAL_CPPDAP)
@@ -463,7 +488,12 @@ install(DIRECTORY docs/
 		DESTINATION ${INSTALL_DOCS_PATH}
 		COMPONENT "Documentation")
 
-option( DYN_OPENAL "Dynamically load OpenAL" ON )
+# Default DYN_OPENAL based on whether we found homebrew OpenAL on macOS
+if( APPLE AND HOMEBREW_OPENAL_FOUND )
+	option( DYN_OPENAL "Dynamically load OpenAL" OFF )
+else()
+	option( DYN_OPENAL "Dynamically load OpenAL" ON )
+endif()
 
 add_subdirectory( libraries/lzma )
 add_subdirectory( tools )

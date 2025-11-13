@@ -42,6 +42,12 @@
 #include "i_interface.h"
 
 #include <Cocoa/Cocoa.h>
+
+// UniformTypeIdentifiers framework for modern file type handling (macOS 11.0+)
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 110000
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#endif
+
 #include <wordexp.h>
 
 
@@ -59,11 +65,9 @@ static const char* const tableHeaders[NUM_COLUMNS] = { "IWAD", "Game" };
 
 // Class to convert the IWAD data into a form that Cocoa can use.
 @interface IWADTableData : NSObject<NSTableViewDataSource>
-{
-	NSMutableArray *data;
-}
 
-- (void)dealloc;
+@property (nonatomic, strong) NSMutableArray *data;
+
 - (IWADTableData *)init:(WadStuff *) wads num:(int) numwads;
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)aTableView;
@@ -72,16 +76,11 @@ static const char* const tableHeaders[NUM_COLUMNS] = { "IWAD", "Game" };
 
 @implementation IWADTableData
 
-- (void)dealloc
-{
-	[data release];
-
-	[super dealloc];
-}
+// dealloc not needed with ARC - memory management is automatic
 
 - (IWADTableData *)init:(WadStuff *) wads num:(int) numwads
 {
-	data = [[NSMutableArray alloc] initWithCapacity:numwads];
+	self.data = [[NSMutableArray alloc] initWithCapacity:numwads];
 
 	for(int i = 0;i < numwads;i++)
 	{
@@ -93,8 +92,8 @@ static const char* const tableHeaders[NUM_COLUMNS] = { "IWAD", "Game" };
 			filename++;
 		[record setObject:[NSString stringWithUTF8String:filename] forKey:[NSString stringWithUTF8String:tableHeaders[COLUMN_IWAD]]];
 		[record setObject:[NSString stringWithUTF8String:wads[i].Name.GetChars()] forKey:[NSString stringWithUTF8String:tableHeaders[COLUMN_GAME]]];
-		[data addObject:record];
-		[record release];
+		[self.data addObject:record];
+		// ARC handles memory management automatically
 	}
 
 	return self;
@@ -102,13 +101,13 @@ static const char* const tableHeaders[NUM_COLUMNS] = { "IWAD", "Game" };
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)aTableView
 {
-	return [data count];
+	return [self.data count];
 }
 
 - (id)tableView:(NSTableView *)aTableView objectValueForTableColumn:(NSTableColumn *)aTableColumn row:(NSInteger)rowIndex
 {
-	NSParameterAssert(rowIndex >= 0 && (unsigned int) rowIndex < [data count]);
-	NSMutableDictionary *record = [data objectAtIndex:rowIndex];
+	NSParameterAssert(rowIndex >= 0 && (unsigned int) rowIndex < [self.data count]);
+	NSMutableDictionary *record = [self.data objectAtIndex:rowIndex];
 	return [record objectForKey:[aTableColumn identifier]];
 }
 
@@ -192,7 +191,28 @@ static NSArray* GetKnownExtensions()
 	[openPanel setCanChooseFiles:YES];
 	[openPanel setCanChooseDirectories:YES];
 	[openPanel setResolvesAliases:YES];
-	[openPanel setAllowedFileTypes:GetKnownExtensions()];
+
+	// Use modern allowedContentTypes API on macOS 11.0+, fall back to allowedFileTypes on older systems
+	if (@available(macOS 11.0, *)) {
+		// Modern API using UTType
+		NSMutableArray* contentTypes = [NSMutableArray array];
+
+		// Add standard types
+		[contentTypes addObject:[UTType typeWithFilenameExtension:@"wad"]];
+		[contentTypes addObject:[UTType typeWithFilenameExtension:@"pk3"]];
+		[contentTypes addObject:[UTType typeWithFilenameExtension:@"zip"]];
+		[contentTypes addObject:[UTType typeWithFilenameExtension:@"pk7"]];
+		[contentTypes addObject:[UTType typeWithFilenameExtension:@"7z"]];
+		[contentTypes addObject:[UTType typeWithFilenameExtension:@"deh"]];
+		[contentTypes addObject:[UTType typeWithFilenameExtension:@"bex"]];
+		[contentTypes addObject:[UTType typeWithFilenameExtension:@"cfg"]];
+		[contentTypes addObject:[UTType typeWithFilenameExtension:@"lmp"]];
+
+		[openPanel setAllowedContentTypes:contentTypes];
+	} else {
+		// Legacy API for older macOS versions
+		[openPanel setAllowedFileTypes:GetKnownExtensions()];
+	}
 
 	if (NSModalResponseOK == [openPanel runModal])
 	{
@@ -265,7 +285,7 @@ static NSArray* GetKnownExtensions()
 	NSTextField *description = [[NSTextField alloc] initWithFrame:NSMakeRect(18, 384, 402, 50)];
 	[self makeLabel:description withString:GAMENAME " found more than one IWAD\nSelect from the list below to determine which one to use:"];
 	[[window contentView] addSubview:description];
-	[description release];
+	// ARC handles memory management automatically
 
 	NSScrollView *iwadScroller = [[NSScrollView alloc] initWithFrame:NSMakeRect(20, 135, 402, 256)];
 	NSTableView *iwadTable = [[NSTableView alloc] initWithFrame:[iwadScroller bounds]];
@@ -279,7 +299,7 @@ static NSArray* GetKnownExtensions()
 		[column setEditable:NO];
 		[column setResizingMask:NSTableColumnAutoresizingMask];
 		[iwadTable addTableColumn:column];
-		[column release];
+		// ARC handles memory management automatically
 	}
 	[iwadScroller setDocumentView:iwadTable];
 	[iwadScroller setHasVerticalScroller:YES];
@@ -289,11 +309,11 @@ static NSArray* GetKnownExtensions()
 	[iwadTable setTarget:self];
 	NSIndexSet *selection = [[NSIndexSet alloc] initWithIndex:defaultiwad];
 	[iwadTable selectRowIndexes:selection byExtendingSelection:NO];
-	[selection release];
+	// ARC handles memory management automatically
 	[iwadTable scrollRowToVisible:defaultiwad];
 	[[window contentView] addSubview:iwadScroller];
-	[iwadTable release];
-	[iwadScroller release];
+	// ARC handles memory management automatically
+	// ARC handles memory management automatically
 
 	NSTextField *additionalParametersLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(18, 108, 144, 17)];
 	[self makeLabel:additionalParametersLabel withString:"Additional Parameters:"];
@@ -340,10 +360,10 @@ static NSArray* GetKnownExtensions()
 
 	[center removeObserver:self name:NSMenuDidSendActionNotification object:nil];
 
-	[window release];
-	[okButton release];
-	[cancelButton release];
-	[browseButton release];
+	// ARC handles memory management automatically
+	// ARC handles memory management automatically
+	// ARC handles memory management automatically
+	// ARC handles memory management automatically
 
 	return cancelled ? -1 : [iwadTable selectedRow];
 }
@@ -384,7 +404,7 @@ static void RestartWithParameters(const WadStuff& wad, NSString* parameters)
 {
 	assert(nil != parameters);
 
-	NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
+	@autoreleasepool {
 
 	@try
 	{
@@ -432,13 +452,13 @@ static void RestartWithParameters(const WadStuff& wad, NSString* parameters)
 		NSLog(@"Cannot restart: %@", [e reason]);
 	}
 
-	[pool release];
+	}
 }
 
 // Simple wrapper so we can call this from outside.
 int I_PickIWad_Cocoa (WadStuff *wads, int numwads, bool showwin, int defaultiwad)
 {
-	NSAutoreleasePool* pool = [[NSAutoreleasePool alloc] init];
+	@autoreleasepool {
 
 	IWADPicker *picker = [IWADPicker alloc];
 	int ret = [picker pickIWad:wads num:numwads showWindow:showwin defaultWad:defaultiwad];
@@ -453,7 +473,6 @@ int I_PickIWad_Cocoa (WadStuff *wads, int numwads, bool showwin, int defaultiwad
 		}
 	}
 
-	[pool release];
-
 	return ret;
+	}
 }

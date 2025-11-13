@@ -127,20 +127,20 @@ static FConsoleWindow* s_instance;
 
 void FConsoleWindow::CreateInstance()
 {
-	assert(NULL == s_instance);
+	assert(!s_instance);
 	s_instance = new FConsoleWindow;
 }
 
 void FConsoleWindow::DeleteInstance()
 {
-	assert(NULL != s_instance);
+	assert(s_instance);
 	delete s_instance;
-	s_instance = NULL;
+	s_instance = nullptr;
 }
 
 FConsoleWindow& FConsoleWindow::GetInstance()
 {
-	assert(NULL != s_instance);
+	assert(s_instance);
 	return *s_instance;
 }
 
@@ -361,8 +361,8 @@ void FConsoleWindow::SetTitleText()
 
 void FConsoleWindow::SetProgressBar(const bool visible)
 {
-	if (  (!visible && nil == m_progressBar)
-		|| (visible && nil != m_progressBar))
+	if (  (!visible && !m_progressBar)
+		|| (visible && m_progressBar))
 	{
 		return;
 	}
@@ -387,7 +387,7 @@ void FConsoleWindow::SetProgressBar(const bool visible)
 		ExpandTextView(PROGRESS_BAR_HEIGHT);
 
 		[m_progressBar removeFromSuperview];
-		m_progressBar = nil;
+		m_progressBar = nil; // ARC releases automatically
 	}
 }
 
@@ -403,7 +403,7 @@ void FConsoleWindow::ExpandTextView(const float height)
 
 void FConsoleWindow::Progress(const int current, const int maximum)
 {
-	if (nil == m_progressBar)
+	if (!m_progressBar)
 	{
 		return;
 	}
@@ -418,7 +418,7 @@ void FConsoleWindow::Progress(const int current, const int maximum)
 
 void FConsoleWindow::NetInit(const char* const message, const bool host)
 {
-	if (nil == m_netView)
+	if (!m_netView)
 	{
 		SetProgressBar(false);
 		ExpandTextView(-NET_VIEW_HEIGHT);
@@ -501,7 +501,7 @@ void FConsoleWindow::NetProgress(const int cur, const int limit)
 {
 	m_netCurPos = cur;
 	m_netMaxPos = limit;
-	if (nil == m_netView)
+	if (!m_netView)
 	{
 		return;
 	}
@@ -520,9 +520,9 @@ void FConsoleWindow::NetDone()
 		ExpandTextView(NET_VIEW_HEIGHT);
 
 		[m_netView removeFromSuperview];
-		m_netView = nil;
+		m_netView = nil; // ARC releases automatically
 
-		// Managed by ARC
+		// Released by ARC when m_netView is deallocated
 		m_netMessageText = nil;
 		m_netCountText = nil;
 		m_netProgressBar = nil;

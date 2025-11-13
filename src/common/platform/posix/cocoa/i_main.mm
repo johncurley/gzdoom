@@ -309,15 +309,14 @@ extern bool AppActive;
 	// The following call resolves this issue
 	[NSApp activateIgnoringOtherApps:YES];
 
-	// Setup timer for custom event loop
+	// Setup timer for custom event loop using modern block-based API
 
-	NSTimer* timer = [NSTimer timerWithTimeInterval:0
-											 target:self
-										   selector:@selector(processEvents:)
-										   userInfo:nil
-											repeats:YES];
-	[[NSRunLoop currentRunLoop] addTimer:timer
-								 forMode:NSDefaultRunLoopMode];
+	__weak ApplicationController* weakSelf = self;
+	NSTimer* timer = [NSTimer scheduledTimerWithTimeInterval:0
+													  repeats:YES
+														block:^(NSTimer* _Nonnull timer) {
+		[weakSelf processEvents:timer];
+	}];
 
 	FConsoleWindow::CreateInstance();
 
@@ -515,12 +514,12 @@ void CreateMenu()
 
 void ReleaseApplicationController()
 {
-	if (NULL != appCtrl)
+	if (appCtrl)
 	{
 		[NSApp setDelegate:nil];
 		[NSApp deactivate];
 
-		appCtrl = NULL;
+		appCtrl = nil; // ARC releases automatically
 	}
 }
 
@@ -548,23 +547,24 @@ int main(int argc, char** argv)
 	}
 
 	@autoreleasepool {
-		[NSApplication sharedApplication];
 
-		// The following code isn't mandatory,
-		// but it enables to run the application without a bundle
-		if ([NSApp respondsToSelector:@selector(setActivationPolicy:)])
-		{
-			[NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
-		}
+	[NSApplication sharedApplication];
 
-		CreateMenu();
-
-		atexit(ReleaseApplicationController);
-
-		appCtrl = [ApplicationController new];
-		[NSApp setDelegate:appCtrl];
-		[NSApp run];
+	// The following code isn't mandatory,
+	// but it enables to run the application without a bundle
+	if ([NSApp respondsToSelector:@selector(setActivationPolicy:)])
+	{
+		[NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
 	}
 
+	CreateMenu();
+
+	atexit(ReleaseApplicationController);
+
+	appCtrl = [ApplicationController new];
+	[NSApp setDelegate:appCtrl];
+	[NSApp run];
+
 	return EXIT_SUCCESS;
+	}
 }
