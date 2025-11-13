@@ -42,6 +42,12 @@
 #include "i_interface.h"
 
 #include <Cocoa/Cocoa.h>
+
+// UniformTypeIdentifiers framework for modern file type handling (macOS 11.0+)
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 110000
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#endif
+
 #include <wordexp.h>
 
 
@@ -185,7 +191,28 @@ static NSArray* GetKnownExtensions()
 	[openPanel setCanChooseFiles:YES];
 	[openPanel setCanChooseDirectories:YES];
 	[openPanel setResolvesAliases:YES];
-	[openPanel setAllowedFileTypes:GetKnownExtensions()];
+
+	// Use modern allowedContentTypes API on macOS 11.0+, fall back to allowedFileTypes on older systems
+	if (@available(macOS 11.0, *)) {
+		// Modern API using UTType
+		NSMutableArray* contentTypes = [NSMutableArray array];
+
+		// Add standard types
+		[contentTypes addObject:[UTType typeWithFilenameExtension:@"wad"]];
+		[contentTypes addObject:[UTType typeWithFilenameExtension:@"pk3"]];
+		[contentTypes addObject:[UTType typeWithFilenameExtension:@"zip"]];
+		[contentTypes addObject:[UTType typeWithFilenameExtension:@"pk7"]];
+		[contentTypes addObject:[UTType typeWithFilenameExtension:@"7z"]];
+		[contentTypes addObject:[UTType typeWithFilenameExtension:@"deh"]];
+		[contentTypes addObject:[UTType typeWithFilenameExtension:@"bex"]];
+		[contentTypes addObject:[UTType typeWithFilenameExtension:@"cfg"]];
+		[contentTypes addObject:[UTType typeWithFilenameExtension:@"lmp"]];
+
+		[openPanel setAllowedContentTypes:contentTypes];
+	} else {
+		// Legacy API for older macOS versions
+		[openPanel setAllowedFileTypes:GetKnownExtensions()];
+	}
 
 	if (NSModalResponseOK == [openPanel runModal])
 	{
