@@ -135,6 +135,7 @@ public:
 	// Update methods
 	void Update(double currentTime);
 	void ProcessInput();
+	void AddAxesToArray(float axes[NUM_AXIS_CODES]);
 	void SendRumble(double highFreq, double lowFreq, double leftTrig, double rightTrig);
 
 	bool IsConnected() const;
@@ -356,23 +357,24 @@ void GameControllerJoystick::Update(double currentTime)
 
 void GameControllerJoystick::ProcessInput()
 {
+	// ProcessInput is called to update button states
+	// Axis values are retrieved separately via GetAxes/AddAxesToArray
+}
+
+void GameControllerJoystick::AddAxesToArray(float axes[NUM_AXIS_CODES])
+{
 	if (!m_enabled)
 		return;
 
-	// Process axis input through the standard Joy_ManageThumbstick system
-	float axes[NUM_AXIS_CODES] = { 0 };
-
+	// Add this joystick's axes to the provided array
 	if (m_axes.Size() >= 6) {
-		axes[0] = m_axes[0].value * m_axes[0].sensitivity;  // Left X
-		axes[1] = m_axes[1].value * m_axes[1].sensitivity;  // Left Y
-		axes[2] = m_axes[2].value * m_axes[2].sensitivity;  // Right X
-		axes[3] = m_axes[3].value * m_axes[3].sensitivity;  // Right Y
-		axes[4] = m_axes[4].value * m_axes[4].sensitivity;  // Left Trigger
-		axes[5] = m_axes[5].value * m_axes[5].sensitivity;  // Right Trigger
+		axes[0] += m_axes[0].value * m_axes[0].sensitivity * m_sensitivity;  // Left X
+		axes[1] += m_axes[1].value * m_axes[1].sensitivity * m_sensitivity;  // Left Y
+		axes[2] += m_axes[2].value * m_axes[2].sensitivity * m_sensitivity;  // Right X
+		axes[3] += m_axes[3].value * m_axes[3].sensitivity * m_sensitivity;  // Right Y
+		axes[4] += m_axes[4].value * m_axes[4].sensitivity * m_sensitivity;  // Left Trigger
+		axes[5] += m_axes[5].value * m_axes[5].sensitivity * m_sensitivity;  // Right Trigger
 	}
-
-	// Send to game
-	I_GetAxes(axes);
 }
 
 void GameControllerJoystick::SendRumble(double highFreq, double lowFreq, double leftTrig, double rightTrig)
@@ -642,6 +644,7 @@ public:
 
 	void Rescan();
 	void ProcessInput();
+	void AddAxes(float axes[NUM_AXIS_CODES]);
 	void GetJoysticks(TArray<IJoystickConfig*>& sticks);
 	void Rumble(double highFreq, double lowFreq, double leftTrig, double rightTrig);
 
@@ -761,6 +764,18 @@ void GameControllerManager::ProcessInput()
 	}
 }
 
+void GameControllerManager::AddAxes(float axes[NUM_AXIS_CODES])
+{
+	if (!use_joystick)
+		return;
+
+	for (auto joy : m_joysticks) {
+		if (joy->IsConnected() && joy->GetEnabled()) {
+			joy->AddAxesToArray(axes);
+		}
+	}
+}
+
 void GameControllerManager::GetJoysticks(TArray<IJoystickConfig*>& sticks)
 {
 	for (auto joy : m_joysticks) {
@@ -787,6 +802,21 @@ static GameControllerManager* s_manager = nullptr;
 // =============================================================================
 // Public API Implementation
 // =============================================================================
+
+void I_GetAxes(float axes[NUM_AXIS_CODES])
+{
+	// Initialize all axes to zero
+	for (size_t i = 0; i < NUM_AXIS_CODES; ++i)
+	{
+		axes[i] = 0.0f;
+	}
+
+	// Add axes from all connected joysticks
+	if (use_joystick && s_manager)
+	{
+		s_manager->AddAxes(axes);
+	}
+}
 
 void I_GetJoysticks(TArray<IJoystickConfig*>& sticks)
 {

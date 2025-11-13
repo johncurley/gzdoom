@@ -1499,6 +1499,11 @@ endif()
 if( APPLE )
 	set( LINK_FRAMEWORKS "-framework Cocoa -framework IOKit -framework OpenGL -framework GameController")
 
+	# Add CoreHaptics framework as weak link for haptic feedback support
+	# Weak linking allows the app to run on macOS < 11.0 where CoreHaptics doesn't exist
+	# The code uses compile-time and runtime checks to avoid using it when unavailable
+	set( LINK_FRAMEWORKS "${LINK_FRAMEWORKS} -weak_framework CoreHaptics" )
+
 	if( HAVE_VULKAN )
 		set( LINK_FRAMEWORKS "${LINK_FRAMEWORKS} -framework QuartzCore" )
 	endif()
