@@ -8,6 +8,8 @@
 #include "metal/system/mt_renderdevice.h"
 #include "metal/system/mt_commandbuffer.h"
 #include "metal/system/mt_buffer.h"
+#include "metal/system/mt_hwbuffer.h"
+#include "metal/textures/mt_texture.h"
 #include "flatvertices.h"
 #include "hwrenderer/data/hw_viewpointbuffer.h"
 #include "hwrenderer/data/hw_cvars.h"
@@ -64,10 +66,21 @@ void MtRenderState::Draw(int dt, int index, int count, bool apply)
 
 void MtRenderState::DrawIndexed(int dt, int index, int count, bool apply)
 {
+	static int drawIndexedCallCount = 0;
+	if (++drawIndexedCallCount <= 10)
+		Printf("Metal: DrawIndexed call #%d (dt=%d, index=%d, count=%d, apply=%d)\n",
+			drawIndexedCallCount, dt, index, count, apply);
+
 	if (apply || mNeedApply)
 		Apply(dt);
 
-	if (!mEncoder || !mIndexBuffer) return;
+	if (!mEncoder || !mIndexBuffer)
+	{
+		if (drawIndexedCallCount <= 10)
+			Printf("Metal: Warning - DrawIndexed called but encoder=%p indexBuffer=%p\n",
+				mEncoder, mIndexBuffer);
+		return;
+	}
 
 	// Convert draw type to Metal primitive type
 	MTL::PrimitiveType primitiveType;
@@ -209,7 +222,7 @@ void MtRenderState::BeginFrame()
 	mApplyCount = 0;
 }
 
-void MtRenderState::SetRenderTarget(MtTextureImage* image, void* depthStencilView, int width, int height, int format, int samples)
+void MtRenderState::SetRenderTarget(void* image, void* depthStencilView, int width, int height, int format, int samples)
 {
 	mRenderTarget.Image = image;
 	mRenderTarget.DepthStencil = depthStencilView;
@@ -296,8 +309,17 @@ void MtRenderState::ApplyRenderPass(int dt)
 
 	// Build pipeline key from current state
 	MtPipelineKey pipelineKey;
-	pipelineKey.VertexFormat = 0;  // TODO: Get from vertex buffer format
-	pipelineKey.ShaderKey = 0;  // TODO: Get from current shader
+	// Get vertex format from current vertex buffer
+	pipelineKey.VertexFormat = mVertexBuffer ? static_cast<MtVertexBuffer*>(mVertexBuffer)->VertexFormat : -1;
+
+	// Build shader key from effect state (following Vulkan pattern)
+	int effectState = mMaterial.mOverrideShader >= 0 ? mMaterial.mOverrideShader : (mMaterial.mMaterial ? mMaterial.mMaterial->GetShaderIndex() : 0);
+	if (!mTextureEnabled) effectState = SHADER_NoTexture;
+	int specialEffect = mSpecialEffect;
+	bool alphaTest = (mAlphaThreshold >= 0.f);
+	// Combine effect state, special effect, and alpha test into a single shader key
+	pipelineKey.ShaderKey = effectState | (specialEffect << 16) | (alphaTest ? (1 << 24) : 0);
+
 	pipelineKey.DepthFunc = mDepthFunc;
 	pipelineKey.DepthClampMode = mDepthClamp ? 1 : 0;
 	pipelineKey.ColorMask = mColorMask;
@@ -623,41 +645,90 @@ void MtRenderState::ApplyMaterial()
 			static_cast<FCanvasTexture*>(mMaterial.mMaterial->Source()->GetTexture())->NeedUpdate();
 		}
 
-		// TODO: Get Metal textures from material
-		// In Vulkan, this uses descriptor sets. In Metal, we bind textures directly:
-		//
-		// Metal Texture Binding Strategy:
-		// Fragment shader texture indices (matching shader expectations):
-		//   - Index 0: Base texture (albedo/diffuse)
-		//   - Index 1: Normal map (if present)
-		//   - Index 2: Specular map (if present)
-		//   - Index 3: Brightness map (if present)
-		//   - Index 4: Glow map (if present)
-		//   - Index 5: Detail texture (if present)
-		//   - Index 6+: Additional layers
-		//
-		// Example code (once MtMaterial and MtHardwareTexture are implemented):
-		// if (mMaterial.mMaterial)
-		// {
-		//     auto mtMaterial = static_cast<MtMaterial*>(mMaterial.mMaterial);
-		//
-		//     // Get base texture
-		//     auto baseTexture = mtMaterial->GetBaseTexture(mMaterial);
-		//     if (baseTexture)
-		//     {
-		//         encoder->setFragmentTexture((MTL::Texture*)baseTexture, 0);
-		//         encoder->setFragmentSamplerState(GetSampler(mMaterial.mClampMode), 0);
-		//     }
-		//
-		//     // Bind normal, specular, etc. if present
-		//     // ...
-		// }
-		// else
-		// {
-		//     // Bind null texture
-		//     auto texManager = fb->GetTextureManager();
-		//     encoder->setFragmentTexture(texManager->GetNullTexture(), 0);
-		// }
+		// Get Metal texture from material
+		static int texBindCount = 0;
+		if (mMaterial.mMaterial)
+		{
+			auto hwTexture = mMaterial.mMaterial->GetLayer(0, mMaterial.mTranslation);
+			if (hwTexture)
+			{
+				// Cast to Metal hardware texture and get the image
+				auto mtHwTexture = static_cast<MtHardwareTexture*>(hwTexture);
+				auto image = mtHwTexture->GetImage();
+
+				// If texture hasn't been created yet, create it now from game texture data
+				if (!image->GetTexture())
+				{
+					auto tex = mMaterial.mMaterial->Source();
+					if (tex)
+					{
+						if (texBindCount < 5)
+							Printf("Metal: Texture not yet created, calling CreateImage()\n");
+						mtHwTexture->CreateImage(tex, mMaterial.mTranslation, mMaterial.mScaleFlags);
+					}
+				}
+
+				// Upload staging buffer data to texture if needed
+				// This happens after MapBuffer() was used to fill the staging buffer
+				if (mtHwTexture->GetStagingBufferSize() > 0 && image->GetTexture())
+				{
+					auto mtlTexture = (MTL::Texture*)image->GetTexture();
+					int w = image->GetWidth();
+					int h = image->GetHeight();
+					int texelsize = mtHwTexture->GetStagingBufferSize() / (w * h);
+
+					// Upload staging buffer to texture
+					MTL::Region region = MTL::Region(0, 0, w, h);
+					mtlTexture->replaceRegion(region, 0, mtHwTexture->GetStagingBuffer(), w * texelsize);
+
+					if (texBindCount < 5)
+						Printf("Metal: Uploaded %d bytes to texture %p (%dx%d)\n",
+							(int)mtHwTexture->GetStagingBufferSize(), mtlTexture, w, h);
+				}
+
+				// Now bind the texture
+				if (image)
+				{
+					auto mtlTexture = image->GetTexture();
+					if (mtlTexture)
+					{
+						if (texBindCount++ < 5)
+							Printf("Metal: Binding texture %p at index 0\n", mtlTexture);
+
+						encoder->setFragmentTexture((MTL::Texture*)mtlTexture, 0);
+
+						// TODO: Get proper sampler from mMaterial.mClampMode
+						// For now, create a simple sampler
+						MTL::SamplerDescriptor* samplerDesc = MTL::SamplerDescriptor::alloc()->init();
+						samplerDesc->setMinFilter(MTL::SamplerMinMagFilterLinear);
+						samplerDesc->setMagFilter(MTL::SamplerMinMagFilterLinear);
+						samplerDesc->setSAddressMode(MTL::SamplerAddressModeRepeat);
+						samplerDesc->setTAddressMode(MTL::SamplerAddressModeRepeat);
+
+						MTL::SamplerState* sampler = fb->device->device->newSamplerState(samplerDesc);
+						encoder->setFragmentSamplerState(sampler, 0);
+						samplerDesc->release();
+						sampler->release();
+					}
+					else if (texBindCount < 5)
+					{
+						Printf("Metal: Warning - hardware texture image exists but GetTexture() returned null\n");
+					}
+				}
+				else if (texBindCount < 5)
+				{
+					Printf("Metal: Warning - hardware texture exists but GetImage() returned null\n");
+				}
+			}
+			else if (texBindCount < 5)
+			{
+				Printf("Metal: Warning - no hardware texture for material layer 0\n");
+			}
+		}
+		else if (texBindCount < 5)
+		{
+			Printf("Metal: Warning - no material set\n");
+		}
 
 		mMaterial.mChanged = false;
 	}

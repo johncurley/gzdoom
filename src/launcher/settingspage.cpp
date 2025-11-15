@@ -36,13 +36,16 @@ SettingsPage::SettingsPage(LauncherWindow* launcher, const FStartupSelectionInfo
 	VulkanCheckbox = new CheckboxLabel(this);
 	OpenGLCheckbox = new CheckboxLabel(this);
 	GLESCheckbox = new CheckboxLabel(this);
+	MetalCheckbox = new CheckboxLabel(this);
 
 	OpenGLCheckbox->SetRadioStyle(true);
 	VulkanCheckbox->SetRadioStyle(true);
 	GLESCheckbox->SetRadioStyle(true);
-	OpenGLCheckbox->FuncChanged = [this](bool on) { if (on) { VulkanCheckbox->SetChecked(false); GLESCheckbox->SetChecked(false); }};
-	VulkanCheckbox->FuncChanged = [this](bool on) { if (on) { OpenGLCheckbox->SetChecked(false); GLESCheckbox->SetChecked(false); }};
-	GLESCheckbox->FuncChanged = [this](bool on) { if (on) { VulkanCheckbox->SetChecked(false); OpenGLCheckbox->SetChecked(false); }};
+	MetalCheckbox->SetRadioStyle(true);
+	OpenGLCheckbox->FuncChanged = [this](bool on) { if (on) { VulkanCheckbox->SetChecked(false); GLESCheckbox->SetChecked(false); MetalCheckbox->SetChecked(false); }};
+	VulkanCheckbox->FuncChanged = [this](bool on) { if (on) { OpenGLCheckbox->SetChecked(false); GLESCheckbox->SetChecked(false); MetalCheckbox->SetChecked(false); }};
+	GLESCheckbox->FuncChanged = [this](bool on) { if (on) { VulkanCheckbox->SetChecked(false); OpenGLCheckbox->SetChecked(false); MetalCheckbox->SetChecked(false); }};
+	MetalCheckbox->FuncChanged = [this](bool on) { if (on) { VulkanCheckbox->SetChecked(false); OpenGLCheckbox->SetChecked(false); GLESCheckbox->SetChecked(false); }};
 	switch (info.DefaultBackend)
 	{
 	case 0:
@@ -53,6 +56,9 @@ SettingsPage::SettingsPage(LauncherWindow* launcher, const FStartupSelectionInfo
 		break;
 	case 2:
 		GLESCheckbox->SetChecked(true);
+		break;
+	case 3:
+		MetalCheckbox->SetChecked(true);
 		break;
 	}
 #endif
@@ -120,6 +126,7 @@ void SettingsPage::SetValues(FStartupSelectionInfo& info) const
 	if (OpenGLCheckbox->GetChecked()) v = 0;
 	else if (VulkanCheckbox->GetChecked()) v = 1;
 	else if (GLESCheckbox->GetChecked()) v = 2;
+	else if (MetalCheckbox->GetChecked()) v = 3;
 	info.DefaultBackend = v;
 #endif
 }
@@ -142,6 +149,7 @@ void SettingsPage::UpdateLanguage()
 	VulkanCheckbox->SetText(GStrings.GetString("OPTVAL_VULKAN"));
 	OpenGLCheckbox->SetText(GStrings.GetString("OPTVAL_OPENGL"));
 	GLESCheckbox->SetText(GStrings.GetString("OPTVAL_OPENGLES"));
+	MetalCheckbox->SetText("Metal");
 #endif
 }
 
@@ -194,6 +202,9 @@ void SettingsPage::OnGeometryChanged()
 
 	GLESCheckbox->SetFrameGeometry(x, y, 190.0, GLESCheckbox->GetPreferredHeight());
 	y += GLESCheckbox->GetPreferredHeight();
+
+	MetalCheckbox->SetFrameGeometry(x, y, 190.0, MetalCheckbox->GetPreferredHeight());
+	y += MetalCheckbox->GetPreferredHeight();
 #endif
 
 	y = max<double>(y, optionsBottom);

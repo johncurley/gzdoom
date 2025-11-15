@@ -61,8 +61,11 @@ public:
 
 	// Additional methods
 	void Reset();
+	void CreateImage(FTexture* tex, int translation, int flags);
 
 	MtTextureImage* GetImage() { return mImage.get(); }
+	size_t GetStagingBufferSize() const { return mStagingBuffer.size(); }
+	const uint8_t* GetStagingBuffer() const { return mStagingBuffer.data(); }
 
 private:
 	std::unique_ptr<MtTextureImage> mImage;

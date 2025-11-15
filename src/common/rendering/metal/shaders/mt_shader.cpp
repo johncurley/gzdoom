@@ -6,7 +6,7 @@
 #include <Metal/Metal.hpp>
 #include "mt_shader.h"
 #include "metal/system/mt_renderdevice.h"
-#include <zvulkan/shadertranslator/shader_translator.h>
+#include <shadertranslator/shader_translator.h>
 #include "cmdlib.h"
 #include "printf.h"
 

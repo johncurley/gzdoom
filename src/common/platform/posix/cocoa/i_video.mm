@@ -63,11 +63,17 @@
 bool I_CreateVulkanSurface(VkInstance instance, VkSurfaceKHR *surface);
 #endif
 
+#import <QuartzCore/QuartzCore.h>
+#import <Metal/Metal.h>
+
+// Get Metal layer if available (for Vulkan or Metal renderer)
+// This check is performed within GetNativeHandle, which is called by the renderer initialization.
+// Therefore, we need to ensure CAMetalLayer is known even if HAVE_METAL is not defined globally,
+// but its usage must be guarded.
 #ifdef HAVE_METAL
 #include "metal/system/mt_renderdevice.h"
-#import <Metal/Metal.h>
-#import <QuartzCore/CAMetalLayer.h>
 #endif
+
 
 extern bool ToggleFullscreen;
 
@@ -287,6 +293,13 @@ namespace
 	[self update];
 }
 
+- (void)keyDown:(NSEvent*)event
+{
+	// Handle key events to prevent system beep
+	// Actual keyboard input is processed through Cocoa event system
+	// Don't call [super keyDown:event] to avoid beep sound
+}
+
 @end
 
 
@@ -343,6 +356,13 @@ namespace
 -(BOOL) isOpaque
 {
 	return YES;
+}
+
+- (void)keyDown:(NSEvent*)event
+{
+	// Handle key events to prevent system beep
+	// Actual keyboard input is processed through Cocoa event system
+	// Don't call [super keyDown:event] to avoid beep sound
 }
 
 @end
@@ -542,8 +562,7 @@ public:
 
 		if (fb == nullptr)
 		{
-// TEMPORARILY DISABLED: Metal renderer disabled for testing Cocoa window changes
-#if 0 // def HAVE_METAL
+#ifdef HAVE_METAL
 			// Try Metal renderer on macOS 10.13+
 			if (V_GetBackend() == 3)
 			{

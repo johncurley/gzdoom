@@ -69,6 +69,9 @@ public:
 	size_t GetStride() const { return mStride; }
 	int GetBindingPoints() const { return mNumBindingPoints; }
 
+	// Vertex format identifier (for pipeline state selection)
+	int VertexFormat = -1;
+
 protected:
 	void SetData(size_t size, const void* data, BufferUsageType usage) override;
 	void SetSubData(size_t offset, size_t size, const void* data) override;

@@ -41,7 +41,11 @@ void MtVertexBuffer::SetFormat(int numBindingPoints, int numAttributes, size_t s
 {
 	mStride = stride;
 	mNumBindingPoints = numBindingPoints;
-	// TODO: Store attributes for pipeline state creation
+
+	// Create a simple vertex format ID by combining stride and attribute count
+	// This is enough to differentiate between different vertex formats for now
+	// TODO: Implement proper vertex format caching like Vulkan
+	VertexFormat = (int)stride + (numAttributes << 16);
 }
 void MtVertexBuffer::SetData(size_t size, const void* data, BufferUsageType usage) { CreateBuffer(size); if (mBuffer && data) memcpy(((MTL::Buffer*)mBuffer)->contents(), data, size); }
 void MtVertexBuffer::SetSubData(size_t offset, size_t size, const void* data) { if (mBuffer && data) memcpy((uint8_t*)((MTL::Buffer*)mBuffer)->contents() + offset, data, size); }

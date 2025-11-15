@@ -210,11 +210,16 @@ void I_OpenShellFolder(const char* folder)
 
 bool I_IsDarkMode()
 {
-	// currently the new startup popup on Mac is not active, so this won't get used
-    NSAppearance *appearance = [NSApp effectiveAppearance];
-    NSAppearanceName name = [appearance bestMatchFromAppearancesWithNames:@[
-        NSAppearanceNameAqua,
-        NSAppearanceNameDarkAqua
-    ]];
-    return [name isEqualToString:NSAppearanceNameDarkAqua];
+	#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 101400
+		// currently the new startup popup on Mac is not active, so this won't get used
+	    NSAppearance *appearance = [NSApp effectiveAppearance];
+	    NSAppearanceName name = [appearance bestMatchFromAppearancesWithNames:@ [
+	        NSAppearanceNameAqua,
+	        NSAppearanceNameDarkAqua
+	    ]];
+	    return [name isEqualToString:NSAppearanceNameDarkAqua];
+	#else
+		// Fallback for older macOS versions
+		return NO;
+	#endif
 }

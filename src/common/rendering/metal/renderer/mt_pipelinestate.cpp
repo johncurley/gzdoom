@@ -9,6 +9,7 @@
 #include "metal/shaders/mt_shader.h"
 #include "hwrenderer/data/hw_renderstate.h"
 #include "renderstyle.h"
+#include "printf.h"
 
 bool MtPipelineKey::operator==(const MtPipelineKey& other) const
 {
@@ -162,6 +163,7 @@ void* MtPipelineStateManager::CreateRenderPipelineState(const MtPipelineKey& key
 
 	if (!defaultLibrary)
 	{
+		Printf("Metal: Compiling default shader...\n");
 		// Simple shader matching FFlatVertex structure with matrix transformations
 		const char* shaderSource = R"(
 			#include <metal_stdlib>
@@ -208,9 +210,18 @@ void* MtPipelineStateManager::CreateRenderPipelineState(const MtPipelineKey& key
 				return out;
 			}
 
-			fragment float4 fragment_main(VertexOut in [[stage_in]]) {
-				// Draw bright magenta for testing - should be VERY visible!
-				return float4(1.0, 0.0, 1.0, 1.0);
+			fragment float4 fragment_main(
+				VertexOut in [[stage_in]],
+				texture2d<float> diffuseTexture [[texture(0)]],
+				sampler diffuseSampler [[sampler(0)]]
+			) {
+				// Sample texture if available, otherwise return white
+				float4 color = diffuseTexture.sample(diffuseSampler, in.texCoord);
+				// If texture is mostly black (unbound), show magenta for debugging
+				if (color.r < 0.01 && color.g < 0.01 && color.b < 0.01) {
+					return float4(1.0, 0.0, 1.0, 1.0);  // Magenta = no texture
+				}
+				return color;
 			}
 		)";
 
@@ -222,13 +233,15 @@ void* MtPipelineStateManager::CreateRenderPipelineState(const MtPipelineKey& key
 		{
 			if (error)
 			{
-				printf("Failed to compile default shader: %s\n",
+				Printf("Metal: Failed to compile default shader: %s\n",
 					error->localizedDescription()->utf8String());
 				error->release();
 			}
 			desc->release();
 			return nullptr;
 		}
+
+		Printf("Metal: Default shader compiled successfully\n");
 
 		auto vertFuncName = NS::String::string("vertex_main", NS::UTF8StringEncoding);
 		auto fragFuncName = NS::String::string("fragment_main", NS::UTF8StringEncoding);
@@ -238,10 +251,12 @@ void* MtPipelineStateManager::CreateRenderPipelineState(const MtPipelineKey& key
 
 		if (!vertexFunction || !fragmentFunction)
 		{
-			printf("Failed to load shader functions from default library\n");
+			Printf("Metal: Failed to load shader functions from default library\n");
 			desc->release();
 			return nullptr;
 		}
+
+		Printf("Metal: Loaded vertex and fragment functions successfully\n");
 	}
 
 	desc->setVertexFunction(vertexFunction);
@@ -320,9 +335,14 @@ void* MtPipelineStateManager::CreateRenderPipelineState(const MtPipelineKey& key
 
 	if (!state && error)
 	{
-		printf("Failed to create render pipeline state: %s\n",
+		Printf("Metal: Failed to create render pipeline state: %s\n",
 			error->localizedDescription()->utf8String());
 		error->release();
+	}
+	else if (state)
+	{
+		Printf("Metal: Pipeline state created successfully (shader key=%d, vertex format=%d)\n",
+			key.ShaderKey, key.VertexFormat);
 	}
 
 	desc->release();

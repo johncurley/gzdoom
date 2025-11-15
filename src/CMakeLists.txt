@@ -1335,6 +1335,7 @@ if( UNIX )
 endif()
 
 target_link_libraries( zdoom ${PROJECT_LIBRARIES} lzma ${ZMUSIC_LIBRARIES} )
+
 include_directories(
 	BEFORE
 	.
@@ -1402,6 +1403,7 @@ include_directories(
 	../libraries/webp/include
 	../libraries/range_map/include
 	../libraries/metal-cpp
+	../libraries/ShaderTranslator/include
 	${SYSTEM_SOURCES_DIR}
 )
 

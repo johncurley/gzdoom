@@ -291,7 +291,7 @@ void MetalRenderDevice::Update()
 
 		// Set render target to drawable texture with depth/stencil
 		mRenderState->SetRenderTarget(
-			(MtTextureImage*)drawableTexture,  // Color attachment
+			drawableTexture,  // Color attachment (raw MTL::Texture*)
 			depthStencilTexture,  // Depth/stencil attachment
 			width,
 			height,

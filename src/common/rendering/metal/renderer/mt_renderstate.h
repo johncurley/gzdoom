@@ -49,7 +49,7 @@ public:
 	void EnableDrawBuffers(int count, bool apply) override;
 
 	void BeginFrame();
-	void SetRenderTarget(MtTextureImage* image, void* depthStencilView, int width, int height, int format, int samples);
+	void SetRenderTarget(void* image, void* depthStencilView, int width, int height, int format, int samples);
 	void Bind(int bindingpoint, uint32_t offset);
 	void EndRenderPass();
 	void EndFrame();
@@ -124,8 +124,8 @@ protected:
 
 	struct RenderTarget
 	{
-		MtTextureImage* Image = nullptr;
-		void* DepthStencil = nullptr; // Metal texture view
+		void* Image = nullptr;  // MTL::Texture*
+		void* DepthStencil = nullptr; // MTL::Texture*
 		int Width = 0;
 		int Height = 0;
 		int Format = 0; // MTLPixelFormat
