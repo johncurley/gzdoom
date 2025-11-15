@@ -259,7 +259,7 @@ endif()
 option (HAVE_VULKAN "Enable Vulkan support" ON)
 if( APPLE )
 	option (HAVE_GLES2 "Enable GLES2 support" OFF)
-	option (HAVE_METAL "Enable Metal support" ON)
+	option (HAVE_METAL "Enable Metal support" OFF)
 else()
 	option (HAVE_GLES2 "Enable GLES2 support" ON)
 endif()
@@ -350,7 +350,7 @@ else()
 	if( APPLE )
 		list(PREPEND CMAKE_PREFIX_PATH "/opt/local")    # port
 		list(PREPEND CMAKE_PREFIX_PATH "/opt/homebrew") # brew
-		set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13")
+		set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13.2")
 		if( CMAKE_CXX_COMPILER_ID STREQUAL "GNU" )
 			# If we're compiling with a custom GCC on the Mac (which we know since g++-4.2 doesn't support C++11) statically link libgcc.
 			set( ALL_C_FLAGS "-static-libgcc" )
@@ -386,7 +386,6 @@ option(FORCE_INTERNAL_CPPDAP "Use internal cppdap" ON)
 mark_as_advanced( FORCE_INTERNAL_ASMJIT )
 
 if (HAVE_VULKAN)
-	# Configure shader translator (now part of ZVulkan)
 	if( APPLE )
 		# Metal renderer support (macOS 10.13+)
 		set(ZVULKAN_ENABLE_MSL ON CACHE INTERNAL "" FORCE)
@@ -397,6 +396,8 @@ if (HAVE_VULKAN)
 	endif()
 
 	add_subdirectory( libraries/ZVulkan )
+	# ShaderTranslator - separate library for GLSL/SPIR-V/MSL/HLSL shader compilation
+	#add_subdirectory( libraries/ShaderTranslator )
 endif()
 
 set(ZWIDGET_BUILD_EXAMPLE OFF CACHE INTERNAL "" FORCE)
