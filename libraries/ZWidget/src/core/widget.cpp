@@ -3,7 +3,6 @@
 #include "core/colorf.h"
 #include "core/theme.h"
 #include "core/layout.h"
-#include "debug_log.h"
 #include <stdexcept>
 #include <cmath>
 #include <algorithm>

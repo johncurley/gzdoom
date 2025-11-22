@@ -497,13 +497,9 @@ void CocoaDisplayWindowImpl::stopDisplayLink()
 {
     if (impl && impl->windowHost)
     {
-        // Ignore key repeats - only process the initial key press
-        if (![theEvent isARepeat])
-        {
-            InputKey key = keycode_to_inputkey([theEvent keyCode]);
-            impl->keyState[key] = true;
-            impl->windowHost->OnWindowKeyDown(key);
-        }
+        InputKey key = keycode_to_inputkey([theEvent keyCode]);
+        impl->keyState[key] = true;
+        impl->windowHost->OnWindowKeyDown(key);
     }
 
     // Call interpretKeyEvents to trigger insertText: for text input

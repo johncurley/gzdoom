@@ -9,7 +9,6 @@
 #include "core/pathfill.h"
 #include "core/font_impl.h"
 #include "window/window.h"
-#include "debug_log.h"
 #include <vector>
 #include <unordered_map>
 #include <stdexcept>
@@ -234,13 +233,6 @@ void Canvas::setOrigin(const Point& newOrigin)
 
 void Canvas::pushClip(const Rect& box)
 {
-	static int clipCallCount = 0;
-	if (clipCallCount < 10) {
-		DebugLog("=== CANVAS === pushClip input: box=(%.1f,%.1f,%.1fx%.1f) origin=(%.1f,%.1f) stack_size=%zu\n",
-		        box.x, box.y, box.width, box.height, origin.x, origin.y, clipStack.size());
-		clipCallCount++;
-	}
-
 	if (!clipStack.empty())
 	{
 		const Rect& clip = clipStack.back();
@@ -258,23 +250,15 @@ void Canvas::pushClip(const Rect& box)
 		if (x0 < x1 && y0 < y1)
 		{
 			clipStack.push_back(Rect::ltrb(x0, y0, x1, y1));
-			if (clipCallCount < 11) {
-				DebugLog("=== CANVAS === pushClip result: valid clip=(%.1f,%.1f,%.1fx%.1f)\n",
-				        x0, y0, x1-x0, y1-y0);
-			}
 		}
 		else
 		{
 			clipStack.push_back(Rect::xywh(0.0, 0.0, 0.0, 0.0));
-			DebugLog("=== CANVAS === pushClip result: ZERO-SIZE CLIP! x0=%.1f x1=%.1f y0=%.1f y1=%.1f\n",
-			        x0, x1, y0, y1);
 		}
 	}
 	else
 	{
 		clipStack.push_back(box);
-		DebugLog("=== CANVAS === pushClip first clip: (%.1f,%.1f,%.1fx%.1f)\n",
-		        box.x, box.y, box.width, box.height);
 	}
 }
 
@@ -285,12 +269,6 @@ void Canvas::popClip()
 
 void Canvas::fillRect(const Rect& box, const Colorf& color)
 {
-	static int fillRectCallCount = 0;
-	if (fillRectCallCount < 10) {
-		DebugLog("=== CANVAS === fillRect: box=(%f,%f,%fx%f) color=(%f,%f,%f,%f)\n",
-		        box.x, box.y, box.width, box.height, color.r, color.g, color.b, color.a);
-		fillRectCallCount++;
-	}
 	fillTile((float)((origin.x + box.x) * uiscale), (float)((origin.y + box.y) * uiscale), (float)(box.width * uiscale), (float)(box.height * uiscale), color);
 }
 
@@ -404,13 +382,6 @@ void Canvas::line(const Point& p0, const Point& p1, const Colorf& color)
 
 void Canvas::drawText(const std::shared_ptr<Font>& font, const Point& pos, const std::string& text, const Colorf& color)
 {
-	static int drawTextCallCount = 0;
-	if (drawTextCallCount < 10) {
-		DebugLog("=== CANVAS === drawText: pos=(%f,%f) text='%s' color=(%f,%f,%f,%f)\n",
-		        pos.x, pos.y, text.c_str(), color.r, color.g, color.b, color.a);
-		drawTextCallCount++;
-	}
-
 	CanvasFontGroup* canvasFont = GetFontGroup(font);
 
 	double x = std::round((origin.x + pos.x) * uiscale);
@@ -725,14 +696,6 @@ void BitmapCanvas::drawLineAntialiased(float x0, float y0, float x1, float y1, C
 
 void BitmapCanvas::fillTile(float left, float top, float width, float height, Colorf color)
 {
-	static int callCount = 0;
-	if (callCount < 10) {
-		fprintf(stdout, "=== CANVAS === BitmapCanvas::fillTile called: pos=(%.1f,%.1f) size=(%.1f,%.1f) color=(%.2f,%.2f,%.2f,%.2f)\n",
-			left, top, width, height, color.r, color.g, color.b, color.a);
-		fflush(stdout);
-		callCount++;
-	}
-
 	if (width <= 0.0f || height <= 0.0f || color.a <= 0.0f)
 		return;
 
@@ -1134,13 +1097,6 @@ void BitmapCanvas::begin(const Colorf& color)
 	uint32_t b = (int32_t)clamp(color.b * 255.0f, 0.0f, 255.0f);
 	uint32_t a = (int32_t)clamp(color.a * 255.0f, 0.0f, 255.0f);
 	uint32_t bgcolor = (a << 24) | (r << 16) | (g << 8) | b;
-
-	static int beginCount = 0;
-	if (beginCount < 5) {
-		fprintf(stdout, "=== CANVAS === BitmapCanvas::begin: size=%dx%d color=0x%08X uiscale=%f\n", width, height, bgcolor, uiscale);
-		fflush(stdout);
-		beginCount++;
-	}
 
 	pixels.clear();
 	pixels.resize(width * height, bgcolor);

@@ -62,7 +62,7 @@ private:
 	bool dropdownOpen = false;
 	Widget* dropdown = nullptr;
 	DropdownList* listView = nullptr;
-	Widget* pendingDeleteDropdown = nullptr; // Dropdown marked for deferred deletion
+	Widget* pendingDeleteDropdown = nullptr;
 
 	int maxDisplayItems = 0;
 	bool dropdownDirection = true;

@@ -29,11 +29,11 @@ std::vector<SingleFontData> ResourceData::LoadSystemFont()
 
 		if (fontURL)
 		{
-			NSString* nsPath = (NSString*)CFURLCopyFileSystemPath(fontURL, kCFURLPOSIXPathStyle);
-			if (nsPath)
+			CFStringRef cfPath = CFURLCopyFileSystemPath(fontURL, kCFURLPOSIXPathStyle);
+			if (cfPath)
 			{
-				fontPath = std::string([nsPath UTF8String]);
-				[(NSString*)nsPath release];
+				fontPath = std::string([(NSString*)cfPath UTF8String]);
+				CFRelease(cfPath);
 			}
 			CFRelease(fontURL);
 		}
@@ -76,22 +76,28 @@ std::vector<SingleFontData> ResourceData::LoadMonospaceSystemFont()
 	SingleFontData fontData;
 	@autoreleasepool
 	{
-		NSFont* systemFont = [NSFont monospacedSystemFontOfSize:13.0 weight:NSFontWeightRegular]; // Use a default size
-		if (!systemFont)
-			throw std::runtime_error("Failed to get system font");
-
-		CTFontRef ctFont = (__bridge CTFontRef)systemFont;
-		CFURLRef fontURL = (CFURLRef)CTFontCopyAttribute(ctFont, kCTFontURLAttribute);
+					NSFont* systemFont = nil;
+					if (@available(macOS 10.15, *)) {
+						systemFont = [NSFont monospacedSystemFontOfSize:13.0 weight:NSFontWeightRegular]; // Use a default size
+					}
+					if (!systemFont) {
+						// Fallback for older macOS versions
+						systemFont = [NSFont systemFontOfSize:13.0];
+					}
+					if (!systemFont) // Double check after fallback
+						throw std::runtime_error("Failed to get system font");
+		
+					CTFontRef ctFont = (__bridge CTFontRef)systemFont;		CFURLRef fontURL = (CFURLRef)CTFontCopyAttribute(ctFont, kCTFontURLAttribute);
 
 		std::string fontPath;
 
 		if (fontURL)
 		{
-			NSString* nsPath = (NSString*)CFURLCopyFileSystemPath(fontURL, kCFURLPOSIXPathStyle);
-			if (nsPath)
+			CFStringRef cfPath = CFURLCopyFileSystemPath(fontURL, kCFURLPOSIXPathStyle);
+			if (cfPath)
 			{
-				fontPath = std::string([nsPath UTF8String]);
-				[(NSString*)nsPath release];
+				fontPath = std::string([(NSString*)cfPath UTF8String]);
+				CFRelease(cfPath);
 			}
 			CFRelease(fontURL);
 		}

@@ -30,7 +30,7 @@ void CocoaOpenFileDialog::SetFilename(const std::string &filename)
 
 void CocoaOpenFileDialog::SetDefaultExtension(const std::string& extension)
 {
-    if (@available(macOS 11.0, *)) {
+    if (@available(macOS 12.0, *)) {
         NSString* extensionString = [NSString stringWithUTF8String:extension.c_str()];
         UTType* utType = [UTType typeWithFilenameExtension:extensionString];
         if (utType) {
@@ -85,7 +85,10 @@ bool CocoaOpenFileDialog::runModalAndGetResults()
 
 bool CocoaOpenFileDialog::Show()
 {
-    if (@available(macOS 11.0, *)) {
+    // IMPORTANT: Allow selection of files that may not match the exact content type
+    [((__bridge NSOpenPanel*)panel) setAllowsOtherFileTypes:YES];
+
+    if (@available(macOS 12.0, *)) {
         if (!_filters.empty())
         {
             NSArray* fileTypeStrings = [[NSString stringWithUTF8String:_filters[_filterIndex].second.c_str()] componentsSeparatedByString:@";"];
@@ -110,6 +113,7 @@ bool CocoaOpenFileDialog::Show()
                 if (utType) {
                     [utTypes addObject:utType];
                 }
+                // If UTType doesn't exist (like .wad), allowsOtherFileTypes will handle it
             }
             if ([utTypes count] > 0) {
                 [((__bridge NSOpenPanel*)panel) setAllowedContentTypes:utTypes];

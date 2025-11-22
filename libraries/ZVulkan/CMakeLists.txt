@@ -4,8 +4,6 @@ project(zvulkan)
 
 option( VULKAN_USE_XLIB "Use Vulkan xlib (X11) WSI integration" ON )
 option( VULKAN_USE_WAYLAND "Use Vulkan Wayland WSI integration" OFF )
-option( ZVULKAN_ENABLE_MSL "Enable Metal Shading Language support (shader-translator)" ON )
-option( ZVULKAN_ENABLE_HLSL "Enable HLSL support (shader-translator)" OFF )
 
 if ( VULKAN_USE_XLIB )
 	add_definitions( -DVULKAN_USE_XLIB=1 )
@@ -13,25 +11,6 @@ else()
 	if (VULKAN_USE_WAYLAND)
 		add_definitions( -DVULKAN_USE_WAYLAND=1 )
 	endif()
-endif()
-
-# Configure SPIRV-Cross for shader translation (SPIR-V → MSL/HLSL)
-set(SPIRV_CROSS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/SPIRV-Cross")
-if(EXISTS "${SPIRV_CROSS_DIR}/CMakeLists.txt")
-	# Configure SPIRV-Cross build options
-	set(SPIRV_CROSS_CLI OFF CACHE BOOL "Build SPIRV-Cross CLI" FORCE)
-	set(SPIRV_CROSS_ENABLE_TESTS OFF CACHE BOOL "Enable SPIRV-Cross tests" FORCE)
-	set(SPIRV_CROSS_ENABLE_GLSL ON CACHE BOOL "Enable GLSL support" FORCE)
-	set(SPIRV_CROSS_ENABLE_HLSL ${ZVULKAN_ENABLE_HLSL} CACHE BOOL "Enable HLSL support" FORCE)
-	set(SPIRV_CROSS_ENABLE_MSL ${ZVULKAN_ENABLE_MSL} CACHE BOOL "Enable MSL support" FORCE)
-	set(SPIRV_CROSS_ENABLE_CPP OFF CACHE BOOL "Enable C++ support" FORCE)
-	set(SPIRV_CROSS_ENABLE_REFLECT OFF CACHE BOOL "Enable reflection support" FORCE)
-	set(SPIRV_CROSS_ENABLE_C_API OFF CACHE BOOL "Enable C API" FORCE)
-	set(SPIRV_CROSS_ENABLE_UTIL OFF CACHE BOOL "Enable utilities" FORCE)
-	set(SPIRV_CROSS_SKIP_INSTALL ON CACHE BOOL "Skip install" FORCE)
-
-	add_subdirectory("${SPIRV_CROSS_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/SPIRV-Cross" EXCLUDE_FROM_ALL)
-	message(STATUS "SPIRV-Cross configured for zvulkan (MSL: ${ZVULKAN_ENABLE_MSL}, HLSL: ${ZVULKAN_ENABLE_HLSL})")
 endif()
 
 set(ZVULKAN_SOURCES
@@ -43,7 +22,6 @@ set(ZVULKAN_SOURCES
 	src/vk_mem_alloc/vk_mem_alloc.cpp
 	src/vk_mem_alloc/vk_mem_alloc.natvis
 	src/volk/volk.c
-	src/shadertranslator/spirv_translator.cpp
 	src/glslang/glslang/MachineIndependent/SymbolTable.h
 	src/glslang/glslang/MachineIndependent/propagateNoContraction.cpp
 	src/glslang/glslang/MachineIndependent/PoolAlloc.cpp
@@ -147,7 +125,6 @@ set(ZVULKAN_INCLUDES
 	include/zvulkan/vulkanswapchain.h
 	include/zvulkan/volk/volk.h
 	include/zvulkan/vk_mem_alloc/vk_mem_alloc.h
-	include/zvulkan/shadertranslator/shader_translator.h
 )
 
 set(ZVULKAN_WIN32_SOURCES
@@ -201,11 +178,9 @@ source_group("src\\glslang\\OGLCompilersDLL" REGULAR_EXPRESSION "${CMAKE_CURRENT
 source_group("src\\glslang\\spirv" REGULAR_EXPRESSION "${CMAKE_CURRENT_SOURCE_DIR}/src/glslang/spirv/.+")
 source_group("src\\vk_mem_alloc" REGULAR_EXPRESSION "${CMAKE_CURRENT_SOURCE_DIR}/src/vk_mem_alloc/.+")
 source_group("src\\volk" REGULAR_EXPRESSION "${CMAKE_CURRENT_SOURCE_DIR}/src/volk/.+")
-source_group("src\\shadertranslator" REGULAR_EXPRESSION "${CMAKE_CURRENT_SOURCE_DIR}/src/shadertranslator/.+")
 source_group("include" REGULAR_EXPRESSION "${CMAKE_CURRENT_SOURCE_DIR}/include/zvulkan/.+")
 source_group("include\\vk_mem_alloc" REGULAR_EXPRESSION "${CMAKE_CURRENT_SOURCE_DIR}/include/zvulkan/vk_mem_alloc/.+")
 source_group("include\\volk" REGULAR_EXPRESSION "${CMAKE_CURRENT_SOURCE_DIR}/include/zvulkan/volk/.+")
-source_group("include\\shadertranslator" REGULAR_EXPRESSION "${CMAKE_CURRENT_SOURCE_DIR}/include/zvulkan/shadertranslator/.+")
 
 include_directories(include include/zvulkan src)
 
@@ -236,24 +211,7 @@ if(MSVC)
 endif()
 
 add_library(zvulkan STATIC ${ZVULKAN_SOURCES} ${ZVULKAN_INCLUDES} ${VULKAN_INCLUDES})
-
-# Link SPIRV-Cross libraries for shader translation
-if(EXISTS "${SPIRV_CROSS_DIR}/CMakeLists.txt")
-	target_link_libraries(zvulkan PUBLIC ${ZVULKAN_LIBS} spirv-cross-core spirv-cross-glsl)
-
-	if(ZVULKAN_ENABLE_MSL)
-		target_link_libraries(zvulkan PUBLIC spirv-cross-msl)
-		target_compile_definitions(zvulkan PUBLIC SHADERTRANSLATOR_MSL_ENABLED)
-	endif()
-
-	if(ZVULKAN_ENABLE_HLSL)
-		target_link_libraries(zvulkan PUBLIC spirv-cross-hlsl)
-		target_compile_definitions(zvulkan PUBLIC SHADERTRANSLATOR_HLSL_ENABLED)
-	endif()
-else()
-	target_link_libraries(zvulkan PUBLIC ${ZVULKAN_LIBS})
-endif()
-
+target_link_libraries(zvulkan PUBLIC ${ZVULKAN_LIBS})
 set_target_properties(zvulkan PROPERTIES CXX_STANDARD 17)
 
 if(MSVC)

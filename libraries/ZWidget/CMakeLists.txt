@@ -3,6 +3,7 @@ project(zwidget)
 
 option(ENABLE_METAL "Enable Metal support for application rendering" ON)
 option(ENABLE_OPENGL "Enable OpenGL support for application rendering" ON)
+option(ENABLE_SDL_ON_MACOS "Enable SDL backends on macOS (native Cocoa is preferred)" OFF)
 
 if (UNIX AND NOT APPLE)
 	include(FindPkgConfig)
@@ -161,7 +162,6 @@ set(ZWIDGET_COCOA_SOURCES
 )
 
 set(ZWIDGET_COCOA_ARC_SOURCES
-	src/core/debug_log.mm
 	src/window/cocoa/cocoa_open_file_dialog.mm
 	src/window/cocoa/cocoa_save_file_dialog.mm
 	src/window/cocoa/cocoa_open_folder_dialog.mm
@@ -289,8 +289,17 @@ elseif(APPLE)
 		message(FATAL_ERROR "Cocoa framework not found")
 	endif()
 
+	find_library(COREVIDEO_FRAMEWORK CoreVideo)
+	if (NOT COREVIDEO_FRAMEWORK)
+		message(FATAL_ERROR "CoreVideo framework not found")
+	endif()
+
 	if(ENABLE_METAL)
 		find_library(METAL_FRAMEWORK Metal)
+		find_library(QUARTZCORE_FRAMEWORK QuartzCore)
+		if (NOT QUARTZCORE_FRAMEWORK)
+			message(FATAL_ERROR "QuartzCore framework not found")
+		endif()
 	endif()
 
 	if(ENABLE_OPENGL)
@@ -299,20 +308,10 @@ elseif(APPLE)
 			message(FATAL_ERROR "OpenGL framework not found")
 		endif()
 	endif()
-	
+
 	find_library(UNIFORMTYPEIDENTIFIERS_FRAMEWORK UniformTypeIdentifiers)
 	if (NOT UNIFORMTYPEIDENTIFIERS_FRAMEWORK)
 		message(FATAL_ERROR "UniformTypeIdentifiers framework not found")
-	endif()
-
-	find_library(COREVIDEO_FRAMEWORK CoreVideo)
-	if (NOT COREVIDEO_FRAMEWORK)
-		message(FATAL_ERROR "CoreVideo framework not found")
-	endif()
-
-	find_library(QUARTZCORE_FRAMEWORK QuartzCore)
-	if (NOT QUARTZCORE_FRAMEWORK)
-		message(FATAL_ERROR "QuartzCore framework not found")
 	endif()
 elseif(HAIKU)
 	set(ZWIDGET_SOURCES ${ZWIDGET_SOURCES} ${ZWIDGET_UNIX_SOURCES})
@@ -347,12 +346,12 @@ else()
 	set(ZWIDGET_LIBS ${ZWIDGET_LIBS} ${FONTCONFIG_LDFLAGS})
 endif()
 
-if(SDL3_FOUND AND NOT WIN32)
+if(SDL3_FOUND AND NOT WIN32 AND (NOT APPLE OR ENABLE_SDL_ON_MACOS))
 	set(ZWIDGET_SOURCES ${ZWIDGET_SOURCES} ${ZWIDGET_SDL3_SOURCES})
 	set(ZWIDGET_DEFINES ${ZWIDGET_DEFINES} -DUSE_SDL3)
 endif()
 
-if(SDL2_FOUND AND NOT SDL3_FOUND AND NOT WIN32)
+if(SDL2_FOUND AND NOT SDL3_FOUND AND NOT WIN32 AND (NOT APPLE OR ENABLE_SDL_ON_MACOS))
 	set(ZWIDGET_SOURCES ${ZWIDGET_SOURCES} ${ZWIDGET_SDL2_SOURCES})
 	set(ZWIDGET_DEFINES ${ZWIDGET_DEFINES} -DUSE_SDL2)
 endif()
@@ -369,31 +368,31 @@ target_compile_definitions(zwidget PRIVATE ${ZWIDGET_DEFINES})
 target_include_directories(zwidget PRIVATE ${ZWIDGET_INCLUDE_DIRS})
 target_link_options(zwidget PRIVATE ${ZWIDGET_LINK_OPTIONS})
 if(APPLE)
-	target_link_libraries(zwidget PRIVATE ${ZWIDGET_LIBS} ${COCOA_FRAMEWORK} ${UNIFORMTYPEIDENTIFIERS_FRAMEWORK} ${COREVIDEO_FRAMEWORK} ${QUARTZCORE_FRAMEWORK})
+	target_link_libraries(zwidget PRIVATE ${ZWIDGET_LIBS} ${COCOA_FRAMEWORK} ${COREVIDEO_FRAMEWORK} ${UNIFORMTYPEIDENTIFIERS_FRAMEWORK} ${QUARTZCORE_FRAMEWORK})
 	if(ENABLE_OPENGL AND OPENGL_FRAMEWORK)
 		target_link_libraries(zwidget PRIVATE ${OPENGL_FRAMEWORK})
 		target_compile_definitions(zwidget PRIVATE HAVE_OPENGL)
 	endif()
 	if(ENABLE_METAL AND METAL_FRAMEWORK)
-		target_link_libraries(zwidget PRIVATE ${METAL_FRAMEWORK})
+		target_link_libraries(zwidget PRIVATE ${METAL_FRAMEWORK} ${QUARTZCORE_FRAMEWORK})
 		target_compile_definitions(zwidget PRIVATE HAVE_METAL)
 	endif()
 else()
 	target_link_libraries(zwidget PRIVATE ${ZWIDGET_LIBS})
 endif()
-if(SDL3_FOUND)
+if(SDL3_FOUND AND (NOT APPLE OR ENABLE_SDL_ON_MACOS))
 	target_include_directories(zwidget PRIVATE ${SDL3_INCLUDE_DIRS})
 	if(TARGET SDL3::SDL3)
 		target_link_libraries(zwidget PRIVATE SDL3::SDL3)
-	else() # needed for gzdoom compat for now
+	else()
 		target_link_libraries(zwidget PRIVATE ${SDL3_LIBRARY})
 	endif()
 endif()
-if(SDL2_FOUND AND NOT SDL3_FOUND)
+if(SDL2_FOUND AND NOT SDL3_FOUND AND (NOT APPLE OR ENABLE_SDL_ON_MACOS))
 	target_include_directories(zwidget PRIVATE ${SDL2_INCLUDE_DIRS})
 	if(TARGET SDL2::SDL2)
 		target_link_libraries(zwidget PRIVATE SDL2::SDL2)
-	else() # needed for gzdoom compat for now
+	else()
 		target_link_libraries(zwidget PRIVATE ${SDL2_LIBRARY})
 	endif()
 endif()
@@ -429,19 +428,22 @@ if(ZWIDGET_BUILD_EXAMPLE)
 		target_compile_definitions(zwidget_example PRIVATE UNICODE _UNICODE)
 		target_link_libraries(zwidget_example PRIVATE gdi32 user32 shell32 comdlg32)
 	elseif(APPLE)
-		target_link_libraries(zwidget_example PRIVATE "-framework Cocoa")
+		target_link_libraries(zwidget_example PRIVATE "-framework Cocoa" "-framework CoreVideo")
 		if(ENABLE_OPENGL AND OPENGL_FRAMEWORK)
 			target_link_libraries(zwidget_example PRIVATE "-framework OpenGL")
+		endif()
+		if(ENABLE_METAL AND METAL_FRAMEWORK)
+			target_link_libraries(zwidget_example PRIVATE "-framework Metal" "-framework QuartzCore")
 		endif()
 	else()
 		target_link_libraries(zwidget_example PRIVATE ${ZWIDGET_LIBS})
 	endif()
 
-	if(SDL3_FOUND)
+	if(SDL3_FOUND AND (NOT APPLE OR ENABLE_SDL_ON_MACOS))
 		target_link_libraries(zwidget_example PRIVATE SDL3::SDL3)
 	endif()
 
-	if(SDL2_FOUND AND NOT SDL3_FOUND)
+	if(SDL2_FOUND AND NOT SDL3_FOUND AND (NOT APPLE OR ENABLE_SDL_ON_MACOS))
 		target_link_libraries(zwidget_example PRIVATE SDL2::SDL2)
 	endif()
 
@@ -449,49 +451,5 @@ if(ZWIDGET_BUILD_EXAMPLE)
 
 	if(MSVC)
 		set_property(TARGET zwidget_example PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-	endif()
-endif()
-
-option(ZWIDGET_BUILD_GZDOOM_LOADER "Build the GZDoom loader application" ON)
-
-if(ZWIDGET_BUILD_GZDOOM_LOADER)
-	add_executable(gzdoom_loader WIN32
-		gzdoom_loader/main.cpp
-		gzdoom_loader/gzdoom_launcher.cpp
-		gzdoom_loader/gzdoom_launcher.h
-		gzdoom_loader/wad_parser.cpp
-		gzdoom_loader/wad_parser.h
-	)
-	target_compile_options(gzdoom_loader PRIVATE ${CXX_WARNING_FLAGS})
-
-	target_include_directories(gzdoom_loader PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/gzdoom_loader)
-	target_link_libraries(gzdoom_loader PRIVATE zwidget)
-
-	if(WIN32)
-		target_compile_definitions(gzdoom_loader PRIVATE UNICODE _UNICODE)
-		target_link_libraries(gzdoom_loader PRIVATE gdi32 user32 shell32 comdlg32)
-	elseif(APPLE)
-		target_link_libraries(gzdoom_loader PRIVATE "-framework Cocoa")
-		if(ENABLE_OPENGL AND OPENGL_FRAMEWORK)
-			target_link_libraries(gzdoom_loader PRIVATE "-framework OpenGL")
-		endif()
-	else()
-		target_link_libraries(gzdoom_loader PRIVATE ${ZWIDGET_LIBS})
-	endif()
-
-	if(SDL3_FOUND)
-		target_link_libraries(gzdoom_loader PRIVATE SDL3::SDL3)
-	endif()
-
-	if(SDL2_FOUND AND NOT SDL3_FOUND AND TARGET SDL2::SDL2)
-		target_link_libraries(gzdoom_loader PRIVATE SDL2::SDL2)
-	endif()
-
-	set_target_properties(gzdoom_loader PROPERTIES CXX_STANDARD 17)
-
-	if(MSVC)
-		set_property(TARGET gzdoom_loader PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-		# Set console subsystem so it uses main() instead of WinMain()
-		set_target_properties(gzdoom_loader PROPERTIES LINK_FLAGS "/SUBSYSTEM:CONSOLE")
 	endif()
 endif()

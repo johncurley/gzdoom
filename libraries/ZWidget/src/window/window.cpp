@@ -93,6 +93,10 @@ std::unique_ptr<DisplayBackend> DisplayBackend::TryCreateBackend()
 		{
 			backend = TryCreateWin32();
 		}
+		else if (backendSelectionStr == "Cocoa")
+		{
+			backend = TryCreateCocoa();
+		}
 		else if (backendSelectionStr == "X11")
 		{
 			backend = TryCreateX11();
@@ -110,7 +114,7 @@ std::unique_ptr<DisplayBackend> DisplayBackend::TryCreateBackend()
 	if (!backend)
 	{
 		backend = TryCreateWin32();
-		if (!backend) backend = TryCreateCocoa();  // macOS native backend
+		if (!backend) backend = TryCreateCocoa();
 		if (!backend) backend = TryCreateWayland();
 		if (!backend) backend = TryCreateX11();
 		if (!backend) backend = TryCreateSDL3();
