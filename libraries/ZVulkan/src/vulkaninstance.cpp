@@ -103,6 +103,9 @@ void VulkanInstance::CreateInstance()
 		appInfo.apiVersion = apiVersion;
 
 		VkInstanceCreateInfo createInfo = {};
+#ifdef __APPLE__
+		createInfo.flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+#endif
 		createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
 		createInfo.pApplicationInfo = &appInfo;
 		createInfo.enabledExtensionCount = (uint32_t)EnabledExtensions.size();

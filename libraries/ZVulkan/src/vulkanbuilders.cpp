@@ -1689,6 +1689,11 @@ VulkanInstanceBuilder::VulkanInstanceBuilder()
 
 	OptionalExtension(VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME);
 	OptionalExtension(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
+	
+	#ifdef __APPLE__
+		// Required for MoltenVK portability driver enumeration
+		RequireExtension(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+	#endif
 }
 
 VulkanInstanceBuilder& VulkanInstanceBuilder::ApiVersionsToTry(const std::vector<uint32_t>& versions)

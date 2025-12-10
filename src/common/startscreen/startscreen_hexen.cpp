@@ -123,7 +123,11 @@ FHexenStartScreen::FHexenStartScreen(int max_progress)
 		}
 		else
 		{
-			S_ChangeMusic("orb", true, true);
+#if defined(__APPLE__)
+			S_ChangeMusic("orb", true, false); // No looping on macOS
+#else
+			S_ChangeMusic("orb", true, true);  // Looping on other platforms
+#endif
 		}
 	}
 	CreateHeader();

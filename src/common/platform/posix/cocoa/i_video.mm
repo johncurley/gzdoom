@@ -111,8 +111,9 @@ extern bool ToggleFullscreen;
 
 EXTERN_CVAR(Bool, vid_hidpi)
 EXTERN_CVAR(Int,  vid_defwidth)
-EXTERN_CVAR(Int,  vid_defheight)
+EXTERN_CVAR(Bool, vid_defheight)
 EXTERN_CVAR(Bool, vk_debug)
+EXTERN_CVAR(Int, vid_preferbackend)
 
 CVAR(Bool, mvk_debug, false, 0)
 CVAR(Bool, vid_nativefullscreen, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
@@ -488,6 +489,8 @@ public:
 		const NSRect contentRect = [ms_window contentRectForFrameRect:[ms_window frame]];
 		SystemBaseFrameBuffer *fb = nullptr;
 
+		Printf("vid_preferbackend: %d\n", (int)vid_preferbackend);
+
 #ifdef HAVE_VULKAN
 		if (ms_isVulkanEnabled)
 		{
@@ -544,11 +547,13 @@ public:
 				m_vulkanSurface = std::make_shared<VulkanSurface>(vulkanInstance, surfacehandle);
 
 				fb = new VulkanRenderDevice(nullptr, vid_fullscreen, m_vulkanSurface);
+				Printf("Vulkan backend initialized successfully.\n");
 			}
-			catch (std::exception const&)
+			catch (std::exception const& e)
 			{
 				ms_isVulkanEnabled = false;
 
+				Printf(TEXTCOLOR_RED "Vulkan backend initialization failed: %s. Falling back to OpenGL.\n", e.what());
 				SetupOpenGLView(ms_window, OpenGLProfile::Core);
 			}
 		}
@@ -557,6 +562,14 @@ public:
 		// Only set up OpenGL view if not using Metal backend
 		if (V_GetBackend() != 3)
 		{
+			if (V_GetBackend() == 2)
+			{
+				Printf("Initializing OpenGLES2 backend.\n");
+			}
+			else
+			{
+				Printf("Initializing OpenGL backend.\n");
+			}
 			SetupOpenGLView(ms_window, OpenGLProfile::Core);
 		}
 
@@ -566,6 +579,7 @@ public:
 			// Try Metal renderer on macOS 10.13+
 			if (V_GetBackend() == 3)
 			{
+				Printf("Attempting to initialize Metal backend...\n");
 				// Ensure the window's view has a Metal layer before initializing Metal renderer
 				NSView* contentView = [ms_window contentView];
 				if (contentView != nil)
@@ -589,8 +603,7 @@ public:
 				}
 				catch (std::exception const& error)
 				{
-					Printf(TEXTCOLOR_RED "Metal renderer initialization failed: %s\n", error.what());
-					Printf("Falling back to OpenGL renderer\n");
+					Printf(TEXTCOLOR_RED "Metal renderer initialization failed: %s. Falling back to OpenGL.\n", error.what());
 					fb = nullptr;
 				}
 			}
@@ -657,6 +670,16 @@ SystemBaseFrameBuffer::SystemBaseFrameBuffer(void*, const bool fullscreen)
 , m_hiDPI(false)
 , m_window(nullptr)
 {
+	int w = vid_defwidth;
+	int h = vid_defheight;
+	if (vid_hidpi && [NSScreen mainScreen] != nil)
+	{
+		CGFloat scale = [NSScreen mainScreen].backingScaleFactor;
+		w = int(w * scale);
+		h = int(h * scale);
+	}
+	SetSize(w, h);
+
 	assert(frameBuffer == nullptr);
 	frameBuffer = this;
 
@@ -776,6 +799,8 @@ void SystemBaseFrameBuffer::SetWindowedMode()
 	const NSRect frameSize = NSMakeRect(win_x, win_y, win_w, win_h);
 	[m_window setFrame:frameSize display:YES];
 	[m_window enterFullscreenOnZoom];
+
+	SetSize(GetClientWidth(), GetClientHeight());
 }
 
 void SystemBaseFrameBuffer::SetMode(const bool fullscreen, const bool hiDPI)
@@ -786,17 +811,19 @@ void SystemBaseFrameBuffer::SetMode(const bool fullscreen, const bool hiDPI)
 	{
 		// OpenGL view: update context surface resolution
 		OpenGLCocoaView* const glView = (OpenGLCocoaView*)[m_window contentView];
-		assert(m_window.screen != nil);
 		assert([glView layer] != nil);
-		[glView layer].contentsScale = hiDPI ? m_window.screen.backingScaleFactor : 1.0;
+		// The 'contentsScale' is managed automatically by macOS for layer-backed views.
+		// Manually setting it here can cause a crash if the window is not yet on a screen.
+		// We just need to ensure the context is updated to reflect any changes.
 		[[glView openGLContext] update]; // Update context with new scaling
 	}
 	else
     {
 		// Vulkan or other view types
-		assert(m_window.screen != nil);
 		assert([m_window.contentView layer] != nil);
-		[m_window.contentView layer].contentsScale = hiDPI ? m_window.screen.backingScaleFactor : 1.0;
+		// For Vulkan/Metal, the layer's drawableSize will be automatically
+		// updated by the system, which is what the renderer should be using.
+		// No need to manually set contentsScale.
 	}
 
 	if (vid_nativefullscreen && fullscreen != m_fullscreen)
