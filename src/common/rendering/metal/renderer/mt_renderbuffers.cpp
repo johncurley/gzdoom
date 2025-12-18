@@ -1,61 +1,154 @@
-/*
-**  Metal backend - Render buffers
-**  Copyright (c) 2025 GZDoom Contributors
-*/
-
-#include <Metal/Metal.hpp>
 #include "mt_renderbuffers.h"
-#include "metal/textures/mt_texture.h"
 #include "metal/system/mt_renderdevice.h"
+#include "metal/textures/mt_texture.h"
 
-MtRenderBuffers::MtRenderBuffers(MetalRenderDevice* fb) : fb(fb) {}
+#include "i_time.h"
+#define TimeScale TimeScale_GZDOOM
+#include <Metal/Metal.hpp>
+#undef TimeScale
 
-MtRenderBuffers::~MtRenderBuffers()
-{
-	// unique_ptr will clean up automatically
+MtRenderBuffers::MtRenderBuffers(MetalRenderDevice *fb) : fb(fb) {}
+
+MtRenderBuffers::~MtRenderBuffers() {}
+
+void MtRenderBuffers::BeginFrame(int width, int height, int sceneWidth,
+                                 int sceneHeight) {
+  if (mWidth != width || mHeight != height) {
+    mWidth = width;
+    mHeight = height;
+    CreatePipeline(width, height);
+    CreatePipelineDepthStencil(width, height);
+  }
+
+  if (mSceneWidth != sceneWidth || mSceneHeight != sceneHeight) {
+    mSceneWidth = sceneWidth;
+    mSceneHeight = sceneHeight;
+    CreateScene(sceneWidth, sceneHeight, 1); // samples=1 for now
+  }
 }
 
-void MtRenderBuffers::Resize(int width, int height)
-{
-	// Skip if same size
-	if (mWidth == width && mHeight == height && mDepthStencilBuffer)
-		return;
+void MtRenderBuffers::CreatePipelineDepthStencil(int width, int height) {
+  PipelineDepthStencil = std::make_unique<MtTextureImage>(fb);
 
-	mWidth = width;
-	mHeight = height;
+  auto desc = MTL::TextureDescriptor::alloc()->init();
+  desc->setWidth(width);
+  desc->setHeight(height);
+  desc->setPixelFormat(MTL::PixelFormatDepth24Unorm_Stencil8);
+  desc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
+  desc->setStorageMode(MTL::StorageModePrivate);
 
-	// Create depth/stencil buffer
-	CreateDepthStencilBuffer(width, height);
+  MTL::Texture *texture = fb->device->device->newTexture(desc);
+  PipelineDepthStencil->SetTexture(texture);
+  PipelineDepthStencil->SetWidth(width);
+  PipelineDepthStencil->SetHeight(height);
+  desc->release();
 }
 
-void MtRenderBuffers::CreateDepthStencilBuffer(int width, int height)
-{
-	// Release old buffer if it exists
-	mDepthStencilBuffer.reset();
+void MtRenderBuffers::CreatePipeline(int width, int height) {
+  for (int i = 0; i < NumPipelineImages; ++i) {
+    PipelineImage[i] = std::make_unique<MtTextureImage>(fb);
 
-	// Create new depth/stencil texture
-	mDepthStencilBuffer = std::make_unique<MtTextureImage>(fb);
+    auto desc = MTL::TextureDescriptor::alloc()->init();
+    desc->setWidth(width);
+    desc->setHeight(height);
+    desc->setPixelFormat(MTL::PixelFormatBGRA8Unorm);
+    desc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
+    desc->setStorageMode(MTL::StorageModePrivate);
 
-	// Create Metal texture descriptor
-	auto desc = MTL::TextureDescriptor::alloc()->init();
-	desc->setWidth(width);
-	desc->setHeight(height);
-	desc->setPixelFormat(MTL::PixelFormatDepth32Float_Stencil8);  // 32-bit depth + 8-bit stencil
-	desc->setUsage(MTL::TextureUsageRenderTarget);  // Used as render target
-	desc->setStorageMode(MTL::StorageModePrivate);  // GPU-only memory (fastest)
+    MTL::Texture *texture = fb->device->device->newTexture(desc);
+    PipelineImage[i]->SetTexture(texture);
+    PipelineImage[i]->SetWidth(width);
+    PipelineImage[i]->SetHeight(height);
+    desc->release();
+  }
+}
 
-	// Create the texture
-	MTL::Texture* texture = fb->device->device->newTexture(desc);
-	desc->release();
+void MtRenderBuffers::CreateScene(int width, int height, int samples) {
+  CreateSceneColor(width, height, samples);
+  CreateSceneDepthStencil(width, height, samples);
+  CreateSceneNormal(width, height, samples);
+  CreateSceneFog(width, height, samples);
+}
 
-	if (!texture)
-	{
-		throw CMetalError("Failed to create depth/stencil buffer");
-	}
+void MtRenderBuffers::CreateSceneColor(int width, int height, int samples) {
+  SceneColor = std::make_unique<MtTextureImage>(fb);
 
-	// Store in MtTextureImage
-	mDepthStencilBuffer->SetTexture(texture);
-	mDepthStencilBuffer->SetWidth(width);
-	mDepthStencilBuffer->SetHeight(height);
-	mDepthStencilBuffer->SetFormat((int)MTL::PixelFormatDepth32Float_Stencil8);
+  auto desc = MTL::TextureDescriptor::alloc()->init();
+  desc->setWidth(width);
+  desc->setHeight(height);
+  desc->setPixelFormat(MTL::PixelFormatBGRA8Unorm);
+  desc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
+  desc->setStorageMode(MTL::StorageModePrivate);
+  desc->setSampleCount(samples);
+  if (samples > 1)
+    desc->setTextureType(MTL::TextureType2DMultisample);
+
+  MTL::Texture *texture = fb->device->device->newTexture(desc);
+  SceneColor->SetTexture(texture);
+  SceneColor->SetWidth(width);
+  SceneColor->SetHeight(height);
+  desc->release();
+}
+
+void MtRenderBuffers::CreateSceneDepthStencil(int width, int height,
+                                              int samples) {
+  SceneDepthStencil = std::make_unique<MtTextureImage>(fb);
+
+  auto desc = MTL::TextureDescriptor::alloc()->init();
+  desc->setWidth(width);
+  desc->setHeight(height);
+  desc->setPixelFormat(MTL::PixelFormatDepth24Unorm_Stencil8);
+  desc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
+  desc->setStorageMode(MTL::StorageModePrivate);
+  desc->setSampleCount(samples);
+  if (samples > 1)
+    desc->setTextureType(MTL::TextureType2DMultisample);
+
+  MTL::Texture *texture = fb->device->device->newTexture(desc);
+  SceneDepthStencil->SetTexture(texture);
+  SceneDepthStencil->SetWidth(width);
+  SceneDepthStencil->SetHeight(height);
+  desc->release();
+}
+
+void MtRenderBuffers::CreateSceneNormal(int width, int height, int samples) {
+  SceneNormal = std::make_unique<MtTextureImage>(fb);
+
+  auto desc = MTL::TextureDescriptor::alloc()->init();
+  desc->setWidth(width);
+  desc->setHeight(height);
+  desc->setPixelFormat(
+      MTL::PixelFormatBGRA8Unorm); // Match Vulkan A2R10G10B10 if possible, but
+                                   // BGRA8 is safe for now
+  desc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
+  desc->setStorageMode(MTL::StorageModePrivate);
+  desc->setSampleCount(samples);
+  if (samples > 1)
+    desc->setTextureType(MTL::TextureType2DMultisample);
+
+  MTL::Texture *texture = fb->device->device->newTexture(desc);
+  SceneNormal->SetTexture(texture);
+  SceneNormal->SetWidth(width);
+  SceneNormal->SetHeight(height);
+  desc->release();
+}
+
+void MtRenderBuffers::CreateSceneFog(int width, int height, int samples) {
+  SceneFog = std::make_unique<MtTextureImage>(fb);
+
+  auto desc = MTL::TextureDescriptor::alloc()->init();
+  desc->setWidth(width);
+  desc->setHeight(height);
+  desc->setPixelFormat(MTL::PixelFormatBGRA8Unorm);
+  desc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
+  desc->setStorageMode(MTL::StorageModePrivate);
+  desc->setSampleCount(samples);
+  if (samples > 1)
+    desc->setTextureType(MTL::TextureType2DMultisample);
+
+  MTL::Texture *texture = fb->device->device->newTexture(desc);
+  SceneFog->SetTexture(texture);
+  SceneFog->SetWidth(width);
+  SceneFog->SetHeight(height);
+  desc->release();
 }

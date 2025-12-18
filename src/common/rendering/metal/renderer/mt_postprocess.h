@@ -1,27 +1,42 @@
 #pragma once
 
-#include <memory>
+#include "intrect.h"
 #include <functional>
+#include <memory>
 
 class MetalRenderDevice;
 class MtTextureImage;
 
+#define TimeScale TimeScale_GZDOOM
+namespace MTL {
+class Texture;
+} // namespace MTL
+#undef TimeScale
+
 // Post-processing effects
-class MtPostprocess
-{
+class MtPostprocess {
 public:
-	MtPostprocess(MetalRenderDevice* fb);
-	~MtPostprocess();
+  MtPostprocess(MetalRenderDevice *fb);
+  ~MtPostprocess();
 
-	// Post-processing operations
-	void BlurScene(float amount);
-	void AmbientOccludeScene(float m5);
-	void UpdateShadowMap();
+  // Post-processing operations
+  void BlurScene(float amount);
+  void AmbientOccludeScene(float m5);
+  void UpdateShadowMap();
+  void ImageTransitionScene(bool undefinedSrcLayout);
+  void BlitSceneToPostprocess();
+  void BlitCurrentToImage(MTL::Texture *dstimage);
+  void SetSceneRenderTarget(bool useSSAO);
 
-	// Scene rendering
-	void SetSceneRenderTarget(bool useSSAO);
-	void PostProcessScene(bool swscene, int fixedcm, float flash, const std::function<void()>& afterBloomDrawEndScene2D);
+  // Scene rendering
+  void SetActiveRenderTarget();
+  void PostProcessScene(bool swscene, int fixedcm, float flash,
+                        const std::function<void()> &afterBloomDrawEndScene2D);
+  void DrawPresentTexture(IntRect box, bool applyGamma, bool screenshot);
+  MTL::Texture *GetCurrentTexture();
+
+  int mCurrentPipelineImage = 0;
 
 private:
-	MetalRenderDevice* fb = nullptr;
+  MetalRenderDevice *fb = nullptr;
 };

@@ -1,12 +1,17 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <vector>
 
-#ifdef __OBJC__
-#import <Metal/Metal.h>
-#else
-#endif
+#define TimeScale TimeScale_GZDOOM
+namespace MTL {
+class Texture;
+class Buffer;
+class SamplerState;
+class RenderCommandEncoder;
+} // namespace MTL
+#undef TimeScale
 
 class MetalRenderDevice;
 
@@ -15,78 +20,48 @@ class MetalRenderDevice;
 // Tier 1: Per-frame buffers (viewpoint, matrices, stream data, lights, bones)
 // Tier 2: Per-material textures (texture layers)
 
-class MtResourceBindingManager
-{
+class MtResourceBindingManager {
 public:
-	MtResourceBindingManager(MetalRenderDevice* fb);
-	~MtResourceBindingManager();
+  MtResourceBindingManager(MetalRenderDevice *fb);
+  ~MtResourceBindingManager();
 
-	// Tier 0: Fixed textures (bind once at init)
-#ifdef __OBJC__
-	void BindFixedTexture(int slot, id<MTLTexture> texture);
-#else
-	void BindFixedTexture(int slot, void* texture);
-#endif
+  // Tier 0: Fixed textures (bind once at init)
+  void BindFixedTexture(int slot, MTL::Texture *texture);
 
-	// Tier 1: Per-frame buffers (update offsets per-frame)
-#ifdef __OBJC__
-	void BindPerFrameBuffer(int slot, id<MTLBuffer> buffer, uint32_t offset);
-#else
-	void BindPerFrameBuffer(int slot, void* buffer, uint32_t offset);
-#endif
+  // Tier 1: Per-frame buffers (update offsets per-frame)
+  void BindPerFrameBuffer(int slot, MTL::Buffer *buffer, uint32_t offset);
 
-	// Tier 2: Per-material textures (bind per-material)
-#ifdef __OBJC__
-	void BindMaterialTexture(int slot, id<MTLTexture> texture, id<MTLSamplerState> sampler);
-#else
-	void BindMaterialTexture(int slot, void* texture, void* sampler);
-#endif
+  // Tier 2: Per-material textures (bind per-material)
+  void BindMaterialTexture(int slot, MTL::Texture *texture,
+                           MTL::SamplerState *sampler);
 
-	// Apply bindings to encoder
-#ifdef __OBJC__
-	void ApplyBindings(id<MTLRenderCommandEncoder> encoder, bool vertex, bool fragment);
-#else
-	void ApplyBindings(void* encoder, bool vertex, bool fragment);
-#endif
+  // Apply bindings to encoder
+  void ApplyBindings(MTL::RenderCommandEncoder *encoder, bool vertex,
+                     bool fragment);
 
-	// Reset for new frame
-	void BeginFrame();
+  // Reset for new frame
+  void BeginFrame();
 
-	// Clear material texture bindings (called when switching materials)
-	void ClearMaterialTextures();
+  // Clear material texture bindings (called when switching materials)
+  void ClearMaterialTextures();
 
 private:
-	MetalRenderDevice* fb = nullptr;
+  MetalRenderDevice *fb = nullptr;
 
-	// Tier 0: Fixed textures
-#ifdef __OBJC__
-	std::vector<id<MTLTexture>> mFixedTextures;
-#else
-	std::vector<void*> mFixedTextures;
-#endif
+  // Tier 0: Fixed textures
+  std::vector<MTL::Texture *> mFixedTextures;
 
-	// Tier 1: Per-frame buffers
-	struct BufferBinding
-	{
-#ifdef __OBJC__
-		id<MTLBuffer> buffer = nil;
-#else
-		void* buffer = nullptr;
-#endif
-		uint32_t offset = 0;
-	};
-	std::vector<BufferBinding> mPerFrameBuffers;
+  // Tier 1: Per-frame buffers
+  struct BufferBinding {
+    MTL::Buffer *buffer = nullptr;
+    uint32_t offset = 0;
+  };
+  std::vector<BufferBinding> mPerFrameBuffers;
 
-	// Tier 2: Per-material textures
-	struct TextureBinding
-	{
-#ifdef __OBJC__
-		id<MTLTexture> texture = nil;
-		id<MTLSamplerState> sampler = nil;
-#else
-		void* texture = nullptr;
-		void* sampler = nullptr;
-#endif
-	};
-	std::vector<TextureBinding> mMaterialTextures;
+  // Tier 2: Per-material textures
+  struct TextureBinding {
+    MTL::Texture *texture = nullptr;
+    MTL::SamplerState *sampler = nullptr;
+  };
+  std::vector<TextureBinding> mMaterialTextures;
 };

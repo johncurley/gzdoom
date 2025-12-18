@@ -1,102 +1,101 @@
 #pragma once
 
 #include "hw_texcontainer.h"
+#include "hwrenderer/postprocessing/hw_postprocess.h"
 #include <memory>
+#include <unordered_map>
 #include <vector>
 
-#ifdef __OBJC__
-#import <Metal/Metal.h>
-#else
-#endif
+#define TimeScale TimeScale_GZDOOM
+namespace MTL {
+class Texture;
+} // namespace MTL
+#undef TimeScale
 
 class MetalRenderDevice;
 class FGameTexture;
 
 // Metal texture image
-class MtTextureImage
-{
+class MtTextureImage {
 public:
-	MtTextureImage(MetalRenderDevice* fb);
-	~MtTextureImage();
+  MtTextureImage(MetalRenderDevice *fb);
+  ~MtTextureImage();
 
-#ifdef __OBJC__
-	id<MTLTexture> GetTexture() const { return mTexture; }
-	void SetTexture(id<MTLTexture> texture) { mTexture = texture; }
-#else
-	void* GetTexture() const { return mTexture; }
-	void SetTexture(void* texture) { mTexture = texture; }
-#endif
+  MTL::Texture *GetTexture() const { return mTexture; }
+  void SetTexture(MTL::Texture *texture) { mTexture = texture; }
 
-	int GetWidth() const { return mWidth; }
-	int GetHeight() const { return mHeight; }
-	int GetFormat() const { return mFormat; }
+  int GetWidth() const { return mWidth; }
+  int GetHeight() const { return mHeight; }
+  int GetFormat() const { return mFormat; }
 
-	void SetWidth(int width) { mWidth = width; }
-	void SetHeight(int height) { mHeight = height; }
-	void SetFormat(int format) { mFormat = format; }
+  void SetWidth(int width) { mWidth = width; }
+  void SetHeight(int height) { mHeight = height; }
+  void SetFormat(int format) { mFormat = format; }
 
 private:
-#ifdef __OBJC__
-	id<MTLTexture> mTexture = nil;
-#else
-	void* mTexture = nullptr;
-#endif
-	int mWidth = 0;
-	int mHeight = 0;
-	int mFormat = 0;
-	MetalRenderDevice* fb = nullptr;
+  MTL::Texture *mTexture = nullptr;
+  int mWidth = 0;
+  int mHeight = 0;
+  int mFormat = 0;
+  MetalRenderDevice *fb = nullptr;
 };
 
 // Metal hardware texture
-class MtHardwareTexture : public IHardwareTexture
-{
+class MtHardwareTexture : public IHardwareTexture {
 public:
-	MtHardwareTexture(MetalRenderDevice* fb, int numchannels);
-	~MtHardwareTexture();
+  MtHardwareTexture(MetalRenderDevice *fb, int numchannels);
+  ~MtHardwareTexture();
 
-	// IHardwareTexture interface
-	void AllocateBuffer(int w, int h, int texelsize) override;
-	uint8_t* MapBuffer() override;
-	unsigned int CreateTexture(unsigned char* buffer, int w, int h, int texunit, bool mipmap, const char* name) override;
+  // IHardwareTexture interface
+  void AllocateBuffer(int w, int h, int texelsize) override;
+  uint8_t *MapBuffer() override;
+  unsigned int CreateTexture(unsigned char *buffer, int w, int h, int texunit,
+                             bool mipmap, const char *name) override;
+  void CreateWipeTexture(int w, int h, const char *name);
 
-	// Additional methods
-	void Reset();
-	void CreateImage(FTexture* tex, int translation, int flags);
+  // Additional methods
+  void Reset();
+  void CreateImage(FTexture *tex, int translation, int flags);
 
-	MtTextureImage* GetImage() { return mImage.get(); }
-	size_t GetStagingBufferSize() const { return mStagingBuffer.size(); }
-	const uint8_t* GetStagingBuffer() const { return mStagingBuffer.data(); }
+  MtTextureImage *GetImage() { return mImage.get(); }
+  size_t GetStagingBufferSize() const { return mStagingBuffer.size(); }
+  const uint8_t *GetStagingBuffer() const { return mStagingBuffer.data(); }
 
 private:
-	std::unique_ptr<MtTextureImage> mImage;
-	MetalRenderDevice* fb = nullptr;
-	int mNumChannels = 0;
-	std::vector<uint8_t> mStagingBuffer;
+  std::unique_ptr<MtTextureImage> mImage;
+  MetalRenderDevice *fb = nullptr;
+  int mNumChannels = 0;
+  std::vector<uint8_t> mStagingBuffer;
 };
 
 // Texture manager
-class MtTextureManager
-{
+class MtTextureManager {
 public:
-	MtTextureManager(MetalRenderDevice* fb);
-	~MtTextureManager();
+  MtTextureManager(MetalRenderDevice *fb);
+  ~MtTextureManager();
 
-	// Create textures
-#ifdef __OBJC__
-	id<MTLTexture> CreateTexture(int width, int height, int format, int mipmaps);
-	id<MTLTexture> CreateTextureFromData(const void* data, int width, int height, int format, int mipmaps);
-#else
-	void* CreateTexture(int width, int height, int format, int mipmaps);
-	void* CreateTextureFromData(const void* data, int width, int height, int format, int mipmaps);
-#endif
+  // Create textures
+  MTL::Texture *CreateTexture(int width, int height, int format, int mipmaps);
+  MTL::Texture *CreateTextureFromData(const void *data, int width, int height,
+                                      int format, int mipmaps);
 
-	// Update texture data
-#ifdef __OBJC__
-	void UpdateTexture(id<MTLTexture> texture, int level, const void* data, size_t size);
-#else
-	void UpdateTexture(void* texture, int level, const void* data, size_t size);
-#endif
+  // Update texture data
+  void UpdateTexture(MTL::Texture *texture, int level, const void *data,
+                     size_t size);
+
+  // PP Texture support
+  MTL::Texture *GetPPTexture(PPTexture *texture);
 
 private:
-	MetalRenderDevice* fb = nullptr;
+  MetalRenderDevice *fb = nullptr;
+  std::unordered_map<PPTexture *, MTL::Texture *> mPPTextures;
+};
+
+class MtPPTexture : public PPTextureBackend {
+public:
+  MtPPTexture(MetalRenderDevice *fb, PPTexture *texture);
+  ~MtPPTexture();
+
+  MetalRenderDevice *fb = nullptr;
+  MTL::Texture *mTexture = nullptr;
 };

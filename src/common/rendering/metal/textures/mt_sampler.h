@@ -3,61 +3,49 @@
 #include <memory>
 #include <unordered_map>
 
-#ifdef __OBJC__
-#import <Metal/Metal.h>
-#else
-#endif
+#define TimeScale TimeScale_GZDOOM
+namespace MTL {
+class SamplerState;
+} // namespace MTL
+#undef TimeScale
 
 class MetalRenderDevice;
 
 // Sampler state key for caching
-struct MtSamplerKey
-{
-	int MinFilter = 0;
-	int MagFilter = 0;
-	int MipFilter = 0;
-	int AddressU = 0;
-	int AddressV = 0;
-	int AddressW = 0;
-	float MaxAnisotropy = 1.0f;
+struct MtSamplerKey {
+  int MinFilter = 0;
+  int MagFilter = 0;
+  int MipFilter = 0;
+  int AddressU = 0;
+  int AddressV = 0;
+  int AddressW = 0;
+  float MaxAnisotropy = 1.0f;
 
-	bool operator==(const MtSamplerKey& other) const;
-	bool operator!=(const MtSamplerKey& other) const { return !(*this == other); }
+  bool operator==(const MtSamplerKey &other) const;
+  bool operator!=(const MtSamplerKey &other) const { return !(*this == other); }
 };
 
 // Hash function for sampler key
-namespace std
-{
-	template<>
-	struct hash<MtSamplerKey>
-	{
-		size_t operator()(const MtSamplerKey& key) const;
-	};
-}
+namespace std {
+template <> struct hash<MtSamplerKey> {
+  size_t operator()(const MtSamplerKey &key) const;
+};
+} // namespace std
 
 // Sampler manager
-class MtSamplerManager
-{
+class MtSamplerManager {
 public:
-	MtSamplerManager(MetalRenderDevice* fb);
-	~MtSamplerManager();
+  MtSamplerManager(MetalRenderDevice *fb);
+  ~MtSamplerManager();
 
-	// Get or create sampler state
-#ifdef __OBJC__
-	id<MTLSamplerState> GetSamplerState(const MtSamplerKey& key);
-#else
-	void* GetSamplerState(const MtSamplerKey& key);
-#endif
+  // Get or create sampler state
+  MTL::SamplerState *GetSamplerState(const MtSamplerKey &key);
 
-	// Clear cache
-	void ClearCache();
+  // Clear cache
+  void ClearCache();
 
 private:
-	MetalRenderDevice* fb = nullptr;
+  MetalRenderDevice *fb = nullptr;
 
-#ifdef __OBJC__
-	std::unordered_map<MtSamplerKey, id<MTLSamplerState>> mSamplerCache;
-#else
-	std::unordered_map<MtSamplerKey, void*> mSamplerCache;
-#endif
+  std::unordered_map<MtSamplerKey, MTL::SamplerState *> mSamplerCache;
 };
