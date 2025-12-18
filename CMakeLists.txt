@@ -256,13 +256,14 @@ if( ${TARGET_ARCHITECTURE} MATCHES "x86_64" )
 	set( HAVE_VM_JIT ON )
 endif()
 
-option (HAVE_VULKAN "Enable Vulkan support" ON)
+option (HAVE_VULKAN "Enable Vulkan support" OFF)
 if( APPLE )
 	option (HAVE_GLES2 "Enable GLES2 support" OFF)
-	option (HAVE_METAL "Enable Metal support" OFF)
+	option (HAVE_METAL "Enable Metal support" ON) # Enable Metal by default
 else()
 	option (HAVE_GLES2 "Enable GLES2 support" ON)
 endif()
+
 
 # no, we're not using external asmjit for now, we made too many modifications to our's.
 # if the asmjit author uses our changes then we'll update this.
@@ -385,19 +386,14 @@ option(FORCE_INTERNAL_CPPDAP "Use internal cppdap" ON)
 
 mark_as_advanced( FORCE_INTERNAL_ASMJIT )
 
-if (HAVE_VULKAN)
-	if( APPLE )
-		# Metal renderer support (macOS 10.13+)
-		set(ZVULKAN_ENABLE_MSL ON CACHE INTERNAL "" FORCE)
-		set(ZVULKAN_ENABLE_HLSL OFF CACHE INTERNAL "" FORCE)
-	else()
-		set(ZVULKAN_ENABLE_MSL OFF CACHE INTERNAL "" FORCE)
-		set(ZVULKAN_ENABLE_HLSL OFF CACHE INTERNAL "" FORCE)
-	endif()
 
+
+if (HAVE_VULKAN)
 	add_subdirectory( libraries/ZVulkan )
-	# ShaderTranslator - separate library for GLSL/SPIR-V/MSL/HLSL shader compilation
-	#add_subdirectory( libraries/ShaderTranslator )
+endif()
+
+if (HAVE_METAL AND APPLE)
+	add_subdirectory( libraries/ShaderTranslator )
 endif()
 
 set(ZWIDGET_BUILD_EXAMPLE OFF CACHE INTERNAL "" FORCE)

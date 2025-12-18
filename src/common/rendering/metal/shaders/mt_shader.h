@@ -72,9 +72,13 @@ struct MtShaderModule
 #ifdef __OBJC__
 	id<MTLLibrary> library = nil;
 	id<MTLFunction> function = nil;
+	id<MTLFunction> fragmentFunction = nil;
+	id<MTLLibrary> fragmentLibrary = nil;
 #else
 	void* library = nullptr;
 	void* function = nullptr;
+	void* fragmentFunction = nullptr;
+	void* fragmentLibrary = nullptr;
 #endif
 	std::string name;
 	std::string entryPoint;

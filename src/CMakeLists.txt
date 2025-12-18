@@ -325,11 +325,12 @@ add_custom_target( revision_check ALL
 # required libraries
 
 set( PROJECT_LIBRARIES ${PROJECT_LIBRARIES} miniz "${BZIP2_LIBRARIES}" "${CMAKE_DL_LIBS}" "${DRPC_LIBRARIES}")
-# Add zvulkan for Vulkan renderer OR Metal renderer (both need glslang for shader compilation)
-if (HAVE_VULKAN OR APPLE)
+# Add zvulkan for Vulkan renderer
+if (HAVE_VULKAN)
 	list( APPEND PROJECT_LIBRARIES "zvulkan" )
 endif()
 
+list( APPEND PROJECT_LIBRARIES "shader-translator" )
 list( APPEND PROJECT_LIBRARIES "zwidget" )
 list( APPEND PROJECT_LIBRARIES "webp" )
 

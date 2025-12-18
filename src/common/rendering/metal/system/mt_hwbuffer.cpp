@@ -6,17 +6,33 @@
 #include <Metal/Metal.hpp>
 #include "mt_hwbuffer.h"
 #include "mt_renderdevice.h"
+#include "printf.h"
+#include "metal/renderer/mt_renderstate.h"
 
 // MtHardwareDataBuffer
 MtHardwareDataBuffer::MtHardwareDataBuffer(MetalRenderDevice* fb, int bindingpoint, bool ssbo, bool needsresize)
-	: fb(fb), mBindingPoint(bindingpoint), mSSBO(ssbo), mNeedsResize(needsresize) {}
+	: mBindingPoint(bindingpoint), mSSBO(ssbo), mNeedsResize(needsresize), fb(fb) {}
 
 MtHardwareDataBuffer::~MtHardwareDataBuffer()
 {
 	if (mBuffer) ((MTL::Buffer*)mBuffer)->release();
 }
 
-void MtHardwareDataBuffer::BindRange(FRenderState* state, size_t start, size_t length) {}
+void MtHardwareDataBuffer::BindRange(FRenderState* state, size_t start, size_t length) 
+{
+	static int bindCount = 0;
+	if (bindCount++ < 10)
+	{
+		Printf("MtHardwareDataBuffer::BindRange: binding to point %d, start=%zu, length=%zu\n", mBindingPoint, start, length);
+	}
+
+	auto mt_state = static_cast<MtRenderState*>(state);
+	auto encoder = (MTL::RenderCommandEncoder*)mt_state->GetEncoder();
+	if (encoder)
+	{
+		encoder->setVertexBuffer((MTL::Buffer*)mBuffer, start, mBindingPoint);
+	}
+}
 void MtHardwareDataBuffer::SetData(size_t size, const void* data, BufferUsageType usage) { CreateBuffer(size); if (mBuffer && data) memcpy(((MTL::Buffer*)mBuffer)->contents(), data, size); }
 void MtHardwareDataBuffer::SetSubData(size_t offset, size_t size, const void* data) { if (mBuffer && data) memcpy((uint8_t*)((MTL::Buffer*)mBuffer)->contents() + offset, data, size); }
 void MtHardwareDataBuffer::Resize(size_t newsize) { CreateBuffer(newsize); }

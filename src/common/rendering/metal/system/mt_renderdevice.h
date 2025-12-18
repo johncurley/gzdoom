@@ -1,7 +1,11 @@
 #pragma once
 
+#include <dispatch/dispatch.h>
 #include "gl_sysfb.h"
 #include "engineerrors.h"
+
+// Prevent MacTypes.h from defining TimeScale by defining it as a macro temporarily
+#define TimeScale TimeScale_GZDOOM
 
 // Forward declarations (no Metal headers in public interface unless needed)
 namespace MTL
@@ -9,6 +13,10 @@ namespace MTL
 	class Device;
 	class CommandQueue;
 }
+class CAMetalLayer;
+
+// Restore TimeScale
+#undef TimeScale
 
 struct FRenderViewpoint;
 class MtSamplerManager;
@@ -121,6 +129,7 @@ private:
 	MtRenderBuffers* mActiveRenderBuffers = nullptr;
 
 	bool mVSync = false;
+	dispatch_semaphore_t mInflightFramesSemaphore;
 };
 
 class CMetalError : public CEngineError

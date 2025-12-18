@@ -310,8 +310,7 @@ VSMatrix::perspective(FLOATTYPE fov, FLOATTYPE ratio, FLOATTYPE nearp, FLOATTYPE
 
 
 // gl Ortho implementation
-void 
-VSMatrix::ortho(FLOATTYPE left, FLOATTYPE right, 
+void VSMatrix::ortho(FLOATTYPE left, FLOATTYPE right, 
 			FLOATTYPE bottom, FLOATTYPE top, 
 			FLOATTYPE nearp, FLOATTYPE farp)
 {

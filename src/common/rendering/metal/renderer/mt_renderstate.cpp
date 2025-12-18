@@ -664,7 +664,7 @@ void MtRenderState::ApplyMaterial()
 					{
 						if (texBindCount < 5)
 							Printf("Metal: Texture not yet created, calling CreateImage()\n");
-						mtHwTexture->CreateImage(tex, mMaterial.mTranslation, mMaterial.mScaleFlags);
+						mtHwTexture->CreateImage(mMaterial.mMaterial->Source()->GetTexture(), mMaterial.mTranslation, mMaterial.mMaterial->GetScaleFlags()); // Corrected
 					}
 				}
 

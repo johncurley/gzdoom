@@ -14,7 +14,53 @@ option(SHADER_TRANSLATOR_USE_SYSTEM_DXC "Use system DXC from VulkanSDK instead o
 set(SHADER_TRANSLATOR_SOURCES
 	src/spirv_translator.cpp
 	src/shader_compiler.cpp
+	src/glslang/glslang/MachineIndependent/propagateNoContraction.cpp
+	src/glslang/glslang/MachineIndependent/PoolAlloc.cpp
+	src/glslang/glslang/MachineIndependent/Intermediate.cpp
+	src/glslang/glslang/MachineIndependent/attribute.cpp
+	src/glslang/glslang/MachineIndependent/Scan.cpp
+	src/glslang/glslang/MachineIndependent/SymbolTable.cpp
+	src/glslang/glslang/MachineIndependent/RemoveTree.cpp
+	src/glslang/glslang/MachineIndependent/reflection.cpp
+	src/glslang/glslang/MachineIndependent/iomapper.cpp
+	src/glslang/glslang/MachineIndependent/intermOut.cpp
+	src/glslang/glslang/MachineIndependent/Versions.cpp
+	src/glslang/glslang/MachineIndependent/Initialize.cpp
+	src/glslang/glslang/MachineIndependent/linkValidate.cpp
+	src/glslang/glslang/MachineIndependent/InfoSink.cpp
+	src/glslang/glslang/MachineIndependent/Constant.cpp
+	src/glslang/glslang/MachineIndependent/IntermTraverse.cpp
+	src/glslang/glslang/MachineIndependent/glslang_tab.cpp
+	src/glslang/glslang/MachineIndependent/ShaderLang.cpp
+	src/glslang/glslang/MachineIndependent/preprocessor/Pp.cpp
+	src/glslang/glslang/MachineIndependent/preprocessor/PpAtom.cpp
+	src/glslang/glslang/MachineIndependent/preprocessor/PpContext.cpp
+	src/glslang/glslang/MachineIndependent/preprocessor/PpTokens.cpp
+	src/glslang/glslang/MachineIndependent/preprocessor/PpScanner.cpp
+	src/glslang/glslang/MachineIndependent/parseConst.cpp
+	src/glslang/glslang/MachineIndependent/limits.cpp
+	src/glslang/glslang/MachineIndependent/ParseContextBase.cpp
+	src/glslang/glslang/MachineIndependent/ParseHelper.cpp
+	src/glslang/glslang/MachineIndependent/SpirvIntrinsics.cpp
+	src/glslang/glslang/GenericCodeGen/Link.cpp
+	src/glslang/glslang/GenericCodeGen/CodeGen.cpp
+	src/glslang/spirv/GlslangToSpv.cpp
+	src/glslang/spirv/doc.cpp
+	src/glslang/spirv/disassemble.cpp
+	src/glslang/spirv/SpvPostProcess.cpp
+	src/glslang/spirv/InReadableOrder.cpp
+	src/glslang/spirv/SPVRemapper.cpp
+	src/glslang/spirv/SpvBuilder.cpp
+	src/glslang/spirv/SpvTools.cpp
+	src/glslang/spirv/Logger.cpp
+	src/glslang/OGLCompilersDLL/InitializeDll.cpp
 )
+
+if(WIN32)
+	list(APPEND SHADER_TRANSLATOR_SOURCES src/glslang/glslang/OSDependent/Windows/ossource.cpp)
+else()
+	list(APPEND SHADER_TRANSLATOR_SOURCES src/glslang/glslang/OSDependent/Unix/ossource.cpp)
+endif()
 
 set(SHADER_TRANSLATOR_HEADERS
 	include/shadertranslator/shader_translator.h
@@ -29,16 +75,16 @@ add_library(shader-translator STATIC
 # Public include directory
 target_include_directories(shader-translator PUBLIC
 	${CMAKE_CURRENT_SOURCE_DIR}/include
+	${CMAKE_CURRENT_SOURCE_DIR}/src # for glslang headers
+	${CMAKE_CURRENT_SOURCE_DIR}/src/glslang
 )
 
 # ShaderTranslator is standalone - it only depends on compiled libraries, not ZVulkan's internals
-# Add glslang and SPIRV-Cross as subdirectories
-add_subdirectory(glslang EXCLUDE_FROM_ALL)
+# Add SPIRV-Cross as subdirectories
 add_subdirectory(SPIRV-Cross EXCLUDE_FROM_ALL)
 
-# Include directories for glslang and SPIRV-Cross
+# Include directories for SPIRV-Cross
 target_include_directories(shader-translator PRIVATE
-	${CMAKE_CURRENT_SOURCE_DIR}/glslang
 	${CMAKE_CURRENT_SOURCE_DIR}/SPIRV-Cross
 )
 
@@ -47,13 +93,6 @@ target_link_libraries(shader-translator PUBLIC
 	spirv-cross-core
 	spirv-cross-glsl
 	spirv-cross-msl
-)
-
-# Link against glslang for GLSL → SPIR-V compilation
-target_link_libraries(shader-translator PUBLIC
-	glslang-core
-	SPIRV
-	glslang-default-resource-limits
 )
 
 # Add HLSL output support if enabled

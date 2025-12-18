@@ -54,6 +54,8 @@ public:
 	void EndRenderPass();
 	void EndFrame();
 
+	void *GetEncoder() { return mEncoder; } // Added back
+
 protected:
 	// Lazy state evaluation pattern (from Vulkan)
 	void Apply(int dt);

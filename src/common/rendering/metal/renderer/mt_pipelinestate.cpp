@@ -91,9 +91,9 @@ void MtPipelineStateManager::ClearCache()
 	mPipelineCache.clear();
 }
 
-// ============================================================================
+// ============================================================================ 
 // Pipeline State Creation
-// ============================================================================
+// ============================================================================ 
 
 void* MtPipelineStateManager::CreateDepthStencilState(const MtPipelineKey& key)
 {
@@ -156,116 +156,165 @@ void* MtPipelineStateManager::CreateRenderPipelineState(const MtPipelineKey& key
 	// TODO: Implement proper shader selection based on key.ShaderKey
 	auto device = (MTL::Device*)fb->device->device;
 
-	// Create a simple default shader if not cached
-	static MTL::Library* defaultLibrary = nullptr;
-	static MTL::Function* vertexFunction = nullptr;
-	static MTL::Function* fragmentFunction = nullptr;
+	auto shaderManager = fb->GetShaderManager();
+	auto module = shaderManager->CompileShader("default", 
+		R"(
+			#version 450
+			// GLSL Vertex Shader
 
-	if (!defaultLibrary)
-	{
-		Printf("Metal: Compiling default shader...\n");
-		// Simple shader matching FFlatVertex structure with matrix transformations
-		const char* shaderSource = R"(
-			#include <metal_stdlib>
-			using namespace metal;
+			layout(location = 0) in vec3 position;
+			layout(location = 1) in vec2 texCoord;
+			layout(location = 2) in vec4 color0; // Vertex color
 
-			struct VertexIn {
-				float3 position [[attribute(0)]];      // x, z, y
-				float2 texCoord [[attribute(1)]];      // u, v
-				float2 lightmapCoord [[attribute(2)]]; // lu, lv
-				float lightmapIndex [[attribute(3)]];  // lindex
-			};
+			layout(location = 0) out vec4 out_position;
+			layout(location = 1) out vec2 out_texCoord;
+			layout(location = 2) out vec4 out_color0; // Pass vertex color to fragment shader
 
-			struct VertexOut {
-				float4 position [[position]];
-				float2 texCoord;
-			};
+			layout(binding = 2, std140) uniform ViewpointUBO {
+				mat4 ProjectionMatrix;
+				mat4 ViewMatrix;
+				mat4 NormalViewMatrix;
+			} viewpoint;
 
-			// Match HWViewpointUniforms structure
-			struct Viewpoint {
-				float4x4 ProjectionMatrix;
-				float4x4 ViewMatrix;
-				float4x4 NormalViewMatrix;
-				// Additional fields omitted for now
-			};
+			layout(binding = 3, std140) uniform MatricesUBO {
+				mat4 ModelMatrix;
+				mat4 NormalModelMatrix;
+				mat4 TextureMatrix;
+			} matrices;
 
-			// Match MatricesUBO structure
-			struct Matrices {
-				float4x4 ModelMatrix;
-				float4x4 NormalModelMatrix;
-				float4x4 TextureMatrix;
-			};
-
-			vertex VertexOut vertex_main(
-				VertexIn in [[stage_in]],
-				constant Viewpoint& viewpoint [[buffer(2)]],
-				constant Matrices& matrices [[buffer(3)]]
-			) {
-				VertexOut out;
+			void main() {
 				// Transform: Projection * View * Model * position
-				float4 worldPos = matrices.ModelMatrix * float4(in.position, 1.0);
-				float4 eyePos = viewpoint.ViewMatrix * worldPos;
-				out.position = viewpoint.ProjectionMatrix * eyePos;
-				out.texCoord = in.texCoord;
-				return out;
+				vec4 worldPos = matrices.ModelMatrix * vec4(position, 1.0);
+				vec4 eyePos = viewpoint.ViewMatrix * worldPos;
+				gl_Position = viewpoint.ProjectionMatrix * eyePos; // Use gl_Position for clip-space output
+				out_texCoord = texCoord;
+				out_color0 = color0; // Pass vertex color
 			}
+		)",
+		R"(
+			#version 450
+			// GLSL Fragment Shader
 
-			fragment float4 fragment_main(
-				VertexOut in [[stage_in]],
-				texture2d<float> diffuseTexture [[texture(0)]],
-				sampler diffuseSampler [[sampler(0)]]
-			) {
-				// Sample texture if available, otherwise return white
-				float4 color = diffuseTexture.sample(diffuseSampler, in.texCoord);
+			layout(location = 1) in vec2 in_texCoord; // Matches out_texCoord from vertex shader
+			layout(location = 2) in vec4 in_color0; // Input vertex color from vertex shader
+
+			// StreamData uniform buffer (from MtStreamBufferWriter)
+			layout(binding = 0, std140) uniform StreamDataUBO {
+				vec4 uObjectColor;
+				vec4 uObjectColor2;
+				vec4 uDynLightColor;
+				vec4 uAddColor;
+				vec4 uTextureAddColor;
+				vec4 uTextureModulateColor;
+				vec4 uTextureBlendColor;
+				vec4 uFogColor;
+				float uDesaturationFactor;
+				float uInterpolationFactor;
+				float timer;
+				int useVertexData;
+				vec4 uVertexColor;
+				vec4 uVertexNormal;
+
+				vec4 uGlowTopPlane;
+				vec4 uGlowTopColor;
+				vec4 uGlowBottomPlane;
+				vec4 uGlowBottomColor;
+
+				vec4 uGradientTopPlane;
+				vec4 uGradientBottomPlane;
+
+				vec4 uSplitTopPlane;
+				vec4 uSplitBottomPlane;
+
+				vec4 uDetailParms;
+				vec4 uNpotEmulation;
+				vec4 padding1;
+				vec4 padding2;
+				vec4 padding3;
+			} streamData;
+
+			// PushConstants uniform buffer (from MtRenderState::ApplyPushConstants)
+			layout(binding = 1, std140) uniform PushConstantsUBO {
+				int uTextureMode;
+				float uAlphaThreshold;
+				vec2 uClipSplit;
+
+				// Lighting + Fog
+				float uLightLevel;
+				float uFogDensity;
+				float uLightFactor;
+				float uLightDist;
+				int uFogEnabled;
+
+				// Dynamic lights
+			int uLightIndex;
+
+				// Blinn glossiness and specular level
+				vec2 uSpecularMaterial;
+
+				// Bone animation
+			int uBoneIndexBase;
+
+				// Stream data index
+			int uDataIndex;
+
+				// Padding to align to 16 bytes
+			int padding[2];
+			} pushConstants;
+
+
+			layout(binding = 0) uniform sampler2D diffuseTexture; // Texture binding, separate space from buffer bindings
+
+			layout(location = 0) out vec4 fragColor; // Output fragment color
+
+			void main() {
+				// Sample texture
+				vec4 color = texture(diffuseTexture, in_texCoord);
+
 				// If texture is mostly black (unbound), show magenta for debugging
 				if (color.r < 0.01 && color.g < 0.01 && color.b < 0.01) {
-					return float4(1.0, 0.0, 1.0, 1.0);  // Magenta = no texture
+					fragColor = vec4(1.0, 0.0, 1.0, 1.0);  // Magenta = no texture
+				} else {
+					// Apply object color and add color from streamData and pushConstants
+					vec4 finalColor = color * streamData.uObjectColor + streamData.uAddColor;
+
+					// Multiply with vertex color (for tinting) - Swizzle to correct BGRA to RGBA
+					finalColor *= in_color0.bgra;
+
+					// Apply push constants (e.g., alpha threshold)
+					// if (finalColor.a < pushConstants.uAlphaThreshold) {
+					// 	discard; // Discard fragment if below alpha threshold
+					// }
+					fragColor = finalColor;
 				}
-				return color;
 			}
-		)";
+		)",
+		{});
 
-		NS::Error* error = nullptr;
-		auto sourceStr = NS::String::string(shaderSource, NS::UTF8StringEncoding);
-		defaultLibrary = device->newLibrary(sourceStr, nullptr, &error);
+	if (!module)
+	{
+		Printf("Metal: Failed to get default shader\n");
+		desc->release();
+		return nullptr;
+	}
+	
+	auto vertexFunction = (MTL::Function*)module->function;
+	auto fragmentFunction = (MTL::Function*)module->fragmentFunction;
 
-		if (!defaultLibrary)
-		{
-			if (error)
-			{
-				Printf("Metal: Failed to compile default shader: %s\n",
-					error->localizedDescription()->utf8String());
-				error->release();
-			}
-			desc->release();
-			return nullptr;
-		}
-
-		Printf("Metal: Default shader compiled successfully\n");
-
-		auto vertFuncName = NS::String::string("vertex_main", NS::UTF8StringEncoding);
-		auto fragFuncName = NS::String::string("fragment_main", NS::UTF8StringEncoding);
-
-		vertexFunction = defaultLibrary->newFunction(vertFuncName);
-		fragmentFunction = defaultLibrary->newFunction(fragFuncName);
-
-		if (!vertexFunction || !fragmentFunction)
-		{
-			Printf("Metal: Failed to load shader functions from default library\n");
-			desc->release();
-			return nullptr;
-		}
-
-		Printf("Metal: Loaded vertex and fragment functions successfully\n");
+	if (!vertexFunction || !fragmentFunction)
+	{
+		Printf("Metal: Failed to load shader functions from default library\n");
+		desc->release();
+		return nullptr;
 	}
 
 	desc->setVertexFunction(vertexFunction);
 	desc->setFragmentFunction(fragmentFunction);
 
-	// Configure vertex descriptor to match FFlatVertex structure
+	// Configure vertex descriptor to match F2DDrawer::TwoDVertex structure
 	auto vertexDesc = MTL::VertexDescriptor::alloc()->init();
 
-	// Attribute 0: Position (float3) - x, z, y
+	// Attribute 0: Position (float3) - x, y, z (z is depth)
 	vertexDesc->attributes()->object(0)->setFormat(MTL::VertexFormatFloat3);
 	vertexDesc->attributes()->object(0)->setOffset(0);
 	vertexDesc->attributes()->object(0)->setBufferIndex(0);
@@ -275,18 +324,13 @@ void* MtPipelineStateManager::CreateRenderPipelineState(const MtPipelineKey& key
 	vertexDesc->attributes()->object(1)->setOffset(12);
 	vertexDesc->attributes()->object(1)->setBufferIndex(0);
 
-	// Attribute 2: Lightmap TexCoord (float2) - lu, lv
-	vertexDesc->attributes()->object(2)->setFormat(MTL::VertexFormatFloat2);
+	// Attribute 2: Color (uchar4 normalized) - color0
+	vertexDesc->attributes()->object(2)->setFormat(MTL::VertexFormatUChar4Normalized);
 	vertexDesc->attributes()->object(2)->setOffset(20);
 	vertexDesc->attributes()->object(2)->setBufferIndex(0);
 
-	// Attribute 3: Lightmap Index (float) - lindex
-	vertexDesc->attributes()->object(3)->setFormat(MTL::VertexFormatFloat);
-	vertexDesc->attributes()->object(3)->setOffset(28);
-	vertexDesc->attributes()->object(3)->setBufferIndex(0);
-
-	// Buffer layout - FFlatVertex is 32 bytes
-	vertexDesc->layouts()->object(0)->setStride(32);
+	// Buffer layout - F2DDrawer::TwoDVertex is 24 bytes
+	vertexDesc->layouts()->object(0)->setStride(24);
 	vertexDesc->layouts()->object(0)->setStepFunction(MTL::VertexStepFunctionPerVertex);
 
 	desc->setVertexDescriptor(vertexDesc);
@@ -354,41 +398,45 @@ void MtPipelineStateManager::ConfigureBlendMode(void* colorAttachment, int blend
 {
 	auto attachment = (MTL::RenderPipelineColorAttachmentDescriptor*)colorAttachment;
 
-	// TODO: Implement proper blend mode mapping from FRenderStyle
-	// For now, use basic blend modes
 	switch (blendMode)
 	{
-		case 0: // Normal (alpha blend)
+		case STYLEOP_Add: // This is the blend mode used by STYLE_Normal
 			attachment->setBlendingEnabled(true);
 			attachment->setSourceRGBBlendFactor(MTL::BlendFactorSourceAlpha);
 			attachment->setDestinationRGBBlendFactor(MTL::BlendFactorOneMinusSourceAlpha);
 			attachment->setRgbBlendOperation(MTL::BlendOperationAdd);
-			attachment->setSourceAlphaBlendFactor(MTL::BlendFactorOne);
+			attachment->setSourceAlphaBlendFactor(MTL::BlendFactorSourceAlpha);
 			attachment->setDestinationAlphaBlendFactor(MTL::BlendFactorOneMinusSourceAlpha);
 			attachment->setAlphaBlendOperation(MTL::BlendOperationAdd);
 			break;
 
-		case 1: // Additive
+		case STYLEOP_RevSub: // This is the blend mode used by STYLE_Subtract
 			attachment->setBlendingEnabled(true);
-			attachment->setSourceRGBBlendFactor(MTL::BlendFactorSourceAlpha);
+			attachment->setSourceRGBBlendFactor(MTL::BlendFactorSourceAlpha); // Typical for subtractive, can be adjusted
 			attachment->setDestinationRGBBlendFactor(MTL::BlendFactorOne);
-			attachment->setRgbBlendOperation(MTL::BlendOperationAdd);
-			attachment->setSourceAlphaBlendFactor(MTL::BlendFactorOne);
+			attachment->setRgbBlendOperation(MTL::BlendOperationReverseSubtract);
+			attachment->setSourceAlphaBlendFactor(MTL::BlendFactorZero); // Typical for subtractive, can be adjusted
 			attachment->setDestinationAlphaBlendFactor(MTL::BlendFactorOne);
 			attachment->setAlphaBlendOperation(MTL::BlendOperationAdd);
 			break;
 
-		case 2: // Subtractive
+		case STYLEOP_None:
+			attachment->setBlendingEnabled(false);
+			break;
+		
+		case STYLEOP_Shadow: // Shadow blend mode
 			attachment->setBlendingEnabled(true);
-			attachment->setSourceRGBBlendFactor(MTL::BlendFactorSourceAlpha);
-			attachment->setDestinationRGBBlendFactor(MTL::BlendFactorOne);
-			attachment->setRgbBlendOperation(MTL::BlendOperationReverseSubtract);
+			attachment->setSourceRGBBlendFactor(MTL::BlendFactorZero);
+			attachment->setDestinationRGBBlendFactor(MTL::BlendFactorSourceAlpha); // Use source alpha to dim background
+			attachment->setRgbBlendOperation(MTL::BlendOperationAdd);
 			attachment->setSourceAlphaBlendFactor(MTL::BlendFactorZero);
 			attachment->setDestinationAlphaBlendFactor(MTL::BlendFactorOne);
 			attachment->setAlphaBlendOperation(MTL::BlendOperationAdd);
 			break;
 
-		default: // No blending
+
+		default: // For any other unhandled blend mode, disable blending for now and warn
+			Printf("Metal: Warning - Unhandled blendMode: %d. Disabling blending.\n", blendMode);
 			attachment->setBlendingEnabled(false);
 			break;
 	}

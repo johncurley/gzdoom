@@ -31,12 +31,12 @@
 **
 */
 
-#include "zvulkan/shadertranslator/shader_translator.h"
-#include <spirv_cross/spirv_msl.hpp>
+#include "shadertranslator/shader_translator.h"
+#include <spirv_msl.hpp>
 #ifdef SHADERTRANSLATOR_HLSL_ENABLED
-#include <spirv_cross/spirv_hlsl.hpp>
+#include <spirv_hlsl.hpp>
 #endif
-#include <spirv_cross/spirv_glsl.hpp>
+#include <spirv_glsl.hpp>
 #include <stdexcept>
 
 namespace ShaderTranslator

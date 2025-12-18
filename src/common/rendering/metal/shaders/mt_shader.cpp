@@ -9,6 +9,7 @@
 #include <shadertranslator/shader_translator.h>
 #include "cmdlib.h"
 #include "printf.h"
+#include <sstream>
 
 // glslang includes for GLSL → SPIR-V compilation
 #include "glslang/glslang/Public/ShaderLang.h"
@@ -218,10 +219,8 @@ std::shared_ptr<MtShaderModule> MtShaderManager::CompileShader(
 		}
 
 		// Step 3: MSL → MTLLibrary
-		// Note: For fragment shaders, we store in a separate field
-		// This is a simplified implementation - in production, you'd manage both shaders
-		MTL::Library* fragLibrary = (MTL::Library*)CompileMSLToLibrary(fragmentMSL, name + "_frag");
-		if (!fragLibrary)
+		module->fragmentLibrary = CompileMSLToLibrary(fragmentMSL, name + "_frag");
+		if (!module->fragmentLibrary)
 		{
 			Printf("Metal: Failed to compile fragment shader MSL to library: %s\n", name.c_str());
 			if (module->function) ((MTL::Function*)module->function)->release();
@@ -229,9 +228,20 @@ std::shared_ptr<MtShaderModule> MtShaderManager::CompileShader(
 			return nullptr;
 		}
 
-		// Clean up fragment library (for now, we only store vertex)
-		// TODO: Properly manage both vertex and fragment shaders
-		fragLibrary->release();
+		// Get main function for fragment shader
+		NS::String* fragFuncName = NS::String::string("main0", NS::UTF8StringEncoding);
+		MTL::Library* fragLib = (MTL::Library*)module->fragmentLibrary;
+		module->fragmentFunction = fragLib->newFunction(fragFuncName);
+		fragFuncName->release();
+
+		if (!module->fragmentFunction)
+		{
+			Printf("Metal: Failed to find main0 function in fragment shader: %s\n", name.c_str());
+			((MTL::Library*)module->fragmentLibrary)->release();
+			if (module->function) ((MTL::Function*)module->function)->release();
+			if (module->library) ((MTL::Library*)module->library)->release();
+			return nullptr;
+		}
 	}
 
 	// Cache the compiled shader
@@ -262,7 +272,9 @@ void MtShaderManager::ClearCache()
 		if (module)
 		{
 			if (module->function) ((MTL::Function*)module->function)->release();
+			if (module->fragmentFunction) ((MTL::Function*)module->fragmentFunction)->release();
 			if (module->library) ((MTL::Library*)module->library)->release();
+			if (module->fragmentLibrary) ((MTL::Library*)module->fragmentLibrary)->release();
 		}
 	}
 	mShaderCache.clear();
@@ -277,16 +289,23 @@ std::vector<uint32_t> MtShaderManager::CompileGLSLToSPIRV(
 	// Determine shader stage
 	EShLanguage stage = isVertex ? EShLangVertex : EShLangFragment;
 
-	// Prepare source with defines
-	std::string fullSource;
-	for (const auto& define : defines)
-	{
-		fullSource += "#define " + define + "\n";
+	// Prepare source:
+	// 1. Remove Metal-specific includes that glslang cannot handle.
+	// 2. Prepend the GL_GOOGLE_include_directive extension.
+	// 3. Add defines.
+	std::string processedSource;
+	std::stringstream ss(source);
+	std::string line;
+	while (std::getline(ss, line)) {
+		// Remove lines that explicitly include metal_stdlib or use namespace metal as glslang cannot process them
+		if (line.find("#include <metal_stdlib>") == std::string::npos &&
+			line.find("using namespace metal;") == std::string::npos) {
+			processedSource += line + "\n";
+		}
 	}
-	fullSource += source;
 
-	const char* sourceStr = fullSource.c_str();
-	int sourceLength = static_cast<int>(fullSource.length());
+		std::string finalSource = processedSource;		
+			const char* sourceStr = finalSource.c_str();	int sourceLength = static_cast<int>(finalSource.length());
 	const char* nameStr = name.c_str();
 
 	// Create glslang shader
@@ -300,7 +319,8 @@ std::vector<uint32_t> MtShaderManager::CompileGLSLToSPIRV(
 	shader.setEnvTarget(glslang::EShTargetSpv, glslang::EShTargetSpv_1_0);
 
 	// Parse shader
-	bool parseSuccess = shader.parse(&resources, 450, false, EShMsgDefault);
+	// EShMsgVulkanRules helps enforce Vulkan GLSL best practices for SPIR-V output.
+	bool parseSuccess = shader.parse(&resources, 450, false, EShMsgVulkanRules); // Use EShMsgVulkanRules
 	if (!parseSuccess)
 	{
 		Printf("Metal: Shader parse failed for %s:\n%s\n", name.c_str(), shader.getInfoLog());

@@ -63,6 +63,9 @@
 #include <zwidget/window/cocoanativehandle.h>
 #endif
 
+// Max number of frames to queue for rendering
+constexpr int MaxFramesInFlight = 3;
+
 EXTERN_CVAR(Int, gl_tonemap)
 EXTERN_CVAR(Int, screenblocks)
 EXTERN_CVAR(Bool, cl_capfps)
@@ -83,6 +86,9 @@ void MetalPrintLog(const char* typestr, const std::string& msg)
 MetalRenderDevice::MetalRenderDevice(void* hMonitor, bool fullscreen)
 	: Super(hMonitor, fullscreen)
 {
+	// Create the semaphore to control frame pacing
+	mInflightFramesSemaphore = dispatch_semaphore_create(MaxFramesInFlight);
+
 	// Create Metal device
 	device = std::make_shared<MetalDevice>();
 	device->device = MTL::CreateSystemDefaultDevice();
@@ -149,6 +155,9 @@ MetalRenderDevice::~MetalRenderDevice()
 			device->device = nullptr;
 		}
 	}
+
+	// Release the semaphore
+	dispatch_release(mInflightFramesSemaphore);
 }
 
 void MetalRenderDevice::InitializeState()
@@ -338,6 +347,9 @@ void MetalRenderDevice::PresentFrame(void* drawablePtr)
 
 void MetalRenderDevice::BeginFrame()
 {
+	// Wait for a free slot in the queue
+	dispatch_semaphore_wait(mInflightFramesSemaphore, DISPATCH_TIME_FOREVER);
+
 	if (mCommands)
 		mCommands->BeginFrame();
 

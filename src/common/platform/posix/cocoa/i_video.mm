@@ -372,6 +372,65 @@ namespace
 // ---------------------------------------------------------------------------
 
 
+// Metal view implementation using CAMetalLayer
+@interface MetalCocoaView : NSView
+{
+	NSCursor* m_cursor;
+}
+
+- (void)setCursor:(NSCursor*)cursor;
+
+@end
+
+
+@implementation MetalCocoaView
+
+- (void)resetCursorRects
+{
+	[super resetCursorRects];
+
+	NSCursor* const cursor = nil == m_cursor
+		? [NSCursor arrowCursor]
+		: m_cursor;
+
+	[self addCursorRect:[self bounds]
+				 cursor:cursor];
+}
+
+- (void)setCursor:(NSCursor*)cursor
+{
+	m_cursor = cursor;
+}
+
+// Use CAMetalLayer for Metal rendering
++(Class) layerClass
+{
+	return NSClassFromString(@"CAMetalLayer");
+}
+
+-(CALayer*) makeBackingLayer
+{
+	return [self.class.layerClass layer];
+}
+
+-(BOOL) isOpaque
+{
+	return YES;
+}
+
+- (void)keyDown:(NSEvent*)event
+{
+	// Handle key events to prevent system beep
+	// Actual keyboard input is processed through Cocoa event system
+	// Don't call [super keyDown:event] to avoid beep sound
+}
+
+@end
+
+
+// ---------------------------------------------------------------------------
+
+
 extern id appCtrl;
 
 
@@ -580,31 +639,21 @@ public:
 			if (V_GetBackend() == 3)
 			{
 				Printf("Attempting to initialize Metal backend...\n");
-				// Ensure the window's view has a Metal layer before initializing Metal renderer
-				NSView* contentView = [ms_window contentView];
-				if (contentView != nil)
-				{
-					// Create Metal layer for the view
-					CAMetalLayer* metalLayer = [CAMetalLayer layer];
-					[contentView setLayer:metalLayer];
-					[contentView setWantsLayer:YES];
+				NSView* metalView = [[MetalCocoaView alloc] initWithFrame:contentRect];
+				metalView.wantsLayer = YES;
+				metalView.layer.backgroundColor = NSColor.blackColor.CGColor;
 
-					// Set initial Metal layer properties
-					metalLayer.pixelFormat = MTLPixelFormatBGRA8Unorm;
-					metalLayer.framebufferOnly = NO; // Allow reading back (for screenshots, etc.)
-
-					Printf("Created Metal layer for window\n");
-				}
+				[ms_window setContentView:metalView];
 
 				try
 				{
 					fb = new MetalRenderDevice(nullptr, vid_fullscreen);
-					Printf("Metal renderer initialized successfully\n");
+					Printf("Metal renderer initialized successfully.\n");
 				}
 				catch (std::exception const& error)
 				{
 					Printf(TEXTCOLOR_RED "Metal renderer initialization failed: %s. Falling back to OpenGL.\n", error.what());
-					fb = nullptr;
+					SetupOpenGLView(ms_window, OpenGLProfile::Core);
 				}
 			}
 #endif
