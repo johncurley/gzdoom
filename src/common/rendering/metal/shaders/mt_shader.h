@@ -122,7 +122,7 @@ private:
 
   // Translate SPIR-V to MSL (using shader-translator)
   std::string TranslateSPIRVToMSL(const std::vector<uint32_t> &spirv,
-                                  bool isVertex);
+                                  bool isVertex, const std::string &name); // Added name
 
   // Compile MSL to MTLLibrary
   MTL::Library *CompileMSLToLibrary(const std::string &msl,

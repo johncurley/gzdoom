@@ -24,7 +24,9 @@
 CVAR(Int, mt_submit_size, 1000, CVAR_ARCHIVE | CVAR_GLOBALCONFIG);
 
 MtRenderState::MtRenderState(MetalRenderDevice *fb)
-    : fb(fb), mStreamBufferWriter(fb), mMatrixBufferWriter(fb) {}
+    : FRenderState(), fb(fb), mStreamBufferWriter(fb), mMatrixBufferWriter(fb) { // Call base class constructor
+    Reset(); // Explicitly call Reset to initialize FRenderState members
+}
 
 void MtRenderState::ClearScreen() {
   // Set 2D viewport and draw a fullscreen black quad

@@ -1,5 +1,6 @@
 #include "mt_pipelinestate.h"
 #include "hwrenderer/data/hw_renderstate.h"
+#include "hwrenderer/data/flatvertices.h" // New include for FFlatVertex
 #include "metal/shaders/mt_shader.h"
 #include "metal/system/mt_hwbuffer.h"
 #include "metal/system/mt_renderdevice.h"
@@ -295,6 +296,45 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
       attrDesc->setBufferIndex(attrs[i].binding);
     }
 
+    // Fix: Ensure all potentially required attributes (3-8) are defined if the shader expects them but the buffer doesn't provide them.
+    // This aliases them to existing attributes to satisfy Metal validation.
+    auto attr3 = vertexDesc->attributes()->object(3); // aVertex2
+    if (attr3->format() == MTL::VertexFormatInvalid) {
+        attr3->setFormat(MTL::VertexFormatFloat2);
+        attr3->setOffset(12); // Alias to TexCoord
+        attr3->setBufferIndex(0);
+    }
+    auto attr4 = vertexDesc->attributes()->object(4); // aNormal
+    if (attr4->format() == MTL::VertexFormatInvalid) {
+        attr4->setFormat(MTL::VertexFormatFloat3);
+        attr4->setOffset(0); // Alias to Position
+        attr4->setBufferIndex(0);
+    }
+    auto attr5 = vertexDesc->attributes()->object(5); // aNormal2
+    if (attr5->format() == MTL::VertexFormatInvalid) {
+        attr5->setFormat(MTL::VertexFormatFloat3);
+        attr5->setOffset(0); // Alias to Position
+        attr5->setBufferIndex(0);
+    }
+    auto attr6 = vertexDesc->attributes()->object(6); // aLightmap
+    if (attr6->format() == MTL::VertexFormatInvalid) {
+        attr6->setFormat(MTL::VertexFormatFloat2);
+        attr6->setOffset(12); // Alias to TexCoord
+        attr6->setBufferIndex(0);
+    }
+    auto attr7 = vertexDesc->attributes()->object(7); // aBoneWeight
+    if (attr7->format() == MTL::VertexFormatInvalid) {
+        attr7->setFormat(MTL::VertexFormatFloat4);
+        attr7->setOffset(0); // Alias to Position
+        attr7->setBufferIndex(0);
+    }
+    auto attr8 = vertexDesc->attributes()->object(8); // aBoneSelector
+    if (attr8->format() == MTL::VertexFormatInvalid) {
+        attr8->setFormat(MTL::VertexFormatUInt4);
+        attr8->setOffset(0); // Alias to Position
+        attr8->setBufferIndex(0);
+    }
+
     // Configure buffer layouts
     int numBindings = vertexBuffer->GetBindingPoints();
     size_t stride = vertexBuffer->GetStride();
@@ -326,6 +366,39 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
         MTL::VertexFormatUChar4Normalized);
     vertexDesc->attributes()->object(2)->setOffset(20);
     vertexDesc->attributes()->object(2)->setBufferIndex(0);
+
+    // Attribute 3: aVertex2 (float2) - Alias to TexCoord (offset 12) to satisfy validation
+    // The shader expects this attribute, but FFlatVertex doesn't provide it.
+    vertexDesc->attributes()->object(3)->setFormat(MTL::VertexFormatFloat2);
+    vertexDesc->attributes()->object(3)->setOffset(12); 
+    vertexDesc->attributes()->object(3)->setBufferIndex(0);
+
+    // Attribute 4: aNormal (float3) - Alias to Position (offset 0)
+    vertexDesc->attributes()->object(4)->setFormat(MTL::VertexFormatFloat3);
+    vertexDesc->attributes()->object(4)->setOffset(0);
+    vertexDesc->attributes()->object(4)->setBufferIndex(0);
+
+    // Attribute 5: aNormal2 (float3) - Alias to Position (offset 0)
+    vertexDesc->attributes()->object(5)->setFormat(MTL::VertexFormatFloat3);
+    vertexDesc->attributes()->object(5)->setOffset(0);
+    vertexDesc->attributes()->object(5)->setBufferIndex(0);
+
+    // Attribute 6: aLightmap (float2) - Alias to TexCoord (offset 12)
+    vertexDesc->attributes()->object(6)->setFormat(MTL::VertexFormatFloat2);
+    vertexDesc->attributes()->object(6)->setOffset(12);
+    vertexDesc->attributes()->object(6)->setBufferIndex(0);
+
+    // Attribute 7: aBoneWeight (float4?) - Alias to Position (offset 0) - reads 12 bytes effectively, padding maybe?
+    // Using Float3 to be safe within stride, or Float4 if we assume 16 bytes available?
+    // Stride is 24. Offset 0 is fine for 16 bytes.
+    vertexDesc->attributes()->object(7)->setFormat(MTL::VertexFormatFloat4);
+    vertexDesc->attributes()->object(7)->setOffset(0);
+    vertexDesc->attributes()->object(7)->setBufferIndex(0);
+
+    // Attribute 8: aBoneSelector (int4?) - Alias to Position (offset 0) - reads as ints
+    vertexDesc->attributes()->object(8)->setFormat(MTL::VertexFormatUInt4);
+    vertexDesc->attributes()->object(8)->setOffset(0);
+    vertexDesc->attributes()->object(8)->setBufferIndex(0);
 
     vertexDesc->layouts()->object(0)->setStride(24);
     vertexDesc->layouts()->object(0)->setStepFunction(

@@ -354,7 +354,7 @@ MTL::Texture *MtTextureManager::GetPPTexture(PPTexture *texture) {
 }
 
 MtPPTexture::MtPPTexture(MetalRenderDevice *fb, PPTexture *texture) : fb(fb) {
-  MTL::PixelFormat format;
+  MTL::PixelFormat format = MTL::PixelFormatInvalid; // Initialize to an invalid but known value
   int bytesPerPixel = 4;
   switch (texture->Format) {
   case PixelFormat::Rgba8:

@@ -359,10 +359,14 @@ MtShaderManager::CompileShader(const std::string &name,
       }
 
       // Step 2: SPIR-V → MSL
-      vertexMSL = TranslateSPIRVToMSL(vertexSPIRV, true);
+      vertexMSL = TranslateSPIRVToMSL(vertexSPIRV, true, name + "_vert"); // Pass name
       if (vertexMSL.empty()) {
         Printf("Metal: Failed to translate vertex shader SPIR-V to MSL: %s\n",
                name.c_str());
+        if (module->function)
+          ((MTL::Function *)module->function)->release();
+        if (module->library)
+          ((MTL::Library *)module->library)->release();
         return nullptr;
       }
 
@@ -424,7 +428,7 @@ MtShaderManager::CompileShader(const std::string &name,
       }
 
       // Step 2: SPIR-V → MSL
-      fragmentMSL = TranslateSPIRVToMSL(fragmentSPIRV, false);
+      fragmentMSL = TranslateSPIRVToMSL(fragmentSPIRV, false, name + "_frag"); // Pass name
       if (fragmentMSL.empty()) {
         Printf("Metal: Failed to translate fragment shader SPIR-V to MSL: %s\n",
                name.c_str());
@@ -581,7 +585,7 @@ bool MtShaderManager::CompileNextShader() {
       compileState = 0;
     }
   }
-  return false;
+  return false; // Not done yet
 }
 
 std::shared_ptr<MtShaderModule>
@@ -803,7 +807,7 @@ MtShaderManager::CompileGLSLToSPIRV(const std::string &source,
 
 std::string
 MtShaderManager::TranslateSPIRVToMSL(const std::vector<uint32_t> &spirv,
-                                     bool isVertex) {
+                                     bool isVertex, const std::string &name) { // Added name
   if (spirv.empty())
     return "";
 
@@ -832,9 +836,18 @@ MTL::Library *MtShaderManager::CompileMSLToLibrary(const std::string &msl,
   MTL::Library *library =
       fb->device->device->newLibrary(source, nullptr, &error);
 
-  if (!library && error) {
-    const char *errorMsg = error->localizedDescription()->utf8String();
-    Printf("Metal shader compilation error: %s\n", errorMsg);
+  if (!library) { // Always log if library creation failed
+    if (error) {
+      const char *errorMsg = error->localizedDescription()->utf8String();
+      Printf("Metal: MSL to MTLLibrary compilation FAILED for %s:\n%s\n", name.c_str(), errorMsg);
+      error->release(); // Release error object
+    } else {
+      Printf("Metal: MSL to MTLLibrary compilation FAILED for %s: Unknown error (NS::Error was null).\n", name.c_str());
+    }
+  } else if (error) { // Log warnings if library created but error present
+      const char *errorMsg = error->localizedDescription()->utf8String();
+      Printf("Metal: MSL to MTLLibrary compilation WARNING for %s:\n%s\n", name.c_str(), errorMsg);
+      error->release(); // Release error object
   }
 
   return library;

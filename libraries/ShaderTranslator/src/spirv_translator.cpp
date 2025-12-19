@@ -79,6 +79,23 @@ public:
 			// Extract resource bindings for reflection
 			spirv_cross::ShaderResources resources = msl.get_shader_resources();
 
+			// DEBUG: Print all reflected vertex attributes
+			for (const auto& resource : resources.stage_inputs)
+			{
+				uint32_t location = msl.get_decoration(resource.id, spv::DecorationLocation);
+				std::string name = resource.name;
+				printf("SPIRV-Cross reflected vertex attribute: name=%s, location=%u\n", name.c_str(), location);
+			}
+
+			// DEBUG: Print all reflected vertex attributes
+			printf("=== SPIRV-Cross Input Variables ===\n");
+			for (const auto& resource : resources.stage_inputs)
+			{
+				uint32_t location = msl.get_decoration(resource.id, spv::DecorationLocation);
+				auto type = msl.get_type(resource.type_id);
+				printf("  Input: %s | Location: %u | Type: %d\n", resource.name.c_str(), location, (int)type.basetype);
+			}
+
 			// Extract texture bindings
 			for (const auto& resource : resources.sampled_images)
 			{

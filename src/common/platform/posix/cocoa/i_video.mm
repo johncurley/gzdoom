@@ -111,7 +111,7 @@ extern bool ToggleFullscreen;
 
 EXTERN_CVAR(Bool, vid_hidpi)
 EXTERN_CVAR(Int,  vid_defwidth)
-EXTERN_CVAR(Bool, vid_defheight)
+EXTERN_CVAR(Int, vid_defheight)
 EXTERN_CVAR(Bool, vk_debug)
 EXTERN_CVAR(Int, vid_preferbackend)
 
@@ -1288,3 +1288,14 @@ void I_PolyPresentDeinit()
 	glBindTexture(GL_TEXTURE_2D, 0);
 	glDeleteTextures(1, &polyTexture);
 }
+
+// Implement the C++-friendly function declared in metal_common.h
+#include "metal/metal_common.h"
+
+MetalViewSize GetMetalViewDrawableSize(void* nsWindowPtr)
+{
+    NSWindow* const window = (__bridge NSWindow*)nsWindowPtr;
+    NSSize nsSize = I_GetContentViewSize(window); // Call the original I_GetContentViewSize
+    return { (float)nsSize.width, (float)nsSize.height };
+}
+

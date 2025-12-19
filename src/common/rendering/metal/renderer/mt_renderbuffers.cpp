@@ -1,6 +1,7 @@
 #include "mt_renderbuffers.h"
 #include "metal/system/mt_renderdevice.h"
 #include "metal/textures/mt_texture.h"
+#include "printf.h" // New include
 
 #include "i_time.h"
 #define TimeScale TimeScale_GZDOOM
@@ -33,7 +34,7 @@ void MtRenderBuffers::CreatePipelineDepthStencil(int width, int height) {
   auto desc = MTL::TextureDescriptor::alloc()->init();
   desc->setWidth(width);
   desc->setHeight(height);
-  desc->setPixelFormat(MTL::PixelFormatDepth24Unorm_Stencil8);
+  desc->setPixelFormat(MTL::PixelFormatDepth32Float_Stencil8); // Changed to a more robust depth/stencil format
   desc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
   desc->setStorageMode(MTL::StorageModePrivate);
 
@@ -97,7 +98,7 @@ void MtRenderBuffers::CreateSceneDepthStencil(int width, int height,
   auto desc = MTL::TextureDescriptor::alloc()->init();
   desc->setWidth(width);
   desc->setHeight(height);
-  desc->setPixelFormat(MTL::PixelFormatDepth24Unorm_Stencil8);
+  desc->setPixelFormat(MTL::PixelFormatDepth32Float_Stencil8); // Changed to a more robust depth/stencil format
   desc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
   desc->setStorageMode(MTL::StorageModePrivate);
   desc->setSampleCount(samples);

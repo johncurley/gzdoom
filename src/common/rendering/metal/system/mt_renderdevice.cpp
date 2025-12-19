@@ -11,6 +11,7 @@
 // i_time.h declares: extern double TimeScale
 // MacTypes.h (included by Metal) declares: typedef SInt32 TimeScale
 #include "i_time.h"
+#include "metal/metal_common.h" // New include
 
 // Prevent MacTypes.h from defining TimeScale by defining it as a macro
 // temporarily
@@ -63,6 +64,11 @@
 #ifdef __APPLE__
 #include <zwidget/window/cocoanativehandle.h>
 #endif
+
+#include "v_video.h"
+#include "v_text.h"
+#include "version.h"
+
 
 // Max number of frames to queue for rendering
 constexpr int MaxFramesInFlight = 3;
@@ -163,13 +169,17 @@ void MetalRenderDevice::InitializeState() {
   if (nativeHandle.metalLayer) {
     CA::MetalLayer *metalLayer = (CA::MetalLayer *)nativeHandle.metalLayer;
     metalLayer->setDevice(device->device);
-    metalLayer->setPixelFormat(MTL::PixelFormatBGRA8Unorm);
-
-    // VSync will be set later via SetVSync()
-    metalLayer->setDisplaySyncEnabled(false);
-
-    Printf("Metal layer configured successfully\n");
-  } else {
+                    metalLayer->setPixelFormat(MTL::PixelFormatBGRA8Unorm);
+            
+                    // VSync will be set later via SetVSync()
+                    metalLayer->setDisplaySyncEnabled(false);
+                    Printf("Metal layer configured successfully\n");
+    
+                    Printf("  MetalLayer properties after setup:\n");
+                    Printf("    pixelFormat: %llu\n", (unsigned long long)metalLayer->pixelFormat());
+                    Printf("    framebufferOnly: %s\n", metalLayer->framebufferOnly() ? "YES" : "NO");
+                    Printf("    drawableSize: %f x %f\n", metalLayer->drawableSize().width, metalLayer->drawableSize().height);
+              } else {
     MetalError("Failed to get Metal layer from window");
   }
 #endif
@@ -260,6 +270,37 @@ void MetalRenderDevice::Update() {
   }
 
   CA::MetalLayer *metalLayer = (CA::MetalLayer *)nativeHandle.metalLayer;
+  // Ensure drawableSize is up-to-date right before requesting a drawable
+#ifdef __APPLE__
+  if (nativeHandle.metalLayer) {
+    CA::MetalLayer *metalLayer = (CA::MetalLayer *)nativeHandle.metalLayer;
+    MetalViewSize viewSize = GetMetalViewDrawableSize(m_window);
+    CGSize drawableSize = CGSizeMake(viewSize.width, viewSize.height);
+
+    // Only set drawable size if it's valid (non-zero)
+    if (drawableSize.width > 0 && drawableSize.height > 0)
+    {
+        if (metalLayer->drawableSize().width != drawableSize.width || metalLayer->drawableSize().height != drawableSize.height)
+        {
+            metalLayer->setDrawableSize(drawableSize);
+            if (mt_debug)
+                Printf("  setDrawableSize called with: %f x %f\n", drawableSize.width, drawableSize.height);
+        }
+    }
+    else
+    {
+        if (mt_debug)
+            Printf("Warning: Skipping setDrawableSize, current view size is 0x0. Retrieved: %f x %f\n", viewSize.width, viewSize.height);
+    }
+
+    if (mt_debug) {
+        Printf("  MetalLayer properties before nextDrawable:\n");
+        Printf("    pixelFormat: %llu\n", (unsigned long long)metalLayer->pixelFormat());
+        Printf("    framebufferOnly: %s\n", metalLayer->framebufferOnly() ? "YES" : "NO");
+        Printf("    drawableSize: %f x %f\n", metalLayer->drawableSize().width, metalLayer->drawableSize().height);
+    }
+  }
+#endif
   CA::MetalDrawable *drawable = metalLayer->nextDrawable();
 
   if (!drawable) {
@@ -361,6 +402,12 @@ void MetalRenderDevice::SetVSync(bool vsync) {
     metalLayer->setDisplaySyncEnabled(vsync);
   }
 #endif
+}
+
+void MetalRenderDevice::SetMode(bool fullscreen, bool hiDPI) {
+  Super::SetMode(fullscreen, hiDPI);
+
+  // TODO: Implement Metal-specific mode setting (e.g., reconfigure metal layer)
 }
 
 void MetalRenderDevice::PrintStartupLog() {
