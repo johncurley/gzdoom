@@ -125,7 +125,7 @@ MetalRenderDevice::~MetalRenderDevice() {
   mShadowMap.Reset();
 
   // Release managers (in reverse order)
-  mRenderState.reset();
+  mMtRenderState.reset();
   mPipelineStateManager.reset();
   mResourceBindingManager.reset();
   mPostprocess.reset();
@@ -242,7 +242,7 @@ void MetalRenderDevice::InitializeState() {
   Printf("  - Shader manager initialized\n");
 
   // 10. Render state (core state machine)
-  mRenderState.reset(new MtRenderState(this));
+  mMtRenderState.reset(new MtRenderState(this));
   Printf("  - Render state initialized\n");
 
   // Initialize vertex data, lights, etc. (same as Vulkan)
@@ -312,9 +312,21 @@ void MetalRenderDevice::Update() {
 
   // Get the drawable's texture and set it as our render target
   MTL::Texture *drawableTexture = drawable->texture();
-  if (drawableTexture && mRenderState && mScreenBuffers) {
+  if (drawableTexture && mMtRenderState && mScreenBuffers) {
     int width = drawableTexture->width();
     int height = drawableTexture->height();
+
+    // Fix: Update SystemBaseFrameBuffer's mScreenViewport with drawable size
+    // This is crucial for Draw2D calls to get correct viewport dimensions.
+    if (mScreenViewport.width != width || mScreenViewport.height != height) {
+        mScreenViewport.width = width;
+        mScreenViewport.height = height;
+        mScreenViewport.left = 0;
+        mScreenViewport.top = 0;
+        if (mt_debug) {
+            Printf("Metal: Updating mScreenViewport to %dx%d\n", width, height);
+        }
+    }
 
     // Ensure render buffers are sized correctly
     mScreenBuffers->BeginFrame(width, height, width, height);
@@ -325,7 +337,7 @@ void MetalRenderDevice::Update() {
         depthStencil ? (MTL::Texture *)depthStencil->GetTexture() : nullptr;
 
     // Set render target to drawable texture with depth/stencil
-    mRenderState->SetRenderTarget(
+    mMtRenderState->SetRenderTarget(
         drawableTexture,     // Color attachment (raw MTL::Texture*)
         depthStencilTexture, // Depth/stencil attachment
         width, height, (int)MTL::PixelFormatBGRA8Unorm,
@@ -338,11 +350,16 @@ void MetalRenderDevice::Update() {
   Flush3D.Unclock();
 
   // End the render pass (finishes encoding)
-  if (mRenderState)
-    mRenderState->EndRenderPass();
+  if (mMtRenderState)
+    mMtRenderState->EndRenderPass();
 
   // Present the frame to screen
   PresentFrame(drawable);
+
+  if (mMtRenderState)
+    mMtRenderState->EndFrame();
+  if (mCommands)
+    mCommands->EndFrame();
 
   Super::Update();
 }
@@ -367,20 +384,24 @@ void MetalRenderDevice::PresentFrame(void *drawablePtr) {
 
   // Present drawable when command buffer completes
   commandBuffer->presentDrawable(drawable);
-
-  // Submit the command buffer
-  commandBuffer->commit();
 }
 
 void MetalRenderDevice::BeginFrame() {
   // Wait for a free slot in the queue
   dispatch_semaphore_wait(mInflightFramesSemaphore, DISPATCH_TIME_FOREVER);
 
+  // Clear the recycle bin for the slot we just acquired
+  mCurrentFrameRecycleIndex = (mCurrentFrameRecycleIndex + 1) % 3;
+  for (auto *buffer : mBufferRecycleBin[mCurrentFrameRecycleIndex]) {
+    buffer->release();
+  }
+  mBufferRecycleBin[mCurrentFrameRecycleIndex].clear();
+
   if (mCommands)
     mCommands->BeginFrame();
 
-  if (mRenderState)
-    mRenderState->BeginFrame();
+  if (mMtRenderState)
+    mMtRenderState->BeginFrame();
 
   if (mResourceBindingManager)
     mResourceBindingManager->BeginFrame();
@@ -426,11 +447,17 @@ const char *MetalRenderDevice::DeviceName() const {
   return "Metal Device";
 }
 
-FRenderState *MetalRenderDevice::RenderState() { return mRenderState.get(); }
+FRenderState *MetalRenderDevice::RenderState() { return mMtRenderState.get(); }
 
 void MetalRenderDevice::WaitForCommands(bool finish) {
   if (mCommands)
     mCommands->WaitForCommands(finish);
+}
+
+void MetalRenderDevice::RecycleBuffer(MTL::Buffer *buffer) {
+  if (buffer) {
+    mBufferRecycleBin[mCurrentFrameRecycleIndex].push_back(buffer);
+  }
 }
 
 unsigned int MetalRenderDevice::GetLightBufferBlockSize() const {
@@ -480,7 +507,7 @@ void MetalRenderDevice::Draw2D() {
     Printf("Draw2D: twod has %d vertices, %d indices, %d commands\n",
            twod->mVertices.Size(), twod->mIndices.Size(), twod->mData.Size());
   }
-  ::Draw2D(twod, *mRenderState);
+  ::Draw2D(twod, *mMtRenderState);
 }
 void MetalRenderDevice::RenderTextureView(
     FCanvasTexture *tex, std::function<void(IntRect &)> renderFunc) {}
@@ -577,14 +604,14 @@ FMaterial *MetalRenderDevice::CreateMaterial(FGameTexture *tex,
 }
 
 IVertexBuffer *MetalRenderDevice::CreateVertexBuffer() {
-  return new MtVertexBuffer(this);
+  return mBufferManager->CreateVertexBuffer();
 }
 
 IIndexBuffer *MetalRenderDevice::CreateIndexBuffer() {
-  return new MtIndexBuffer(this);
+  return mBufferManager->CreateIndexBuffer();
 }
 
 IDataBuffer *MetalRenderDevice::CreateDataBuffer(int bindingpoint, bool ssbo,
                                                  bool needsresize) {
-  return new MtHardwareDataBuffer(this, bindingpoint, ssbo, needsresize);
+  return mBufferManager->CreateDataBuffer(bindingpoint, ssbo, needsresize);
 }

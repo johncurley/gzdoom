@@ -73,28 +73,57 @@ public:
 			options.enable_decoration_binding = true;
 			msl.set_msl_options(options);
 
+			// Map all bindings to their original binding points in MSL
+			spirv_cross::ShaderResources resources = msl.get_shader_resources();
+			
+			for (auto &resource : resources.uniform_buffers) {
+				uint32_t binding = msl.get_decoration(resource.id, spv::DecorationBinding);
+				uint32_t set = msl.get_decoration(resource.id, spv::DecorationDescriptorSet);
+				
+				for (int stage = 0; stage < 3; stage++) { // Vertex, Fragment, Compute
+					spirv_cross::MSLResourceBinding b;
+					b.stage = (spv::ExecutionModel)stage;
+					b.desc_set = set;
+					b.binding = binding;
+					b.msl_buffer = binding;
+					msl.add_msl_resource_binding(b);
+				}
+			}
+
+			for (auto &resource : resources.storage_buffers) {
+				uint32_t binding = msl.get_decoration(resource.id, spv::DecorationBinding);
+				uint32_t set = msl.get_decoration(resource.id, spv::DecorationDescriptorSet);
+				
+				for (int stage = 0; stage < 3; stage++) {
+					spirv_cross::MSLResourceBinding b;
+					b.stage = (spv::ExecutionModel)stage;
+					b.desc_set = set;
+					b.binding = binding;
+					b.msl_buffer = binding;
+					msl.add_msl_resource_binding(b);
+				}
+			}
+
+			for (auto &resource : resources.sampled_images) {
+				uint32_t binding = msl.get_decoration(resource.id, spv::DecorationBinding);
+				uint32_t set = msl.get_decoration(resource.id, spv::DecorationDescriptorSet);
+				
+				for (int stage = 0; stage < 3; stage++) {
+					spirv_cross::MSLResourceBinding b;
+					b.stage = (spv::ExecutionModel)stage;
+					b.desc_set = set;
+					b.binding = binding;
+					b.msl_texture = binding;
+					b.msl_sampler = binding;
+					msl.add_msl_resource_binding(b);
+				}
+			}
+
 			// Compile SPIR-V to MSL
 			result.source = msl.compile();
 
 			// Extract resource bindings for reflection
 			spirv_cross::ShaderResources resources = msl.get_shader_resources();
-
-			// DEBUG: Print all reflected vertex attributes
-			for (const auto& resource : resources.stage_inputs)
-			{
-				uint32_t location = msl.get_decoration(resource.id, spv::DecorationLocation);
-				std::string name = resource.name;
-				printf("SPIRV-Cross reflected vertex attribute: name=%s, location=%u\n", name.c_str(), location);
-			}
-
-			// DEBUG: Print all reflected vertex attributes
-			printf("=== SPIRV-Cross Input Variables ===\n");
-			for (const auto& resource : resources.stage_inputs)
-			{
-				uint32_t location = msl.get_decoration(resource.id, spv::DecorationLocation);
-				auto type = msl.get_type(resource.type_id);
-				printf("  Input: %s | Location: %u | Type: %d\n", resource.name.c_str(), location, (int)type.basetype);
-			}
 
 			// Extract texture bindings
 			for (const auto& resource : resources.sampled_images)

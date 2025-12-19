@@ -14,6 +14,7 @@
 #include "metal/system/mt_renderdevice.h"
 #include "metal/textures/mt_sampler.h"
 #include "metal/textures/mt_texture.h"
+#include "metal/metal_common.h" // New include
 #include "mt_pipelinestate.h"
 #include "mt_renderstate.h"
 #include "mt_streambuffer.h"
@@ -22,6 +23,8 @@
 #include "v_video.h"
 
 CVAR(Int, mt_submit_size, 1000, CVAR_ARCHIVE | CVAR_GLOBALCONFIG);
+
+EXTERN_CVAR(Bool, mt_debug)
 
 MtRenderState::MtRenderState(MetalRenderDevice *fb)
     : FRenderState(), fb(fb), mStreamBufferWriter(fb), mMatrixBufferWriter(fb) { // Call base class constructor
@@ -96,20 +99,12 @@ void MtRenderState::Draw(int dt, int index, int count, bool apply) {
 }
 
 void MtRenderState::DrawIndexed(int dt, int index, int count, bool apply) {
-  static int drawIndexedCallCount = 0;
-  if (++drawIndexedCallCount <= 10)
-    Printf(
-        "Metal: DrawIndexed call #%d (dt=%d, index=%d, count=%d, apply=%d)\n",
-        drawIndexedCallCount, dt, index, count, apply);
+  if (count <= 0) return; // Fix: Skip empty draws
 
   if (apply || mNeedApply)
     Apply(dt);
 
   if (!mEncoder || !mIndexBuffer) {
-    if (drawIndexedCallCount <= 10)
-      Printf(
-          "Metal: Warning - DrawIndexed called but encoder=%p indexBuffer=%p\n",
-          mEncoder, mIndexBuffer);
     return;
   }
 
@@ -223,6 +218,9 @@ void MtRenderState::EnableStencil(bool on) {
 }
 
 void MtRenderState::SetScissor(int x, int y, int w, int h) {
+  if (mt_debug) {
+      Printf("MtRenderState[%p]::SetScissor: %d %d %d %d\n", this, x, y, w, h);
+  }
   mScissorX = x;
   mScissorY = y;
   mScissorWidth = w;
@@ -231,6 +229,9 @@ void MtRenderState::SetScissor(int x, int y, int w, int h) {
 }
 
 void MtRenderState::SetViewport(int x, int y, int w, int h) {
+  if (mt_debug) {
+      Printf("MtRenderState[%p]::SetViewport: %d %d %d %d\n", this, x, y, w, h);
+  }
   mViewportX = x;
   mViewportY = y;
   mViewportWidth = w;
@@ -282,9 +283,13 @@ void MtRenderState::SetRenderTarget(MTL::Texture *image,
 }
 
 void MtRenderState::Bind(int bindingpoint, uint32_t offset) {
-  // TODO: Implement viewpoint binding
-  mViewpointOffset = offset;
-  mNeedApply = true;
+  if (mt_debug) {
+      Printf("MtRenderState[%p]::Bind: bp=%d offset=%u\n", this, bindingpoint, offset);
+  }
+  if (bindingpoint == VIEWPOINT_BINDINGPOINT) {
+    mViewpointOffset = offset;
+    mNeedApply = true;
+  }
 }
 
 void MtRenderState::EndRenderPass() {
@@ -298,6 +303,7 @@ void MtRenderState::EndFrame() {
   // Reset stream buffer writers for next frame
   mMatrixBufferWriter.Reset();
   mStreamBufferWriter.Reset();
+  mApplyCount = 0;
 }
 
 // ============================================================================
@@ -450,6 +456,10 @@ void MtRenderState::ApplyScissor() {
       scissor.height = (NS::UInteger)std::max(1, mRenderTarget.Height);
     }
 
+    if (mt_debug) {
+        Printf("  SetScissor: %lu %lu %lu %lu\n", (unsigned long)scissor.x, (unsigned long)scissor.y, (unsigned long)scissor.width, (unsigned long)scissor.height);
+    }
+
     encoder->setScissorRect(scissor);
     mScissorChanged = false;
   }
@@ -473,6 +483,12 @@ void MtRenderState::ApplyViewport() {
     }
     viewport.znear = (double)mViewportDepthMin;
     viewport.zfar = (double)mViewportDepthMax;
+
+    if (mt_debug) {
+        Printf("  SetViewport: %f %f %f %f [%f..%f]\n", 
+               viewport.originX, viewport.originY, viewport.width, viewport.height,
+               viewport.znear, viewport.zfar);
+    }
 
     encoder->setViewport(viewport);
     mViewportChanged = false;
@@ -563,8 +579,8 @@ void MtRenderState::ApplyPushConstants() {
   // - Vertex shader: index 7
   // - Fragment shader: index 7
   auto encoder = (MTL::RenderCommandEncoder *)mEncoder;
-  encoder->setVertexBytes(&mPushConstants, sizeof(PushConstants), 7);
-  encoder->setFragmentBytes(&mPushConstants, sizeof(PushConstants), 7);
+  encoder->setVertexBytes(&mPushConstants, sizeof(PushConstants), MT_Buffer_PushConstants);
+  encoder->setFragmentBytes(&mPushConstants, sizeof(PushConstants), MT_Buffer_PushConstants);
 }
 
 void MtRenderState::ApplyHWBufferSet() {
@@ -577,27 +593,8 @@ void MtRenderState::ApplyHWBufferSet() {
   uint32_t matrixOffset = mMatrixBufferWriter.Offset();
   uint32_t streamDataOffset = mStreamBufferWriter.StreamDataOffset();
 
-  // Only rebind global buffers if offsets have changed or if we're starting a
-  // new encoder
-  if (mViewpointOffset != mLastViewpointOffset ||
-      matrixOffset != mLastMatricesOffset ||
-      streamDataOffset != mLastStreamDataOffset) {
-    // Metal Buffer Binding Strategy (following GZDoom shader layouts):
-    //
-    // Vertex Shader Buffers:
-    //   - Index 0-1: Vertex buffers (bound in ApplyVertexBuffers)
-    //   - Index 2: Viewpoint buffer (per-frame camera/projection data)
-    //   - Index 3: Matrices buffer (per-draw model/texture matrices)
-    //   - Index 4: Stream data buffer (per-draw stream data)
-    //   - Index 5: Light buffer (per-frame dynamic light data)
-    //   - Index 6: Bone buffer (per-frame skeletal animation data)
-    //   - Index 7: Push constants (inline buffer, bound in ApplyPushConstants)
-    //
-    // Fragment Shader Buffers:
-    //   - Index 4: Stream data buffer (per-draw stream data)
-    //   - Index 7: Push constants (inline buffer, bound in ApplyPushConstants)
-    //   - Index 0+: Material textures (separate address space in Metal)
-
+  // For now, always re-bind everything to the encoder to avoid tracking issues with recreated buffers
+  {
     auto bufferManager = fb->GetBufferManager();
 
     // Bind viewpoint buffer (camera/projection matrices)
@@ -605,21 +602,34 @@ void MtRenderState::ApplyHWBufferSet() {
       auto viewpointBuffer =
           (MTL::Buffer *)bufferManager->ViewpointUBO->GetBuffer();
       if (viewpointBuffer) {
-        encoder->setVertexBuffer(viewpointBuffer, mViewpointOffset, 2);
+        if (mt_debug) {
+            static int lastVpReport = -1;
+            if (mViewpointOffset != lastVpReport) {
+                float* m = (float*)((uint8_t*)viewpointBuffer->contents() + mViewpointOffset);
+                Printf("Viewpoint Matrix [0]: %f %f %f %f\n", m[0], m[1], m[2], m[3]);
+                Printf("Viewpoint Matrix [1]: %f %f %f %f\n", m[4], m[5], m[6], m[7]);
+                Printf("Viewpoint Matrix [2]: %f %f %f %f\n", m[8], m[9], m[10], m[11]);
+                Printf("Viewpoint Matrix [3]: %f %f %f %f\n", m[12], m[13], m[14], m[15]);
+                lastVpReport = mViewpointOffset;
+            }
+        }
+        encoder->setVertexBuffer(viewpointBuffer, mViewpointOffset, 13);
+        encoder->setFragmentBuffer(viewpointBuffer, mViewpointOffset, 13);
       }
     }
 
     // Bind matrices buffer (model/texture matrices)
     auto matrixBuffer = (MTL::Buffer *)mMatrixBufferWriter.GetBuffer();
     if (matrixBuffer) {
-      encoder->setVertexBuffer(matrixBuffer, matrixOffset, 3);
+      encoder->setVertexBuffer(matrixBuffer, matrixOffset, 20);
+      encoder->setFragmentBuffer(matrixBuffer, matrixOffset, 20);
     }
 
     // Bind stream data buffer (per-draw uniforms)
     auto streamBuffer = (MTL::Buffer *)mStreamBufferWriter.GetBuffer();
     if (streamBuffer) {
-      encoder->setVertexBuffer(streamBuffer, streamDataOffset, 4);
-      encoder->setFragmentBuffer(streamBuffer, streamDataOffset, 4);
+      encoder->setVertexBuffer(streamBuffer, streamDataOffset, 21);
+      encoder->setFragmentBuffer(streamBuffer, streamDataOffset, 21);
     }
 
     // Bind light buffer (dynamic lights)
@@ -627,8 +637,8 @@ void MtRenderState::ApplyHWBufferSet() {
       auto lightBuffer =
           (MTL::Buffer *)bufferManager->LightBufferSSO->GetBuffer();
       if (lightBuffer) {
-        encoder->setVertexBuffer(lightBuffer, 0, 5);
-        encoder->setFragmentBuffer(lightBuffer, 0, 5);
+        encoder->setVertexBuffer(lightBuffer, 0, 11);
+        encoder->setFragmentBuffer(lightBuffer, 0, 11);
       }
     }
 
@@ -637,7 +647,8 @@ void MtRenderState::ApplyHWBufferSet() {
       auto boneBuffer =
           (MTL::Buffer *)bufferManager->BoneBufferSSO->GetBuffer();
       if (boneBuffer) {
-        encoder->setVertexBuffer(boneBuffer, 0, 6);
+        encoder->setVertexBuffer(boneBuffer, 0, 17);
+        encoder->setFragmentBuffer(boneBuffer, 0, 17);
       }
     }
 
@@ -654,11 +665,8 @@ void MtRenderState::ApplyVertexBuffers() {
 
   auto encoder = (MTL::RenderCommandEncoder *)mEncoder;
 
-  // Bind vertex buffer if changed
-  if ((mVertexBuffer != mLastVertexBuffer ||
-       mVertexOffsets[0] != mLastVertexOffsets[0] ||
-       mVertexOffsets[1] != mLastVertexOffsets[1]) &&
-      mVertexBuffer) {
+  // Always bind vertex buffer to avoid tracking issues with recreated buffers
+  if (mVertexBuffer) {
     auto mtBuffer = static_cast<MtVertexBuffer *>(mVertexBuffer);
     size_t stride = mtBuffer->GetStride();
     MTL::Buffer *buffer = mtBuffer->GetBuffer();
@@ -797,15 +805,21 @@ void MtRenderState::BeginRenderPass() {
     auto colorAttachment = passDescriptor->colorAttachments()->object(0);
     colorAttachment->setTexture(
         static_cast<MTL::Texture *>(mRenderTarget.Image));
-    colorAttachment->setLoadAction((mClearTargets & CT_Color)
+    
+    // Fix: If this is the very first pass of the frame (mApplyCount == 1), 
+    // we MUST clear it unless the engine explicitly said not to (by not calling Clear).
+    bool forceClear = (mApplyCount == 1 && (mClearTargets & CT_Color) == 0);
+
+    colorAttachment->setLoadAction((mClearTargets & CT_Color || forceClear)
                                        ? MTL::LoadActionClear
                                        : MTL::LoadActionLoad);
     colorAttachment->setStoreAction(MTL::StoreActionStore);
 
-    if (mClearTargets & CT_Color) {
+    if (mClearTargets & CT_Color || forceClear) {
+      auto cc = screen->mSceneClearColor;
       colorAttachment->setClearColor(MTL::ClearColor::Make(
-          screen->mSceneClearColor[0], screen->mSceneClearColor[1],
-          screen->mSceneClearColor[2], screen->mSceneClearColor[3]));
+          cc[0], cc[1], cc[2], cc[3]));
+      colorAttachment->setLoadAction(MTL::LoadActionClear);
     }
   }
 
@@ -859,10 +873,14 @@ void MtRenderState::BeginRenderPass() {
   // Clean up pass descriptor
   passDescriptor->release();
 
-  static int encCount = 0;
-  if (encCount++ < 3)
-    Printf("BeginRenderPass: Created encoder %p (width=%d height=%d)\n",
-           mEncoder, mRenderTarget.Width, mRenderTarget.Height);
+  if (mt_debug) {
+      static void* lastEncoder = nullptr;
+      if (mEncoder != lastEncoder) {
+          Printf("BeginRenderPass: Created encoder %p (width=%d height=%d)\n",
+                 mEncoder, mRenderTarget.Width, mRenderTarget.Height);
+          lastEncoder = mEncoder;
+      }
+  }
 
   // Mark material as changed to force rebinding
   mMaterial.mChanged = true;
@@ -878,6 +896,15 @@ void MtRenderState::BeginRenderPass() {
 
   // Invalidate pipeline key to force pipeline state rebinding
   mPipelineKey = MtPipelineKey(); // Reset to default/invalid state
+
+  // Fix: Reset last bound state tracking to force re-binding to the new encoder
+  mLastViewpointOffset = 0xffffffff;
+  mLastMatricesOffset = 0xffffffff;
+  mLastStreamDataOffset = 0xffffffff;
+  mLastVertexBuffer = nullptr;
+  mLastIndexBuffer = nullptr;
+  mLastVertexOffsets[0] = -1;
+  mLastVertexOffsets[1] = -1;
 
   // Set default dynamic state
   if (mEncoder) {

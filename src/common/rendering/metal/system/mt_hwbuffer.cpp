@@ -5,36 +5,37 @@
 
 #include "hwrenderer/data/hw_renderstate.h"
 #include "metal/renderer/mt_renderstate.h"
+#include "metal/metal_common.h" // New include
 #include "mt_hwbuffer.h"
 #include "mt_renderdevice.h"
 #include "printf.h"
+
+EXTERN_CVAR(Bool, mt_debug)
 
 // MtHardwareDataBuffer
 MtHardwareDataBuffer::MtHardwareDataBuffer(MetalRenderDevice *fb,
                                            int bindingpoint, bool ssbo,
                                            bool needsresize)
-    : mBindingPoint(bindingpoint), mSSBO(ssbo), mNeedsResize(needsresize),
+    : mBindingPoint(bindingpoint >= 0 ? bindingpoint + 10 : bindingpoint), mSSBO(ssbo), mNeedsResize(needsresize),
       fb(fb) {}
 
 MtHardwareDataBuffer::~MtHardwareDataBuffer() {
   if (mBuffer)
-    mBuffer->release();
+    fb->RecycleBuffer(mBuffer);
 }
 
 void MtHardwareDataBuffer::BindRange(FRenderState *state, size_t start,
                                      size_t length) {
-  static int bindCount = 0;
-  if (bindCount++ < 10) {
+  if (mt_debug) {
     Printf("MtHardwareDataBuffer::BindRange: binding to point %d, start=%zu, "
            "length=%zu\n",
            mBindingPoint, start, length);
   }
 
   auto mt_state = static_cast<MtRenderState *>(state);
-  MTL::RenderCommandEncoder *encoder = mt_state->GetEncoder();
-  if (encoder) {
-    encoder->setVertexBuffer(mBuffer, start, mBindingPoint);
-  }
+  // Correctly update the render state with the binding point and offset
+  // We subtract 10 because mBindingPoint was constructor-translated with +10
+  mt_state->Bind(mBindingPoint - 10, (uint32_t)start);
 }
 void MtHardwareDataBuffer::SetData(size_t size, const void *data,
                                    BufferUsageType usage) {
@@ -71,7 +72,7 @@ void MtHardwareDataBuffer::CreateBuffer(size_t size) {
 MtVertexBuffer::MtVertexBuffer(MetalRenderDevice *fb) : fb(fb) {}
 MtVertexBuffer::~MtVertexBuffer() {
   if (mBuffer)
-    mBuffer->release();
+    fb->RecycleBuffer(mBuffer);
 }
 
 void MtVertexBuffer::SetFormat(int numBindingPoints, int numAttributes,
@@ -118,7 +119,7 @@ void MtVertexBuffer::Unlock() { Unmap(); }
 
 void MtVertexBuffer::CreateBuffer(size_t size) {
   if (mBuffer)
-    mBuffer->release();
+    fb->RecycleBuffer(mBuffer);
   mBuffer = fb->device->device->newBuffer(size, MTL::StorageModeShared);
   mBufferSize = size;
   buffersize = size; // Set base class member
@@ -128,7 +129,7 @@ void MtVertexBuffer::CreateBuffer(size_t size) {
 MtIndexBuffer::MtIndexBuffer(MetalRenderDevice *fb) : fb(fb) {}
 MtIndexBuffer::~MtIndexBuffer() {
   if (mBuffer)
-    mBuffer->release();
+    fb->RecycleBuffer(mBuffer);
 }
 
 void MtIndexBuffer::SetData(size_t size, const void *data,

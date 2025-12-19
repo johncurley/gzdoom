@@ -22,7 +22,7 @@ class MtTextureImage;
 class MtRenderState : public FRenderState {
 public:
   MtRenderState(MetalRenderDevice *fb);
-  virtual ~MtRenderState() = default;
+  ~MtRenderState() = default;
 
   // Draw commands
   void ClearScreen() override;

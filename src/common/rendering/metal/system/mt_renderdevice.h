@@ -12,6 +12,7 @@
 namespace MTL {
 class Device;
 class CommandQueue;
+class Buffer;
 } // namespace MTL
 
 // Restore TimeScale
@@ -57,7 +58,7 @@ public:
   MtPipelineStateManager *GetPipelineStateManager() {
     return mPipelineStateManager.get();
   }
-  MtRenderState *GetRenderState() { return mRenderState.get(); }
+  MtRenderState *GetRenderState() { return mMtRenderState.get(); }
   MtPostprocess *GetPostprocess() { return mPostprocess.get(); }
   MtRenderBuffers *GetBuffers() { return mActiveRenderBuffers; }
   FRenderState *RenderState() override;
@@ -113,6 +114,7 @@ public:
   void Draw2D() override;
 
   void WaitForCommands(bool finish) override;
+  void RecycleBuffer(MTL::Buffer *buffer);
 
 private:
   void RenderTextureView(FCanvasTexture *tex,
@@ -132,12 +134,16 @@ private:
   std::unique_ptr<MtPostprocess> mPostprocess;
   std::unique_ptr<MtResourceBindingManager> mResourceBindingManager;
   std::unique_ptr<MtPipelineStateManager> mPipelineStateManager;
-  std::unique_ptr<MtRenderState> mRenderState;
+  std::unique_ptr<MtRenderState> mMtRenderState;
 
   MtRenderBuffers *mActiveRenderBuffers = nullptr;
 
   bool mVSync = false;
   dispatch_semaphore_t mInflightFramesSemaphore;
+
+  // Resource recycling bin to keep buffers alive until GPU is done
+  std::vector<MTL::Buffer *> mBufferRecycleBin[3];
+  int mCurrentFrameRecycleIndex = 0;
 };
 
 class CMetalError : public CEngineError {

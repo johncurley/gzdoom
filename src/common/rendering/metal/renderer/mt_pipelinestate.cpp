@@ -301,7 +301,7 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
     auto attr3 = vertexDesc->attributes()->object(3); // aVertex2
     if (attr3->format() == MTL::VertexFormatInvalid) {
         attr3->setFormat(MTL::VertexFormatFloat2);
-        attr3->setOffset(12); // Alias to TexCoord
+        attr3->setOffset(0); // Alias to Position (safer than TexCoord)
         attr3->setBufferIndex(0);
     }
     auto attr4 = vertexDesc->attributes()->object(4); // aNormal
@@ -319,7 +319,7 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
     auto attr6 = vertexDesc->attributes()->object(6); // aLightmap
     if (attr6->format() == MTL::VertexFormatInvalid) {
         attr6->setFormat(MTL::VertexFormatFloat2);
-        attr6->setOffset(12); // Alias to TexCoord
+        attr6->setOffset(0); // Alias to Position
         attr6->setBufferIndex(0);
     }
     auto attr7 = vertexDesc->attributes()->object(7); // aBoneWeight
@@ -367,10 +367,9 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
     vertexDesc->attributes()->object(2)->setOffset(20);
     vertexDesc->attributes()->object(2)->setBufferIndex(0);
 
-    // Attribute 3: aVertex2 (float2) - Alias to TexCoord (offset 12) to satisfy validation
-    // The shader expects this attribute, but FFlatVertex doesn't provide it.
+    // Attribute 3: aVertex2 (float2) - Alias to Position (offset 0)
     vertexDesc->attributes()->object(3)->setFormat(MTL::VertexFormatFloat2);
-    vertexDesc->attributes()->object(3)->setOffset(12); 
+    vertexDesc->attributes()->object(3)->setOffset(0); 
     vertexDesc->attributes()->object(3)->setBufferIndex(0);
 
     // Attribute 4: aNormal (float3) - Alias to Position (offset 0)
@@ -383,9 +382,9 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
     vertexDesc->attributes()->object(5)->setOffset(0);
     vertexDesc->attributes()->object(5)->setBufferIndex(0);
 
-    // Attribute 6: aLightmap (float2) - Alias to TexCoord (offset 12)
+    // Attribute 6: aLightmap (float2) - Alias to Position (offset 0)
     vertexDesc->attributes()->object(6)->setFormat(MTL::VertexFormatFloat2);
-    vertexDesc->attributes()->object(6)->setOffset(12);
+    vertexDesc->attributes()->object(6)->setOffset(0);
     vertexDesc->attributes()->object(6)->setBufferIndex(0);
 
     // Attribute 7: aBoneWeight (float4?) - Alias to Position (offset 0) - reads 12 bytes effectively, padding maybe?
