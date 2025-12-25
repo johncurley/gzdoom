@@ -270,10 +270,13 @@ void MtRenderState::ApplyRenderPass(int dt) {
 
   // Build pipeline key from current state
   MtPipelineKey pipelineKey;
-  // Get vertex format from current vertex buffer
+  // Get vertex format and stride from current vertex buffer
+  int stride = mVertexBuffer ? static_cast<MtVertexBuffer *>(mVertexBuffer)->GetStride() : 0;
   pipelineKey.VertexFormat =
       mVertexBuffer ? static_cast<MtVertexBuffer *>(mVertexBuffer)->VertexFormat
                     : -1;
+  // Add stride to the key to differentiate between FFlatVertex (32) and TwoDVertex (24)
+  pipelineKey.VertexFormat |= (stride << 8);
 
   // Build shader key from effect state (following Vulkan pattern)
   pipelineKey.EffectState =
@@ -597,7 +600,7 @@ void MtRenderState::ApplyHWBufferSet() {
       mLastBoundOffsets[VIEWPOINT_BINDINGPOINT] = vpOff;
       if (mt_debug) {
           float* m = (float*)((uint8_t*)vpBuf->contents() + vpOff);
-          Printf("Metal: Bound Viewpoint (17) buf=%p off=%u. Matrix[0]=%.2f %.2f %.2f %.2f\n", vpBuf, vpOff, m[0], m[1], m[2], m[3]);
+          Printf("Metal: Bound Viewpoint (17) buf=%p off=%u. Matrix[0]=%.6f %.6f %.6f %.6f\n", vpBuf, vpOff, m[0], m[1], m[2], m[3]);
       }
   }
 
@@ -631,7 +634,10 @@ void MtRenderState::ApplyHWBufferSet() {
     mEncoder->setFragmentBuffer(matrixBuffer, matrixOffset, 19);
     mLastBoundBuffers[14] = matrixBuffer;
     mLastBoundOffsets[14] = matrixOffset;
-    if (mt_debug) Printf("Metal: Bound Matrix (19) buf=%p off=%u\n", matrixBuffer, matrixOffset);
+    if (mt_debug) {
+        float* m = (float*)((uint8_t*)matrixBuffer->contents() + matrixOffset);
+        Printf("Metal: Bound Matrix (19) buf=%p off=%u. ModelMatrix[0]=%.6f %.6f %.6f %.6f\n", matrixBuffer, matrixOffset, m[0], m[1], m[2], m[3]);
+    }
   }
 
   // 5. Stream (Per-draw uniforms)
@@ -642,7 +648,10 @@ void MtRenderState::ApplyHWBufferSet() {
     mEncoder->setFragmentBuffer(streamBuffer, streamDataOffset, 20);
     mLastBoundBuffers[15] = streamBuffer;
     mLastBoundOffsets[15] = streamDataOffset;
-    if (mt_debug) Printf("Metal: Bound Stream (20) buf=%p off=%u\n", streamBuffer, streamDataOffset);
+    if (mt_debug) {
+        float* m = (float*)((uint8_t*)streamBuffer->contents() + streamDataOffset);
+        Printf("Metal: Bound Stream (20) buf=%p off=%u. uObjectColor=%.6f %.6f %.6f %.6f\n", streamBuffer, streamDataOffset, m[0], m[1], m[2], m[3]);
+    }
   }
 }
 
@@ -733,11 +742,11 @@ void MtRenderState::SetRenderTarget(MTL::Texture *image,
   mRenderTarget.DepthStencil = depthStencilView;
   mRenderTarget.Width = width;
   mRenderTarget.Height = height;
-  mRenderTarget.Format = format;
+  mRenderTarget.Format = image ? (int)image->pixelFormat() : format;
   mRenderTarget.Samples = samples;
 }
 
-// FORCE RECOMPILE: December 25 Final Audit Build
+// FORCE RECOMPILE: December 25 V8 Final Audit Build
 void MtRenderState::BeginRenderPass() {
   if (!mRenderTarget.Image)
     return;
@@ -758,7 +767,7 @@ void MtRenderState::BeginRenderPass() {
 
   // Color Attachment
   auto colorAttachment = pRPD->colorAttachments()->object(0);
-  colorAttachment.setTexture(mRenderTarget.Image);
+  colorAttachment->setTexture(mRenderTarget.Image);
   bool colorFilled = mClearedTargets.find(mRenderTarget.Image) != mClearedTargets.end();
   bool clearColor = (mClearTargets & CT_Color) || !colorFilled;
   
@@ -811,19 +820,33 @@ void MtRenderState::BeginRenderPass() {
         mEncoder->setFrontFacingWinding(MTL::WindingCounterClockwise);
         
         MTL::Viewport viewport;
-        viewport.originX = 0;
-        viewport.originY = 0;
-        viewport.width = (double)mRenderTarget.Width;
-        viewport.height = (double)mRenderTarget.Height;
-        viewport.znear = 0;
-        viewport.zfar = 1;
+        if (mViewportWidth >= 0) {
+            viewport.originX = (double)mViewportX;
+            viewport.originY = (double)mViewportY;
+            viewport.width = (double)mViewportWidth;
+            viewport.height = (double)mViewportHeight;
+        } else {
+            viewport.originX = 0;
+            viewport.originY = 0;
+            viewport.width = (double)mRenderTarget.Width;
+            viewport.height = (double)mRenderTarget.Height;
+        }
+        viewport.znear = mViewportDepthMin;
+        viewport.zfar = mViewportDepthMax;
         mEncoder->setViewport(viewport);
         
         MTL::ScissorRect scissor;
-        scissor.x = 0;
-        scissor.y = 0;
-        scissor.width = (NS::UInteger)mRenderTarget.Width;
-        scissor.height = (NS::UInteger)mRenderTarget.Height;
+        if (mScissorWidth >= 0) {
+            scissor.x = (NS::UInteger)clamp(mScissorX, 0, mRenderTarget.Width);
+            scissor.y = (NS::UInteger)clamp(mScissorY, 0, mRenderTarget.Height);
+            scissor.width = (NS::UInteger)clamp(mScissorWidth, 0, mRenderTarget.Width - (int)scissor.x);
+            scissor.height = (NS::UInteger)clamp(mScissorHeight, 0, mRenderTarget.Height - (int)scissor.y);
+        } else {
+            scissor.x = 0;
+            scissor.y = 0;
+            scissor.width = (NS::UInteger)mRenderTarget.Width;
+            scissor.height = (NS::UInteger)mRenderTarget.Height;
+        }
         mEncoder->setScissorRect(scissor);
     }
   }

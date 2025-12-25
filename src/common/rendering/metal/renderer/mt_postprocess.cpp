@@ -60,7 +60,8 @@ public:
 
     if (Output.Type == PPTextureType::SwapChain) {
       outputTex = nullptr;                 // use default/swapchain
-      format = MTL::PixelFormatRGBA16Float;
+      // Match the swapchain format (usually BGRA8Unorm) instead of forcing RGBA16Float
+      format = (fb->mCurrentDrawable) ? (MTL::PixelFormat)fb->mCurrentDrawable->texture()->pixelFormat() : MTL::PixelFormatBGRA8Unorm;
       
       // Use physical drawable dimensions if available
       if (fb->mCurrentDrawable) {
@@ -132,6 +133,14 @@ public:
       // Set vertex buffer on the render state so ApplyRenderPass uses it
       mtRenderState->SetVertexBuffer(screen->mVertexData);
       
+      // Update pipeline key for tracking and potential future use in ApplyRenderPass
+      auto vb = static_cast<MtVertexBuffer *>(
+          screen->mVertexData->GetBufferObjects().first);
+      int stride = (int)vb->GetStride();
+      MtPipelineKey ppKey;
+      ppKey.VertexFormat = vb->VertexFormat | (stride << 8);
+      mtRenderState->SetPipelineKey(ppKey);
+
       encoder->setRenderPipelineState(pipeline);
       
       // CRITICAL: Explicitly set essential state for the new encoder
@@ -155,8 +164,6 @@ public:
       encoder->setScissorRect(scissor);
 
       // Bind vertex buffer (screen->mVertexData) at slot 0 manually too for safety
-      auto vb = static_cast<MtVertexBuffer *>(
-          screen->mVertexData->GetBufferObjects().first);
       encoder->setVertexBuffer(vb->GetBuffer(), 0, 0);
 
       // Bind input textures and samplers
@@ -218,6 +225,7 @@ public:
 
       // Bind uniforms
       if (Uniforms.Data.Size() > 0) {
+        if (mt_debug) Printf("Metal: PPRenderState::Draw - Binding uniforms size=%u\n", (unsigned int)Uniforms.Data.Size());
         encoder->setFragmentBytes(Uniforms.Data.Data(), Uniforms.Data.Size(),
                                   0);
       }
@@ -243,7 +251,7 @@ private:
   MetalRenderDevice *fb;
 };
 
-// FORCE RECOMPILE: December 25 Final Audit Build
+// FORCE RECOMPILE: December 25 V8 Final Audit Build
 MtPostprocess::MtPostprocess(MetalRenderDevice *fb) : fb(fb) {}
 MtPostprocess::~MtPostprocess() {}
 

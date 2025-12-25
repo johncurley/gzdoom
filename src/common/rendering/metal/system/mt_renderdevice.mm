@@ -217,12 +217,13 @@ void MetalRenderDevice::Update() {
     mPostprocess->BlitSceneToPostprocess();
   }
 
-  // FORCE RECOMPILE: December 25 V3 Cache Force
+  // FORCE RECOMPILE: December 25 V8 Final Audit Build
   // 2. Set target and Draw 2D into PipelineImage[0] (where the scene is now)
   if (mPostprocess) {
     mPostprocess->SetActiveRenderTarget();
   }
   
+  // Update 2D viewpoint to ensure correct projection matrices for UI
   mViewpoints->Set2D(*mMtRenderState, GetWidth(), GetHeight());
 
   if (mt_debug) Printf("Metal: Update - Calling Draw2D\n");

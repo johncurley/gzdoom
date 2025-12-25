@@ -52,6 +52,8 @@ public:
   void BeginFrame();
   void SetRenderTarget(MTL::Texture *image, MTL::Texture *depthStencilView,
                        int width, int height, int format, int samples);
+  void SetPipelineKey(const MtPipelineKey &key) { mPipelineKey = key; }
+  const MtPipelineKey &GetPipelineKey() const { return mPipelineKey; }
   void Bind(int bindingpoint, uint32_t offset);
   void BindBuffer(int bindingpoint, MTL::Buffer *buffer, uint32_t offset);
   void MarkAsFilled(MTL::Texture *tex);

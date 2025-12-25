@@ -696,16 +696,20 @@ std::string MtShaderManager::LoadPublicShaderLump(const char *lumpname) {
   int lump = fileSystem.CheckNumForFullName(lumpname, 0);
   if (lump == -1)
     lump = fileSystem.CheckNumForFullName(lumpname);
-  if (lump == -1)
-    return "";
+  if (lump == -1) {
+      if (mt_debug) Printf("Metal: WARNING - Public shader lump not found: %s\n", lumpname);
+      return "";
+  }
   auto data = fileSystem.ReadFile(lump);
   return std::string((const char *)data.data(), data.size());
 }
 
 std::string MtShaderManager::LoadPrivateShaderLump(const char *lumpname) {
   int lump = fileSystem.CheckNumForFullName(lumpname, 0);
-  if (lump == -1)
-    return "";
+  if (lump == -1) {
+      if (mt_debug) Printf("Metal: WARNING - Private shader lump not found: %s\n", lumpname);
+      return "";
+  }
   auto data = fileSystem.ReadFile(lump);
   return std::string((const char *)data.data(), data.size());
 }
@@ -730,7 +734,7 @@ void MtShaderManager::ClearCache() {
 
 std::string MtShaderManager::GetCachePath(const std::string &key) {
   FString path = M_GetCachePath(true);
-  path += "/metal_sh_v3_";
+  path += "/metal_sh_v8_";
   if (mt_debug) Printf("Metal: Cache path for key %s: %s\n", key.c_str(), path.GetChars());
   // Simple alphanumeric key
   for (char c : key) {
@@ -773,6 +777,10 @@ MtShaderManager::CompileGLSLToSPIRV(const std::string &source,
   const char *sourceStr = finalSource.c_str();
   int sourceLength = static_cast<int>(finalSource.length());
   const char *nameStr = name.c_str();
+
+  if (mt_debug) {
+      Printf("Metal: Compiling GLSL shader %s. Source length: %d\n", name.c_str(), sourceLength);
+  }
 
   // Create glslang shader
   TBuiltInResource resources = GetDefaultTBuiltInResource();

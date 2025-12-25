@@ -132,12 +132,14 @@ MtPipelineStateManager::GetPPPipelineState(MtShaderProgram *program,
   desc->setFragmentFunction(program->frag->fragmentFunction);
 
   auto vertexDesc = MTL::VertexDescriptor::alloc()->init();
-  // Pos (x, z, y, ...) - mapped to vec4 in screenquad.vp
-  // Since we are drawing from FFlatVertex, we must match its layout.
+  // Pos (x, z, y) - FFlatVertex layout.
+  // This maps FFlatVertex.x to Position.x, FFlatVertex.z to Position.y, and FFlatVertex.y to Position.z.
+  // For the screen quad, FFlatVertex.y is typically 0, and x/z are used for NDC.
   auto attr0 = vertexDesc->attributes()->object(0);
-  attr0->setFormat(MTL::VertexFormatFloat3); // vec3, Metal fills w=1.0
+  attr0->setFormat(MTL::VertexFormatFloat3);
   attr0->setOffset(offsetof(FFlatVertex, x));
   attr0->setBufferIndex(0);
+  
   // TexCoord (u, v)
   auto attr1 = vertexDesc->attributes()->object(1);
   attr1->setFormat(MTL::VertexFormatFloat2); // vec2
@@ -282,13 +284,15 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
   desc->setVertexFunction(vertexFunction);
   desc->setFragmentFunction(fragmentFunction);
 
+  size_t stride = vertexBuffer ? vertexBuffer->GetStride() : ((key.VertexFormat >> 8) & 0xFF);
+  if (stride == 0) stride = sizeof(FFlatVertex);
+
   // Configure vertex descriptor
   if (vertexBuffer && vertexBuffer->GetNumAttributes() > 0) {
     auto vertexDesc = MTL::VertexDescriptor::alloc()->init();
 
     int numAttrs = vertexBuffer->GetNumAttributes();
     const FVertexBufferAttribute *attrs = vertexBuffer->GetAttributes();
-    size_t stride = vertexBuffer->GetStride();
 
     for (int i = 0; i < numAttrs; i++) {
       // Map GZDoom vertex format to Metal vertex format
@@ -404,7 +408,7 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
     // provided This is useful for ClearScreen or other internal draws
     auto vertexDesc = MTL::VertexDescriptor::alloc()->init();
 
-    vertexDesc->layouts()->object(0)->setStride(sizeof(FFlatVertex));
+    vertexDesc->layouts()->object(0)->setStride(stride);
     vertexDesc->layouts()->object(0)->setStepFunction(
         MTL::VertexStepFunctionPerVertex);
 
@@ -424,19 +428,19 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
     vertexDesc->attributes()->object(2)->setBufferIndex(0);
 
     // Attribute 3: aVertex2 (float2) - Points to TexCoord if stride is 24, or lindex if 32
-    if (sizeof(FFlatVertex) == 32) {
+    if (stride == 32) {
         vertexDesc->attributes()->object(3)->setFormat(MTL::VertexFormatFloat);
         vertexDesc->attributes()->object(3)->setOffset(offsetof(FFlatVertex, lindex));
         vertexDesc->attributes()->object(3)->setBufferIndex(0);
     } else {
-        // Fallback for 24-byte FFlatVertex
+        // Fallback for 24-byte FFlatVertex or TwoDVertex
         vertexDesc->attributes()->object(3)->setFormat(MTL::VertexFormatFloat2);
         vertexDesc->attributes()->object(3)->setOffset(offsetof(FFlatVertex, u));
         vertexDesc->attributes()->object(3)->setBufferIndex(0);
     }
 
     // Attribute 6: aLightmap (float2) - Points to lu, lv if 32 bytes
-    if (sizeof(FFlatVertex) == 32) {
+    if (stride == 32) {
         vertexDesc->attributes()->object(6)->setFormat(MTL::VertexFormatFloat2);
         vertexDesc->attributes()->object(6)->setOffset(offsetof(FFlatVertex, lu));
         vertexDesc->attributes()->object(6)->setBufferIndex(0);
@@ -576,6 +580,10 @@ void MtPipelineStateManager::ConfigureBlendMode(
   case STYLEOP_Add:
   case STYLEOP_Sub:
   case STYLEOP_RevSub:
+    if (style.AsDWORD == STYLE_Normal) {
+        attachment->setBlendingEnabled(false);
+        return;
+    }
     attachment->setBlendingEnabled(true);
     attachment->setSourceRGBBlendFactor(srcRGBFactor);
     attachment->setDestinationRGBBlendFactor(dstRGBFactor);

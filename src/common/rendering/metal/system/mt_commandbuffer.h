@@ -20,6 +20,7 @@ public:
   // Get command buffers for different operations
   MTL::CommandBuffer *GetRenderCommandBuffer();
   MTL::CommandBuffer *GetBlitCommandBuffer();
+  MTL::CommandBuffer *CreateNewCommandBuffer();
   MTL::CommandBuffer *GetCurrentCommandBuffer() {
     return mCurrentCommandBuffer;
   }

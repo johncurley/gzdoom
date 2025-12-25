@@ -14,30 +14,30 @@ MtCommandBufferManager::~MtCommandBufferManager() {}
 
 MTL::CommandBuffer *MtCommandBufferManager::GetRenderCommandBuffer() {
   if (!mCurrentCommandBuffer) {
-    MTL::CommandBuffer *cmdBuf = fb->device->commandQueue->commandBuffer();
-    if (!cmdBuf) {
-      throw CMetalError("Failed to create command buffer");
-    }
-    cmdBuf->retain(); // Keep alive
-    
-    // Add completed handler to signal semaphore for inflight frame management
-    // This is especially important on Intel GPUs to maintain steady frame pacing.
-    dispatch_semaphore_t sem = fb->GetInflightSemaphore();
-    [(__bridge id<MTLCommandBuffer>)cmdBuf addCompletedHandler:^(id<MTLCommandBuffer> buffer) {
-        if (buffer.status == MTLCommandBufferStatusError) {
-            NSLog(@"Metal: CommandBuffer Error: %@", buffer.error.localizedDescription);
-        }
-        dispatch_semaphore_signal(sem);
-    }];
-    
-    mCurrentCommandBuffer = cmdBuf;
+    mCurrentCommandBuffer = CreateNewCommandBuffer();
   }
   return mCurrentCommandBuffer;
 }
 
+MTL::CommandBuffer *MtCommandBufferManager::CreateNewCommandBuffer() {
+  MTL::CommandBuffer *cmdBuf = fb->device->commandQueue->commandBuffer();
+  if (!cmdBuf) {
+    throw CMetalError("Failed to create command buffer");
+  }
+  cmdBuf->retain(); // Keep alive for our manual management
+  
+  // Add completed handler to signal semaphore for inflight frame management
+  dispatch_semaphore_t sem = fb->GetInflightSemaphore();
+  [(__bridge id<MTLCommandBuffer>)cmdBuf addCompletedHandler:^(id<MTLCommandBuffer> buffer) {
+      if (buffer.status == MTLCommandBufferStatusError) {
+          NSLog(@"Metal: CommandBuffer Error: %@", buffer.error.localizedDescription);
+      }
+      dispatch_semaphore_signal(sem);
+  }];
+  return cmdBuf;
+}
+
 MTL::CommandBuffer *MtCommandBufferManager::GetBlitCommandBuffer() {
-  // For now, reuse the same command buffer
-  // In the future, we could optimize by using separate blit command encoders
   return GetRenderCommandBuffer();
 }
 
@@ -67,17 +67,12 @@ void MtCommandBufferManager::WaitForCommands(bool finish) {
 void MtCommandBufferManager::BeginFrame() {
   mFrameIndex++;
 
-  // Create new command buffer for this frame
   if (mCurrentCommandBuffer) {
     mCurrentCommandBuffer->release();
   }
-  MTL::CommandBuffer *cmdBuf = fb->device->commandQueue->commandBuffer();
-  if (cmdBuf) {
-    cmdBuf->retain();
-    mCurrentCommandBuffer = cmdBuf;
-  } else {
-    mCurrentCommandBuffer = nullptr;
-  }
+  
+  // Proactively create command buffer for the frame
+  mCurrentCommandBuffer = CreateNewCommandBuffer();
 }
 
 void MtCommandBufferManager::EndFrame() {
