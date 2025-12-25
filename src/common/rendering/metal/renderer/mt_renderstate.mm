@@ -127,7 +127,7 @@ void MtRenderState::DrawIndexed(int dt, int index, int count, bool apply) {
   if (apply || mNeedApply)
     Apply(dt);
 
-  if (!mEncoder)
+  if (!mEncoder || !mIndexBuffer)
     return;
 
   mEncoder->drawIndexedPrimitives(
@@ -409,6 +409,9 @@ void MtRenderState::ApplyStreamData() {
 }
 
 void MtRenderState::ApplyPushConstants() {
+  if (!mEncoder)
+    return;
+
   int fogset = 0;
   if (mFogEnabled) {
     if (mFogEnabled == 2) {
@@ -462,6 +465,9 @@ void MtRenderState::ApplyMatrices() {
 }
 
 void MtRenderState::ApplyVertexBuffers() {
+  if (!mEncoder)
+    return;
+
   if ((mVertexBuffer != mLastVertexBuffer ||
        mVertexOffsets[0] != mLastVertexOffsets[0] ||
        mVertexOffsets[1] != mLastVertexOffsets[1]) &&
@@ -490,6 +496,9 @@ void MtRenderState::ApplyVertexBuffers() {
 }
 
 void MtRenderState::ApplyMaterial() {
+  if (!mEncoder)
+    return;
+
   if (mMaterial.mChanged) {
     if (mMaterial.mMaterial) {
       if (mMaterial.mMaterial->Source()->isHardwareCanvas())
@@ -572,7 +581,7 @@ void MtRenderState::ApplyMaterial() {
 }
 
 void MtRenderState::ApplyCulling() {
-  if (mCullModeChanged) {
+  if (mCullModeChanged && mEncoder) {
     if (mCullMode == Cull_None)
       mEncoder->setCullMode(MTL::CullModeNone);
     else if (mCullMode == Cull_CW)
@@ -586,6 +595,8 @@ void MtRenderState::ApplyCulling() {
 void MtRenderState::ApplyHWBufferSet() {
   if (!mEncoder)
     return;
+
+  if (mt_debug) Printf("Metal: ApplyHWBufferSet\n");
 
   // Binding Indices (Matching shaderBindings in mt_shader.cpp)
   // Viewpoint = 17, Light = 16, Bone = 18, Matrix = 19, Stream = 20, PushConstants = 21
@@ -748,8 +759,10 @@ void MtRenderState::SetRenderTarget(MTL::Texture *image,
 
 // FORCE RECOMPILE: December 25 V8 Final Audit Build
 void MtRenderState::BeginRenderPass() {
-  if (!mRenderTarget.Image)
+  if (!mRenderTarget.Image) {
+    if (mt_debug) Printf("Metal: BeginRenderPass - No render target image! width=%d height=%d\n", mRenderTarget.Width, mRenderTarget.Height);
     return;
+  }
     
   if (mRenderTarget.Width <= 0 || mRenderTarget.Height <= 0) {
       if (mt_debug) Printf("Metal: BeginRenderPass - Invalid render target size %dx%d\n", mRenderTarget.Width, mRenderTarget.Height);

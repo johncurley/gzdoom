@@ -303,7 +303,7 @@ static const char *shaderBindings = R"(
 	#define uNpotEmulation data[uDataIndex].uNpotEmulation
 
 	#define SUPPORTS_SHADOWMAPS
-	//#define HAS_UNIFORM_VERTEX_DATA
+	#define HAS_UNIFORM_VERTEX_DATA
 
 	float noise1(float) { return 0; }
 	vec2 noise2(vec2) { return vec2(0); }

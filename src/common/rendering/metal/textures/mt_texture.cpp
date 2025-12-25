@@ -230,10 +230,12 @@ void MtHardwareTexture::Reset() {
 
 void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
   static int createImageCount = 0;
-  if (createImageCount++ < 10)
+  if (mt_debug || createImageCount++ < 10)
     Printf(
-        "Metal: CreateImage called for texture %s (translation=%d, flags=%d)\n",
-        tex ? "valid" : "null", translation, flags);
+        "Metal: CreateImage called for texture %p (translation=%d, flags=%d). HWCanvas=%d\n",
+        tex, translation, flags, tex ? tex->isHardwareCanvas() : -1);
+
+  if (!tex) return;
 
   if (!tex->isHardwareCanvas()) {
     // Regular texture - get pixel data from game texture and upload to GPU

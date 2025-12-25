@@ -147,22 +147,6 @@ public:
       encoder->setDepthStencilState(fb->GetPipelineStateManager()->GetDisabledDepthStencilState());
       encoder->setCullMode(MTL::CullModeNone);
       
-      MTL::Viewport mtlViewport;
-      mtlViewport.originX = 0;
-      mtlViewport.originY = 0;
-      mtlViewport.width = width;
-      mtlViewport.height = height;
-      mtlViewport.znear = 0;
-      mtlViewport.zfar = 1;
-      encoder->setViewport(mtlViewport);
-
-      MTL::ScissorRect scissor;
-      scissor.x = 0;
-      scissor.y = 0;
-      scissor.width = width;
-      scissor.height = height;
-      encoder->setScissorRect(scissor);
-
       // Bind vertex buffer (screen->mVertexData) at slot 0 manually too for safety
       encoder->setVertexBuffer(vb->GetBuffer(), 0, 0);
 
@@ -230,8 +214,8 @@ public:
                                   0);
       }
 
-      // Draw quad (Triangle Strip of 3 vertices = 1 triangle covering the screen)
-      encoder->drawPrimitives(MTL::PrimitiveTypeTriangleStrip, (NS::UInteger)FFlatVertexBuffer::PRESENT_INDEX, (NS::UInteger)3);
+      // Draw quad (Triangle Strip of 4 vertices forming a quad)
+      encoder->drawPrimitives(MTL::PrimitiveTypeTriangleStrip, (NS::UInteger)FFlatVertexBuffer::PRESENT_INDEX, (NS::UInteger)4);
       if (mt_debug) Printf("Metal: PPRenderState::Draw - called drawPrimitives\n");
     } else if (mt_debug) {
         Printf("Metal: PPRenderState::Draw - FAILED to get pipeline state\n");
@@ -340,7 +324,7 @@ void MtPostprocess::BlitSceneToPostprocess() {
 
   blitEncoder->endEncoding();
   tmpBuffer->commit();
-  tmpBuffer->waitUntilCompleted(); // Absolute sync
+  // tmpBuffer->waitUntilCompleted(); // Removed for performance
 }
 
 void MtPostprocess::BlitCurrentToImage(MTL::Texture *dstimage) {

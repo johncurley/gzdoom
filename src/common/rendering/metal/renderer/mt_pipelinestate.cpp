@@ -505,7 +505,7 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
     Printf("Metal: Failed to create render pipeline state: %s\n",
            error->localizedDescription()->utf8String());
     error->release();
-  } else if (state) {
+  } else if (state && mt_debug) {
     Printf("Metal: Pipeline state created successfully (effect=%d, state=%d, "
            "alpha=%d, vfmt=%d)\n",
            key.SpecialEffect, key.EffectState, key.AlphaTest, key.VertexFormat);
@@ -580,7 +580,7 @@ void MtPipelineStateManager::ConfigureBlendMode(
   case STYLEOP_Add:
   case STYLEOP_Sub:
   case STYLEOP_RevSub:
-    if (style.AsDWORD == STYLE_Normal) {
+    if (style.SrcAlpha == STYLEALPHA_One && style.DestAlpha == STYLEALPHA_Zero && style.BlendOp == STYLEOP_Add) {
         attachment->setBlendingEnabled(false);
         return;
     }
