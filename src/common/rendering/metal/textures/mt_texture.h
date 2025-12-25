@@ -58,6 +58,7 @@ public:
   void CreateImage(FTexture *tex, int translation, int flags);
 
   MtTextureImage *GetImage() { return mImage.get(); }
+  MtTextureImage *GetDepthStencil(FCanvasTexture *tex);
   size_t GetStagingBufferSize() const { return mStagingBuffer.size(); }
   const uint8_t *GetStagingBuffer() const { return mStagingBuffer.data(); }
 
@@ -85,6 +86,9 @@ public:
 
   // PP Texture support
   MTL::Texture *GetPPTexture(PPTexture *texture);
+
+  std::unordered_map<FCanvasTexture *, std::unique_ptr<MtTextureImage>>
+      mCanvasDepthStencils;
 
 private:
   MetalRenderDevice *fb = nullptr;

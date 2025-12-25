@@ -4,10 +4,9 @@
 #include <vector>
 #include <list>
 
-#ifdef __OBJC__
-#import <Metal/Metal.h>
-#else
-#endif
+namespace MTL {
+class Buffer;
+}
 
 class MetalRenderDevice;
 class MtHardwareDataBuffer;
@@ -27,13 +26,8 @@ public:
 	void Deinit();
 
 	// Create buffers
-#ifdef __OBJC__
-	id<MTLBuffer> CreateBuffer(size_t size, MTLResourceOptions options);
-	id<MTLBuffer> CreateBufferWithData(const void* data, size_t size, MTLResourceOptions options);
-#else
-	void* CreateBuffer(size_t size, unsigned int options);
-	void* CreateBufferWithData(const void* data, size_t size, unsigned int options);
-#endif
+	MTL::Buffer* CreateBuffer(size_t size, unsigned int options);
+	MTL::Buffer* CreateBufferWithData(const void* data, size_t size, unsigned int options);
 
 	IVertexBuffer* CreateVertexBuffer();
 	IIndexBuffer* CreateIndexBuffer();
@@ -42,11 +36,7 @@ public:
 	// Ring buffer allocation (for dynamic data)
 	struct RingBufferAllocation
 	{
-#ifdef __OBJC__
-		id<MTLBuffer> buffer;
-#else
-		void* buffer;
-#endif
+		MTL::Buffer* buffer;
 		uint32_t offset;
 		void* data;
 	};
@@ -59,14 +49,6 @@ public:
 
 	// Statistics
 	size_t GetAllocatedMemory() const { return mAllocatedMemory; }
-
-	// Uniform buffers (exposed for resource binding)
-	MtHardwareDataBuffer* ViewpointUBO = nullptr;
-	MtHardwareDataBuffer* LightBufferSSO = nullptr;
-	MtHardwareDataBuffer* LightNodes = nullptr;
-	MtHardwareDataBuffer* LightLines = nullptr;
-	MtHardwareDataBuffer* LightList = nullptr;
-	MtHardwareDataBuffer* BoneBufferSSO = nullptr;
 
 	std::unique_ptr<MtStreamBuffer> MatrixBuffer;
 	std::unique_ptr<MtStreamBuffer> StreamBuffer;
@@ -81,11 +63,7 @@ private:
 
 	// Ring buffers
 	static const size_t kRingBufferSize = 8 * 1024 * 1024; // 8MB
-#ifdef __OBJC__
-	std::vector<id<MTLBuffer>> mRingBuffers;
-#else
-	std::vector<void*> mRingBuffers;
-#endif
+	std::vector<MTL::Buffer*> mRingBuffers;
 	size_t mCurrentRingBuffer = 0;
 	size_t mRingBufferOffset = 0;
 };

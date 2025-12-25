@@ -611,6 +611,10 @@ file( GLOB HEADER_FILES
 	common/rendering/metal/renderer/*.h
 	common/rendering/metal/shaders/*.h
 	common/rendering/metal/textures/*.h
+	common/rendering/metal/system
+	common/rendering/metal/renderer
+	common/rendering/metal/shaders
+	common/rendering/metal/textures
 	common/scripting/core/*h
 	common/scripting/vm/*h
 	common/scripting/dap/*.h
@@ -773,11 +777,11 @@ set (VULKAN_SOURCES
 
 # Metal renderer (macOS only)
 set (METAL_SOURCES
-	common/rendering/metal/system/mt_renderdevice.cpp
-	common/rendering/metal/system/mt_commandbuffer.cpp
+	common/rendering/metal/system/mt_renderdevice.mm
+	common/rendering/metal/system/mt_commandbuffer.mm
 	common/rendering/metal/system/mt_buffer.cpp
 	common/rendering/metal/system/mt_hwbuffer.cpp
-	common/rendering/metal/renderer/mt_renderstate.cpp
+	common/rendering/metal/renderer/mt_renderstate.mm
 	common/rendering/metal/renderer/mt_pipelinestate.cpp
 	common/rendering/metal/renderer/mt_streambuffer.cpp
 	common/rendering/metal/renderer/mt_renderbuffers.cpp
@@ -1310,6 +1314,15 @@ set( GAME_NONPCH_SOURCES ${GAME_SOURCES} )
 list( REMOVE_ITEM GAME_NONPCH_SOURCES ${PCH_SOURCES} )
 
 add_executable( zdoom WIN32 MACOSX_BUNDLE ${GAME_SOURCES} )
+
+if (HAVE_METAL)
+	target_include_directories(zdoom PRIVATE
+		common/rendering/metal/system
+		common/rendering/metal/renderer
+		common/rendering/metal/shaders
+		common/rendering/metal/textures
+	)
+endif()
 
 target_precompile_headers( zdoom PRIVATE g_pch.h )
 

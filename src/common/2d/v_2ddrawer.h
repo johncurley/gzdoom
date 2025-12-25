@@ -151,8 +151,19 @@ public:
 		int shape2DCommandCounter;
 
 		RenderCommand()
+			: isSpecial(SpecialDrawCommand::NotSpecial),
+			  stencilOn(false), stencilOffs(0), stencilOp(0), stencilFlags(0),
+			  mType(DrawTypeTriangles), mVertIndex(0), mVertCount(0), mIndexIndex(0), mIndexCount(0),
+			  mTexture(nullptr), mTranslationId(NO_TRANSLATION),
+			  mDesaturate(0), mDrawMode(TM_NORMAL), mLightLevel(0), mFlags(0), mScreenFade(1.0f),
+			  useTransform(false), shape2DBufIndex(0), shape2DIndexCount(0), shape2DCommandCounter(0)
 		{
-			memset((void*)this, 0,  sizeof(*this));
+			mRenderStyle = LegacyRenderStyles[STYLE_Normal];
+			mSpecialColormap[0] = 0;
+			mSpecialColormap[1] = 0;
+			mScissor[0] = mScissor[1] = mScissor[2] = mScissor[3] = 0;
+			mColor1 = 0;
+			transform.Identity();
 		}
 
 		// If these fields match, two draw commands can be batched.

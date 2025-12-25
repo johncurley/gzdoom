@@ -3,6 +3,7 @@
 #include "engineerrors.h"
 #include "gl_sysfb.h"
 #include <dispatch/dispatch.h>
+#include <mutex>
 
 // Prevent MacTypes.h from defining TimeScale by defining it as a macro
 // temporarily
@@ -13,10 +14,28 @@ namespace MTL {
 class Device;
 class CommandQueue;
 class Buffer;
+class Texture;
 } // namespace MTL
 
 // Restore TimeScale
 #undef TimeScale
+
+namespace CA {
+class MetalLayer;
+class MetalDrawable;
+} // namespace CA
+
+// RAII guard for the inflight frames semaphore
+struct SemaphoreGuard {
+  dispatch_semaphore_t sem;
+  bool signaled = false;
+  SemaphoreGuard(dispatch_semaphore_t s) : sem(s) {}
+  ~SemaphoreGuard() {
+    if (!signaled)
+      dispatch_semaphore_signal(sem);
+  }
+  void Handled() { signaled = true; }
+};
 
 struct FRenderViewpoint;
 class MtSamplerManager;
@@ -115,13 +134,18 @@ public:
 
   void WaitForCommands(bool finish) override;
   void RecycleBuffer(MTL::Buffer *buffer);
+  void RecycleTexture(MTL::Texture *texture);
+  
+  dispatch_semaphore_t GetInflightSemaphore() { return mInflightFramesSemaphore; }
+
+  CA::MetalDrawable *mCurrentDrawable = nullptr;
 
 private:
   void RenderTextureView(FCanvasTexture *tex,
                          std::function<void(IntRect &)> renderFunc) override;
   void PrintStartupLog();
   void CopyScreenToBuffer(int w, int h, uint8_t *data) override;
-  void PresentFrame(void *drawable);
+  void PresentFrame(void *drawable, SemaphoreGuard *guard);
 
   // Manager instances (following Vulkan pattern)
   std::unique_ptr<MtCommandBufferManager> mCommands;
@@ -143,7 +167,9 @@ private:
 
   // Resource recycling bin to keep buffers alive until GPU is done
   std::vector<MTL::Buffer *> mBufferRecycleBin[3];
+  std::vector<MTL::Texture *> mTextureRecycleBin[3];
   int mCurrentFrameRecycleIndex = 0;
+  std::mutex mRecycleMutex;
 };
 
 class CMetalError : public CEngineError {

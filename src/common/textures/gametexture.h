@@ -174,14 +174,14 @@ public:
 	void SetNoDecals(bool on) { if (on) flags |= GTexf_NoDecals; else flags &= ~GTexf_NoDecals; }
 	void SetOffsetsNotForFont() { flags |= GTexf_OffsetsNotForFont; }
 
-	bool isValid() const { return UseType != ETextureType::Null; }
+	bool isValid() const { return UseType != ETextureType::Null && Base != nullptr; }
 	int isWarped() { return warped; }
 	void SetWarpStyle(int style) { warped = style; }
-	bool isMasked() { return Base->Masked; }
-	bool isHardwareCanvas() const { return Base->isHardwareCanvas(); }	// There's two here so that this can deal with software canvases in the hardware renderer later.
-	bool isSoftwareCanvas() const { return Base->isCanvas(); }
+	bool isMasked() { return Base != nullptr && Base->Masked; }
+	bool isHardwareCanvas() const { return Base != nullptr && Base->isHardwareCanvas(); }	// There's two here so that this can deal with software canvases in the hardware renderer later.
+	bool isSoftwareCanvas() const { return Base != nullptr && Base->isCanvas(); }
 
-	void SetTranslucent(bool on) { Base->bTranslucent = on; }
+	void SetTranslucent(bool on) { if (Base != nullptr) Base->bTranslucent = on; }
 	void SetUseType(ETextureType type) { UseType = type; }
 	int GetRotations() const { return Rotations; }
 	void SetRotations(int rot) { Rotations = int16_t(rot); }

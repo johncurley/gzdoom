@@ -123,7 +123,7 @@ public:
 			result.source = msl.compile();
 
 			// Extract resource bindings for reflection
-			spirv_cross::ShaderResources resources = msl.get_shader_resources();
+			msl.get_shader_resources();
 
 			// Extract texture bindings
 			for (const auto& resource : resources.sampled_images)

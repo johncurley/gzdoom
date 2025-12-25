@@ -441,7 +441,7 @@ void MtRenderState::ApplyPushConstants() {
   mPushConstants.uDataIndex = mStreamBufferWriter.DataIndex();
 
   if (mt_debug) {
-      Printf("Metal: ApplyPushConstants texMode=%d alpha=%f fog=%d lightLvl=%f dataIndex=%d\n", 
+      Printf("Metal: ApplyPushConstants (21) texMode=%d alpha=%f fog=%d lightLvl=%f dataIndex=%d\n", 
              mPushConstants.uTextureMode, mPushConstants.uAlphaThreshold, mPushConstants.uFogEnabled, mPushConstants.uLightLevel, mPushConstants.uDataIndex);
   }
 
@@ -584,8 +584,8 @@ void MtRenderState::ApplyHWBufferSet() {
   if (!mEncoder)
     return;
 
-  // Bind tracked buffers (Viewpoint, Light, Bone, etc.)
-  // Viewpoint = 17, Light = 16, Bone = 18
+  // Binding Indices (Matching shaderBindings in mt_shader.cpp)
+  // Viewpoint = 17, Light = 16, Bone = 18, Matrix = 19, Stream = 20, PushConstants = 21
   
   // 1. Viewpoint
   MTL::Buffer* vpBuf = mBoundBuffers[VIEWPOINT_BINDINGPOINT];
@@ -595,7 +595,10 @@ void MtRenderState::ApplyHWBufferSet() {
       mEncoder->setFragmentBuffer(vpBuf, vpOff, 17);
       mLastBoundBuffers[VIEWPOINT_BINDINGPOINT] = vpBuf;
       mLastBoundOffsets[VIEWPOINT_BINDINGPOINT] = vpOff;
-      if (mt_debug) Printf("Metal: Bound Viewpoint buffer %p offset %u\n", vpBuf, vpOff);
+      if (mt_debug) {
+          float* m = (float*)((uint8_t*)vpBuf->contents() + vpOff);
+          Printf("Metal: Bound Viewpoint (17) buf=%p off=%u. Matrix[0]=%.2f %.2f %.2f %.2f\n", vpBuf, vpOff, m[0], m[1], m[2], m[3]);
+      }
   }
 
   // 2. Light
@@ -606,7 +609,7 @@ void MtRenderState::ApplyHWBufferSet() {
       mEncoder->setFragmentBuffer(ltBuf, ltOff, 16);
       mLastBoundBuffers[LIGHTBUF_BINDINGPOINT] = ltBuf;
       mLastBoundOffsets[LIGHTBUF_BINDINGPOINT] = ltOff;
-      if (mt_debug) Printf("Metal: Bound Light buffer %p offset %u\n", ltBuf, ltOff);
+      if (mt_debug) Printf("Metal: Bound Light (16) buf=%p off=%u\n", ltBuf, ltOff);
   }
 
   // 3. Bone
@@ -617,10 +620,10 @@ void MtRenderState::ApplyHWBufferSet() {
       mEncoder->setFragmentBuffer(bnBuf, bnOff, 18);
       mLastBoundBuffers[BONEBUF_BINDINGPOINT] = bnBuf;
       mLastBoundOffsets[BONEBUF_BINDINGPOINT] = bnOff;
-      if (mt_debug) Printf("Metal: Bound Bone buffer %p offset %u\n", bnBuf, bnOff);
+      if (mt_debug) Printf("Metal: Bound Bone (18) buf=%p off=%u\n", bnBuf, bnOff);
   }
 
-  // Bind matrices buffer (model/texture matrices)
+  // 4. Matrix (Model/Texture)
   uint32_t matrixOffset = mMatrixBufferWriter.Offset();
   MTL::Buffer *matrixBuffer = mMatrixBufferWriter.GetBuffer();
   if (matrixBuffer && (matrixBuffer != mLastBoundBuffers[14] || matrixOffset != mLastBoundOffsets[14])) {
@@ -628,10 +631,10 @@ void MtRenderState::ApplyHWBufferSet() {
     mEncoder->setFragmentBuffer(matrixBuffer, matrixOffset, 19);
     mLastBoundBuffers[14] = matrixBuffer;
     mLastBoundOffsets[14] = matrixOffset;
-    if (mt_debug) Printf("Metal: Bound Matrix buffer %p offset %u\n", matrixBuffer, matrixOffset);
+    if (mt_debug) Printf("Metal: Bound Matrix (19) buf=%p off=%u\n", matrixBuffer, matrixOffset);
   }
 
-  // Bind stream data buffer (per-draw uniforms)
+  // 5. Stream (Per-draw uniforms)
   uint32_t streamDataOffset = mStreamBufferWriter.StreamDataOffset();
   MTL::Buffer *streamBuffer = mStreamBufferWriter.GetBuffer();
   if (streamBuffer && (streamBuffer != mLastBoundBuffers[15] || streamDataOffset != mLastBoundOffsets[15])) {
@@ -639,7 +642,7 @@ void MtRenderState::ApplyHWBufferSet() {
     mEncoder->setFragmentBuffer(streamBuffer, streamDataOffset, 20);
     mLastBoundBuffers[15] = streamBuffer;
     mLastBoundOffsets[15] = streamDataOffset;
-    if (mt_debug) Printf("Metal: Bound Stream buffer %p offset %u\n", streamBuffer, streamDataOffset);
+    if (mt_debug) Printf("Metal: Bound Stream (20) buf=%p off=%u\n", streamBuffer, streamDataOffset);
   }
 }
 
@@ -734,7 +737,7 @@ void MtRenderState::SetRenderTarget(MTL::Texture *image,
   mRenderTarget.Samples = samples;
 }
 
-// FORCE RECOMPILE: December 25 Simplified Pass Build
+// FORCE RECOMPILE: December 25 Final Audit Build
 void MtRenderState::BeginRenderPass() {
   if (!mRenderTarget.Image)
     return;
@@ -755,7 +758,7 @@ void MtRenderState::BeginRenderPass() {
 
   // Color Attachment
   auto colorAttachment = pRPD->colorAttachments()->object(0);
-  colorAttachment->setTexture(mRenderTarget.Image);
+  colorAttachment.setTexture(mRenderTarget.Image);
   bool colorFilled = mClearedTargets.find(mRenderTarget.Image) != mClearedTargets.end();
   bool clearColor = (mClearTargets & CT_Color) || !colorFilled;
   
@@ -770,6 +773,7 @@ void MtRenderState::BeginRenderPass() {
           screen->mSceneClearColor[2], screen->mSceneClearColor[3]));
   }
 
+
   // Depth/Stencil Attachment
   if (mRenderTarget.DepthStencil) {
     bool dsFilled = mClearedTargets.find(mRenderTarget.DepthStencil) != mClearedTargets.end();
@@ -780,19 +784,19 @@ void MtRenderState::BeginRenderPass() {
 
     auto depthAttachment = pRPD->depthAttachment();
     depthAttachment->setTexture(mRenderTarget.DepthStencil);
-    depthAttachment.setLoadAction(clearDepth ? MTL::LoadActionClear : MTL::LoadActionLoad);
-    depthAttachment.setStoreAction(MTL::StoreActionStore);
+    depthAttachment->setLoadAction(clearDepth ? MTL::LoadActionClear : MTL::LoadActionLoad);
+    depthAttachment->setStoreAction(MTL::StoreActionStore);
     if (clearDepth) {
-        depthAttachment.setClearDepth(1.0);
+        depthAttachment->setClearDepth(1.0);
         mClearedTargets.insert(mRenderTarget.DepthStencil);
     }
 
     auto stencilAttachment = pRPD->stencilAttachment();
-    stencilAttachment.setTexture(mRenderTarget.DepthStencil);
-    stencilAttachment.setLoadAction(clearStencil ? MTL::LoadActionClear : MTL::LoadActionLoad);
-    stencilAttachment.setStoreAction(MTL::StoreActionStore);
+    stencilAttachment->setTexture(mRenderTarget.DepthStencil);
+    stencilAttachment->setLoadAction(clearStencil ? MTL::LoadActionClear : MTL::LoadActionLoad);
+    stencilAttachment->setStoreAction(MTL::StoreActionStore);
     if (clearStencil) {
-        stencilAttachment.setClearStencil(0);
+        stencilAttachment->setClearStencil(0);
         mClearedTargets.insert(mRenderTarget.DepthStencil);
     }
   }

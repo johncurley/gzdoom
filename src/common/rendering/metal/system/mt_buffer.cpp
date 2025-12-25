@@ -27,12 +27,12 @@ MtBufferManager::~MtBufferManager() {
   // Release all ring buffers
   for (auto buffer : mRingBuffers) {
     if (buffer)
-      ((MTL::Buffer *)buffer)->release();
+      buffer->release();
   }
   mRingBuffers.clear();
 }
 
-void *MtBufferManager::CreateBuffer(size_t size, unsigned int options) {
+MTL::Buffer *MtBufferManager::CreateBuffer(size_t size, unsigned int options) {
   MTL::Buffer *buffer =
       fb->device->device->newBuffer(size, (MTL::ResourceOptions)options);
   if (buffer) {
@@ -41,7 +41,7 @@ void *MtBufferManager::CreateBuffer(size_t size, unsigned int options) {
   return buffer;
 }
 
-void *MtBufferManager::CreateBufferWithData(const void *data, size_t size,
+MTL::Buffer *MtBufferManager::CreateBufferWithData(const void *data, size_t size,
                                             unsigned int options) {
   MTL::Buffer *buffer =
       fb->device->device->newBuffer(data, size, (MTL::ResourceOptions)options);
@@ -63,14 +63,14 @@ MtBufferManager::AllocateRingBuffer(size_t size) {
   }
 
   // Get current ring buffer
-  MTL::Buffer *buffer = (MTL::Buffer *)mRingBuffers[mCurrentRingBuffer];
+  MTL::Buffer *buffer = mRingBuffers[mCurrentRingBuffer];
 
   // Check if we need to wrap around
   if (mRingBufferOffset + size > kRingBufferSize) {
     // Move to next ring buffer
     mCurrentRingBuffer = (mCurrentRingBuffer + 1) % mRingBuffers.size();
     mRingBufferOffset = 0;
-    buffer = (MTL::Buffer *)mRingBuffers[mCurrentRingBuffer];
+    buffer = mRingBuffers[mCurrentRingBuffer];
   }
 
   // Allocate from current position
@@ -99,32 +99,6 @@ void MtBufferManager::Deinit() {
   MatrixBuffer.reset();
   StreamBuffer.reset();
   FanToTrisIndexBuffer.reset();
-
-  // Clean up uniform buffers
-  if (ViewpointUBO) {
-    delete ViewpointUBO;
-    ViewpointUBO = nullptr;
-  }
-  if (LightBufferSSO) {
-    delete LightBufferSSO;
-    LightBufferSSO = nullptr;
-  }
-  if (LightNodes) {
-    delete LightNodes;
-    LightNodes = nullptr;
-  }
-  if (LightLines) {
-    delete LightLines;
-    LightLines = nullptr;
-  }
-  if (LightList) {
-    delete LightList;
-    LightList = nullptr;
-  }
-  if (BoneBufferSSO) {
-    delete BoneBufferSSO;
-    BoneBufferSSO = nullptr;
-  }
 }
 
 IVertexBuffer *MtBufferManager::CreateVertexBuffer() {
@@ -137,35 +111,7 @@ IIndexBuffer *MtBufferManager::CreateIndexBuffer() {
 
 IDataBuffer *MtBufferManager::CreateDataBuffer(int bindingpoint, bool ssbo,
                                                bool needsresize) {
-  auto buffer = new MtHardwareDataBuffer(fb, bindingpoint, ssbo, needsresize);
-
-  // Store references to commonly used buffers
-  switch (bindingpoint) {
-  case LIGHTBUF_BINDINGPOINT:
-    LightBufferSSO = buffer;
-    break;
-  case VIEWPOINT_BINDINGPOINT:
-    ViewpointUBO = buffer;
-    break;
-  case LIGHTNODES_BINDINGPOINT:
-    LightNodes = buffer;
-    break;
-  case LIGHTLINES_BINDINGPOINT:
-    LightLines = buffer;
-    break;
-  case LIGHTLIST_BINDINGPOINT:
-    LightList = buffer;
-    break;
-  case BONEBUF_BINDINGPOINT:
-    BoneBufferSSO = buffer;
-    break;
-  case POSTPROCESS_BINDINGPOINT:
-    break;
-  default:
-    break;
-  }
-
-  return buffer;
+  return new MtHardwareDataBuffer(fb, bindingpoint, ssbo, needsresize);
 }
 
 void MtBufferManager::CreateFanToTrisIndexBuffer() {

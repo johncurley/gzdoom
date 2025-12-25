@@ -52,6 +52,10 @@ FMaterial::FMaterial(FGameTexture * tx, int scaleflags)
 	mShaderIndex = SHADER_Default;
 	sourcetex = tx;
 	auto imgtex = tx->GetTexture();
+	if (!imgtex)
+	{
+		return;
+	}
 	mTextureLayers.Push({ imgtex, scaleflags, -1 });
 
 	if (tx->GetUseType() == ETextureType::SWCanvas && static_cast<FWrapperTexture*>(imgtex)->GetColorFormat() == 0)
@@ -203,7 +207,7 @@ IHardwareTexture* FMaterial::GetLayer(int i, int translation, MaterialLayerInfo*
 
 FMaterial * FMaterial::ValidateTexture(FGameTexture * gtex, int scaleflags, bool create)
 {
-	if (gtex && gtex->isValid())
+	if (gtex && gtex->isValid() && gtex->GetTexture())
 	{
 		if (scaleflags & CTF_Indexed) scaleflags = CTF_Indexed;
 		if (!gtex->expandSprites()) scaleflags &= ~CTF_Expand;

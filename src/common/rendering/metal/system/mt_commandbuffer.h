@@ -25,7 +25,7 @@ public:
   }
 
   // Submit and wait
-  void FlushCommands();
+  void FlushCommands(bool wait = false);
   void WaitForCommands(bool finish);
 
   // Frame synchronization

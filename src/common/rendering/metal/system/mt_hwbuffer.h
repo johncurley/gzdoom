@@ -19,6 +19,7 @@ public:
   ~MtHardwareDataBuffer();
 
   void BindRange(FRenderState *state, size_t start, size_t length) override;
+  void Upload(size_t offset, size_t size) override;
 
   MTL::Buffer *GetBuffer() const { return mBuffer; }
 
@@ -51,6 +52,7 @@ public:
 
   void SetFormat(int numBindingPoints, int numAttributes, size_t stride,
                  const FVertexBufferAttribute *attrs) override;
+  void Upload(size_t offset, size_t size) override;
 
   MTL::Buffer *GetBuffer() const { return mBuffer; }
 
@@ -95,6 +97,7 @@ public:
   ~MtIndexBuffer();
 
   MTL::Buffer *GetBuffer() const { return mBuffer; }
+  void Upload(size_t offset, size_t size) override;
 
 protected:
   void SetData(size_t size, const void *data, BufferUsageType usage) override;

@@ -366,6 +366,8 @@ void S_PrecacheLevel(FLevelLocals* Level)
 
 void S_InitData()
 {
+	Printf("Metal: Entered S_InitData.\n");
+
 	LastLocalSndInfo = LastLocalSndSeq = "";
 	S_ParseSndInfo(false);
 	S_ParseSndSeq(-1);

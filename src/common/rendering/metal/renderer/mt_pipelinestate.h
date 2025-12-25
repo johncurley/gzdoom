@@ -68,6 +68,8 @@ public:
                                                MTL::PixelFormat colorFormat,
                                                FRenderStyle blendMode);
 
+  MTL::DepthStencilState *GetDisabledDepthStencilState();
+
   // Clear cache
   void ClearCache();
 
@@ -111,4 +113,5 @@ private:
 
   std::unordered_map<PPKey, MTL::RenderPipelineState *, PPKeyHash>
       mPPPipelineCache;
+  MTL::DepthStencilState *mDisabledDepthStencilState = nullptr;
 };

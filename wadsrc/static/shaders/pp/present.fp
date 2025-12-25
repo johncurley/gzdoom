@@ -22,14 +22,16 @@ vec4 ApplyGamma(vec4 c)
 	return vec4(val, c.a);
 }
 
-vec4 Dither(vec4 c)
+vec4 Dither(vec4 c, vec2 fragCoord)
 {
 	if (ColorScale == 0.0)
 		return c;
 	vec2 texSize = vec2(textureSize(DitherTexture, 0));
-	float threshold = texture(DitherTexture, gl_FragCoord.xy / texSize).r;
+	float threshold = texture(DitherTexture, fragCoord / texSize).r;
 	return vec4(floor(c.rgb * ColorScale + threshold) / ColorScale, c.a);
 }
+
+// ...
 
 vec3 sRGBtoLinear(vec3 c)
 {
@@ -51,5 +53,6 @@ vec4 ApplyHdrMode(vec4 c)
 
 void main()
 {
-	FragColor = Dither(ApplyHdrMode(ApplyGamma(texture(InputTexture, UVOffset + TexCoord * UVScale))));
+	vec4 color = texture(InputTexture, TexCoord * UVScale + UVOffset);
+	FragColor = Dither(ApplyHdrMode(ApplyGamma(color)), gl_FragCoord.xy);
 }

@@ -9,6 +9,8 @@
 #include <Foundation/Foundation.hpp>
 #include <Metal/Metal.hpp>
 
+EXTERN_CVAR(Bool, mt_debug)
+
 bool MtPipelineKey::operator==(const MtPipelineKey &other) const {
   return VertexFormat == other.VertexFormat &&
          SpecialEffect == other.SpecialEffect &&
@@ -79,6 +81,19 @@ MtPipelineStateManager::GetPipelineState(const MtPipelineKey &key,
   return ptr;
 }
 
+MTL::DepthStencilState *MtPipelineStateManager::GetDisabledDepthStencilState() {
+  if (mDisabledDepthStencilState)
+    return mDisabledDepthStencilState;
+
+  auto desc = MTL::DepthStencilDescriptor::alloc()->init();
+  desc->setDepthCompareFunction(MTL::CompareFunctionAlways);
+  desc->setDepthWriteEnabled(false);
+
+  mDisabledDepthStencilState = fb->device->device->newDepthStencilState(desc);
+  desc->release();
+  return mDisabledDepthStencilState;
+}
+
 void MtPipelineStateManager::ClearCache() {
   for (auto &pair : mPipelineCache) {
     auto &state = pair.second;
@@ -96,6 +111,11 @@ void MtPipelineStateManager::ClearCache() {
       pair.second->release();
   }
   mPPPipelineCache.clear();
+
+  if (mDisabledDepthStencilState) {
+    mDisabledDepthStencilState->release();
+    mDisabledDepthStencilState = nullptr;
+  }
 }
 
 MTL::RenderPipelineState *
@@ -109,34 +129,40 @@ MtPipelineStateManager::GetPPPipelineState(MtShaderProgram *program,
 
   auto desc = MTL::RenderPipelineDescriptor::alloc()->init();
   desc->setVertexFunction(program->vert->function);
-  desc->setFragmentFunction(program->frag->function);
+  desc->setFragmentFunction(program->frag->fragmentFunction);
 
   auto vertexDesc = MTL::VertexDescriptor::alloc()->init();
-  // Pos (x, z, y)
+  // Pos (x, z, y, ...) - mapped to vec4 in screenquad.vp
+  // Since we are drawing from FFlatVertex, we must match its layout.
   auto attr0 = vertexDesc->attributes()->object(0);
-  attr0->setFormat(MTL::VertexFormatFloat3);
-  attr0->setOffset(0);
+  attr0->setFormat(MTL::VertexFormatFloat3); // vec3, Metal fills w=1.0
+  attr0->setOffset(offsetof(FFlatVertex, x));
   attr0->setBufferIndex(0);
   // TexCoord (u, v)
   auto attr1 = vertexDesc->attributes()->object(1);
-  attr1->setFormat(MTL::VertexFormatFloat2);
-  attr1->setOffset(12);
+  attr1->setFormat(MTL::VertexFormatFloat2); // vec2
+  attr1->setOffset(offsetof(FFlatVertex, u));
   attr1->setBufferIndex(0);
 
-  vertexDesc->layouts()->object(0)->setStride(32); // FFlatVertex size
+  vertexDesc->layouts()->object(0)->setStride(sizeof(FFlatVertex)); // FFlatVertex size
   desc->setVertexDescriptor(vertexDesc);
 
   auto colorAttachment = desc->colorAttachments()->object(0);
   colorAttachment->setPixelFormat(colorFormat);
+  colorAttachment->setWriteMask(MTL::ColorWriteMaskAll);
 
   // Configure blend mode
+  // Opaque (STYLEOP_Add, STYLEALPHA_One, STYLEALPHA_Zero)
   if (blendMode.SrcAlpha == (uint8_t)STYLEALPHA_One &&
-      blendMode.DestAlpha == (uint8_t)STYLEALPHA_One) {
+      blendMode.DestAlpha == (uint8_t)STYLEALPHA_Zero) {
+    colorAttachment->setBlendingEnabled(false); // Disable blending for opaque overwrite
+  } else if (blendMode.SrcAlpha == (uint8_t)STYLEALPHA_One &&
+             blendMode.DestAlpha == (uint8_t)STYLEALPHA_One) { // Additive
     colorAttachment->setBlendingEnabled(true);
     colorAttachment->setSourceRGBBlendFactor(MTL::BlendFactorOne);
     colorAttachment->setDestinationRGBBlendFactor(MTL::BlendFactorOne);
   } else if (blendMode.SrcAlpha == (uint8_t)STYLEALPHA_Src &&
-             blendMode.DestAlpha == (uint8_t)STYLEALPHA_InvSrc) {
+             blendMode.DestAlpha == (uint8_t)STYLEALPHA_InvSrc) { // Translucent
     colorAttachment->setBlendingEnabled(true);
     colorAttachment->setSourceRGBBlendFactor(MTL::BlendFactorSourceAlpha);
     colorAttachment->setDestinationRGBBlendFactor(
@@ -213,6 +239,9 @@ MtPipelineStateManager::CreateDepthStencilState(const MtPipelineKey &key) {
 
 MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
     const MtPipelineKey &key, MtVertexBuffer *vertexBuffer) {
+  if (mt_debug) {
+      Printf("Metal: CreateRenderPipelineState. FFlatVertex size = %zu\n", sizeof(FFlatVertex));
+  }
   auto desc = MTL::RenderPipelineDescriptor::alloc()->init();
 
   // Get or create shader based on key
@@ -254,11 +283,12 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
   desc->setFragmentFunction(fragmentFunction);
 
   // Configure vertex descriptor
-  if (vertexBuffer) {
+  if (vertexBuffer && vertexBuffer->GetNumAttributes() > 0) {
     auto vertexDesc = MTL::VertexDescriptor::alloc()->init();
 
     int numAttrs = vertexBuffer->GetNumAttributes();
     const FVertexBufferAttribute *attrs = vertexBuffer->GetAttributes();
+    size_t stride = vertexBuffer->GetStride();
 
     for (int i = 0; i < numAttrs; i++) {
       // Map GZDoom vertex format to Metal vertex format
@@ -296,13 +326,29 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
       attrDesc->setBufferIndex(attrs[i].binding);
     }
 
-    // Fix: Ensure all potentially required attributes (3-8) are defined if the shader expects them but the buffer doesn't provide them.
+    // Fix: Ensure all potentially required attributes (2-8) are defined if the shader expects them but the buffer doesn't provide them.
     // This aliases them to existing attributes to satisfy Metal validation.
-    auto attr3 = vertexDesc->attributes()->object(3); // aVertex2
+    auto attr2 = vertexDesc->attributes()->object(2); // aColor
+    if (attr2->format() == MTL::VertexFormatInvalid) {
+        attr2->setFormat(MTL::VertexFormatUChar4Normalized);
+        attr2->setOffset(0); // Alias to Position (reads first 4 bytes as color)
+        attr2->setBufferIndex(0);
+    }
+    // Attribute 3: aVertex2
+    auto attr3 = vertexDesc->attributes()->object(3);
     if (attr3->format() == MTL::VertexFormatInvalid) {
-        attr3->setFormat(MTL::VertexFormatFloat2);
-        attr3->setOffset(0); // Alias to Position (safer than TexCoord)
-        attr3->setBufferIndex(0);
+        if (stride == 24) {
+             // Alias to TexCoord (offset 12) for 2D vertex buffer to avoid reading out of bounds
+             // FFlatVertex 24: Pos(0-11), UV(12-19), Color(20-23)
+             attr3->setFormat(MTL::VertexFormatFloat2);
+             attr3->setOffset(offsetof(FFlatVertex, u)); 
+             attr3->setBufferIndex(0);
+        } else {
+             // Alias to Position for 32-byte buffer
+             attr3->setFormat(MTL::VertexFormatFloat2);
+             attr3->setOffset(0); 
+             attr3->setBufferIndex(0);
+        }
     }
     auto attr4 = vertexDesc->attributes()->object(4); // aNormal
     if (attr4->format() == MTL::VertexFormatInvalid) {
@@ -318,9 +364,17 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
     }
     auto attr6 = vertexDesc->attributes()->object(6); // aLightmap
     if (attr6->format() == MTL::VertexFormatInvalid) {
-        attr6->setFormat(MTL::VertexFormatFloat2);
-        attr6->setOffset(0); // Alias to Position
-        attr6->setBufferIndex(0);
+        if (stride == 24) {
+             // Alias to TexCoord (offset 12) for 2D
+             attr6->setFormat(MTL::VertexFormatFloat2);
+             attr6->setOffset(offsetof(FFlatVertex, u));
+             attr6->setBufferIndex(0);
+        } else {
+             // Alias to Position for 32-byte
+             attr6->setFormat(MTL::VertexFormatFloat2);
+             attr6->setOffset(0);
+             attr6->setBufferIndex(0);
+        }
     }
     auto attr7 = vertexDesc->attributes()->object(7); // aBoneWeight
     if (attr7->format() == MTL::VertexFormatInvalid) {
@@ -337,7 +391,6 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
 
     // Configure buffer layouts
     int numBindings = vertexBuffer->GetBindingPoints();
-    size_t stride = vertexBuffer->GetStride();
     for (int i = 0; i < numBindings; i++) {
       auto layoutDesc = vertexDesc->layouts()->object(i);
       layoutDesc->setStride(stride);
@@ -351,57 +404,48 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
     // provided This is useful for ClearScreen or other internal draws
     auto vertexDesc = MTL::VertexDescriptor::alloc()->init();
 
+    vertexDesc->layouts()->object(0)->setStride(sizeof(FFlatVertex));
+    vertexDesc->layouts()->object(0)->setStepFunction(
+        MTL::VertexStepFunctionPerVertex);
+
     // Attribute 0: Position (float3)
     vertexDesc->attributes()->object(0)->setFormat(MTL::VertexFormatFloat3);
-    vertexDesc->attributes()->object(0)->setOffset(0);
+    vertexDesc->attributes()->object(0)->setOffset(offsetof(FFlatVertex, x));
     vertexDesc->attributes()->object(0)->setBufferIndex(0);
 
     // Attribute 1: TexCoord (float2)
     vertexDesc->attributes()->object(1)->setFormat(MTL::VertexFormatFloat2);
-    vertexDesc->attributes()->object(1)->setOffset(12);
+    vertexDesc->attributes()->object(1)->setOffset(offsetof(FFlatVertex, u));
     vertexDesc->attributes()->object(1)->setBufferIndex(0);
 
-    // Attribute 2: Color (uchar4 normalized)
-    vertexDesc->attributes()->object(2)->setFormat(
-        MTL::VertexFormatUChar4Normalized);
-    vertexDesc->attributes()->object(2)->setOffset(20);
+    // Attribute 2: Color (uchar4 normalized) - Alias to Position if color missing
+    vertexDesc->attributes()->object(2)->setFormat(MTL::VertexFormatUChar4Normalized);
+    vertexDesc->attributes()->object(2)->setOffset(offsetof(FFlatVertex, x));
     vertexDesc->attributes()->object(2)->setBufferIndex(0);
 
-    // Attribute 3: aVertex2 (float2) - Alias to Position (offset 0)
-    vertexDesc->attributes()->object(3)->setFormat(MTL::VertexFormatFloat2);
-    vertexDesc->attributes()->object(3)->setOffset(0); 
-    vertexDesc->attributes()->object(3)->setBufferIndex(0);
+    // Attribute 3: aVertex2 (float2) - Points to TexCoord if stride is 24, or lindex if 32
+    if (sizeof(FFlatVertex) == 32) {
+        vertexDesc->attributes()->object(3)->setFormat(MTL::VertexFormatFloat);
+        vertexDesc->attributes()->object(3)->setOffset(offsetof(FFlatVertex, lindex));
+        vertexDesc->attributes()->object(3)->setBufferIndex(0);
+    } else {
+        // Fallback for 24-byte FFlatVertex
+        vertexDesc->attributes()->object(3)->setFormat(MTL::VertexFormatFloat2);
+        vertexDesc->attributes()->object(3)->setOffset(offsetof(FFlatVertex, u));
+        vertexDesc->attributes()->object(3)->setBufferIndex(0);
+    }
 
-    // Attribute 4: aNormal (float3) - Alias to Position (offset 0)
-    vertexDesc->attributes()->object(4)->setFormat(MTL::VertexFormatFloat3);
-    vertexDesc->attributes()->object(4)->setOffset(0);
-    vertexDesc->attributes()->object(4)->setBufferIndex(0);
-
-    // Attribute 5: aNormal2 (float3) - Alias to Position (offset 0)
-    vertexDesc->attributes()->object(5)->setFormat(MTL::VertexFormatFloat3);
-    vertexDesc->attributes()->object(5)->setOffset(0);
-    vertexDesc->attributes()->object(5)->setBufferIndex(0);
-
-    // Attribute 6: aLightmap (float2) - Alias to Position (offset 0)
-    vertexDesc->attributes()->object(6)->setFormat(MTL::VertexFormatFloat2);
-    vertexDesc->attributes()->object(6)->setOffset(0);
-    vertexDesc->attributes()->object(6)->setBufferIndex(0);
-
-    // Attribute 7: aBoneWeight (float4?) - Alias to Position (offset 0) - reads 12 bytes effectively, padding maybe?
-    // Using Float3 to be safe within stride, or Float4 if we assume 16 bytes available?
-    // Stride is 24. Offset 0 is fine for 16 bytes.
-    vertexDesc->attributes()->object(7)->setFormat(MTL::VertexFormatFloat4);
-    vertexDesc->attributes()->object(7)->setOffset(0);
-    vertexDesc->attributes()->object(7)->setBufferIndex(0);
-
-    // Attribute 8: aBoneSelector (int4?) - Alias to Position (offset 0) - reads as ints
-    vertexDesc->attributes()->object(8)->setFormat(MTL::VertexFormatUInt4);
-    vertexDesc->attributes()->object(8)->setOffset(0);
-    vertexDesc->attributes()->object(8)->setBufferIndex(0);
-
-    vertexDesc->layouts()->object(0)->setStride(24);
-    vertexDesc->layouts()->object(0)->setStepFunction(
-        MTL::VertexStepFunctionPerVertex);
+    // Attribute 6: aLightmap (float2) - Points to lu, lv if 32 bytes
+    if (sizeof(FFlatVertex) == 32) {
+        vertexDesc->attributes()->object(6)->setFormat(MTL::VertexFormatFloat2);
+        vertexDesc->attributes()->object(6)->setOffset(offsetof(FFlatVertex, lu));
+        vertexDesc->attributes()->object(6)->setBufferIndex(0);
+    } else {
+        // Fallback for 24-byte
+        vertexDesc->attributes()->object(6)->setFormat(MTL::VertexFormatFloat2);
+        vertexDesc->attributes()->object(6)->setOffset(offsetof(FFlatVertex, u));
+        vertexDesc->attributes()->object(6)->setBufferIndex(0);
+    }
 
     desc->setVertexDescriptor(vertexDesc);
     vertexDesc->release();
@@ -471,52 +515,94 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
 void MtPipelineStateManager::ConfigureBlendMode(
     MTL::RenderPipelineColorAttachmentDescriptor *attachment, int blendMode) {
 
-  switch (blendMode) {
-  case STYLEOP_Add: // This is the blend mode used by STYLE_Normal
-    attachment->setBlendingEnabled(true);
-    attachment->setSourceRGBBlendFactor(MTL::BlendFactorSourceAlpha);
-    attachment->setDestinationRGBBlendFactor(
-        MTL::BlendFactorOneMinusSourceAlpha);
-    attachment->setRgbBlendOperation(MTL::BlendOperationAdd);
-    attachment->setSourceAlphaBlendFactor(MTL::BlendFactorSourceAlpha);
-    attachment->setDestinationAlphaBlendFactor(
-        MTL::BlendFactorOneMinusSourceAlpha);
-    attachment->setAlphaBlendOperation(MTL::BlendOperationAdd);
-    break;
+  // Default to no blending
+  attachment->setBlendingEnabled(false);
 
-  case STYLEOP_RevSub: // This is the blend mode used by STYLE_Subtract
-    attachment->setBlendingEnabled(true);
-    attachment->setSourceRGBBlendFactor(
-        MTL::BlendFactorSourceAlpha); // Typical for subtractive, can be
-                                      // adjusted
-    attachment->setDestinationRGBBlendFactor(MTL::BlendFactorOne);
-    attachment->setRgbBlendOperation(MTL::BlendOperationReverseSubtract);
-    attachment->setSourceAlphaBlendFactor(
-        MTL::BlendFactorZero); // Typical for subtractive, can be adjusted
-    attachment->setDestinationAlphaBlendFactor(MTL::BlendFactorOne);
-    attachment->setAlphaBlendOperation(MTL::BlendOperationAdd);
-    break;
+  // Unpack FRenderStyle from the int
+  FRenderStyle style;
+  style.AsDWORD = blendMode;
 
+  // Metal Blend Factors mapping
+  static const MTL::BlendFactor blendFactors[] = {
+      MTL::BlendFactorZero,                     // STYLEALPHA_Zero
+      MTL::BlendFactorOne,                      // STYLEALPHA_One
+      MTL::BlendFactorSourceAlpha,              // STYLEALPHA_Src
+      MTL::BlendFactorOneMinusSourceAlpha,      // STYLEALPHA_InvSrc
+      MTL::BlendFactorSourceColor,              // STYLEALPHA_SrcCol
+      MTL::BlendFactorOneMinusSourceColor,      // STYLEALPHA_InvSrcCol
+      MTL::BlendFactorDestinationColor,         // STYLEALPHA_DstCol
+      MTL::BlendFactorOneMinusDestinationColor, // STYLEALPHA_InvDstCol
+      MTL::BlendFactorDestinationAlpha,         // STYLEALPHA_Dst
+      MTL::BlendFactorOneMinusDestinationAlpha  // STYLEALPHA_InvDst
+  };
+
+  // Metal Blend Operations mapping
+  static const MTL::BlendOperation blendOps[] = {
+      MTL::BlendOperationAdd, // Default/Placeholder
+      MTL::BlendOperationAdd,             // STYLEOP_Add
+      MTL::BlendOperationSubtract,        // STYLEOP_Sub
+      MTL::BlendOperationReverseSubtract, // STYLEOP_RevSub
+  };
+
+  MTL::BlendFactor srcRGBFactor = blendFactors[style.SrcAlpha % STYLEALPHA_MAX];
+  MTL::BlendFactor dstRGBFactor = blendFactors[style.DestAlpha % STYLEALPHA_MAX];
+  MTL::BlendOperation rgbBlendOp = MTL::BlendOperationAdd; // Default to Add
+
+  if (style.BlendOp >= STYLEOP_Add && style.BlendOp <= STYLEOP_RevSub) {
+      rgbBlendOp = blendOps[style.BlendOp];
+  }
+
+  // Alpha blending typically follows RGB, or is additive
+  MTL::BlendFactor srcAlphaFactor = blendFactors[style.SrcAlpha % STYLEALPHA_MAX];
+  MTL::BlendFactor dstAlphaFactor = blendFactors[style.DestAlpha % STYLEALPHA_MAX];
+  MTL::BlendOperation alphaBlendOp = MTL::BlendOperationAdd;
+
+  switch (style.BlendOp) {
   case STYLEOP_None:
     attachment->setBlendingEnabled(false);
-    break;
+    return;
 
-  case STYLEOP_Shadow: // Shadow blend mode
+  case STYLEOP_Shadow:
+    // Special blend mode for shadows (similar to Opaque but dims destination)
     attachment->setBlendingEnabled(true);
     attachment->setSourceRGBBlendFactor(MTL::BlendFactorZero);
-    attachment->setDestinationRGBBlendFactor(
-        MTL::BlendFactorSourceAlpha); // Use source alpha to dim background
+    attachment->setDestinationRGBBlendFactor(MTL::BlendFactorSourceAlpha); // Use source alpha to dim background
     attachment->setRgbBlendOperation(MTL::BlendOperationAdd);
     attachment->setSourceAlphaBlendFactor(MTL::BlendFactorZero);
     attachment->setDestinationAlphaBlendFactor(MTL::BlendFactorOne);
     attachment->setAlphaBlendOperation(MTL::BlendOperationAdd);
-    break;
+    return;
 
-  default: // For any other unhandled blend mode, disable blending for now and
-           // warn
-    Printf("Metal: Warning - Unhandled blendMode: %d. Disabling blending.\n",
-           blendMode);
+  case STYLEOP_Add:
+  case STYLEOP_Sub:
+  case STYLEOP_RevSub:
+    attachment->setBlendingEnabled(true);
+    attachment->setSourceRGBBlendFactor(srcRGBFactor);
+    attachment->setDestinationRGBBlendFactor(dstRGBFactor);
+    attachment->setRgbBlendOperation(rgbBlendOp);
+    attachment->setSourceAlphaBlendFactor(srcAlphaFactor);
+    attachment->setDestinationAlphaBlendFactor(dstAlphaFactor);
+    attachment->setAlphaBlendOperation(alphaBlendOp);
+    return;
+
+  default:
+    // Handle Fuzzy styles or any unmapped complex styles
+    // For now, default to additive blend if unhandled, or disable if unsure
+    if (style.BlendOp == STYLEOP_Fuzz || style.BlendOp == STYLEOP_FuzzOrAdd || 
+        style.BlendOp == STYLEOP_FuzzOrSub || style.BlendOp == STYLEOP_FuzzOrRevSub)
+    {
+        // Default fuzz to translucent style if not handled more specifically
+        attachment->setBlendingEnabled(true);
+        attachment->setSourceRGBBlendFactor(MTL::BlendFactorDestinationColor); // Similar to Vulkan fuzz
+        attachment->setDestinationRGBBlendFactor(MTL::BlendFactorOneMinusSourceAlpha);
+        attachment->setRgbBlendOperation(MTL::BlendOperationAdd);
+        attachment->setSourceAlphaBlendFactor(MTL::BlendFactorZero);
+        attachment->setDestinationAlphaBlendFactor(MTL::BlendFactorOne);
+        attachment->setAlphaBlendOperation(MTL::BlendOperationAdd);
+        return;
+    }
+    Printf("Metal: Warning - Unhandled blendMode: %d. Disabling blending.\n", style.BlendOp);
     attachment->setBlendingEnabled(false);
-    break;
+    return;
   }
 }

@@ -5,6 +5,10 @@
 
 #include "metal/system/mt_renderdevice.h"
 #include "mt_resourcebinding.h"
+#include "c_cvars.h"
+#include "printf.h"
+
+EXTERN_CVAR(Bool, mt_debug)
 
 MtResourceBindingManager::MtResourceBindingManager(MetalRenderDevice *fb)
     : fb(fb) {}
@@ -36,6 +40,7 @@ void MtResourceBindingManager::BindMaterialTexture(int slot,
 
 void MtResourceBindingManager::ApplyBindings(MTL::RenderCommandEncoder *encoder,
                                              bool vertex, bool fragment) {
+  if (mt_debug) Printf("Metal: ApplyBindings vert=%d frag=%d\n", (int)vertex, (int)fragment);
   if (!encoder)
     return;
 

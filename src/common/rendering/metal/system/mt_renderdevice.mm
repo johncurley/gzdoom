@@ -217,7 +217,7 @@ void MetalRenderDevice::Update() {
     mPostprocess->BlitSceneToPostprocess();
   }
 
-  // FORCE RECOMPILE: December 25 Diagnostic Build
+  // FORCE RECOMPILE: December 25 V3 Cache Force
   // 2. Set target and Draw 2D into PipelineImage[0] (where the scene is now)
   if (mPostprocess) {
     mPostprocess->SetActiveRenderTarget();
@@ -286,11 +286,8 @@ void MetalRenderDevice::PresentFrame(void *drawablePtr, SemaphoreGuard *guard) {
     return;
 
   auto commandBuffer = (MTL::CommandBuffer *)cmdBufPtr;
-  dispatch_semaphore_t sem = mInflightFramesSemaphore;
-  commandBuffer->addCompletedHandler(^(MTL::CommandBuffer *buffer) {
-    dispatch_semaphore_signal(sem);
-  });
-  
+  // NOTE: Semaphore signal moved to CommandBufferManager::GetRenderCommandBuffer completion handler
+  // to support robust inflight management across multiple command buffers per frame.
   if (guard) guard->Handled();
   commandBuffer->presentDrawable(drawable);
   commandBuffer->commit();

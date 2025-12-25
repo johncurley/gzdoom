@@ -8,6 +8,7 @@
 #include "hw_material.h"
 #include "hw_renderstate.h"
 #include "name.h"
+#include <set>
 
 namespace MTL {
 class RenderCommandEncoder;
@@ -19,7 +20,7 @@ class MetalRenderDevice;
 class MtPipelineState;
 class MtTextureImage;
 
-class MtRenderState : public FRenderState {
+class MtRenderState final : public FRenderState {
 public:
   MtRenderState(MetalRenderDevice *fb);
   ~MtRenderState() = default;
@@ -52,6 +53,9 @@ public:
   void SetRenderTarget(MTL::Texture *image, MTL::Texture *depthStencilView,
                        int width, int height, int format, int samples);
   void Bind(int bindingpoint, uint32_t offset);
+  void BindBuffer(int bindingpoint, MTL::Buffer *buffer, uint32_t offset);
+  void MarkAsFilled(MTL::Texture *tex);
+  void BeginRenderPass();
   void EndRenderPass();
   void EndFrame();
 
@@ -74,7 +78,6 @@ protected:
   void ApplyMaterial();
   void ApplyCulling();
 
-  void BeginRenderPass();
   void WaitForStreamBuffers();
 
   MetalRenderDevice *fb = nullptr;
@@ -97,6 +100,7 @@ protected:
   bool mDepthWrite = false;
   bool mStencilTest = false;
   int mClipDistanceMask = 0;
+  bool mIsFirstPass = true;
 
   bool mStencilRefChanged = false;
   int mStencilRef = 0;
@@ -107,6 +111,11 @@ protected:
   bool mCullModeChanged = true;
 
   PushConstants mPushConstants = {};
+
+  MTL::Buffer *mBoundBuffers[16] = { nullptr };
+  uint32_t mBoundOffsets[16] = { 0 };
+  MTL::Buffer *mLastBoundBuffers[16] = { nullptr };
+  uint32_t mLastBoundOffsets[16] = { 0 };
 
   uint32_t mLastViewpointOffset = 0xffffffff;
   uint32_t mLastMatricesOffset = 0xffffffff;
@@ -124,6 +133,7 @@ protected:
   bool mLastTextureMatrixEnabled = true;
 
   int mApplyCount = 0;
+  std::set<MTL::Texture *> mClearedTargets;
 
   struct RenderTarget {
     MTL::Texture *Image = nullptr;

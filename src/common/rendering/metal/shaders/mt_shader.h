@@ -87,10 +87,10 @@ public:
 // Shader manager - handles GLSL → SPIR-V → MSL compilation
 class MtShaderManager {
 public:
-  MtShaderManager(MetalRenderDevice *fb);
+  MtShaderManager(class MetalRenderDevice *fb);
   ~MtShaderManager();
 
-  // Compile shader from GLSL source
+  // Compile GLSL to Metal (via SPIR-V and MSL)
   // Pipeline: GLSL → glslang → SPIR-V → shader-translator → MSL → MTLLibrary
   std::shared_ptr<MtShaderModule>
   CompileShader(const std::string &name, const std::string &vertexSource,

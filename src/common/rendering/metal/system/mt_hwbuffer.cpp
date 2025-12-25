@@ -16,7 +16,7 @@ EXTERN_CVAR(Bool, mt_debug)
 MtHardwareDataBuffer::MtHardwareDataBuffer(MetalRenderDevice *fb,
                                            int bindingpoint, bool ssbo,
                                            bool needsresize)
-    : mBindingPoint(bindingpoint >= 0 ? bindingpoint + 10 : bindingpoint), mSSBO(ssbo), mNeedsResize(needsresize),
+    : mBindingPoint(bindingpoint), mSSBO(ssbo), mNeedsResize(needsresize),
       fb(fb) {}
 
 MtHardwareDataBuffer::~MtHardwareDataBuffer() {
@@ -27,16 +27,22 @@ MtHardwareDataBuffer::~MtHardwareDataBuffer() {
 void MtHardwareDataBuffer::BindRange(FRenderState *state, size_t start,
                                      size_t length) {
   if (mt_debug) {
-    Printf("MtHardwareDataBuffer::BindRange: binding to point %d, start=%zu, "
-           "length=%zu\n",
+    Printf("MtHardwareDataBuffer::BindRange: bp=%d, start=%zu, len=%zu\n",
            mBindingPoint, start, length);
   }
 
-  auto mt_state = static_cast<MtRenderState *>(state);
-  // Correctly update the render state with the binding point and offset
-  // We subtract 10 because mBindingPoint was constructor-translated with +10
-  mt_state->Bind(mBindingPoint - 10, (uint32_t)start);
+  auto mt_state = static_cast<MtRenderState *>(state ? state : fb->GetRenderState());
+  mt_state->BindBuffer(mBindingPoint, mBuffer, (uint32_t)start);
 }
+
+void MtHardwareDataBuffer::Upload(size_t offset, size_t size) {
+  if (mBuffer && mBuffer->storageMode() == MTL::StorageModeShared) {
+    if (size > 0 && offset + size <= mBufferSize) {
+      mBuffer->didModifyRange(NS::Range(offset, size));
+    }
+  }
+}
+
 void MtHardwareDataBuffer::SetData(size_t size, const void *data,
                                    BufferUsageType usage) {
   CreateBuffer(size);
@@ -50,10 +56,15 @@ void MtHardwareDataBuffer::SetSubData(size_t offset, size_t size,
 }
 void MtHardwareDataBuffer::Resize(size_t newsize) { CreateBuffer(newsize); }
 void MtHardwareDataBuffer::Map() {
-  if (mBuffer)
+  if (mBuffer) {
     this->map = mBuffer->contents();
+    this->mMappedMemory = this->map;
+  }
 }
-void MtHardwareDataBuffer::Unmap() { this->map = nullptr; }
+void MtHardwareDataBuffer::Unmap() { 
+  // For Metal StorageModeShared, we keep the buffer mapped as it's persistently accessible.
+  // Clearing this->map here would cause crashes in the generic HW renderer logic.
+}
 void *MtHardwareDataBuffer::Lock(unsigned int size) {
   Map();
   return this->map;
@@ -62,10 +73,13 @@ void MtHardwareDataBuffer::Unlock() { Unmap(); }
 
 void MtHardwareDataBuffer::CreateBuffer(size_t size) {
   if (mBuffer)
-    mBuffer->release();
+    fb->RecycleBuffer(mBuffer);
+  if (size == 0) size = 16;
   mBuffer = fb->device->device->newBuffer(size, MTL::StorageModeShared);
   mBufferSize = size;
   buffersize = size; // Set base class member
+  this->map = mBuffer->contents();
+  this->mMappedMemory = this->map;
 }
 
 // MtVertexBuffer
@@ -95,8 +109,24 @@ void MtVertexBuffer::SetFormat(int numBindingPoints, int numAttributes,
   // TODO: Implement proper vertex format caching like Vulkan
   VertexFormat = (int)stride + (numAttributes << 16);
 }
+
+void MtVertexBuffer::Upload(size_t offset, size_t size) {
+  if (mBuffer && mBuffer->storageMode() == MTL::StorageModeShared) {
+    if (size > 0 && offset + size <= mBufferSize) {
+      if (mt_debug) {
+        Printf("Metal: MtVertexBuffer::Upload didModifyRange offset=%zu size=%zu\n", offset, size);
+      }
+      mBuffer->didModifyRange(NS::Range(offset, size));
+    }
+  }
+}
+
 void MtVertexBuffer::SetData(size_t size, const void *data,
                              BufferUsageType usage) {
+  if (mt_debug) {
+    Printf("Metal: MtVertexBuffer::SetData size=%zu data=%p usage=%d\n", size,
+           data, (int)usage);
+  }
   CreateBuffer(size);
   if (mBuffer && data)
     memcpy(mBuffer->contents(), data, size);
@@ -107,10 +137,12 @@ void MtVertexBuffer::SetSubData(size_t offset, size_t size, const void *data) {
 }
 void MtVertexBuffer::Resize(size_t newsize) { CreateBuffer(newsize); }
 void MtVertexBuffer::Map() {
-  if (mBuffer)
+  if (mBuffer) {
     this->map = mBuffer->contents();
+    this->mMappedMemory = this->map;
+  }
 }
-void MtVertexBuffer::Unmap() { this->map = nullptr; }
+void MtVertexBuffer::Unmap() { }
 void *MtVertexBuffer::Lock(unsigned int size) {
   Map();
   return this->map;
@@ -118,11 +150,17 @@ void *MtVertexBuffer::Lock(unsigned int size) {
 void MtVertexBuffer::Unlock() { Unmap(); }
 
 void MtVertexBuffer::CreateBuffer(size_t size) {
+  if (mt_debug) {
+    Printf("Metal: MtVertexBuffer::CreateBuffer size=%zu\n", size);
+  }
   if (mBuffer)
     fb->RecycleBuffer(mBuffer);
+  if (size == 0) size = 16;
   mBuffer = fb->device->device->newBuffer(size, MTL::StorageModeShared);
   mBufferSize = size;
   buffersize = size; // Set base class member
+  this->map = mBuffer->contents();
+  this->mMappedMemory = this->map;
 }
 
 // MtIndexBuffer
@@ -130,6 +168,14 @@ MtIndexBuffer::MtIndexBuffer(MetalRenderDevice *fb) : fb(fb) {}
 MtIndexBuffer::~MtIndexBuffer() {
   if (mBuffer)
     fb->RecycleBuffer(mBuffer);
+}
+
+void MtIndexBuffer::Upload(size_t offset, size_t size) {
+  if (mBuffer && mBuffer->storageMode() == MTL::StorageModeShared) {
+    if (size > 0 && offset + size <= mBufferSize) {
+      mBuffer->didModifyRange(NS::Range(offset, size));
+    }
+  }
 }
 
 void MtIndexBuffer::SetData(size_t size, const void *data,
@@ -144,10 +190,12 @@ void MtIndexBuffer::SetSubData(size_t offset, size_t size, const void *data) {
 }
 void MtIndexBuffer::Resize(size_t newsize) { CreateBuffer(newsize); }
 void MtIndexBuffer::Map() {
-  if (mBuffer)
+  if (mBuffer) {
     this->map = mBuffer->contents();
+    this->mMappedMemory = this->map;
+  }
 }
-void MtIndexBuffer::Unmap() { this->map = nullptr; }
+void MtIndexBuffer::Unmap() { }
 void *MtIndexBuffer::Lock(unsigned int size) {
   Map();
   return this->map;
@@ -156,8 +204,11 @@ void MtIndexBuffer::Unlock() { Unmap(); }
 
 void MtIndexBuffer::CreateBuffer(size_t size) {
   if (mBuffer)
-    mBuffer->release();
+    fb->RecycleBuffer(mBuffer);
+  if (size == 0) size = 16;
   mBuffer = fb->device->device->newBuffer(size, MTL::StorageModeShared);
   mBufferSize = size;
   buffersize = size; // Set base class member
+  this->map = mBuffer->contents();
+  this->mMappedMemory = this->map;
 }

@@ -243,7 +243,7 @@ private:
   MetalRenderDevice *fb;
 };
 
-// FORCE RECOMPILE: December 25 Diagnostic Build
+// FORCE RECOMPILE: December 25 Final Audit Build
 MtPostprocess::MtPostprocess(MetalRenderDevice *fb) : fb(fb) {}
 MtPostprocess::~MtPostprocess() {}
 
@@ -305,7 +305,6 @@ void MtPostprocess::ImageTransitionScene(bool undefinedSrcLayout) {
   // Metal doesn't need explicit transitions
 }
 
-// FORCE RECOMPILE: December 25 Final Audit Build
 void MtPostprocess::BlitSceneToPostprocess() {
   fb->GetRenderState()->EndRenderPass();
 
@@ -399,6 +398,11 @@ void MtPostprocess::DrawPresentTexture(IntRect box, bool applyGamma,
   }
 
   uniforms.HdrMode = 0;
+
+  if (mt_debug) {
+      Printf("Metal: DrawPresentTexture - Scale: %.2f %.2f Offset: %.2f %.2f Gamma: %.2f\n", 
+             uniforms.Scale.X, uniforms.Scale.Y, uniforms.Offset.X, uniforms.Offset.Y, uniforms.InvGamma);
+  }
 
   renderstate.Clear();
   renderstate.Shader = &hw_postprocess.present.Present;

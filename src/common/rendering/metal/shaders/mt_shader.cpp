@@ -417,6 +417,9 @@ MtShaderManager::CompileShader(const std::string &name,
     } else {
       if (mt_debug) Printf("Metal: Recompiling fragment shader %s from scratch.\n", name.c_str());
       // Step 1: GLSL → SPIR-V
+      if (mt_debug && fragmentSource.find("present") != std::string::npos) {
+          Printf("Metal: Compiling fragment shader %s. Source preview: %.256s\n", name.c_str(), fragmentSource.c_str());
+      }
       auto fragmentSPIRV =
           CompileGLSLToSPIRV(fragmentSource, name + "_frag", false, defines);
       if (fragmentSPIRV.empty()) {
@@ -727,7 +730,7 @@ void MtShaderManager::ClearCache() {
 
 std::string MtShaderManager::GetCachePath(const std::string &key) {
   FString path = M_GetCachePath(true);
-  path += "/metal_sh_v2_";
+  path += "/metal_sh_v3_";
   if (mt_debug) Printf("Metal: Cache path for key %s: %s\n", key.c_str(), path.GetChars());
   // Simple alphanumeric key
   for (char c : key) {

@@ -31,12 +31,12 @@ public:
   uint8_t *GetBufferPointer() const;
 
   // Reset for new frame
-  void Reset() { mStreamDataOffset = 0; }
+  void Reset() { mStreamDataOffset = 0xffffffff; }
 
 private:
   MTL::Buffer *mBuffer = nullptr;
   uint32_t mBlockSize = 0;
-  uint32_t mStreamDataOffset = 0;
+  uint32_t mStreamDataOffset = 0xffffffff;
   size_t mBufferSize = 0;
   MetalRenderDevice *fb = nullptr;
 };
