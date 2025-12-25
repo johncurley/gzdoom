@@ -66,6 +66,7 @@ void MtHardwareDataBuffer::Unmap() {
   // Clearing this->map here would cause crashes in the generic HW renderer logic.
 }
 void *MtHardwareDataBuffer::Lock(unsigned int size) {
+  if (!mBuffer) CreateBuffer(size);
   Map();
   return this->map;
 }
@@ -144,6 +145,7 @@ void MtVertexBuffer::Map() {
 }
 void MtVertexBuffer::Unmap() { }
 void *MtVertexBuffer::Lock(unsigned int size) {
+  if (!mBuffer) CreateBuffer(size);
   Map();
   return this->map;
 }
@@ -197,6 +199,7 @@ void MtIndexBuffer::Map() {
 }
 void MtIndexBuffer::Unmap() { }
 void *MtIndexBuffer::Lock(unsigned int size) {
+  if (!mBuffer) CreateBuffer(size);
   Map();
   return this->map;
 }
