@@ -4,6 +4,12 @@
 */
 
 #include "mt_postprocess.h"
+#include "i_time.h"
+#define TimeScale TimeScale_GZDOOM
+#include <Metal/Metal.hpp>
+#include <QuartzCore/QuartzCore.hpp>
+#undef TimeScale
+
 #include "c_cvars.h"
 #include "flatvertices.h"
 #include "hwrenderer/postprocessing/hw_postprocess.h"
@@ -16,12 +22,14 @@
 #include "metal/system/mt_commandbuffer.h"
 #include "metal/system/mt_hwbuffer.h"
 #include "metal/system/mt_renderdevice.h"
+#include "metal/textures/mt_sampler.h"
 #include "metal/textures/mt_texture.h"
 #include "printf.h"
 #include "r_videoscale.h"
 #include "v_video.h"
 
 EXTERN_CVAR(Int, gl_dither_bpc)
+EXTERN_CVAR(Bool, mt_debug)
 
 class MtPPRenderState : public PPRenderState {
 public:
@@ -36,25 +44,32 @@ public:
   }
 
   void Draw() override {
+    if (mt_debug) {
+      Printf("Metal: PPRenderState::Draw shader=%p viewport=%d,%d %dx%d OutputType=%d\n", 
+             Shader, Viewport.left, Viewport.top, Viewport.width, Viewport.height, (int)Output.Type);
+    }
     auto renderState = fb->GetRenderState();
-    renderState->EndRenderPass();
-
-    MtShaderProgram *program = fb->GetShaderManager()->GetPPShader(Shader);
-    if (!program || !program->vert || !program->frag)
-      return;
+    auto mtRenderState = static_cast<MtRenderState *>(renderState);
 
     // Determine output target
     MTL::Texture *outputTex = nullptr;
     int width = fb->GetBuffers()->GetWidth();
     int height = fb->GetBuffers()->GetHeight();
     MTL::PixelFormat format = MTL::PixelFormatRGBA16Float;
+    MTL::Texture *depthStencil = nullptr;
 
     if (Output.Type == PPTextureType::SwapChain) {
-      // Swapchain handled by MtRenderState default
-      outputTex = nullptr;                 // use default
-      format = MTL::PixelFormatBGRA8Unorm; // Standard for macOS swapchain
-      width = screen->GetWidth();
-      height = screen->GetHeight();
+      outputTex = nullptr;                 // use default/swapchain
+      format = MTL::PixelFormatRGBA16Float;
+      
+      // Use physical drawable dimensions if available
+      if (fb->mCurrentDrawable) {
+          width = (int)fb->mCurrentDrawable->texture()->width();
+          height = (int)fb->mCurrentDrawable->texture()->height();
+      } else {
+          width = fb->GetClientWidth();
+          height = fb->GetClientHeight();
+      }
     } else if (Output.Type == PPTextureType::PPTexture) {
       outputTex = fb->GetTextureManager()->GetPPTexture(Output.Texture);
       if (outputTex) {
@@ -78,46 +93,73 @@ public:
       format = MTL::PixelFormatRGBA16Float;
     }
 
-    auto renderPassDesc = MTL::RenderPassDescriptor::alloc()->init();
-    auto colorAttachment = renderPassDesc->colorAttachments()->object(0);
+    if (mt_debug) {
+        Printf("Metal: PPRenderState::Draw - targeting %p %dx%d fmt=%llu\n", outputTex, width, height, (unsigned long long)format);
+    }
 
-    if (outputTex) {
-      colorAttachment->setTexture(outputTex);
-    } else {
-      // Use swapchain texture if available
-      auto curTex = fb->GetRenderState()->GetRenderTarget().Image;
-      if (curTex)
-        colorAttachment->setTexture(curTex);
-      else {
-        renderPassDesc->release();
+    mtRenderState->SetRenderTarget(outputTex, depthStencil, width, height, (int)format, 1);
+    
+    // Explicitly set the viewport for the PP pass
+    mtRenderState->SetViewport(Viewport.left, Viewport.top, Viewport.width, Viewport.height);
+
+    // Handle clearing if requested
+    if (BlendMode.SrcAlpha == (uint8_t)STYLEALPHA_One &&
+        BlendMode.DestAlpha == (uint8_t)STYLEALPHA_Zero && !ShadowMapBuffers) {
+      mtRenderState->Clear(CT_Color);
+    }
+
+    mtRenderState->BeginRenderPass();
+    auto encoder = mtRenderState->GetEncoder();
+    if (!encoder) {
+        if (mt_debug) Printf("Metal: PPRenderState::Draw - FAILED to get encoder\n");
         return;
-      }
     }
 
-    // Load/Clear logic
-    if (BlendMode.SrcAlpha == STYLEALPHA_One &&
-        BlendMode.DestAlpha == STYLEALPHA_Zero && !ShadowMapBuffers) {
-      colorAttachment->setLoadAction(MTL::LoadActionClear);
-      colorAttachment->setClearColor(MTL::ClearColor(0, 0, 0, 1));
-    } else {
-      colorAttachment->setLoadAction(MTL::LoadActionLoad);
+    MtShaderProgram *program = fb->GetShaderManager()->GetPPShader(Shader);
+    if (!program) {
+      return;
     }
-    colorAttachment->setStoreAction(MTL::StoreActionStore);
-
-    auto cmdBuffer = fb->GetCommands()->GetRenderCommandBuffer();
-    auto encoder = cmdBuffer->renderCommandEncoder(renderPassDesc);
+    if (!program->vert) {
+      return;
+    }
+    if (!program->frag) {
+      return;
+    }
 
     auto pipeline = fb->GetPipelineStateManager()->GetPPPipelineState(
-        program, format, BlendMode);
+        program, (MTL::PixelFormat)format, BlendMode);
     if (pipeline) {
+      // Set vertex buffer on the render state so ApplyRenderPass uses it
+      mtRenderState->SetVertexBuffer(screen->mVertexData);
+      
       encoder->setRenderPipelineState(pipeline);
+      
+      // CRITICAL: Explicitly set essential state for the new encoder
+      encoder->setDepthStencilState(fb->GetPipelineStateManager()->GetDisabledDepthStencilState());
+      encoder->setCullMode(MTL::CullModeNone);
+      
+      MTL::Viewport mtlViewport;
+      mtlViewport.originX = 0;
+      mtlViewport.originY = 0;
+      mtlViewport.width = width;
+      mtlViewport.height = height;
+      mtlViewport.znear = 0;
+      mtlViewport.zfar = 1;
+      encoder->setViewport(mtlViewport);
 
-      // Bind vertex buffer (screen->mVertexData)
+      MTL::ScissorRect scissor;
+      scissor.x = 0;
+      scissor.y = 0;
+      scissor.width = width;
+      scissor.height = height;
+      encoder->setScissorRect(scissor);
+
+      // Bind vertex buffer (screen->mVertexData) at slot 0 manually too for safety
       auto vb = static_cast<MtVertexBuffer *>(
           screen->mVertexData->GetBufferObjects().first);
       encoder->setVertexBuffer(vb->GetBuffer(), 0, 0);
 
-      // Bind input textures
+      // Bind input textures and samplers
       for (int i = 0; i < (int)Textures.Size(); ++i) {
         auto &input = Textures[i];
         MTL::Texture *tex = nullptr;
@@ -143,13 +185,34 @@ public:
         case PPTextureType::SceneDepth:
           tex = fb->GetBuffers()->SceneDepthStencil->GetTexture();
           break;
+        case PPTextureType::SceneFog:
+          tex = fb->GetBuffers()->SceneFog->GetTexture();
+          break;
+        case PPTextureType::SceneNormal:
+          tex = fb->GetBuffers()->SceneNormal->GetTexture();
+          break;
         default:
           break;
         }
 
         if (tex) {
           encoder->setFragmentTexture(tex, i);
-          // TODO: Set sampler
+          
+          // Set sampler state based on input filter/wrap modes
+          MtSamplerKey samplerKey;
+          samplerKey.MinFilter = (input.Filter == PPFilterMode::Linear) ? 1 : 0;
+          samplerKey.MagFilter = (input.Filter == PPFilterMode::Linear) ? 1 : 0;
+          samplerKey.MipFilter = 0;
+          samplerKey.AddressU = (input.Wrap == PPWrapMode::Repeat) ? 0 : 2; // 0=Repeat, 2=ClampToEdge
+          samplerKey.AddressV = (input.Wrap == PPWrapMode::Repeat) ? 0 : 2;
+          samplerKey.AddressW = (input.Wrap == PPWrapMode::Repeat) ? 0 : 2;
+          samplerKey.MaxAnisotropy = 1;
+
+          auto sampler = fb->GetSamplerManager()->GetSamplerState(samplerKey);
+          if (sampler) {
+            encoder->setFragmentSamplerState(sampler, i);
+          }
+          if (mt_debug) Printf("Metal: PPRenderState::Draw - bound texture %p to slot %d\n", tex, i);
         }
       }
 
@@ -159,13 +222,14 @@ public:
                                   0);
       }
 
-      // Draw quad
-      encoder->drawPrimitives(MTL::PrimitiveTypeTriangle,
-                              FFlatVertexBuffer::PRESENT_INDEX, 3);
+      // Draw quad (Triangle Strip of 3 vertices = 1 triangle covering the screen)
+      encoder->drawPrimitives(MTL::PrimitiveTypeTriangleStrip, (NS::UInteger)FFlatVertexBuffer::PRESENT_INDEX, (NS::UInteger)3);
+      if (mt_debug) Printf("Metal: PPRenderState::Draw - called drawPrimitives\n");
+    } else if (mt_debug) {
+        Printf("Metal: PPRenderState::Draw - FAILED to get pipeline state\n");
     }
 
-    encoder->endEncoding();
-    renderPassDesc->release();
+    mtRenderState->EndRenderPass();
 
     // Advance pipeline index if output was Next
     if (Output.Type == PPTextureType::NextPipelineTexture) {
@@ -179,6 +243,7 @@ private:
   MetalRenderDevice *fb;
 };
 
+// FORCE RECOMPILE: December 25 Diagnostic Build
 MtPostprocess::MtPostprocess(MetalRenderDevice *fb) : fb(fb) {}
 MtPostprocess::~MtPostprocess() {}
 
@@ -211,8 +276,10 @@ void MtPostprocess::SetActiveRenderTarget() {
   auto buffers = fb->GetBuffers();
   fb->GetRenderState()->SetRenderTarget(
       buffers->PipelineImage[mCurrentPipelineImage]->GetTexture(),
-      buffers->PipelineDepthStencil->GetTexture(), buffers->GetWidth(),
+      buffers->PipelineDepthStencil->GetTexture(),
+      buffers->GetWidth(),
       buffers->GetHeight(), (int)MTL::PixelFormatRGBA16Float, 1);
+  fb->GetRenderState()->SetViewport(0, 0, buffers->GetWidth(), buffers->GetHeight());
 }
 
 void MtPostprocess::PostProcessScene(
@@ -223,33 +290,50 @@ void MtPostprocess::PostProcessScene(
 
   MtPPRenderState renderstate(fb);
 
-  hw_postprocess.Pass1(&renderstate, fixedcm, sceneWidth, sceneHeight);
-  SetActiveRenderTarget();
-  afterBloomDrawEndScene2D();
-  hw_postprocess.Pass2(&renderstate, fixedcm, flash, sceneWidth, sceneHeight);
+  if (!swscene) {
+    hw_postprocess.Pass1(&renderstate, fixedcm, sceneWidth, sceneHeight);
+    SetActiveRenderTarget();
+    afterBloomDrawEndScene2D();
+    hw_postprocess.Pass2(&renderstate, fixedcm, flash, sceneWidth, sceneHeight);
+  } else {
+    // Software scene post-processing path if needed
+    afterBloomDrawEndScene2D();
+  }
 }
 
 void MtPostprocess::ImageTransitionScene(bool undefinedSrcLayout) {
   // Metal doesn't need explicit transitions
 }
 
+// FORCE RECOMPILE: December 25 Final Audit Build
 void MtPostprocess::BlitSceneToPostprocess() {
   fb->GetRenderState()->EndRenderPass();
 
   auto buffers = fb->GetBuffers();
   mCurrentPipelineImage = 0;
 
-  auto cmdBuffer = fb->GetCommands()->GetBlitCommandBuffer();
-  auto blitEncoder = cmdBuffer->blitCommandEncoder();
+  // Use a temporary command buffer for the blit to ensure absolute isolation on Intel drivers
+  MTL::CommandBuffer *tmpBuffer = fb->device->commandQueue->commandBuffer();
+  if (!tmpBuffer) return;
+
+  auto blitEncoder = tmpBuffer->blitCommandEncoder();
+  if (!blitEncoder) return;
 
   auto src = buffers->SceneColor->GetTexture();
   auto dst = buffers->PipelineImage[0]->GetTexture();
 
+  if (mt_debug) {
+      Printf("Metal: BlitSceneToPostprocess (Isolated) src=%p dst=%p\n", src, dst);
+  }
+
   if (src && dst) {
     blitEncoder->copyFromTexture(src, dst);
+    static_cast<MtRenderState*>(fb->GetRenderState())->MarkAsFilled(dst);
   }
 
   blitEncoder->endEncoding();
+  tmpBuffer->commit();
+  tmpBuffer->waitUntilCompleted(); // Absolute sync
 }
 
 void MtPostprocess::BlitCurrentToImage(MTL::Texture *dstimage) {
@@ -257,6 +341,11 @@ void MtPostprocess::BlitCurrentToImage(MTL::Texture *dstimage) {
 
   auto srcimage =
       fb->GetBuffers()->PipelineImage[mCurrentPipelineImage]->GetTexture();
+  
+  if (mt_debug) {
+      Printf("Metal: BlitCurrentToImage src=%p dst=%p\n", srcimage, dstimage);
+  }
+
   if (!srcimage || !dstimage)
     return;
 
@@ -265,6 +354,7 @@ void MtPostprocess::BlitCurrentToImage(MTL::Texture *dstimage) {
     auto cmdBuffer = fb->GetCommands()->GetBlitCommandBuffer();
     auto blitEncoder = cmdBuffer->blitCommandEncoder();
     blitEncoder->copyFromTexture(srcimage, dstimage);
+    static_cast<MtRenderState*>(fb->GetRenderState())->MarkAsFilled(dstimage);
     blitEncoder->endEncoding();
   } else {
     // Use a simple draw call to convert formats
@@ -300,15 +390,12 @@ void MtPostprocess::DrawPresentTexture(IntRect box, bool applyGamma,
       (gl_dither_bpc == -1) ? 255.0f : (float)((1 << gl_dither_bpc) - 1);
 
   if (screenshot) {
-    uniforms.Scale = {
-        screen->mScreenViewport.width / (float)fb->GetBuffers()->GetWidth(),
-        screen->mScreenViewport.height / (float)fb->GetBuffers()->GetHeight()};
-    uniforms.Offset = {0.0f, 0.0f};
+    uniforms.Scale = { 1.0f, 1.0f };
+    uniforms.Offset = { 0.0f, 0.0f };
   } else {
-    uniforms.Scale = {
-        screen->mScreenViewport.width / (float)fb->GetBuffers()->GetWidth(),
-        -screen->mScreenViewport.height / (float)fb->GetBuffers()->GetHeight()};
-    uniforms.Offset = {0.0f, 1.0f};
+    // Metal is Y-down, GZDoom is Y-up. Need to flip vertically when blitting to swapchain.
+    uniforms.Scale = { 1.0f, -1.0f };
+    uniforms.Offset = { 0.0f, 1.0f };
   }
 
   uniforms.HdrMode = 0;
@@ -323,10 +410,8 @@ void MtPostprocess::DrawPresentTexture(IntRect box, bool applyGamma,
 
   if (screenshot)
     renderstate.SetOutputNext();
-  else {
-    // For Metal, we might need a specific way to set the swapchain output
-    // For now, assume it's the current target
-  }
+  else
+    renderstate.SetOutputSwapChain();
 
   renderstate.SetNoBlend();
   renderstate.Draw();

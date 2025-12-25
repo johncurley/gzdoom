@@ -28,17 +28,21 @@ void MtRenderBuffers::BeginFrame(int width, int height, int sceneWidth,
   }
 }
 
+// FORCE RECOMPILE: December 25 Depth24 Build
 void MtRenderBuffers::CreatePipelineDepthStencil(int width, int height) {
   PipelineDepthStencil = std::make_unique<MtTextureImage>(fb);
 
   auto desc = MTL::TextureDescriptor::alloc()->init();
   desc->setWidth(width);
   desc->setHeight(height);
-  desc->setPixelFormat(MTL::PixelFormatDepth32Float_Stencil8); // Changed to a more robust depth/stencil format
+  desc->setPixelFormat(MTL::PixelFormatDepth32Float_Stencil8); 
   desc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
   desc->setStorageMode(MTL::StorageModePrivate);
 
   MTL::Texture *texture = fb->device->device->newTexture(desc);
+  if (!texture) {
+      Printf("Metal: Failed to create PipelineDepthStencil texture!\n");
+  }
   PipelineDepthStencil->SetTexture(texture);
   PipelineDepthStencil->SetWidth(width);
   PipelineDepthStencil->SetHeight(height);
@@ -52,11 +56,12 @@ void MtRenderBuffers::CreatePipeline(int width, int height) {
     auto desc = MTL::TextureDescriptor::alloc()->init();
     desc->setWidth(width);
     desc->setHeight(height);
-    desc->setPixelFormat(MTL::PixelFormatBGRA8Unorm);
+    desc->setPixelFormat(MTL::PixelFormatRGBA16Float);
     desc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
     desc->setStorageMode(MTL::StorageModePrivate);
 
     MTL::Texture *texture = fb->device->device->newTexture(desc);
+    if (i == 0) Printf("Metal: Created PipelineImage[0] at %p\n", texture);
     PipelineImage[i]->SetTexture(texture);
     PipelineImage[i]->SetWidth(width);
     PipelineImage[i]->SetHeight(height);
@@ -77,7 +82,7 @@ void MtRenderBuffers::CreateSceneColor(int width, int height, int samples) {
   auto desc = MTL::TextureDescriptor::alloc()->init();
   desc->setWidth(width);
   desc->setHeight(height);
-  desc->setPixelFormat(MTL::PixelFormatBGRA8Unorm);
+  desc->setPixelFormat(MTL::PixelFormatRGBA16Float);
   desc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
   desc->setStorageMode(MTL::StorageModePrivate);
   desc->setSampleCount(samples);
@@ -98,7 +103,7 @@ void MtRenderBuffers::CreateSceneDepthStencil(int width, int height,
   auto desc = MTL::TextureDescriptor::alloc()->init();
   desc->setWidth(width);
   desc->setHeight(height);
-  desc->setPixelFormat(MTL::PixelFormatDepth32Float_Stencil8); // Changed to a more robust depth/stencil format
+  desc->setPixelFormat(MTL::PixelFormatDepth32Float_Stencil8); 
   desc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
   desc->setStorageMode(MTL::StorageModePrivate);
   desc->setSampleCount(samples);

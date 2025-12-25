@@ -8,6 +8,7 @@
 #include "metal/system/mt_renderdevice.h"
 #include "mt_texture.h"
 #include "printf.h"
+
 #include "textures.h"
 #include <cmath>
 
@@ -16,7 +17,7 @@ MtTextureImage::MtTextureImage(MetalRenderDevice *fb) : fb(fb) {}
 
 MtTextureImage::~MtTextureImage() {
   if (mTexture) {
-    mTexture->release();
+    fb->RecycleTexture(mTexture);
     mTexture = nullptr;
   }
 }
@@ -59,7 +60,7 @@ void MtHardwareTexture::AllocateBuffer(int w, int h, int texelsize) {
     case 3:
     case 4:
     default:
-      format = MTL::PixelFormatRGBA8Unorm;
+      format = MTL::PixelFormatBGRA8Unorm;
       break;
     }
 
@@ -132,7 +133,7 @@ unsigned int MtHardwareTexture::CreateTexture(unsigned char *buffer, int w,
   case 3:
   case 4:
   default:
-    desc->setPixelFormat(MTL::PixelFormatRGBA8Unorm);
+    desc->setPixelFormat(MTL::PixelFormatBGRA8Unorm);
     break;
   }
 
@@ -175,7 +176,7 @@ void MtHardwareTexture::CreateWipeTexture(int w, int h, const char *name) {
   auto desc = MTL::TextureDescriptor::alloc()->init();
   desc->setWidth(w);
   desc->setHeight(h);
-  desc->setPixelFormat(MTL::PixelFormatRGBA8Unorm);
+  desc->setPixelFormat(MTL::PixelFormatBGRA8Unorm);
   desc->setUsage(MTL::TextureUsageShaderRead | MTL::TextureUsageRenderTarget);
   desc->setStorageMode(MTL::StorageModePrivate);
 
@@ -188,6 +189,36 @@ void MtHardwareTexture::CreateWipeTexture(int w, int h, const char *name) {
   mImage->SetFormat((int)MTL::PixelFormatRGBA8Unorm);
 
   fb->GetPostprocess()->BlitCurrentToImage(texture);
+}
+
+MtTextureImage *MtHardwareTexture::GetDepthStencil(FCanvasTexture *tex) {
+  if (!tex->isHardwareCanvas())
+    return nullptr;
+
+  auto &depthStencils = fb->GetTextureManager()->mCanvasDepthStencils;
+
+  auto it = depthStencils.find(tex);
+  if (it == depthStencils.end() || it->second->GetWidth() != tex->GetWidth() ||
+      it->second->GetHeight() != tex->GetHeight()) {
+    auto ds = std::make_unique<MtTextureImage>(fb);
+    auto desc = MTL::TextureDescriptor::alloc()->init();
+    desc->setWidth(tex->GetWidth());
+    desc->setHeight(tex->GetHeight());
+    desc->setPixelFormat(MTL::PixelFormatDepth32Float_Stencil8);
+    desc->setUsage(MTL::TextureUsageRenderTarget);
+    desc->setStorageMode(MTL::StorageModePrivate);
+
+    MTL::Texture *texture = fb->device->device->newTexture(desc);
+    ds->SetTexture(texture);
+    ds->SetWidth(tex->GetWidth());
+    ds->SetHeight(tex->GetHeight());
+    desc->release();
+
+    depthStencils[tex] = std::move(ds);
+    return depthStencils[tex].get();
+  }
+
+  return it->second.get();
 }
 
 void MtHardwareTexture::Reset() {
@@ -234,7 +265,7 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
     case 3:
     case 4:
     default:
-      format = MTL::PixelFormatRGBA8Unorm;
+      format = MTL::PixelFormatBGRA8Unorm;
       break;
     }
 
@@ -408,8 +439,6 @@ MtPPTexture::MtPPTexture(MetalRenderDevice *fb, PPTexture *texture) : fb(fb) {
 }
 
 MtPPTexture::~MtPPTexture() {
-  if (mTexture) {
-    mTexture->release();
-    mTexture = nullptr;
-  }
+  // Base class MtTextureImage handles recycling mTexture.
+  // No need to recycle again here.
 }

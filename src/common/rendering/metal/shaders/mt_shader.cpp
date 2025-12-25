@@ -15,6 +15,8 @@
 #include <shadertranslator/shader_translator.h>
 #include <sstream>
 
+EXTERN_CVAR(Bool, mt_debug)
+
 // glslang includes for GLSL → SPIR-V compilation
 #include "glslang/glslang/Public/ShaderLang.h"
 #include "glslang/spirv/GlslangToSpv.h"
@@ -132,8 +134,11 @@ static const char *shaderBindings = R"(
 	layout(binding = 14) uniform sampler2D ShadowMap;
 	layout(binding = 15) uniform sampler2DArray LightMap;
 
+	// UBO/SSBO Bindings remapped to avoid texture slots (0-15)
+	// Metal Argument Buffers or direct bindings
+
 	// This must match the HWViewpointUniforms struct
-	layout(binding = 13, std140) uniform readonly ViewpointUBO {
+	layout(binding = 17, std140) uniform readonly ViewpointUBO {
 		mat4 ProjectionMatrix;
 		mat4 ViewMatrix;
 		mat4 NormalViewMatrix;
@@ -154,7 +159,7 @@ static const char *shaderBindings = R"(
 		float uThickFogMultiplier;
 	};
 
-	layout(binding = 20, std140) uniform readonly MatricesUBO {
+	layout(binding = 19, std140) uniform readonly MatricesUBO {
 		mat4 ModelMatrix;
 		mat4 NormalModelMatrix;
 		mat4 TextureMatrix;
@@ -193,25 +198,24 @@ static const char *shaderBindings = R"(
 		vec4 padding1, padding2, padding3;
 	};
 
-	layout(binding = 21, std140) uniform readonly StreamUBO {
+	layout(binding = 20, std140) uniform readonly StreamUBO {
 		StreamData data[MAX_STREAM_DATA];
 	};
 
 	// light buffers
-	layout(binding = 11, std430) buffer readonly LightBufferSSO
+	layout(binding = 16, std430) buffer readonly LightBufferSSO
 	{
 	    vec4 lights[];
 	};
 
 	// bone matrix buffers
-	layout(binding = 17, std430) buffer readonly BoneBufferSSO
+	layout(binding = 18, std430) buffer readonly BoneBufferSSO
 	{
 	    mat4 bones[];
 	};
 
 	// textures
-	// In Metal, we'll map these to texture bindings.
-	// We'll use binding space for textures.
+	// In Metal, these map to texture slots 0-11
 	layout(binding = 0) uniform sampler2D tex;
 	layout(binding = 1) uniform sampler2D texture2;
 	layout(binding = 2) uniform sampler2D texture3;
@@ -226,9 +230,7 @@ static const char *shaderBindings = R"(
 	layout(binding = 11) uniform sampler2D texture12;
 
 	// This must match the PushConstants struct
-	// Metal uses setVertexBytes/setFragmentBytes for push constants, 
-	// but SPIRV-Cross can map a uniform block to it.
-	layout(binding = 7, std140) uniform PushConstants
+	layout(binding = 21, std140) uniform PushConstants
 	{
 		int uTextureMode;
 		float uAlphaThreshold;
@@ -301,8 +303,7 @@ static const char *shaderBindings = R"(
 	#define uNpotEmulation data[uDataIndex].uNpotEmulation
 
 	#define SUPPORTS_SHADOWMAPS
-	#define VULKAN_COORDINATE_SYSTEM
-	#define HAS_UNIFORM_VERTEX_DATA
+	//#define HAS_UNIFORM_VERTEX_DATA
 
 	float noise1(float) { return 0; }
 	vec2 noise2(vec2) { return vec2(0); }
@@ -320,6 +321,7 @@ MtShaderManager::~MtShaderManager() {
   // Finalize glslang
   glslang::FinalizeProcess();
 }
+
 
 std::shared_ptr<MtShaderModule>
 MtShaderManager::CompileShader(const std::string &name,
@@ -345,24 +347,22 @@ MtShaderManager::CompileShader(const std::string &name,
 
     std::ifstream vfile(cachePath);
     if (vfile.is_open()) {
+      if (mt_debug) Printf("Metal: Loading vertex shader %s from cache.\n", name.c_str());
       std::stringstream ss;
       ss << vfile.rdbuf();
       vertexMSL = ss.str();
     } else {
+      if (mt_debug) Printf("Metal: Recompiling vertex shader %s from scratch.\n", name.c_str());
       // Step 1: GLSL → SPIR-V
       auto vertexSPIRV =
           CompileGLSLToSPIRV(vertexSource, name + "_vert", true, defines);
       if (vertexSPIRV.empty()) {
-        Printf("Metal: Failed to compile vertex shader GLSL to SPIR-V: %s\n",
-               name.c_str());
         return nullptr;
       }
 
       // Step 2: SPIR-V → MSL
       vertexMSL = TranslateSPIRVToMSL(vertexSPIRV, true, name + "_vert"); // Pass name
       if (vertexMSL.empty()) {
-        Printf("Metal: Failed to translate vertex shader SPIR-V to MSL: %s\n",
-               name.c_str());
         if (module->function)
           ((MTL::Function *)module->function)->release();
         if (module->library)
@@ -410,16 +410,16 @@ MtShaderManager::CompileShader(const std::string &name,
 
     std::ifstream ffile(cachePath);
     if (ffile.is_open()) {
+      if (mt_debug) Printf("Metal: Loading fragment shader %s from cache.\n", name.c_str());
       std::stringstream ss;
       ss << ffile.rdbuf();
       fragmentMSL = ss.str();
     } else {
+      if (mt_debug) Printf("Metal: Recompiling fragment shader %s from scratch.\n", name.c_str());
       // Step 1: GLSL → SPIR-V
       auto fragmentSPIRV =
           CompileGLSLToSPIRV(fragmentSource, name + "_frag", false, defines);
       if (fragmentSPIRV.empty()) {
-        Printf("Metal: Failed to compile fragment shader GLSL to SPIR-V: %s\n",
-               name.c_str());
         if (module->function)
           ((MTL::Function *)module->function)->release();
         if (module->library)
@@ -430,8 +430,6 @@ MtShaderManager::CompileShader(const std::string &name,
       // Step 2: SPIR-V → MSL
       fragmentMSL = TranslateSPIRVToMSL(fragmentSPIRV, false, name + "_frag"); // Pass name
       if (fragmentMSL.empty()) {
-        Printf("Metal: Failed to translate fragment shader SPIR-V to MSL: %s\n",
-               name.c_str());
         if (module->function)
           ((MTL::Function *)module->function)->release();
         if (module->library)
@@ -484,6 +482,7 @@ MtShaderManager::CompileShader(const std::string &name,
 }
 
 MtShaderProgram *MtShaderManager::GetEffect(int effect, EPassType passType) {
+  if (mt_debug) Printf("Metal: MtShaderManager::GetEffect %d pass=%d\n", effect, (int)passType);
   if (compileIndex == -1 && effect >= 0 && effect < MAX_EFFECTS &&
       mEffectShaders[passType][effect].frag) {
     return &mEffectShaders[passType][effect];
@@ -493,6 +492,7 @@ MtShaderProgram *MtShaderManager::GetEffect(int effect, EPassType passType) {
 
 MtShaderProgram *MtShaderManager::Get(unsigned int eff, bool alphateston,
                                       EPassType passType) {
+  if (mt_debug) Printf("Metal: MtShaderManager::Get %u alpha=%d pass=%d\n", eff, (int)alphateston, (int)passType);
   if (compileIndex != -1) {
     if (mMaterialShaders[0].size() > 0)
       return &mMaterialShaders[0][0];
@@ -593,11 +593,36 @@ MtShaderManager::LoadVertShader(const std::string &shadername,
                                 const char *vert_lump, const char *defines) {
   std::string code = "#version 450\n";
   code += "#extension GL_GOOGLE_include_directive : enable\n";
-  code += defines;
+  
+  std::string definesStr = defines;
+  size_t vpos = definesStr.find("#define VULKAN_COORDINATE_SYSTEM");
+  if (vpos != std::string::npos) {
+      if (mt_debug) Printf("Metal: Stripping VULKAN_COORDINATE_SYSTEM from %s to use manual Metal patch.\n", shadername.c_str());
+      definesStr.replace(vpos, strlen("#define VULKAN_COORDINATE_SYSTEM"), "//efine VULKAN_COORDINATE_SYSTEM");
+  }
+  
+  code += definesStr;
   code += "\n#define MAX_STREAM_DATA " + std::to_string(MAX_STREAM_DATA) + "\n";
   code += shaderBindings;
   code += "\n#line 1\n";
-  code += LoadPrivateShaderLump(vert_lump);
+  std::string source = LoadPrivateShaderLump(vert_lump);
+
+  // Patch source to handle Metal coordinate system (Y-flip and Z range 0..1)
+  // GZDoom shaders expect OpenGL NDC (-1..1 for all axes, Y up)
+  // Metal expects 0..1 for Z, and we want to Y-flip 3D only to match GZDoom's RenderTextureIsFlipped(true)
+  size_t pos = source.find("gl_Position = ProjectionMatrix * eyeCoordPos;");
+  if (pos != std::string::npos) {
+      if (mt_debug) Printf("Metal: Patching vertex shader %s for coordinate system.\n", shadername.c_str());
+      source.replace(pos, strlen("gl_Position = ProjectionMatrix * eyeCoordPos;"),
+          "gl_Position = ProjectionMatrix * eyeCoordPos;\n"
+          "if (ProjectionMatrix[3][3] < 0.5) gl_Position.y = -gl_Position.y;\n" // Flip Y for 3D (perspective) only
+          "gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;\n" // Map -1..1 to 0..1
+      );
+  } else {
+      if (mt_debug) Printf("Metal: WARNING - Failed to patch vertex shader %s! Coordinate system may be wrong.\n", shadername.c_str());
+  }
+
+  code += source;
 
   return CompileShader(shadername + "_vert", code, "", {});
 }
@@ -702,7 +727,8 @@ void MtShaderManager::ClearCache() {
 
 std::string MtShaderManager::GetCachePath(const std::string &key) {
   FString path = M_GetCachePath(true);
-  path += "/metal_sh_";
+  path += "/metal_sh_v2_";
+  if (mt_debug) Printf("Metal: Cache path for key %s: %s\n", key.c_str(), path.GetChars());
   // Simple alphanumeric key
   for (char c : key) {
     if (isalnum(c) || c == '_')

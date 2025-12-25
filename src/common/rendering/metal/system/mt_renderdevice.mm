@@ -8,16 +8,12 @@
 */
 
 // Include i_time.h BEFORE Metal headers to avoid TimeScale conflict
-// i_time.h declares: extern double TimeScale
-// MacTypes.h (included by Metal) declares: typedef SInt32 TimeScale
 #include "i_time.h"
 #include "metal/metal_common.h" // New include
 
 // Prevent MacTypes.h from defining TimeScale by defining it as a macro
-// temporarily
 #define TimeScale TimeScale_GZDOOM
 
-// Define private implementation for metal-cpp (only in this file!)
 #define NS_PRIVATE_IMPLEMENTATION
 #define MTL_PRIVATE_IMPLEMENTATION
 #define CA_PRIVATE_IMPLEMENTATION
@@ -44,7 +40,6 @@
 #include "m_png.h"
 #include "r_videoscale.h"
 #include "v_video.h"
-// i_time.h included earlier to avoid TimeScale conflict
 #include "c_dispatch.h"
 #include "engineerrors.h"
 #include "flatvertices.h"
@@ -60,15 +55,9 @@
 #include "v_text.h"
 #include "version.h"
 
-// For accessing CocoaNativeHandle
 #ifdef __APPLE__
 #include <zwidget/window/cocoanativehandle.h>
 #endif
-
-#include "v_video.h"
-#include "v_text.h"
-#include "version.h"
-
 
 // Max number of frames to queue for rendering
 constexpr int MaxFramesInFlight = 3;
@@ -88,35 +77,25 @@ void MetalPrintLog(const char *typestr, const std::string &msg) {
 
 MetalRenderDevice::MetalRenderDevice(void *hMonitor, bool fullscreen)
     : Super(hMonitor, fullscreen) {
-  // Create the semaphore to control frame pacing
   mInflightFramesSemaphore = dispatch_semaphore_create(MaxFramesInFlight);
-
-  // Create Metal device
   device = std::make_shared<MetalDevice>();
   device->device = MTL::CreateSystemDefaultDevice();
 
   if (!device->device) {
-    MetalError("Failed to create Metal device - Metal may not be supported on "
-               "this system");
+    MetalError("Failed to create Metal device");
   }
 
-  // Create command queue
   device->commandQueue = device->device->newCommandQueue();
   if (!device->commandQueue) {
     MetalError("Failed to create Metal command queue");
   }
-
-  // Note: Metal layer setup is deferred to InitializeState() after window is
-  // set
 }
 
 MetalRenderDevice::~MetalRenderDevice() {
-  // Wait for GPU to finish all work
   if (mCommands) {
     mCommands->WaitForCommands(true);
   }
 
-  // Clean up resources
   delete mVertexData;
   delete mSkyData;
   delete mViewpoints;
@@ -124,7 +103,6 @@ MetalRenderDevice::~MetalRenderDevice() {
   delete mBones;
   mShadowMap.Reset();
 
-  // Release managers (in reverse order)
   mMtRenderState.reset();
   mPipelineStateManager.reset();
   mResourceBindingManager.reset();
@@ -140,19 +118,27 @@ MetalRenderDevice::~MetalRenderDevice() {
   }
   mCommands.reset();
 
-  // Release Metal device objects
   if (device) {
     if (device->commandQueue) {
       device->commandQueue->release();
-      device->commandQueue = nullptr;
     }
     if (device->device) {
       device->device->release();
-      device->device = nullptr;
     }
   }
 
-  // Release the semaphore
+  for (int i = 0; i < 3; i++) {
+    for (auto *buffer : mBufferRecycleBin[i]) {
+      buffer->release();
+    }
+    mBufferRecycleBin[i].clear();
+
+    for (auto *texture : mTextureRecycleBin[i]) {
+      texture->release();
+    }
+    mTextureRecycleBin[i].clear();
+  }
+
   dispatch_release(mInflightFramesSemaphore);
 }
 
@@ -163,89 +149,49 @@ void MetalRenderDevice::InitializeState() {
     first = false;
   }
 
-  // Set up Metal layer now that window is available
 #ifdef __APPLE__
   CocoaNativeHandle nativeHandle = GetNativeHandle();
   if (nativeHandle.metalLayer) {
     CA::MetalLayer *metalLayer = (CA::MetalLayer *)nativeHandle.metalLayer;
     metalLayer->setDevice(device->device);
-                    metalLayer->setPixelFormat(MTL::PixelFormatBGRA8Unorm);
-            
-                    // VSync will be set later via SetVSync()
-                    metalLayer->setDisplaySyncEnabled(false);
-                    Printf("Metal layer configured successfully\n");
-    
-                    Printf("  MetalLayer properties after setup:\n");
-                    Printf("    pixelFormat: %llu\n", (unsigned long long)metalLayer->pixelFormat());
-                    Printf("    framebufferOnly: %s\n", metalLayer->framebufferOnly() ? "YES" : "NO");
-                    Printf("    drawableSize: %f x %f\n", metalLayer->drawableSize().width, metalLayer->drawableSize().height);
-              } else {
-    MetalError("Failed to get Metal layer from window");
+    metalLayer->setPixelFormat(MTL::PixelFormatBGRA8Unorm);
+
+    MetalViewSize viewSize = GetMetalViewDrawableSize(m_window);
+    if (viewSize.width > 0 && viewSize.height > 0) {
+      CGSize drawableSize = CGSizeMake(viewSize.width, viewSize.height);
+      metalLayer->setDrawableSize(drawableSize);
+    } else {
+      metalLayer->setDrawableSize(CGSizeMake(GetWidth(), GetHeight()));
+    }
+    metalLayer->setDisplaySyncEnabled(false);
   }
 #endif
 
-  // Set vendor string from device
   const char *deviceName = device->device->name()->utf8String();
   vendorstring = deviceName;
-
-  // Set capabilities (Metal supports shader storage buffers via argument
-  // buffers)
   hwcaps = RFL_SHADER_STORAGE_BUFFER | RFL_BUFFER_STORAGE;
-  glslversion = 4.50f; // Report GLSL 4.5 for shader compatibility
+  glslversion = 4.50f;
+  uniformblockalignment = 256;
+  maxuniformblock = 65536;
 
-  // Metal has specific alignment requirements
-  uniformblockalignment = 256; // Metal constant buffer alignment
-  maxuniformblock = 65536;     // Metal max constant buffer size
+  Printf(TEXTCOLOR_BLUE "Initializing Metal renderer managers...\n");
 
-  // Initialize managers in dependency order (following Vulkan pattern)
-  // Order matters! Some managers depend on others being initialized first
-
-  Printf(TEXTCOLOR_BLUE "Initializing Metal renderer...\n");
-
-  // 1. Command buffer manager (needed by everything)
   mCommands.reset(new MtCommandBufferManager(this));
-  Printf("  - Command buffer manager initialized\n");
-
-  // 2. Sampler manager
   mSamplerManager.reset(new MtSamplerManager(this));
-  Printf("  - Sampler manager initialized\n");
-
-  // 3. Texture manager
   mTextureManager.reset(new MtTextureManager(this));
-  Printf("  - Texture manager initialized\n");
-
-  // 4. Buffer manager (with initialization)
   mBufferManager.reset(new MtBufferManager(this));
   mBufferManager->Init();
-  Printf("  - Buffer manager initialized\n");
 
-  // 5. Render buffers (screen and save)
   mScreenBuffers.reset(new MtRenderBuffers(this));
   mSaveBuffers.reset(new MtRenderBuffers(this));
   mActiveRenderBuffers = mScreenBuffers.get();
-  Printf("  - Render buffers initialized\n");
 
-  // 6. Post-processing
   mPostprocess.reset(new MtPostprocess(this));
-  Printf("  - Post-process initialized\n");
-
-  // 7. Resource binding manager (three-tier strategy)
   mResourceBindingManager.reset(new MtResourceBindingManager(this));
-  Printf("  - Resource binding manager initialized\n");
-
-  // 8. Pipeline state manager (needs shader manager)
   mPipelineStateManager.reset(new MtPipelineStateManager(this));
-  Printf("  - Pipeline state manager initialized\n");
-
-  // 9. Shader manager (GLSL→SPIR-V→MSL pipeline)
   mShaderManager.reset(new MtShaderManager(this));
-  Printf("  - Shader manager initialized\n");
-
-  // 10. Render state (core state machine)
   mMtRenderState.reset(new MtRenderState(this));
-  Printf("  - Render state initialized\n");
 
-  // Initialize vertex data, lights, etc. (same as Vulkan)
   mVertexData = new FFlatVertexBuffer(GetWidth(), GetHeight());
   mSkyData = new FSkyVertexBuffer;
   mViewpoints = new HWViewpointBuffer;
@@ -253,149 +199,160 @@ void MetalRenderDevice::InitializeState() {
   mBones = new BoneBuffer();
 
   Printf(TEXTCOLOR_GREEN "Metal renderer initialized successfully!\n");
-  Printf("  Device: %s\n", deviceName);
 }
 
 void MetalRenderDevice::Update() {
-  BeginFrame();
+  NS::AutoreleasePool *pool = NS::AutoreleasePool::alloc()->init();
+  SemaphoreGuard guard(mInflightFramesSemaphore);
+
+  if (mt_debug) Printf("Metal: Update START\n");
 
   twoD.Reset();
   Flush3D.Reset();
-
-  // Get the Metal layer and next drawable
-  CocoaNativeHandle nativeHandle = GetNativeHandle();
-  if (!nativeHandle.metalLayer) {
-    Super::Update();
-    return;
-  }
-
-  CA::MetalLayer *metalLayer = (CA::MetalLayer *)nativeHandle.metalLayer;
-  // Ensure drawableSize is up-to-date right before requesting a drawable
-#ifdef __APPLE__
-  if (nativeHandle.metalLayer) {
-    CA::MetalLayer *metalLayer = (CA::MetalLayer *)nativeHandle.metalLayer;
-    MetalViewSize viewSize = GetMetalViewDrawableSize(m_window);
-    CGSize drawableSize = CGSizeMake(viewSize.width, viewSize.height);
-
-    // Only set drawable size if it's valid (non-zero)
-    if (drawableSize.width > 0 && drawableSize.height > 0)
-    {
-        if (metalLayer->drawableSize().width != drawableSize.width || metalLayer->drawableSize().height != drawableSize.height)
-        {
-            metalLayer->setDrawableSize(drawableSize);
-            if (mt_debug)
-                Printf("  setDrawableSize called with: %f x %f\n", drawableSize.width, drawableSize.height);
-        }
-    }
-    else
-    {
-        if (mt_debug)
-            Printf("Warning: Skipping setDrawableSize, current view size is 0x0. Retrieved: %f x %f\n", viewSize.width, viewSize.height);
-    }
-
-    if (mt_debug) {
-        Printf("  MetalLayer properties before nextDrawable:\n");
-        Printf("    pixelFormat: %llu\n", (unsigned long long)metalLayer->pixelFormat());
-        Printf("    framebufferOnly: %s\n", metalLayer->framebufferOnly() ? "YES" : "NO");
-        Printf("    drawableSize: %f x %f\n", metalLayer->drawableSize().width, metalLayer->drawableSize().height);
-    }
-  }
-#endif
-  CA::MetalDrawable *drawable = metalLayer->nextDrawable();
-
-  if (!drawable) {
-    if (mt_debug)
-      Printf("Warning: Failed to get next Metal drawable\n");
-    Super::Update();
-    return;
-  }
-
-  // Get the drawable's texture and set it as our render target
-  MTL::Texture *drawableTexture = drawable->texture();
-  if (drawableTexture && mMtRenderState && mScreenBuffers) {
-    int width = drawableTexture->width();
-    int height = drawableTexture->height();
-
-    // Fix: Update SystemBaseFrameBuffer's mScreenViewport with drawable size
-    // This is crucial for Draw2D calls to get correct viewport dimensions.
-    if (mScreenViewport.width != width || mScreenViewport.height != height) {
-        mScreenViewport.width = width;
-        mScreenViewport.height = height;
-        mScreenViewport.left = 0;
-        mScreenViewport.top = 0;
-        if (mt_debug) {
-            Printf("Metal: Updating mScreenViewport to %dx%d\n", width, height);
-        }
-    }
-
-    // Ensure render buffers are sized correctly
-    mScreenBuffers->BeginFrame(width, height, width, height);
-
-    // Get depth/stencil buffer
-    MtTextureImage *depthStencil = mScreenBuffers->SceneDepthStencil.get();
-    MTL::Texture *depthStencilTexture =
-        depthStencil ? (MTL::Texture *)depthStencil->GetTexture() : nullptr;
-
-    // Set render target to drawable texture with depth/stencil
-    mMtRenderState->SetRenderTarget(
-        drawableTexture,     // Color attachment (raw MTL::Texture*)
-        depthStencilTexture, // Depth/stencil attachment
-        width, height, (int)MTL::PixelFormatBGRA8Unorm,
-        1 // No MSAA yet
-    );
-  }
-
   Flush3D.Clock();
-  Draw2D();
+
+  // 1. Blit scene from SceneColor to PipelineImage[0]
+  if (mPostprocess) {
+    if (mt_debug) Printf("Metal: Update - Blitting scene\n");
+    mPostprocess->BlitSceneToPostprocess();
+  }
+
+  // FORCE RECOMPILE: December 25 Diagnostic Build
+  // 2. Set target and Draw 2D into PipelineImage[0] (where the scene is now)
+  if (mPostprocess) {
+    mPostprocess->SetActiveRenderTarget();
+  }
+  
+  mViewpoints->Set2D(*mMtRenderState, GetWidth(), GetHeight());
+
+  if (mt_debug) Printf("Metal: Update - Calling Draw2D\n");
+  this->Draw2D();
+
+  if (mMtRenderState) {
+    if (mt_debug) Printf("Metal: Update - Ending 2D pass\n");
+    mMtRenderState->EndRenderPass();
+    mMtRenderState->EndFrame();
+  }
+
   Flush3D.Unclock();
 
-  // End the render pass (finishes encoding)
-  if (mMtRenderState)
-    mMtRenderState->EndRenderPass();
+  if (mCurrentDrawable) {
+    auto drawableTexture = mCurrentDrawable->texture();
+    int width = (int)drawableTexture->width();
+    int height = (int)drawableTexture->height();
 
-  // Present the frame to screen
-  PresentFrame(drawable);
+    if (mt_debug) {
+        Printf("Metal: Update - drawable: %d x %d, letterbox: %d,%d %dx%d\n", 
+               width, height,
+               mOutputLetterbox.left, mOutputLetterbox.top, mOutputLetterbox.width, mOutputLetterbox.height);
+    }
 
-  if (mMtRenderState)
-    mMtRenderState->EndFrame();
+    // 3. Blit the final result (3D + 2D) from PipelineImage[0] to the swapchain
+    if (mPostprocess) {
+      if (mt_debug) Printf("Metal: Update - Blitting to swapchain\n");
+      IntRect physicalBox = { 0, 0, width, height };
+      mPostprocess->DrawPresentTexture(physicalBox, true, false);
+    }
+
+    if (mMtRenderState)
+      mMtRenderState->EndRenderPass();
+
+    // 4. Present
+    if (mt_debug) Printf("Metal: Update - Presenting frame\n");
+    PresentFrame(mCurrentDrawable, &guard);
+
+    mCurrentDrawable->release();
+    mCurrentDrawable = nullptr;
+  }
+
   if (mCommands)
     mCommands->EndFrame();
 
+  twod->Clear();
+
+  if (mt_debug) Printf("Metal: Update END\n");
+
   Super::Update();
+  pool->release();
 }
 
-void MetalRenderDevice::PresentFrame(void *drawablePtr) {
+void MetalRenderDevice::PresentFrame(void *drawablePtr, SemaphoreGuard *guard) {
   if (!drawablePtr)
     return;
 
   auto drawable = (CA::MetalDrawable *)drawablePtr;
-
-  // Get current command buffer
   void *cmdBufPtr = mCommands->GetRenderCommandBuffer();
   if (!cmdBufPtr)
     return;
 
   auto commandBuffer = (MTL::CommandBuffer *)cmdBufPtr;
-
-  // Signal the semaphore when the command buffer finishes execution
-  mCommands->AddCompletedHandler(commandBuffer, [this]() {
-    dispatch_semaphore_signal(mInflightFramesSemaphore);
+  dispatch_semaphore_t sem = mInflightFramesSemaphore;
+  commandBuffer->addCompletedHandler(^(MTL::CommandBuffer *buffer) {
+    dispatch_semaphore_signal(sem);
   });
-
-  // Present drawable when command buffer completes
+  
+  if (guard) guard->Handled();
   commandBuffer->presentDrawable(drawable);
+  commandBuffer->commit();
+  commandBuffer->release();
 }
 
 void MetalRenderDevice::BeginFrame() {
-  // Wait for a free slot in the queue
+  if (mt_debug) {
+      Printf("Metal: BeginFrame START. FFlatVertex size = %zu\n", sizeof(FFlatVertex));
+  }
+  if (mCurrentDrawable)
+    return;
+
+  SetViewportRects(nullptr);
+  mViewpoints->Clear();
+  mLights->Clear();
+  mBones->Clear();
+
+  NS::AutoreleasePool *pool = NS::AutoreleasePool::alloc()->init();
   dispatch_semaphore_wait(mInflightFramesSemaphore, DISPATCH_TIME_FOREVER);
 
-  // Clear the recycle bin for the slot we just acquired
-  mCurrentFrameRecycleIndex = (mCurrentFrameRecycleIndex + 1) % 3;
-  for (auto *buffer : mBufferRecycleBin[mCurrentFrameRecycleIndex]) {
-    buffer->release();
+  {
+    std::lock_guard<std::mutex> lock(mRecycleMutex);
+    mCurrentFrameRecycleIndex = (mCurrentFrameRecycleIndex + 1) % 3;
+    for (auto *buffer : mBufferRecycleBin[mCurrentFrameRecycleIndex]) {
+      buffer->release();
+    }
+    mBufferRecycleBin[mCurrentFrameRecycleIndex].clear();
+
+    for (auto *texture : mTextureRecycleBin[mCurrentFrameRecycleIndex]) {
+      texture->release();
+    }
+    mTextureRecycleBin[mCurrentFrameRecycleIndex].clear();
   }
-  mBufferRecycleBin[mCurrentFrameRecycleIndex].clear();
+
+  CocoaNativeHandle nativeHandle = GetNativeHandle();
+  if (nativeHandle.metalLayer) {
+    CA::MetalLayer *metalLayer = (CA::MetalLayer *)nativeHandle.metalLayer;
+
+    MetalViewSize viewSize = GetMetalViewDrawableSize(m_window);
+    if (viewSize.width > 0 && viewSize.height > 0) {
+      CGSize drawableSize = CGSizeMake(viewSize.width, viewSize.height);
+      if (metalLayer->drawableSize().width != drawableSize.width ||
+          metalLayer->drawableSize().height != drawableSize.height) {
+        metalLayer->setDrawableSize(drawableSize);
+      }
+    }
+
+    mCurrentDrawable = metalLayer->nextDrawable();
+    if (mCurrentDrawable) {
+      mCurrentDrawable->retain();
+      if (mt_debug) {
+        auto tex = mCurrentDrawable->texture();
+        Printf("Metal: Acquired drawable %p (%lu x %lu). ClientSize: %d x %d\n", mCurrentDrawable, 
+               tex->width(), tex->height(), GetWidth(), GetHeight());
+      }
+    }
+  }
+
+  mScreenBuffers->BeginFrame(GetWidth(), GetHeight(), GetWidth(), GetHeight());
+  mSaveBuffers->BeginFrame(SAVEPICWIDTH, SAVEPICHEIGHT, SAVEPICWIDTH,
+                           SAVEPICHEIGHT);
 
   if (mCommands)
     mCommands->BeginFrame();
@@ -405,6 +362,9 @@ void MetalRenderDevice::BeginFrame() {
 
   if (mResourceBindingManager)
     mResourceBindingManager->BeginFrame();
+
+  if (mt_debug) Printf("Metal: BeginFrame END\n");
+  pool->release();
 }
 
 bool MetalRenderDevice::CompileNextShader() {
@@ -415,7 +375,6 @@ bool MetalRenderDevice::CompileNextShader() {
 
 void MetalRenderDevice::SetVSync(bool vsync) {
   mVSync = vsync;
-
 #ifdef __APPLE__
   CocoaNativeHandle nativeHandle = GetNativeHandle();
   if (nativeHandle.metalLayer) {
@@ -427,13 +386,10 @@ void MetalRenderDevice::SetVSync(bool vsync) {
 
 void MetalRenderDevice::SetMode(bool fullscreen, bool hiDPI) {
   Super::SetMode(fullscreen, hiDPI);
-
-  // TODO: Implement Metal-specific mode setting (e.g., reconfigure metal layer)
 }
 
 void MetalRenderDevice::PrintStartupLog() {
   const char *deviceName = device->device->name()->utf8String();
-
   Printf(TEXTCOLOR_CYAN "Metal Renderer for GZDoom\n");
   Printf("  Device: %s\n", deviceName);
   Printf("  API Version: Metal 2.0+\n");
@@ -456,16 +412,22 @@ void MetalRenderDevice::WaitForCommands(bool finish) {
 
 void MetalRenderDevice::RecycleBuffer(MTL::Buffer *buffer) {
   if (buffer) {
+    std::lock_guard<std::mutex> lock(mRecycleMutex);
     mBufferRecycleBin[mCurrentFrameRecycleIndex].push_back(buffer);
   }
 }
 
+void MetalRenderDevice::RecycleTexture(MTL::Texture *texture) {
+  if (texture) {
+    std::lock_guard<std::mutex> lock(mRecycleMutex);
+    mTextureRecycleBin[mCurrentFrameRecycleIndex].push_back(texture);
+  }
+}
+
 unsigned int MetalRenderDevice::GetLightBufferBlockSize() const {
-  // Metal uses 256-byte alignment for constant buffers
   return 256;
 }
 
-// Stubs for methods that will be implemented later
 void MetalRenderDevice::PrecacheMaterial(FMaterial *mat, int translation) {}
 void MetalRenderDevice::UpdatePalette() {}
 void MetalRenderDevice::SetTextureFilterMode() {}
@@ -479,15 +441,20 @@ void MetalRenderDevice::BlurScene(float amount) {
 void MetalRenderDevice::PostProcessScene(
     bool swscene, int fixedcm, float flash,
     const std::function<void()> &afterBloomDrawEndScene2D) {
-  if (mPostprocess)
+  if (mt_debug) Printf("Metal: PostProcessScene\n");
+  if (mPostprocess) {
+    if (!swscene)
+      mPostprocess->BlitSceneToPostprocess();
     mPostprocess->PostProcessScene(swscene, fixedcm, flash,
                                    afterBloomDrawEndScene2D);
+  }
 }
 void MetalRenderDevice::AmbientOccludeScene(float m5) {
   if (mPostprocess)
     mPostprocess->AmbientOccludeScene(m5);
 }
 void MetalRenderDevice::SetSceneRenderTarget(bool useSSAO) {
+  if (mt_debug) Printf("Metal: SetSceneRenderTarget\n");
   if (mPostprocess)
     mPostprocess->SetSceneRenderTarget(useSSAO);
 }
@@ -500,40 +467,61 @@ void MetalRenderDevice::SetSaveBuffers(bool yes) {
   mActiveRenderBuffers = yes ? mSaveBuffers.get() : mScreenBuffers.get();
 }
 void MetalRenderDevice::ImageTransitionScene(bool unknown) {}
-void MetalRenderDevice::SetActiveRenderTarget() {}
-void MetalRenderDevice::Draw2D() {
-  static int debugCount = 0;
-  if (debugCount++ < 5) {
-    Printf("Draw2D: twod has %d vertices, %d indices, %d commands\n",
-           twod->mVertices.Size(), twod->mIndices.Size(), twod->mData.Size());
-  }
-  ::Draw2D(twod, *mMtRenderState);
+void MetalRenderDevice::SetActiveRenderTarget() {
+  if (mt_debug) Printf("Metal: SetActiveRenderTarget (SceneColor)\n");
+  mActiveRenderBuffers = mScreenBuffers.get();
+  mMtRenderState->SetRenderTarget(
+      mActiveRenderBuffers->SceneColor->GetTexture(),
+      mActiveRenderBuffers->SceneDepthStencil->GetTexture(),
+      mActiveRenderBuffers->GetWidth(), mActiveRenderBuffers->GetHeight(),
+      (int)MTL::PixelFormatRGBA16Float, 1);
 }
-void MetalRenderDevice::RenderTextureView(
-    FCanvasTexture *tex, std::function<void(IntRect &)> renderFunc) {}
+void MetalRenderDevice::Draw2D() {
+  if (mPostprocess) {
+    mPostprocess->SetActiveRenderTarget();
+  }
+  mViewpoints->Set2D(*mMtRenderState, GetWidth(), GetHeight());
+
+  if (mt_debug) Printf("Metal: Update - Calling Draw2D\n");
+  ::Draw2D(twod, *mMtRenderState);
+}void MetalRenderDevice::RenderTextureView(
+    FCanvasTexture *tex, std::function<void(IntRect &)> renderFunc) {
+  auto baseLayer = static_cast<MtHardwareTexture *>(tex->GetHardwareTexture(0, 0));
+  auto image = baseLayer->GetImage();
+  auto depthStencil = baseLayer->GetDepthStencil(tex);
+  auto oldTarget = mMtRenderState->GetRenderTarget();
+  mMtRenderState->EndRenderPass();
+  mMtRenderState->SetRenderTarget(
+      image->GetTexture(), 
+      depthStencil ? (MTL::Texture*)depthStencil->GetTexture() : nullptr,
+      image->GetWidth(), image->GetHeight(), 
+      image->GetFormat(), 1);
+  IntRect bounds;
+  bounds.left = bounds.top = 0;
+  bounds.width = min(tex->GetWidth(), image->GetWidth());
+  bounds.height = min(tex->GetHeight(), image->GetHeight());
+  if (mt_debug) Printf("Metal: RenderTextureView bounds %d,%d %dx%d\n", bounds.left, bounds.top, bounds.width, bounds.height);
+  renderFunc(bounds);
+  mMtRenderState->EndRenderPass();
+  mMtRenderState->SetRenderTarget(
+      oldTarget.Image, oldTarget.DepthStencil, 
+      oldTarget.Width, oldTarget.Height, 
+      oldTarget.Format, oldTarget.Samples);
+  tex->SetUpdated(true);
+}
 void MetalRenderDevice::CopyScreenToBuffer(int w, int h, uint8_t *data) {
   auto srcTex = mPostprocess->GetCurrentTexture();
   if (!srcTex)
     return;
-
-  // Create a staging buffer
-  size_t dataSize = w * h * 4; // Assuming RGBA8
-  MTL::Buffer *stagingBuffer =
-      device->device->newBuffer(dataSize, MTL::ResourceStorageModeShared);
-
+  size_t dataSize = w * h * 4;
+  MTL::Buffer *stagingBuffer = device->device->newBuffer(dataSize, MTL::ResourceStorageModeShared);
   auto cmdBuffer = mCommands->GetRenderCommandBuffer();
   auto blitEncoder = cmdBuffer->blitCommandEncoder();
-
   MTL::Size sourceSize = MTL::Size(w, h, 1);
   blitEncoder->copyFromTexture(srcTex, 0, 0, MTL::Origin(0, 0, 0), sourceSize,
                                stagingBuffer, 0, w * 4, w * h * 4);
   blitEncoder->endEncoding();
-
-  // Submit and wait
   mCommands->WaitForCommands(true);
-
-  // Copy from staging buffer to data (and convert RGBA8 to RGB8 if needed, but
-  // GZDoom wants RGB8 for screenshots)
   uint8_t *pixels = (uint8_t *)stagingBuffer->contents();
   uint8_t *dest = data;
   for (int i = 0; i < w * h; i++) {
@@ -541,34 +529,22 @@ void MetalRenderDevice::CopyScreenToBuffer(int w, int h, uint8_t *data) {
     dest[i * 3 + 1] = pixels[i * 4 + 1];
     dest[i * 3 + 2] = pixels[i * 4 + 2];
   }
-
   stagingBuffer->release();
 }
 FTexture *MetalRenderDevice::WipeStartScreen() {
   SetViewportRects(nullptr);
-
-  auto tex =
-      new FWrapperTexture(mScreenViewport.width, mScreenViewport.height, 1);
+  auto tex = new FWrapperTexture(mScreenViewport.width, mScreenViewport.height, 1);
   auto systex = static_cast<MtHardwareTexture *>(tex->GetSystemTexture());
-
-  systex->CreateWipeTexture(mScreenViewport.width, mScreenViewport.height,
-                            "WipeStartScreen");
-
+  systex->CreateWipeTexture(mScreenViewport.width, mScreenViewport.height, "WipeStartScreen");
   return tex;
 }
-
 FTexture *MetalRenderDevice::WipeEndScreen() {
   GetPostprocess()->SetActiveRenderTarget();
   Draw2D();
   twod->Clear();
-
-  auto tex =
-      new FWrapperTexture(mScreenViewport.width, mScreenViewport.height, 1);
+  auto tex = new FWrapperTexture(mScreenViewport.width, mScreenViewport.height, 1);
   auto systex = static_cast<MtHardwareTexture *>(tex->GetSystemTexture());
-
-  systex->CreateWipeTexture(mScreenViewport.width, mScreenViewport.height,
-                            "WipeEndScreen");
-
+  systex->CreateWipeTexture(mScreenViewport.width, mScreenViewport.height, "WipeEndScreen");
   return tex;
 }
 TArray<uint8_t> MetalRenderDevice::GetScreenshotBuffer(int &pitch,
@@ -576,41 +552,28 @@ TArray<uint8_t> MetalRenderDevice::GetScreenshotBuffer(int &pitch,
                                                        float &gamma) {
   int w = SCREENWIDTH;
   int h = SCREENHEIGHT;
-
-  IntRect box;
-  box.left = 0;
-  box.top = 0;
-  box.width = w;
-  box.height = h;
+  IntRect box = { 0, 0, w, h };
   mPostprocess->DrawPresentTexture(box, true, true);
-
   TArray<uint8_t> ScreenshotBuffer(w * h * 3, true);
   CopyScreenToBuffer(w, h, ScreenshotBuffer.Data());
-
   pitch = w * 3;
   color_type = SS_RGB;
   gamma = 1.0f;
   return ScreenshotBuffer;
 }
-
-// Hardware object creation
 IHardwareTexture *MetalRenderDevice::CreateHardwareTexture(int numchannels) {
   return new MtHardwareTexture(this, numchannels);
 }
-
 FMaterial *MetalRenderDevice::CreateMaterial(FGameTexture *tex,
                                              int scaleflags) {
   return new FMaterial(tex, scaleflags);
 }
-
 IVertexBuffer *MetalRenderDevice::CreateVertexBuffer() {
   return mBufferManager->CreateVertexBuffer();
 }
-
 IIndexBuffer *MetalRenderDevice::CreateIndexBuffer() {
   return mBufferManager->CreateIndexBuffer();
 }
-
 IDataBuffer *MetalRenderDevice::CreateDataBuffer(int bindingpoint, bool ssbo,
                                                  bool needsresize) {
   return mBufferManager->CreateDataBuffer(bindingpoint, ssbo, needsresize);

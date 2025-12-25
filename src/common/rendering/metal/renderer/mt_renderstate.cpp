@@ -384,7 +384,7 @@ void MtRenderState::ApplyRenderPass(int dt) {
   pipelineKey.DrawBufferCount = mRenderTarget.DrawBuffers;
   pipelineKey.PixelFormat = mRenderTarget.Format;
   pipelineKey.DepthStencilFormat =
-      mRenderTarget.DepthStencil ? (int)MTL::PixelFormatDepth32Float_Stencil8
+      mRenderTarget.DepthStencil ? (int)mRenderTarget.DepthStencil->pixelFormat()
                                  : 0;
 
   // Only update pipeline state if key changed
