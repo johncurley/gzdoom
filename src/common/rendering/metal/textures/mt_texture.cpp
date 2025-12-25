@@ -8,9 +8,12 @@
 #include "metal/system/mt_renderdevice.h"
 #include "mt_texture.h"
 #include "printf.h"
+#include "c_cvars.h"
 
 #include "textures.h"
 #include <cmath>
+
+EXTERN_CVAR(Bool, mt_debug)
 
 // MtTextureImage
 MtTextureImage::MtTextureImage(MetalRenderDevice *fb) : fb(fb) {}
