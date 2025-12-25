@@ -236,6 +236,7 @@ void MtRenderState::Apply(int dt) {
   if (mApplyCount >= mt_submit_size) {
     EndRenderPass();
     fb->GetCommands()->FlushCommands();
+    mApplyCount = 0;
   }
 
   ApplyStreamData();
@@ -294,7 +295,7 @@ void MtRenderState::ApplyRenderPass(int dt) {
   pipelineKey.CullMode = mCullMode;
   pipelineKey.StencilTest = mStencilTest ? 1 : 0;
   pipelineKey.StencilOp = mStencilOp;
-  pipelineKey.BlendMode = mRenderStyle.BlendOp; // Use render style blend op
+  pipelineKey.BlendMode = mRenderStyle.AsDWORD; // Use full render style for pipeline key
   pipelineKey.SampleCount = mRenderTarget.Samples;
   pipelineKey.DrawBufferCount = mRenderTarget.DrawBuffers;
   pipelineKey.PixelFormat = mRenderTarget.Format;

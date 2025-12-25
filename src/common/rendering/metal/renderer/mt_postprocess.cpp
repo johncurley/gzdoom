@@ -147,22 +147,6 @@ public:
       encoder->setDepthStencilState(fb->GetPipelineStateManager()->GetDisabledDepthStencilState());
       encoder->setCullMode(MTL::CullModeNone);
       
-      MTL::Viewport mtlViewport;
-      mtlViewport.originX = 0;
-      mtlViewport.originY = 0;
-      mtlViewport.width = width;
-      mtlViewport.height = height;
-      mtlViewport.znear = 0;
-      mtlViewport.zfar = 1;
-      encoder->setViewport(mtlViewport);
-
-      MTL::ScissorRect scissor;
-      scissor.x = 0;
-      scissor.y = 0;
-      scissor.width = width;
-      scissor.height = height;
-      encoder->setScissorRect(scissor);
-
       // Bind vertex buffer (screen->mVertexData) at slot 0 manually too for safety
       encoder->setVertexBuffer(vb->GetBuffer(), 0, 0);
 
