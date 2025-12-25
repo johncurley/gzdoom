@@ -29,7 +29,7 @@ MTL::CommandBuffer *MtCommandBufferManager::CreateNewCommandBuffer() {
   // Add completed handler to signal semaphore for inflight frame management
   dispatch_semaphore_t sem = fb->GetInflightSemaphore();
   [(__bridge id<MTLCommandBuffer>)cmdBuf addCompletedHandler:^(id<MTLCommandBuffer> buffer) {
-      if (buffer.status == MTLCommandBufferStatusError) {
+      if (buffer.status == MTLCommandBufferStatusError && buffer.error) {
           NSLog(@"Metal: CommandBuffer Error: %@", buffer.error.localizedDescription);
       }
       dispatch_semaphore_signal(sem);
@@ -76,9 +76,10 @@ void MtCommandBufferManager::BeginFrame() {
 }
 
 void MtCommandBufferManager::EndFrame() {
-  // Command buffer is committed and released in PresentFrame
-  // Just clear our reference here
-  mCurrentCommandBuffer = nullptr;
+  if (mCurrentCommandBuffer) {
+    mCurrentCommandBuffer->release();
+    mCurrentCommandBuffer = nullptr;
+  }
 }
 
 void MtCommandBufferManager::AddCompletedHandler(

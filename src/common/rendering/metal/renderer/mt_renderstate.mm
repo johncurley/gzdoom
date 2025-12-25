@@ -130,9 +130,13 @@ void MtRenderState::DrawIndexed(int dt, int index, int count, bool apply) {
   if (!mEncoder || !mIndexBuffer)
     return;
 
+  auto mtlIB = static_cast<MtIndexBuffer *>(mIndexBuffer)->GetBuffer();
+  if (!mtlIB)
+    return;
+
   mEncoder->drawIndexedPrimitives(
       MTL::PrimitiveTypeTriangle, count, MTL::IndexTypeUInt32,
-      static_cast<MtIndexBuffer *>(mIndexBuffer)->GetBuffer(),
+      mtlIB,
       index * 4); // Each index is 4 bytes (UInt32)
 }
 

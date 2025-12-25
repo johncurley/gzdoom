@@ -292,7 +292,6 @@ void MetalRenderDevice::PresentFrame(void *drawablePtr, SemaphoreGuard *guard) {
   if (guard) guard->Handled();
   commandBuffer->presentDrawable(drawable);
   commandBuffer->commit();
-  commandBuffer->release();
 }
 
 void MetalRenderDevice::BeginFrame() {

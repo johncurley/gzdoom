@@ -422,10 +422,17 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
     vertexDesc->attributes()->object(1)->setOffset(offsetof(FFlatVertex, u));
     vertexDesc->attributes()->object(1)->setBufferIndex(0);
 
-    // Attribute 2: Color (uchar4 normalized) - Alias to Position if color missing
-    vertexDesc->attributes()->object(2)->setFormat(MTL::VertexFormatUChar4Normalized);
-    vertexDesc->attributes()->object(2)->setOffset(offsetof(FFlatVertex, x));
-    vertexDesc->attributes()->object(2)->setBufferIndex(0);
+    // Attribute 2: Color (uchar4 normalized)
+    if (stride == 24) {
+        vertexDesc->attributes()->object(2)->setFormat(MTL::VertexFormatUChar4Normalized);
+        vertexDesc->attributes()->object(2)->setOffset(20); // color0 offset in TwoDVertex
+        vertexDesc->attributes()->object(2)->setBufferIndex(0);
+    } else {
+        // Fallback for FFlatVertex which has no color - alias to position to avoid validation errors
+        vertexDesc->attributes()->object(2)->setFormat(MTL::VertexFormatUChar4Normalized);
+        vertexDesc->attributes()->object(2)->setOffset(offsetof(FFlatVertex, x));
+        vertexDesc->attributes()->object(2)->setBufferIndex(0);
+    }
 
     // Attribute 3: aVertex2 (float2) - Points to TexCoord if stride is 24, or lindex if 32
     if (stride == 32) {
