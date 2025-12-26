@@ -182,7 +182,7 @@ MtPipelineStateManager::GetPPPipelineState(MtShaderProgram *program,
       fb->device->device->newRenderPipelineState(desc, &error);
 
   if (!pipeline && error) {
-    Printf("Metal: Failed to create PP pipeline: %s\n",
+    Printf(PRINT_LOG, "Metal: Failed to create PP pipeline: %s\n",
            error->localizedDescription()->utf8String());
   }
 
@@ -248,7 +248,7 @@ MtPipelineStateManager::CreateDepthStencilState(const MtPipelineKey &key) {
 MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
     const MtPipelineKey &key, MtVertexBuffer *vertexBuffer) {
   if (mt_debug) {
-      Printf("Metal: CreateRenderPipelineState. FFlatVertex size = %zu\n", sizeof(FFlatVertex));
+      Printf(PRINT_LOG, "Metal: CreateRenderPipelineState. FFlatVertex size = %zu\n", sizeof(FFlatVertex));
   }
   auto desc = MTL::RenderPipelineDescriptor::alloc()->init();
 
@@ -270,7 +270,7 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
   if (!program || !program->vert || !program->frag) {
     static int warnCount = 0;
     if (warnCount++ < 5)
-      Printf(
+      Printf(PRINT_LOG, 
           "Metal: Failed to get shader for effect=%d state=%d alphaTest=%d\n",
           key.SpecialEffect, key.EffectState, key.AlphaTest);
     desc->release();
@@ -282,7 +282,7 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
   auto fragmentFunction = program->frag->fragmentFunction;
 
   if (!vertexFunction || !fragmentFunction) {
-    Printf("Metal: Failed to load shader functions from default library\n");
+    Printf(PRINT_LOG, "Metal: Failed to load shader functions from default library\n");
     desc->release();
     return nullptr;
   }
@@ -447,11 +447,11 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
   auto state = device->newRenderPipelineState(desc, &error);
 
   if (!state && error) {
-    Printf("Metal: Failed to create render pipeline state: %s\n",
+    Printf(PRINT_LOG, "Metal: Failed to create render pipeline state: %s\n",
            error->localizedDescription()->utf8String());
     error->release();
   } else if (state && mt_debug) {
-    Printf("Metal: Pipeline state created successfully (effect=%d, state=%d, "
+    Printf(PRINT_LOG, "Metal: Pipeline state created successfully (effect=%d, state=%d, "
            "alpha=%d, vfmt=%d)\n",
            key.SpecialEffect, key.EffectState, key.AlphaTest, key.VertexFormat);
   }
@@ -554,7 +554,7 @@ void MtPipelineStateManager::ConfigureBlendMode(
         attachment->setAlphaBlendOperation(MTL::BlendOperationAdd);
         return;
     }
-    Printf("Metal: Warning - Unhandled blendMode: %d. Disabling blending.\n", style.BlendOp);
+    Printf(PRINT_LOG, "Metal: Warning - Unhandled blendMode: %d. Disabling blending.\n", style.BlendOp);
     attachment->setBlendingEnabled(false);
     return;
   }

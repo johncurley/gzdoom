@@ -44,7 +44,7 @@ void MtRenderBuffers::CreatePipelineDepthStencil(int width, int height) {
 
   MTL::Texture *texture = fb->device->device->newTexture(desc);
   if (!texture) {
-      Printf("Metal: Failed to create PipelineDepthStencil texture!\n");
+      Printf(PRINT_LOG, "Metal: Failed to create PipelineDepthStencil texture!\n");
   }
   PipelineDepthStencil->SetTexture(texture);
   PipelineDepthStencil->SetWidth(width);
@@ -64,7 +64,7 @@ void MtRenderBuffers::CreatePipeline(int width, int height) {
     desc->setStorageMode(MTL::StorageModePrivate);
 
     MTL::Texture *texture = fb->device->device->newTexture(desc);
-    if (i == 0) Printf("Metal: Created PipelineImage[0] at %p\n", texture);
+    if (i == 0) Printf(PRINT_LOG, "Metal: Created PipelineImage[0] at %p\n", texture);
     PipelineImage[i]->SetTexture(texture);
     PipelineImage[i]->SetWidth(width);
     PipelineImage[i]->SetHeight(height);

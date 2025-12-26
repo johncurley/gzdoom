@@ -27,7 +27,7 @@ MtStreamBuffer::MtStreamBuffer(MetalRenderDevice *fb, size_t structSize, size_t 
       mBufferSize = 8 * 1024 * 1024;
 
   if (mt_debug) {
-      Printf("Metal: MtStreamBuffer allocated %zu bytes (structSize=%zu, capacity=%zu)\n", 
+      Printf(PRINT_LOG, "Metal: MtStreamBuffer allocated %zu bytes (structSize=%zu, capacity=%zu)\n", 
              mBufferSize, structSize, capacity);
   }
 
@@ -98,7 +98,7 @@ bool MtStreamBufferWriter::Write(const StreamData &data) {
            sizeof(StreamData));
     
     if (mt_debug) {
-        Printf("Metal: StreamData %d: Color=(%.2f, %.2f, %.2f, %.2f) UseVertex=%d Timer=%f\n", 
+        Printf(PRINT_LOG, "Metal: StreamData %d: Color=(%.2f, %.2f, %.2f, %.2f) UseVertex=%d Timer=%f\n", 
                mDataIndex, data.uVertexColor.X, data.uVertexColor.Y, data.uVertexColor.Z, data.uVertexColor.W, data.useVertexData, data.timer);
     }
   }

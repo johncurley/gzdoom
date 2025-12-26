@@ -351,12 +351,12 @@ MtShaderManager::CompileShader(const std::string &name,
 
     std::ifstream vfile(cachePath);
     if (vfile.is_open()) {
-      if (mt_debug) Printf("Metal: Loading vertex shader %s from cache.\n", name.c_str());
+      if (mt_debug) Printf(PRINT_LOG, "Metal: Loading vertex shader %s from cache.\n", name.c_str());
       std::stringstream ss;
       ss << vfile.rdbuf();
       vertexMSL = ss.str();
     } else {
-      if (mt_debug) Printf("Metal: Recompiling vertex shader %s from scratch.\n", name.c_str());
+      if (mt_debug) Printf(PRINT_LOG, "Metal: Recompiling vertex shader %s from scratch.\n", name.c_str());
       // Step 1: GLSL → SPIR-V
       auto vertexSPIRV =
           CompileGLSLToSPIRV(vertexSource, name + "_vert", true, defines);
@@ -384,7 +384,7 @@ MtShaderManager::CompileShader(const std::string &name,
     // Step 3: MSL → MTLLibrary
     module->library = CompileMSLToLibrary(vertexMSL, name + "_vert");
     if (!module->library) {
-      Printf("Metal: Failed to compile vertex shader MSL to library: %s\n",
+      Printf(PRINT_LOG, "Metal: Failed to compile vertex shader MSL to library: %s\n",
              name.c_str());
       return nullptr;
     }
@@ -395,7 +395,7 @@ MtShaderManager::CompileShader(const std::string &name,
     funcName->release();
 
     if (!module->function) {
-      Printf("Metal: Failed to find main0 function in vertex shader: %s\n",
+      Printf(PRINT_LOG, "Metal: Failed to find main0 function in vertex shader: %s\n",
              name.c_str());
       module->library->release();
       return nullptr;
@@ -417,15 +417,15 @@ MtShaderManager::CompileShader(const std::string &name,
 
     std::ifstream ffile(cachePath);
     if (ffile.is_open()) {
-      if (mt_debug) Printf("Metal: Loading fragment shader %s from cache.\n", name.c_str());
+      if (mt_debug) Printf(PRINT_LOG, "Metal: Loading fragment shader %s from cache.\n", name.c_str());
       std::stringstream ss;
       ss << ffile.rdbuf();
       fragmentMSL = ss.str();
     } else {
-      if (mt_debug) Printf("Metal: Recompiling fragment shader %s from scratch.\n", name.c_str());
+      if (mt_debug) Printf(PRINT_LOG, "Metal: Recompiling fragment shader %s from scratch.\n", name.c_str());
       // Step 1: GLSL → SPIR-V
       if (mt_debug && fragmentSource.find("present") != std::string::npos) {
-          Printf("Metal: Compiling fragment shader %s. Source preview: %.256s\n", name.c_str(), fragmentSource.c_str());
+          Printf(PRINT_LOG, "Metal: Compiling fragment shader %s. Source preview: %.256s\n", name.c_str(), fragmentSource.c_str());
       }
       auto fragmentSPIRV =
           CompileGLSLToSPIRV(fragmentSource, name + "_frag", false, defines);
@@ -457,7 +457,7 @@ MtShaderManager::CompileShader(const std::string &name,
     // Step 3: MSL → MTLLibrary
     module->fragmentLibrary = CompileMSLToLibrary(fragmentMSL, name + "_frag");
     if (!module->fragmentLibrary) {
-      Printf("Metal: Failed to compile fragment shader MSL to library: %s\n",
+      Printf(PRINT_LOG, "Metal: Failed to compile fragment shader MSL to library: %s\n",
              name.c_str());
       if (module->function)
         ((MTL::Function *)module->function)->release();
@@ -474,7 +474,7 @@ MtShaderManager::CompileShader(const std::string &name,
     fragFuncName->release();
 
     if (!module->fragmentFunction) {
-      Printf("Metal: Failed to find main0 function in fragment shader: %s\n",
+      Printf(PRINT_LOG, "Metal: Failed to find main0 function in fragment shader: %s\n",
              name.c_str());
       module->fragmentLibrary->release();
       if (module->function)
@@ -492,7 +492,7 @@ MtShaderManager::CompileShader(const std::string &name,
 }
 
 MtShaderProgram *MtShaderManager::GetEffect(int effect, EPassType passType) {
-  if (mt_debug) Printf("Metal: MtShaderManager::GetEffect %d pass=%d\n", effect, (int)passType);
+  if (mt_debug) Printf(PRINT_LOG, "Metal: MtShaderManager::GetEffect %d pass=%d\n", effect, (int)passType);
   if (compileIndex == -1 && effect >= 0 && effect < MAX_EFFECTS &&
       mEffectShaders[passType][effect].frag) {
     return &mEffectShaders[passType][effect];
@@ -502,7 +502,7 @@ MtShaderProgram *MtShaderManager::GetEffect(int effect, EPassType passType) {
 
 MtShaderProgram *MtShaderManager::Get(unsigned int eff, bool alphateston,
                                       EPassType passType) {
-  if (mt_debug) Printf("Metal: MtShaderManager::Get %u alpha=%d pass=%d\n", eff, (int)alphateston, (int)passType);
+  if (mt_debug) Printf(PRINT_LOG, "Metal: MtShaderManager::Get %u alpha=%d pass=%d\n", eff, (int)alphateston, (int)passType);
   if (compileIndex != -1) {
     if (mMaterialShaders[0].size() > 0)
       return &mMaterialShaders[0][0];
@@ -605,7 +605,7 @@ static void PatchVertexShader(std::string &source, const std::string &shadername
   // Case 1: Standard projection
   size_t pos = source.find("gl_Position = ProjectionMatrix * eyeCoordPos;");
   if (pos != std::string::npos) {
-      if (mt_debug) Printf("Metal: Patching vertex shader %s (Standard Projection) for coordinate system.\n", shadername.c_str());
+      if (mt_debug) Printf(PRINT_LOG, "Metal: Patching vertex shader %s (Standard Projection) for coordinate system.\n", shadername.c_str());
       source.replace(pos, strlen("gl_Position = ProjectionMatrix * eyeCoordPos;"),
           "gl_Position = ProjectionMatrix * eyeCoordPos;\n"
           "gl_Position.y = -gl_Position.y;\n" // Restore Y flip
@@ -616,7 +616,7 @@ static void PatchVertexShader(std::string &source, const std::string &shadername
   // Case 2: Direct projection (used by PP shaders like screenquad.vp)
   size_t pos2 = source.find("gl_Position = PositionInProjection;");
   if (pos2 != std::string::npos) {
-      if (mt_debug) Printf("Metal: Patching vertex shader %s (Direct Projection) for coordinate system.\n", shadername.c_str());
+      if (mt_debug) Printf(PRINT_LOG, "Metal: Patching vertex shader %s (Direct Projection) for coordinate system.\n", shadername.c_str());
       source.replace(pos2, strlen("gl_Position = PositionInProjection;"),
           "gl_Position = PositionInProjection;\n"
           "gl_Position.y = -gl_Position.y;\n" // Restore Y flip
@@ -634,7 +634,7 @@ MtShaderManager::LoadVertShader(const std::string &shadername,
   std::string definesStr = defines;
   size_t vpos = definesStr.find("#define VULKAN_COORDINATE_SYSTEM");
   if (vpos != std::string::npos) {
-      if (mt_debug) Printf("Metal: Stripping VULKAN_COORDINATE_SYSTEM from %s to use manual Metal patch.\n", shadername.c_str());
+      if (mt_debug) Printf(PRINT_LOG, "Metal: Stripping VULKAN_COORDINATE_SYSTEM from %s to use manual Metal patch.\n", shadername.c_str());
       definesStr.replace(vpos, strlen("#define VULKAN_COORDINATE_SYSTEM"), "//efine VULKAN_COORDINATE_SYSTEM");
   }
   
@@ -718,7 +718,7 @@ std::string MtShaderManager::LoadPublicShaderLump(const char *lumpname) {
   if (lump == -1)
     lump = fileSystem.CheckNumForFullName(lumpname);
   if (lump == -1) {
-      if (mt_debug) Printf("Metal: WARNING - Public shader lump not found: %s\n", lumpname);
+      if (mt_debug) Printf(PRINT_LOG, "Metal: WARNING - Public shader lump not found: %s\n", lumpname);
       return "";
   }
   auto data = fileSystem.ReadFile(lump);
@@ -728,7 +728,7 @@ std::string MtShaderManager::LoadPublicShaderLump(const char *lumpname) {
 std::string MtShaderManager::LoadPrivateShaderLump(const char *lumpname) {
   int lump = fileSystem.CheckNumForFullName(lumpname, 0);
   if (lump == -1) {
-      if (mt_debug) Printf("Metal: WARNING - Private shader lump not found: %s\n", lumpname);
+      if (mt_debug) Printf(PRINT_LOG, "Metal: WARNING - Private shader lump not found: %s\n", lumpname);
       return "";
   }
   auto data = fileSystem.ReadFile(lump);
@@ -794,7 +794,7 @@ MtShaderManager::CompileGLSLToSPIRV(const std::string &source,
   const char *nameStr = name.c_str();
 
   if (mt_debug) {
-      Printf("Metal: Compiling GLSL shader %s. Source length: %d\n", name.c_str(), sourceLength);
+      Printf(PRINT_LOG, "Metal: Compiling GLSL shader %s. Source length: %d\n", name.c_str(), sourceLength);
   }
 
   // Create glslang shader
@@ -814,7 +814,7 @@ MtShaderManager::CompileGLSLToSPIRV(const std::string &source,
   bool parseSuccess = shader.parse(&resources, 450, false,
                                    EShMsgVulkanRules); // Use EShMsgVulkanRules
   if (!parseSuccess) {
-    Printf("Metal: Shader parse failed for %s:\n%s\n", name.c_str(),
+    Printf(PRINT_LOG, "Metal: Shader parse failed for %s:\n%s\n", name.c_str(),
            shader.getInfoLog());
     return std::vector<uint32_t>();
   }
@@ -824,7 +824,7 @@ MtShaderManager::CompileGLSLToSPIRV(const std::string &source,
   program.addShader(&shader);
   bool linkSuccess = program.link(EShMsgDefault);
   if (!linkSuccess) {
-    Printf("Metal: Shader link failed for %s:\n%s\n", name.c_str(),
+    Printf(PRINT_LOG, "Metal: Shader link failed for %s:\n%s\n", name.c_str(),
            program.getInfoLog());
     return std::vector<uint32_t>();
   }
@@ -832,7 +832,7 @@ MtShaderManager::CompileGLSLToSPIRV(const std::string &source,
   // Get intermediate representation
   glslang::TIntermediate *intermediate = program.getIntermediate(stage);
   if (!intermediate) {
-    Printf("Metal: Failed to get intermediate representation for %s\n",
+    Printf(PRINT_LOG, "Metal: Failed to get intermediate representation for %s\n",
            name.c_str());
     return std::vector<uint32_t>();
   }
@@ -850,7 +850,7 @@ MtShaderManager::CompileGLSLToSPIRV(const std::string &source,
   // Log any messages
   std::string messages = logger.getAllMessages();
   if (!messages.empty()) {
-    Printf("Metal: SPIR-V generation messages for %s:\n%s\n", name.c_str(),
+    Printf(PRINT_LOG, "Metal: SPIR-V generation messages for %s:\n%s\n", name.c_str(),
            messages.c_str());
   }
 
@@ -870,7 +870,7 @@ MtShaderManager::TranslateSPIRVToMSL(const std::vector<uint32_t> &spirv,
   auto result = translator.TranslateToMSL(spirv, 20);
 
   if (!result.success) {
-    Printf("Metal SPIR-V translation error: %s\n", result.errorLog.c_str());
+    Printf(PRINT_LOG, "Metal SPIR-V translation error: %s\n", result.errorLog.c_str());
     return "";
   }
 
@@ -903,14 +903,14 @@ MTL::Library *MtShaderManager::CompileMSLToLibrary(const std::string &msl,
   if (!library) { // Always log if library creation failed
     if (error) {
       const char *errorMsg = error->localizedDescription()->utf8String();
-      Printf("Metal: MSL to MTLLibrary compilation FAILED for %s:\n%s\n", name.c_str(), errorMsg);
+      Printf(PRINT_LOG, "Metal: MSL to MTLLibrary compilation FAILED for %s:\n%s\n", name.c_str(), errorMsg);
       error->release(); // Release error object
     } else {
-      Printf("Metal: MSL to MTLLibrary compilation FAILED for %s: Unknown error (NS::Error was null).\n", name.c_str());
+      Printf(PRINT_LOG, "Metal: MSL to MTLLibrary compilation FAILED for %s: Unknown error (NS::Error was null).\n", name.c_str());
     }
   } else if (error) { // Log warnings if library created but error present
       const char *errorMsg = error->localizedDescription()->utf8String();
-      Printf("Metal: MSL to MTLLibrary compilation WARNING for %s:\n%s\n", name.c_str(), errorMsg);
+      Printf(PRINT_LOG, "Metal: MSL to MTLLibrary compilation WARNING for %s:\n%s\n", name.c_str(), errorMsg);
       error->release(); // Release error object
   }
 

@@ -71,8 +71,8 @@ CVAR(Bool, mt_debug, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 void MetalError(const char *text) { throw CMetalError(text); }
 
 void MetalPrintLog(const char *typestr, const std::string &msg) {
-  Printf(TEXTCOLOR_RED "[Metal %s] ", typestr);
-  Printf(TEXTCOLOR_WHITE "%s\n", msg.c_str());
+  Printf(PRINT_LOG, TEXTCOLOR_RED "[Metal %s] ", typestr);
+  Printf(PRINT_LOG, TEXTCOLOR_WHITE "%s\n", msg.c_str());
 }
 
 MetalRenderDevice::MetalRenderDevice(void *hMonitor, bool fullscreen)
@@ -180,7 +180,7 @@ void MetalRenderDevice::InitializeState() {
   uniformblockalignment = 256;
   maxuniformblock = 65536;
 
-  Printf(TEXTCOLOR_BLUE "Initializing Metal renderer managers...\n");
+  Printf(PRINT_LOG, TEXTCOLOR_BLUE "Initializing Metal renderer managers...\n");
 
   mCommands.reset(new MtCommandBufferManager(this));
   mSamplerManager.reset(new MtSamplerManager(this));
@@ -204,13 +204,13 @@ void MetalRenderDevice::InitializeState() {
   mLights = new FLightBuffer();
   mBones = new BoneBuffer();
 
-  Printf(TEXTCOLOR_GREEN "Metal renderer initialized successfully!\n");
+  Printf(PRINT_LOG, TEXTCOLOR_GREEN "Metal renderer initialized successfully!\n");
 }
 
 void MetalRenderDevice::Update() {
   // NS::AutoreleasePool *pool = NS::AutoreleasePool::alloc()->init();
 
-  if (mt_debug) Printf("Metal: Update START\n");
+  if (mt_debug) Printf(PRINT_LOG, "Metal: Update START\n");
 
   twoD.Reset();
   Flush3D.Reset();
@@ -224,11 +224,11 @@ void MetalRenderDevice::Update() {
   // Update 2D viewpoint to ensure correct projection matrices for UI
   mViewpoints->Set2D(*mMtRenderState, GetWidth(), GetHeight());
 
-  if (mt_debug) Printf("Metal: Update - Calling Draw2D\n");
+  if (mt_debug) Printf(PRINT_LOG, "Metal: Update - Calling Draw2D\n");
   this->Draw2D();
 
   if (mMtRenderState) {
-    if (mt_debug) Printf("Metal: Update - Ending 2D pass\n");
+    if (mt_debug) Printf(PRINT_LOG, "Metal: Update - Ending 2D pass\n");
     mMtRenderState->EndRenderPass();
     mMtRenderState->EndFrame();
   }
@@ -241,14 +241,14 @@ void MetalRenderDevice::Update() {
     int height = (int)drawableTexture->height();
 
     if (mt_debug) {
-        Printf("Metal: Update - drawable: %d x %d, letterbox: %d,%d %dx%d\n", 
+        Printf(PRINT_LOG, "Metal: Update - drawable: %d x %d, letterbox: %d,%d %dx%d\n", 
                width, height,
                mOutputLetterbox.left, mOutputLetterbox.top, mOutputLetterbox.width, mOutputLetterbox.height);
     }
 
     // 3. Blit the final result (3D + 2D) from PipelineImage[0] to the swapchain
     if (mPostprocess) {
-      if (mt_debug) Printf("Metal: Update - Blitting to swapchain\n");
+      if (mt_debug) Printf(PRINT_LOG, "Metal: Update - Blitting to swapchain\n");
       IntRect physicalBox = { 0, 0, width, height };
       mPostprocess->DrawPresentTexture(physicalBox, true, false);
     }
@@ -256,17 +256,26 @@ void MetalRenderDevice::Update() {
     if (mMtRenderState)
       mMtRenderState->EndRenderPass();
 
-    // 4. Present
-    if (mt_debug) Printf("Metal: Update - Presenting frame\n");
+    // 4. Frame pacing and presentation
+    if (!mVSync) {
+        this->FPSLimit();
+    }
+
+    if (mt_debug) Printf(PRINT_LOG, "Metal: Update - Presenting frame\n");
     PresentFrame(mCurrentDrawable);
   }
 
-  if (mCommands)
+  if (mCommands) {
     mCommands->EndFrame();
+  }
+
+  // Update GZDoom's frame timer after presentation.
+  // This tells the engine exactly when the previous frame finished.
+  I_SetFrameTime();
 
   twod->Clear();
 
-  if (mt_debug) Printf("Metal: Update END\n");
+  if (mt_debug) Printf(PRINT_LOG, "Metal: Update END\n");
 
   Super::Update();
   // pool->release();
@@ -294,7 +303,7 @@ void MetalRenderDevice::PresentFrame(void *drawablePtr) {
 
 void MetalRenderDevice::BeginFrame() {
   if (mt_debug) {
-      Printf("Metal: BeginFrame START. FFlatVertex size = %zu\n", sizeof(FFlatVertex));
+      Printf(PRINT_LOG, "Metal: BeginFrame START. FFlatVertex size = %zu\n", sizeof(FFlatVertex));
   }
   if (mCurrentDrawable)
     return;
@@ -304,14 +313,12 @@ void MetalRenderDevice::BeginFrame() {
   mLights->Clear();
   mBones->Clear();
 
-  // Wait for GPU backpressure
-  if (mt_debug) Printf("Metal: BeginFrame - Waiting for semaphore\n");
+  // Wait for GPU backpressure (MaxFramesInFlight frames allowed)
   dispatch_semaphore_wait(mInflightFramesSemaphore, DISPATCH_TIME_FOREVER);
-  if (mt_debug) Printf("Metal: BeginFrame - Semaphore acquired\n");
 
   {
     std::lock_guard<std::mutex> lock(mRecycleMutex);
-    mCurrentFrameRecycleIndex = (mCurrentFrameRecycleIndex + 1) % 2;
+    mCurrentFrameRecycleIndex = (mCurrentFrameRecycleIndex + 1) % 3;
     for (auto *buffer : mBufferRecycleBin[mCurrentFrameRecycleIndex]) {
       buffer->release();
     }
@@ -341,7 +348,7 @@ void MetalRenderDevice::BeginFrame() {
       mCurrentDrawable->retain();
       if (mt_debug) {
         auto tex = mCurrentDrawable->texture();
-        Printf("Metal: Acquired drawable %p (%lu x %lu). ClientSize: %d x %d\n", mCurrentDrawable, 
+        Printf(PRINT_LOG, "Metal: Acquired drawable %p (%lu x %lu). ClientSize: %d x %d\n", mCurrentDrawable, 
                tex->width(), tex->height(), GetWidth(), GetHeight());
       }
     }
@@ -368,7 +375,7 @@ void MetalRenderDevice::BeginFrame() {
     mPostprocess->SetActiveRenderTarget();
   }
 
-  if (mt_debug) Printf("Metal: BeginFrame END\n");
+  if (mt_debug) Printf(PRINT_LOG, "Metal: BeginFrame END\n");
 }
 
 bool MetalRenderDevice::CompileNextShader() {
@@ -394,11 +401,11 @@ void MetalRenderDevice::SetMode(bool fullscreen, bool hiDPI) {
 
 void MetalRenderDevice::PrintStartupLog() {
   const char *deviceName = device->device->name()->utf8String();
-  Printf(TEXTCOLOR_CYAN "Metal Renderer for GZDoom\n");
-  Printf("  Device: %s\n", deviceName);
-  Printf("  API Version: Metal 2.0+\n");
-  Printf("  Backend: Native Metal (metal-cpp)\n");
-  Printf("\n");
+  Printf(PRINT_LOG, TEXTCOLOR_CYAN "Metal Renderer for GZDoom\n");
+  Printf(PRINT_LOG, "  Device: %s\n", deviceName);
+  Printf(PRINT_LOG, "  API Version: Metal 2.0+\n");
+  Printf(PRINT_LOG, "  Backend: Native Metal (metal-cpp)\n");
+  Printf(PRINT_LOG, "\n");
 }
 
 const char *MetalRenderDevice::DeviceName() const {
@@ -453,7 +460,7 @@ void MetalRenderDevice::BlurScene(float amount) {
 void MetalRenderDevice::PostProcessScene(
     bool swscene, int fixedcm, float flash,
     const std::function<void()> &afterBloomDrawEndScene2D) {
-  if (mt_debug) Printf("Metal: PostProcessScene\n");
+  if (mt_debug) Printf(PRINT_LOG, "Metal: PostProcessScene\n");
   if (mPostprocess) {
     if (!swscene)
       mPostprocess->BlitSceneToPostprocess();
@@ -466,7 +473,7 @@ void MetalRenderDevice::AmbientOccludeScene(float m5) {
     mPostprocess->AmbientOccludeScene(m5);
 }
 void MetalRenderDevice::SetSceneRenderTarget(bool useSSAO) {
-  if (mt_debug) Printf("Metal: SetSceneRenderTarget\n");
+  if (mt_debug) Printf(PRINT_LOG, "Metal: SetSceneRenderTarget\n");
   if (mPostprocess)
     mPostprocess->SetSceneRenderTarget(useSSAO);
 }
@@ -480,7 +487,7 @@ void MetalRenderDevice::SetSaveBuffers(bool yes) {
 }
 void MetalRenderDevice::ImageTransitionScene(bool unknown) {}
 void MetalRenderDevice::SetActiveRenderTarget() {
-  if (mt_debug) Printf("Metal: SetActiveRenderTarget (SceneColor)\n");
+  if (mt_debug) Printf(PRINT_LOG, "Metal: SetActiveRenderTarget (SceneColor)\n");
   mActiveRenderBuffers = mScreenBuffers.get();
   mMtRenderState->SetRenderTarget(
       mActiveRenderBuffers->SceneColor->GetTexture(),
@@ -494,7 +501,7 @@ void MetalRenderDevice::Draw2D() {
   }
   mViewpoints->Set2D(*mMtRenderState, GetWidth(), GetHeight());
 
-  if (mt_debug) Printf("Metal: Update - Calling Draw2D\n");
+  if (mt_debug) Printf(PRINT_LOG, "Metal: Update - Calling Draw2D\n");
   
   // No local pool here - it causes encoders created inside ::Draw2D to be 
   // destroyed before endEncoding is called when this local pool is released.
@@ -516,7 +523,7 @@ void MetalRenderDevice::RenderTextureView(
   bounds.left = bounds.top = 0;
   bounds.width = min(tex->GetWidth(), image->GetWidth());
   bounds.height = min(tex->GetHeight(), image->GetHeight());
-  if (mt_debug) Printf("Metal: RenderTextureView bounds %d,%d %dx%d\n", bounds.left, bounds.top, bounds.width, bounds.height);
+  if (mt_debug) Printf(PRINT_LOG, "Metal: RenderTextureView bounds %d,%d %dx%d\n", bounds.left, bounds.top, bounds.width, bounds.height);
   renderFunc(bounds);
   mMtRenderState->EndRenderPass();
   mMtRenderState->SetRenderTarget(

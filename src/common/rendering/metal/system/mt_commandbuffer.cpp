@@ -32,7 +32,7 @@ MTL::CommandBuffer *MtCommandBufferManager::CreateNewCommandBuffer() {
   }
   cmdBuf->retain(); // Keep alive for our manual management
 
-  if (mt_debug) Printf("Metal: Created CommandBuffer %p\n", cmdBuf);
+  if (mt_debug) Printf(PRINT_LOG, "Metal: Created CommandBuffer %p\n", cmdBuf);
 
   // Add error logging to every buffer
   cmdBuf->addCompletedHandler([=](MTL::CommandBuffer* buffer) {
@@ -55,7 +55,7 @@ MTL::CommandBuffer *MtCommandBufferManager::GetBlitCommandBuffer() {
 
 void MtCommandBufferManager::FlushCommands(bool wait) {
   if (mCurrentCommandBuffer) {
-    if (mt_debug) Printf("Metal: Flushing CommandBuffer %p (wait=%d)\n", mCurrentCommandBuffer, (int)wait);
+    if (mt_debug) Printf(PRINT_LOG, "Metal: Flushing CommandBuffer %p (wait=%d)\n", mCurrentCommandBuffer, (int)wait);
     
     // Reset apply count in render state since we are starting a new command buffer
     auto renderState = dynamic_cast<MtRenderState*>(fb->RenderState());
@@ -100,16 +100,15 @@ void MtCommandBufferManager::BeginFrame() {
 }
 
 void MtCommandBufferManager::EndFrame() {
-  // Ensure we have at least one command buffer to signal the semaphore
+  // Ensure we have at least one command buffer
   MTL::CommandBuffer *cb = GetRenderCommandBuffer();
   dispatch_semaphore_t sem = fb->GetInflightSemaphore();
 
-  if (mt_debug) Printf("Metal: EndFrame committing CommandBuffer %p with semaphore signal\n", cb);
+  if (mt_debug) Printf(PRINT_LOG, "Metal: EndFrame committing CommandBuffer %p with semaphore signal\n", cb);
 
   // Add the signal handler BEFORE commit
   cb->addCompletedHandler([=](MTL::CommandBuffer* buffer) {
       if (sem) {
-          // if (mt_debug) Printf("Metal: CommandBuffer %p completed, signaling semaphore\n", buffer); // Can't print easily from bg thread
           dispatch_semaphore_signal(sem);
       }
   });

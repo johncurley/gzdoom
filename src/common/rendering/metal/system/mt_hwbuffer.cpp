@@ -33,7 +33,7 @@ MtHardwareDataBuffer::~MtHardwareDataBuffer() {
 void MtHardwareDataBuffer::BindRange(FRenderState *state, size_t start,
                                      size_t length) {
   if (mt_debug) {
-    Printf("MtHardwareDataBuffer::BindRange: bp=%d, start=%zu, len=%zu\n",
+    Printf(PRINT_LOG, "MtHardwareDataBuffer::BindRange: bp=%d, start=%zu, len=%zu\n",
            mBindingPoint, start, length);
   }
 
@@ -147,7 +147,7 @@ void MtVertexBuffer::Upload(size_t offset, size_t size) {
 void MtVertexBuffer::SetData(size_t size, const void *data,
                              BufferUsageType usage) {
   if (mt_debug) {
-    Printf("Metal: MtVertexBuffer::SetData size=%zu data=%p usage=%d\n", size,
+    Printf(PRINT_LOG, "Metal: MtVertexBuffer::SetData size=%zu data=%p usage=%d\n", size,
            data, (int)usage);
   }
   CreateBuffer(size);
@@ -181,7 +181,7 @@ void MtVertexBuffer::Unlock() { Unmap(); }
 
 void MtVertexBuffer::CreateBuffer(size_t size) {
   if (mt_debug) {
-    Printf("Metal: MtVertexBuffer::CreateBuffer size=%zu\n", size);
+    Printf(PRINT_LOG, "Metal: MtVertexBuffer::CreateBuffer size=%zu\n", size);
   }
   if (mBuffer) {
     if (fb && !fb->mIsDestroyed) {

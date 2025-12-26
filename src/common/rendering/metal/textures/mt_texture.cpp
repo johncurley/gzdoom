@@ -40,7 +40,7 @@ MtHardwareTexture::~MtHardwareTexture() {}
 void MtHardwareTexture::AllocateBuffer(int w, int h, int texelsize) {
   static int allocCount = 0;
   if (allocCount++ < 10)
-    Printf("Metal: AllocateBuffer called: %dx%d, texelsize=%d\n", w, h,
+    Printf(PRINT_LOG, "Metal: AllocateBuffer called: %dx%d, texelsize=%d\n", w, h,
            texelsize);
 
   // Check if we need to recreate the texture
@@ -81,7 +81,7 @@ void MtHardwareTexture::AllocateBuffer(int w, int h, int texelsize) {
     desc->release();
 
     if (!texture) {
-      Printf("Metal: Failed to allocate texture %dx%d\n", w, h);
+      Printf(PRINT_LOG, "Metal: Failed to allocate texture %dx%d\n", w, h);
       return;
     }
 
@@ -92,7 +92,7 @@ void MtHardwareTexture::AllocateBuffer(int w, int h, int texelsize) {
     mImage->SetFormat((int)format);
 
     if (allocCount <= 10)
-      Printf("Metal: Texture allocated successfully: %p (%dx%d)\n", texture, w,
+      Printf(PRINT_LOG, "Metal: Texture allocated successfully: %p (%dx%d)\n", texture, w,
              h);
   }
 
@@ -104,13 +104,13 @@ uint8_t *MtHardwareTexture::MapBuffer() {
   // For Metal, we use shared storage mode which allows CPU access
   // So we return the staging buffer that will be uploaded later
   if (mStagingBuffer.empty()) {
-    Printf("Metal: Warning - MapBuffer called but staging buffer is empty\n");
+    Printf(PRINT_LOG, "Metal: Warning - MapBuffer called but staging buffer is empty\n");
     return nullptr;
   }
 
   static int mapCount = 0;
   if (mapCount++ < 5)
-    Printf("Metal: MapBuffer called, returning %zu byte buffer\n",
+    Printf(PRINT_LOG, "Metal: MapBuffer called, returning %zu byte buffer\n",
            mStagingBuffer.size());
 
   return mStagingBuffer.data();
@@ -121,7 +121,7 @@ unsigned int MtHardwareTexture::CreateTexture(unsigned char *buffer, int w,
                                               const char *name) {
   static int texCount = 0;
   if (texCount++ < 10)
-    Printf("Metal: CreateTexture called: %dx%d, mipmap=%d, name=%s\n", w, h,
+    Printf(PRINT_LOG, "Metal: CreateTexture called: %dx%d, mipmap=%d, name=%s\n", w, h,
            mipmap, name ? name : "null");
 
   // Create Metal texture descriptor
@@ -153,7 +153,7 @@ unsigned int MtHardwareTexture::CreateTexture(unsigned char *buffer, int w,
   desc->release();
 
   if (!texture) {
-    Printf("Metal: Failed to create texture %dx%d\n", w, h);
+    Printf(PRINT_LOG, "Metal: Failed to create texture %dx%d\n", w, h);
     return 0;
   }
 
@@ -171,7 +171,7 @@ unsigned int MtHardwareTexture::CreateTexture(unsigned char *buffer, int w,
   mImage->SetFormat((int)texture->pixelFormat());
 
   if (texCount <= 10)
-    Printf("Metal: Texture created successfully: %p\n", texture);
+    Printf(PRINT_LOG, "Metal: Texture created successfully: %p\n", texture);
 
   return 1; // Success
 }
@@ -237,7 +237,7 @@ void MtHardwareTexture::Reset() {
 void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
   static int createImageCount = 0;
   if (mt_debug || createImageCount++ < 10)
-    Printf(
+    Printf(PRINT_LOG, 
         "Metal: CreateImage called for texture %p (translation=%d, flags=%d). HWCanvas=%d\n",
         tex, translation, flags, tex ? tex->isHardwareCanvas() : -1);
 
@@ -253,7 +253,7 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
     int h = texbuffer.mHeight;
 
     if (createImageCount <= 10)
-      Printf("Metal: Creating GPU texture from buffer: %dx%d, %d channels\n", w,
+      Printf(PRINT_LOG, "Metal: Creating GPU texture from buffer: %dx%d, %d channels\n", w,
              h, numChannels);
 
     // Create Metal texture descriptor
@@ -287,12 +287,12 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
     desc->release();
 
     if (!texture) {
-      Printf("Metal: Failed to create GPU texture %dx%d\n", w, h);
+      Printf(PRINT_LOG, "Metal: Failed to create GPU texture %dx%d\n", w, h);
       return;
     }
 
     if (mt_debug) {
-        Printf("Metal: Created GPU texture %p (%dx%d), format=%llu, storageMode=%llu\n", 
+        Printf(PRINT_LOG, "Metal: Created GPU texture %p (%dx%d), format=%llu, storageMode=%llu\n", 
                texture, w, h, (unsigned long long)texture->pixelFormat(), (unsigned long long)texture->storageMode());
     }
 
@@ -302,7 +302,7 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
       texture->replaceRegion(region, 0, texbuffer.mBuffer, w * numChannels);
 
       if (createImageCount <= 10)
-        Printf("Metal: Uploaded %d bytes to GPU texture %p\n",
+        Printf(PRINT_LOG, "Metal: Uploaded %d bytes to GPU texture %p\n",
                w * h * numChannels, texture);
     }
 
@@ -319,7 +319,7 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
         tex->IsHDR() ? MTL::PixelFormatRGBA32Float : MTL::PixelFormatBGRA8Unorm;
 
     if (createImageCount <= 10)
-      Printf("Metal: Creating hardware canvas: %dx%d\n", w, h);
+      Printf(PRINT_LOG, "Metal: Creating hardware canvas: %dx%d\n", w, h);
 
     auto desc = MTL::TextureDescriptor::alloc()->init();
     desc->setWidth(w);
@@ -334,12 +334,12 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
     desc->release();
 
     if (!texture) {
-      Printf("Metal: Failed to create hardware canvas %dx%d\n", w, h);
+      Printf(PRINT_LOG, "Metal: Failed to create hardware canvas %dx%d\n", w, h);
       return;
     }
 
     if (mt_debug) {
-        Printf("Metal: Created HWCanvas texture %p (%dx%d), format=%llu, storageMode=%llu\n", 
+        Printf(PRINT_LOG, "Metal: Created HWCanvas texture %p (%dx%d), format=%llu, storageMode=%llu\n", 
                texture, w, h, (unsigned long long)texture->pixelFormat(), (unsigned long long)texture->storageMode());
     }
 

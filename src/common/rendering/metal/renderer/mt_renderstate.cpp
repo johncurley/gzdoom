@@ -43,7 +43,7 @@
 #include <Metal/Metal.hpp>
 #include <QuartzCore/QuartzCore.hpp>
  
-CVAR(Int, mt_submit_size, 256, 0);
+CVAR(Int, mt_submit_size, 1024, 0);
 EXTERN_CVAR(Bool, r_skipmats)
 EXTERN_CVAR(Bool, mt_debug)
 MtRenderState::MtRenderState(MetalRenderDevice *fb)
@@ -53,7 +53,7 @@ MtRenderState::MtRenderState(MetalRenderDevice *fb)
 
 void MtRenderState::ClearScreen() {
   if (mt_debug) {
-    Printf("Metal: ClearScreen\n");
+    Printf(PRINT_LOG, "Metal: ClearScreen\n");
   }
   screen->mViewpoints->Set2D(*this, SCREENWIDTH, SCREENHEIGHT);
   SetColor(0, 0, 0);
@@ -69,13 +69,13 @@ void MtRenderState::ClearScreen() {
 void MtRenderState::Draw(int dt, int index, int count, bool apply) {
   if (mt_debug) {
     auto mtVBuf = dynamic_cast<MtVertexBuffer*>(mVertexBuffer);
-    Printf("Metal: Draw dt=%d index=%d count=%d apply=%d vbuf=%p stride=%zu\n", 
+    Printf(PRINT_LOG, "Metal: Draw dt=%d index=%d count=%d apply=%d vbuf=%p stride=%zu\n", 
            dt, index, count, (int)apply, mVertexBuffer, 
            mtVBuf ? mtVBuf->GetStride() : 0);
     
     if (mtVBuf && mtVBuf->GetStride() == 24 && count > 0) {
         float* v = (float*)((uint8_t*)mtVBuf->GetBuffer()->contents() + index * mtVBuf->GetStride());
-        Printf("  2D Vert 0: Pos=(%f, %f, %f) UV=(%f, %f) Color=%08x\n", v[0], v[1], v[2], v[3], v[4], ((uint32_t*)v)[5]);
+        Printf(PRINT_LOG, "  2D Vert 0: Pos=(%f, %f, %f) UV=(%f, %f) Color=%08x\n", v[0], v[1], v[2], v[3], v[4], ((uint32_t*)v)[5]);
     }
   }
   if (dt == DT_TriangleFan) {
@@ -133,13 +133,13 @@ void MtRenderState::Draw(int dt, int index, int count, bool apply) {
 void MtRenderState::DrawIndexed(int dt, int index, int count, bool apply) {
   if (mt_debug) {
     auto mtVBuf = dynamic_cast<MtVertexBuffer*>(mVertexBuffer);
-    Printf("Metal: DrawIndexed dt=%d index=%d count=%d apply=%d vbuf=%p stride=%zu\n", 
+    Printf(PRINT_LOG, "Metal: DrawIndexed dt=%d index=%d count=%d apply=%d vbuf=%p stride=%zu\n", 
            dt, index, count, (int)apply, mVertexBuffer, 
            mtVBuf ? mtVBuf->GetStride() : 0);
     
     if (mtVBuf && mtVBuf->GetStride() == 24 && count > 0) {
         float* v = (float*)((uint8_t*)mtVBuf->GetBuffer()->contents() + mVertexOffsets[0] * mtVBuf->GetStride());
-        Printf("  2D Vert 0: Pos=(%f, %f, %f) UV=(%f, %f) Color=%08x\n", v[0], v[1], v[2], v[3], v[4], ((uint32_t*)v)[5]);
+        Printf(PRINT_LOG, "  2D Vert 0: Pos=(%f, %f, %f) UV=(%f, %f) Color=%08x\n", v[0], v[1], v[2], v[3], v[4], ((uint32_t*)v)[5]);
     }
   }
   if (apply || mNeedApply)
@@ -258,7 +258,7 @@ void MtRenderState::EnableLineSmooth(bool on) {}
 void MtRenderState::Apply(int dt) {
   // Handle command buffer flushing like Vulkan
   if (mApplyCount >= mt_submit_size) {
-    if (mt_debug) Printf("Metal: mt_submit_size (%d) reached, flushing.\n", *mt_submit_size);
+    if (mt_debug) Printf(PRINT_LOG, "Metal: mt_submit_size (%d) reached, flushing.\n", *mt_submit_size);
     EndRenderPass();
     fb->GetCommands()->FlushCommands();
     mApplyCount = 0;
@@ -340,7 +340,7 @@ void MtRenderState::ApplyRenderPass(int dt) {
     if (pipelineState && pipelineState->pipelineState) {
       if (mEncoder) {
         if (mt_debug) {
-            Printf("Metal: Changed PipelineState effect=%d state=%d vfmt=%d\n", 
+            Printf(PRINT_LOG, "Metal: Changed PipelineState effect=%d state=%d vfmt=%d\n", 
                    pipelineKey.SpecialEffect, pipelineKey.EffectState, pipelineKey.VertexFormat);
         }
         mEncoder->setRenderPipelineState(pipelineState->pipelineState);
@@ -379,7 +379,7 @@ void MtRenderState::ApplyScissor() {
       scissor.height = (NS::UInteger)mRenderTarget.Height;
     }
     if (mt_debug) {
-        Printf("Metal: ApplyScissor %lu,%lu %lu x %lu\n", (unsigned long)scissor.x, (unsigned long)scissor.y, (unsigned long)scissor.width, (unsigned long)scissor.height);
+        Printf(PRINT_LOG, "Metal: ApplyScissor %lu,%lu %lu x %lu\n", (unsigned long)scissor.x, (unsigned long)scissor.y, (unsigned long)scissor.width, (unsigned long)scissor.height);
     }
     mEncoder->setScissorRect(scissor);
     mScissorChanged = false;
@@ -409,7 +409,7 @@ void MtRenderState::ApplyViewport() {
                       }    viewport.znear = mViewportDepthMin;
     viewport.zfar = mViewportDepthMax;
     if (mt_debug) {
-        Printf("Metal: ApplyViewport %f,%f %f x %f range %f..%f\n", viewport.originX, viewport.originY, viewport.width, viewport.height, viewport.znear, viewport.zfar);
+        Printf(PRINT_LOG, "Metal: ApplyViewport %f,%f %f x %f range %f..%f\n", viewport.originX, viewport.originY, viewport.width, viewport.height, viewport.znear, viewport.zfar);
     }
     mEncoder->setViewport(viewport);
     mViewportChanged = false;
@@ -480,7 +480,7 @@ void MtRenderState::ApplyPushConstants() {
   if (mt_debug) {
       auto mat = mMaterial.mMaterial;
       const char* matName = (mat && mat->Source()) ? mat->Source()->GetName().GetChars() : "none";
-      Printf("Metal: ApplyPushConstants (21) texMode=%d alpha=%f fog=%d lightLvl=%f dataIndex=%d material=%s\n", 
+      Printf(PRINT_LOG, "Metal: ApplyPushConstants (21) texMode=%d alpha=%f fog=%d lightLvl=%f dataIndex=%d material=%s\n", 
              mPushConstants.uTextureMode, mPushConstants.uAlphaThreshold, mPushConstants.uFogEnabled, mPushConstants.uLightLevel, mPushConstants.uDataIndex, matName);
   }
 
@@ -514,7 +514,7 @@ void MtRenderState::ApplyVertexBuffers() {
             mEncoder->setVertexBuffer(buffer, mVertexOffsets[0] * stride, 0);
             mEncoder->setVertexBuffer(buffer, mVertexOffsets[1] * stride, 1);
             if (mt_debug) {
-                Printf("Metal: Bound VertexBuffer %p at offsets %d,%d (stride %zu)\n", 
+                Printf(PRINT_LOG, "Metal: Bound VertexBuffer %p at offsets %d,%d (stride %zu)\n", 
                        buffer, mVertexOffsets[0], mVertexOffsets[1], stride);
             }
         }
@@ -593,7 +593,7 @@ void MtRenderState::ApplyMaterial() {
             mEncoder->setVertexTexture(mtlTexture, i);
             
             if (mt_debug) {
-                Printf("Metal: ApplyMaterial - Bound texture %p to slot %d (W:%lu H:%lu fmt=%llu)\n", 
+                Printf(PRINT_LOG, "Metal: ApplyMaterial - Bound texture %p to slot %d (W:%lu H:%lu fmt=%llu)\n", 
                        mtlTexture, i, mtlTexture->width(), mtlTexture->height(), (unsigned long long)mtlTexture->pixelFormat());
             }
 
@@ -619,7 +619,7 @@ void MtRenderState::ApplyMaterial() {
               mEncoder->setFragmentSamplerState(sampler, i);
               mEncoder->setVertexSamplerState(sampler, i);
               if (mt_debug) {
-                  Printf("Metal: ApplyMaterial - Bound sampler %p to slot %d\n", sampler, i);
+                  Printf(PRINT_LOG, "Metal: ApplyMaterial - Bound sampler %p to slot %d\n", sampler, i);
               }
             }
           }
@@ -647,7 +647,7 @@ void MtRenderState::ApplyHWBufferSet() {
   if (!mEncoder)
     return;
 
-  if (mt_debug) Printf("Metal: ApplyHWBufferSet\n");
+  if (mt_debug) Printf(PRINT_LOG, "Metal: ApplyHWBufferSet\n");
 
   // Binding Indices (Matching shaderBindings in mt_shader.cpp)
   // Viewpoint = 17, Light = 16, Bone = 18, Matrix = 19, Stream = 20, PushConstants = 21
@@ -665,7 +665,7 @@ void MtRenderState::ApplyHWBufferSet() {
       mLastBoundOffsets[17] = vpOff;
       if (mt_debug) {
           float* m = (float*)((uint8_t*)vpBuf->contents() + vpOff);
-          Printf("Metal: Bound Viewpoint (17) buf=%p off=%u. Matrix[0]=%.6f %.6f %.6f %.6f\n", vpBuf, vpOff, m[0], m[1], m[2], m[3]);
+          Printf(PRINT_LOG, "Metal: Bound Viewpoint (17) buf=%p off=%u. Matrix[0]=%.6f %.6f %.6f %.6f\n", vpBuf, vpOff, m[0], m[1], m[2], m[3]);
       }
   }
 
@@ -680,7 +680,7 @@ void MtRenderState::ApplyHWBufferSet() {
       mEncoder->setFragmentBuffer(ltBuf, ltOff, 16);
       mLastBoundBuffers[16] = ltBuf;
       mLastBoundOffsets[16] = ltOff;
-      if (mt_debug) Printf("Metal: Bound Light (16) buf=%p off=%u\n", ltBuf, ltOff);
+      if (mt_debug) Printf(PRINT_LOG, "Metal: Bound Light (16) buf=%p off=%u\n", ltBuf, ltOff);
   }
 
   // 3. Bone
@@ -694,7 +694,7 @@ void MtRenderState::ApplyHWBufferSet() {
       mEncoder->setFragmentBuffer(bnBuf, bnOff, 18);
       mLastBoundBuffers[18] = bnBuf;
       mLastBoundOffsets[18] = bnOff;
-      if (mt_debug) Printf("Metal: Bound Bone (18) buf=%p off=%u\n", bnBuf, bnOff);
+      if (mt_debug) Printf(PRINT_LOG, "Metal: Bound Bone (18) buf=%p off=%u\n", bnBuf, bnOff);
   }
 
   // 4. Matrix (Model/Texture)
@@ -707,7 +707,7 @@ void MtRenderState::ApplyHWBufferSet() {
     mLastBoundOffsets[19] = matrixOffset;
     if (mt_debug) {
         float* m = (float*)((uint8_t*)matrixBuffer->contents() + matrixOffset);
-        Printf("Metal: Bound Matrix (19) buf=%p off=%u. ModelMatrix[0]=%.6f %.6f %.6f %.6f\n", matrixBuffer, matrixOffset, m[0], m[1], m[2], m[3]);
+        Printf(PRINT_LOG, "Metal: Bound Matrix (19) buf=%p off=%u. ModelMatrix[0]=%.6f %.6f %.6f %.6f\n", matrixBuffer, matrixOffset, m[0], m[1], m[2], m[3]);
     }
   }
 
@@ -721,7 +721,7 @@ void MtRenderState::ApplyHWBufferSet() {
     mLastBoundOffsets[20] = streamDataOffset;
     if (mt_debug) {
         float* m = (float*)((uint8_t*)streamBuffer->contents() + streamDataOffset);
-        Printf("Metal: Bound Stream (20) buf=%p off=%u. uObjectColor=%.6f %.6f %.6f %.6f\n", streamBuffer, streamDataOffset, m[0], m[1], m[2], m[3]);
+        Printf(PRINT_LOG, "Metal: Bound Stream (20) buf=%p off=%u. uObjectColor=%.6f %.6f %.6f %.6f\n", streamBuffer, streamDataOffset, m[0], m[1], m[2], m[3]);
     }
   }
 }
@@ -731,8 +731,8 @@ void MtRenderState::WaitForStreamBuffers() {
   fb->GetCommands()->FlushCommands(true);
   
   mApplyCount = 0;
-  mStreamBufferWriter.Reset();
-  mMatrixBufferWriter.Reset();
+  mStreamBufferWriter.BeginFrame();
+  mMatrixBufferWriter.BeginFrame();
   
   BeginRenderPass();
 }
@@ -744,7 +744,7 @@ void MtRenderState::Bind(int bindingpoint, uint32_t offset) {
 void MtRenderState::BindBuffer(int bindingpoint, MTL::Buffer *buffer,
                                uint32_t offset) {
   if (mt_debug) {
-    Printf("Metal: BindBuffer bp=%d buffer=%p offset=%u\n", bindingpoint, buffer, offset);
+    Printf(PRINT_LOG, "Metal: BindBuffer bp=%d buffer=%p offset=%u\n", bindingpoint, buffer, offset);
   }
   if (bindingpoint >= 0 && bindingpoint < 32) {
     mBoundBuffers[bindingpoint] = buffer;
@@ -760,7 +760,7 @@ void MtRenderState::BindBuffer(int bindingpoint, MTL::Buffer *buffer,
 
 void MtRenderState::MarkAsFilled(MTL::Texture *tex) {
   if (tex) {
-    if (mt_debug) Printf("Metal: MarkAsFilled tex=%p\n", tex);
+    if (mt_debug) Printf(PRINT_LOG, "Metal: MarkAsFilled tex=%p\n", tex);
     mClearedTargets.insert(tex);
   }
 }
@@ -772,6 +772,9 @@ void MtRenderState::BeginFrame() {
   mClearedTargets.clear();
   mPipelineBound = false;
   
+  mStreamBufferWriter.BeginFrame();
+  mMatrixBufferWriter.BeginFrame();
+  
   for (int i = 0; i < 32; i++) {
       mBoundBuffers[i] = nullptr;
       mBoundOffsets[i] = 0;
@@ -781,7 +784,7 @@ void MtRenderState::BeginFrame() {
 void MtRenderState::EndRenderPass() {
   if (mEncoder) {
     if (mt_debug) {
-      Printf("Metal: EndRenderPass encoder=%p (applyCount was %d)\n", mEncoder, mApplyCount);
+      Printf(PRINT_LOG, "Metal: EndRenderPass encoder=%p (applyCount was %d)\n", mEncoder, mApplyCount);
     }
     mEncoder->endEncoding();
     mEncoder = nullptr;
@@ -810,7 +813,7 @@ void MtRenderState::SetRenderTarget(MTL::Texture *image,
                                     MTL::Texture *depthStencilView, int width,
                                     int height, int format, int samples) {
   if (mt_debug) {
-    Printf("Metal: SetRenderTarget image=%p ds=%p %dx%d fmt=%d samples=%d\n",
+    Printf(PRINT_LOG, "Metal: SetRenderTarget image=%p ds=%p %dx%d fmt=%d samples=%d\n",
            image, depthStencilView, width, height, format, samples);
   }
   
@@ -841,12 +844,12 @@ void MtRenderState::BeginRenderPass() {
   }
 
   if (!targetTex) {
-    if (mt_debug) Printf("Metal: BeginRenderPass - No render target image! width=%d height=%d\n", mRenderTarget.Width, mRenderTarget.Height);
+    if (mt_debug) Printf(PRINT_LOG, "Metal: BeginRenderPass - No render target image! width=%d height=%d\n", mRenderTarget.Width, mRenderTarget.Height);
     return;
   }
     
   if (mRenderTarget.Width <= 0 || mRenderTarget.Height <= 0) {
-      if (mt_debug) Printf("Metal: BeginRenderPass - Invalid render target size %dx%d\n", mRenderTarget.Width, mRenderTarget.Height);
+      if (mt_debug) Printf(PRINT_LOG, "Metal: BeginRenderPass - Invalid render target size %dx%d\n", mRenderTarget.Width, mRenderTarget.Height);
       return;
   }
 
@@ -855,7 +858,7 @@ void MtRenderState::BeginRenderPass() {
   if (!pRPD) return;
 
   if (mt_debug) {
-    Printf("Metal: BeginRenderPass target=%p (%dx%d fmt=%llu) clearTargets=%d applyCount=%d isSwap=%d\n",
+    Printf(PRINT_LOG, "Metal: BeginRenderPass target=%p (%dx%d fmt=%llu) clearTargets=%d applyCount=%d isSwap=%d\n",
            targetTex, mRenderTarget.Width, mRenderTarget.Height, (unsigned long long)targetTex->pixelFormat(), mClearTargets, mApplyCount, (int)mRenderTarget.IsSwapChain);
   }
 
@@ -871,7 +874,7 @@ void MtRenderState::BeginRenderPass() {
   
   if (clearColor) {
       if (mt_debug) {
-          Printf("Metal: BeginRenderPass - Clearing color target %p with (%f, %f, %f, %f)\n", 
+          Printf(PRINT_LOG, "Metal: BeginRenderPass - Clearing color target %p with (%f, %f, %f, %f)\n", 
                  targetTex, screen->mSceneClearColor[0], screen->mSceneClearColor[1],
                  screen->mSceneClearColor[2], screen->mSceneClearColor[3]);
       }
@@ -891,14 +894,22 @@ void MtRenderState::BeginRenderPass() {
     bool clearStencil = (mClearTargets & CT_Stencil) || clearDS;
 
     if (mt_debug) {
-        Printf("Metal: BeginRenderPass Depth target %p, ClearDepth: %d, ClearStencil: %d\n", 
+        Printf(PRINT_LOG, "Metal: BeginRenderPass Depth target %p, ClearDepth: %d, ClearStencil: %d\n", 
                mRenderTarget.DepthStencil, (int)clearDepth, (int)clearStencil);
     }
 
     auto depthAttachment = pRPD->depthAttachment();
     depthAttachment->setTexture(mRenderTarget.DepthStencil);
     depthAttachment->setLoadAction(clearDepth ? MTL::LoadActionClear : MTL::LoadActionLoad);
-    depthAttachment->setStoreAction(MTL::StoreActionStore);
+    
+    // TBDR Optimization: If we are in the 2D/UI pass, we usually don't need the depth buffer preserved
+    // for the next frame. Discarding it on-chip is much faster on Apple Silicon.
+    if (mRenderTarget.IsSwapChain) {
+        depthAttachment->setStoreAction(MTL::StoreActionDontCare);
+    } else {
+        depthAttachment->setStoreAction(MTL::StoreActionStore);
+    }
+
     if (clearDepth) {
         depthAttachment->setClearDepth(1.0);
         mClearedTargets.insert(mRenderTarget.DepthStencil);
@@ -907,7 +918,13 @@ void MtRenderState::BeginRenderPass() {
     auto stencilAttachment = pRPD->stencilAttachment();
     stencilAttachment->setTexture(mRenderTarget.DepthStencil);
     stencilAttachment->setLoadAction(clearStencil ? MTL::LoadActionClear : MTL::LoadActionLoad);
-    stencilAttachment->setStoreAction(MTL::StoreActionStore);
+    
+    if (mRenderTarget.IsSwapChain) {
+        stencilAttachment->setStoreAction(MTL::StoreActionDontCare);
+    } else {
+        stencilAttachment->setStoreAction(MTL::StoreActionStore);
+    }
+
     if (clearStencil) {
         stencilAttachment->setClearStencil(0);
         mClearedTargets.insert(mRenderTarget.DepthStencil);
@@ -918,7 +935,7 @@ void MtRenderState::BeginRenderPass() {
 
   MTL::CommandBuffer *cmdBuffer = fb->GetCommands()->GetRenderCommandBuffer();
   if (cmdBuffer) {
-    if (mt_debug) Printf("Metal: renderCommandEncoder status=%d\n", (int)cmdBuffer->status());
+    if (mt_debug) Printf(PRINT_LOG, "Metal: renderCommandEncoder status=%d\n", (int)cmdBuffer->status());
     mEncoder = cmdBuffer->renderCommandEncoder(pRPD);
     mPipelineBound = false;
     if (mEncoder) {
