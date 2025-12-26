@@ -193,9 +193,9 @@ MtPipelineStateManager::GetPPPipelineState(MtShaderProgram *program,
   return pipeline;
 }
 
-// ============================================================================
+// ============================================================================ 
 // Pipeline State Creation
-// ============================================================================
+// ============================================================================ 
 
 MTL::DepthStencilState *
 MtPipelineStateManager::CreateDepthStencilState(const MtPipelineKey &key) {
@@ -203,9 +203,9 @@ MtPipelineStateManager::CreateDepthStencilState(const MtPipelineKey &key) {
 
   // Map depth function enum to Metal
   static const MTL::CompareFunction depthFuncs[] = {
-      MTL::CompareFunctionLess,      // DF_Less
-      MTL::CompareFunctionLessEqual, // DF_LEqual
-      MTL::CompareFunctionAlways     // DF_Always
+      MTL::CompareFunctionLess,
+      MTL::CompareFunctionLessEqual,
+      MTL::CompareFunctionAlways
   };
 
   // Configure depth test
@@ -218,9 +218,9 @@ MtPipelineStateManager::CreateDepthStencilState(const MtPipelineKey &key) {
 
   // Configure stencil operations
   static const MTL::StencilOperation stencilOps[] = {
-      MTL::StencilOperationKeep,           // SOP_Keep
-      MTL::StencilOperationIncrementClamp, // SOP_Increment
-      MTL::StencilOperationDecrementClamp  // SOP_Decrement
+      MTL::StencilOperationKeep,
+      MTL::StencilOperationIncrementClamp,
+      MTL::StencilOperationDecrementClamp
   };
 
   if (key.StencilTest != 0 && key.StencilOp >= 0 && key.StencilOp < 3) {
@@ -335,13 +335,40 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
       attrDesc->setOffset(attrs[i].offset);
       attrDesc->setBufferIndex(attrs[i].binding);
     }
+
+    // Robustly define all attributes 0-15 to satisfy Metal validation for ANY shader
+    for (int i = 0; i < 16; i++) {
+        auto attr = vertexDesc->attributes()->object(i);
+        if (attr->format() == MTL::VertexFormatInvalid) {
+            // Map unknown attributes to a safe default aliasing attribute 0
+            // aBoneSelector (slot 8) is uint4 in shaders, must match format.
+            if (i == 8)
+                attr->setFormat(MTL::VertexFormatUInt4);
+            else
+                attr->setFormat(MTL::VertexFormatFloat4);
+            attr->setOffset(0);
+            attr->setBufferIndex(0);
+        }
+    }
+
+    // Configure buffer layouts
+    int numBindings = vertexBuffer->GetBindingPoints();
+    for (int i = 0; i < numBindings; i++) {
+      auto layoutDesc = vertexDesc->layouts()->object(i);
+      layoutDesc->setStride(stride);
+      layoutDesc->setStepFunction(MTL::VertexStepFunctionPerVertex);
+    }
+
+    desc->setVertexDescriptor(vertexDesc);
+    vertexDesc->release();
   } else {
     // Fallback: Create a basic vertex descriptor for internal draws
+    auto vertexDesc = MTL::VertexDescriptor::alloc()->init();
     vertexDesc->layouts()->object(0)->setStride(stride);
     vertexDesc->layouts()->object(0)->setStepFunction(MTL::VertexStepFunctionPerVertex);
 
     // Attribute 0: Position. 
-    vertexDesc->attributes()->object(0)->setFormat(MTL::VertexFormatFloat2);
+    vertexDesc->attributes()->object(0)->setFormat(MTL::VertexFormatFloat3);
     vertexDesc->attributes()->object(0)->setOffset(0); 
     vertexDesc->attributes()->object(0)->setBufferIndex(0);
 
@@ -349,29 +376,29 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
     vertexDesc->attributes()->object(1)->setFormat(MTL::VertexFormatFloat2);
     vertexDesc->attributes()->object(1)->setOffset(12);
     vertexDesc->attributes()->object(1)->setBufferIndex(0);
-  }
 
-  // Robustly define all attributes 0-15 to satisfy Metal validation for ANY shader
-  for (int i = 0; i < 16; i++) {
-      auto attr = vertexDesc->attributes()->object(i);
-      if (attr->format() == MTL::VertexFormatInvalid) {
-          // Map unknown attributes to a safe default aliasing attribute 0
-          attr->setFormat(MTL::VertexFormatFloat4);
-          attr->setOffset(0);
-          attr->setBufferIndex(0);
-      }
-  }
+    // Attribute 2: Color (for 2D drawer fallback)
+    auto attr2 = vertexDesc->attributes()->object(2);
+    attr2->setFormat(MTL::VertexFormatUChar4Normalized);
+    attr2->setOffset(stride == 24 ? 20 : 0); 
+    attr2->setBufferIndex(0);
 
-  // Configure buffer layouts
-  int numBindings = vertexBuffer ? vertexBuffer->GetBindingPoints() : 1;
-  for (int i = 0; i < numBindings; i++) {
-    auto layoutDesc = vertexDesc->layouts()->object(i);
-    layoutDesc->setStride(stride);
-    layoutDesc->setStepFunction(MTL::VertexStepFunctionPerVertex);
-  }
+    // Robustly define all attributes 0-15 to satisfy Metal validation for ANY shader
+    for (int i = 0; i < 16; i++) {
+        auto attr = vertexDesc->attributes()->object(i);
+        if (attr->format() == MTL::VertexFormatInvalid) {
+            if (i == 8)
+                attr->setFormat(MTL::VertexFormatUInt4);
+            else
+                attr->setFormat(MTL::VertexFormatFloat4);
+            attr->setOffset(0);
+            attr->setBufferIndex(0);
+        }
+    }
 
-  desc->setVertexDescriptor(vertexDesc);
-  vertexDesc->release();
+    desc->setVertexDescriptor(vertexDesc);
+    vertexDesc->release();
+  }
 
   // Configure color attachments
   int numColorAttachments = key.DrawBufferCount;
@@ -446,24 +473,24 @@ void MtPipelineStateManager::ConfigureBlendMode(
 
   // Metal Blend Factors mapping
   static const MTL::BlendFactor blendFactors[] = {
-      MTL::BlendFactorZero,                     // STYLEALPHA_Zero
-      MTL::BlendFactorOne,                      // STYLEALPHA_One
-      MTL::BlendFactorSourceAlpha,              // STYLEALPHA_Src
-      MTL::BlendFactorOneMinusSourceAlpha,      // STYLEALPHA_InvSrc
-      MTL::BlendFactorSourceColor,              // STYLEALPHA_SrcCol
-      MTL::BlendFactorOneMinusSourceColor,      // STYLEALPHA_InvSrcCol
-      MTL::BlendFactorDestinationColor,         // STYLEALPHA_DstCol
-      MTL::BlendFactorOneMinusDestinationColor, // STYLEALPHA_InvDstCol
-      MTL::BlendFactorDestinationAlpha,         // STYLEALPHA_Dst
-      MTL::BlendFactorOneMinusDestinationAlpha  // STYLEALPHA_InvDst
+      MTL::BlendFactorZero,
+      MTL::BlendFactorOne,
+      MTL::BlendFactorSourceAlpha,
+      MTL::BlendFactorOneMinusSourceAlpha,
+      MTL::BlendFactorSourceColor,
+      MTL::BlendFactorOneMinusSourceColor,
+      MTL::BlendFactorDestinationColor,
+      MTL::BlendFactorOneMinusDestinationColor,
+      MTL::BlendFactorDestinationAlpha,
+      MTL::BlendFactorOneMinusDestinationAlpha
   };
 
   // Metal Blend Operations mapping
   static const MTL::BlendOperation blendOps[] = {
       MTL::BlendOperationAdd, // Default/Placeholder
-      MTL::BlendOperationAdd,             // STYLEOP_Add
-      MTL::BlendOperationSubtract,        // STYLEOP_Sub
-      MTL::BlendOperationReverseSubtract, // STYLEOP_RevSub
+      MTL::BlendOperationAdd,
+      MTL::BlendOperationSubtract,
+      MTL::BlendOperationReverseSubtract,
   };
 
   MTL::BlendFactor srcRGBFactor = blendFactors[style.SrcAlpha % STYLEALPHA_MAX];

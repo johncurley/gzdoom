@@ -14,6 +14,7 @@
 #include <fstream>
 #include <shadertranslator/shader_translator.h>
 #include <sstream>
+#include "common/thirdparty/superfasthash.h"
 
 EXTERN_CVAR(Bool, mt_debug)
 
@@ -339,9 +340,12 @@ MtShaderManager::CompileShader(const std::string &name,
 
   // Compile vertex shader: GLSL → SPIR-V → MSL → MTLLibrary
   if (!vertexSource.empty()) {
-    std::string cacheKey = name + "_vert";
+    uint32_t hash = SuperFastHash(vertexSource.c_str(), vertexSource.length());
     for (auto &d : defines)
-      cacheKey += d;
+        hash = SuperFastHash(d.c_str(), d.length()) ^ (hash << 1);
+    
+    char cacheKey[128];
+    snprintf(cacheKey, sizeof(cacheKey), "%s_%08x_vert", name.c_str(), hash);
     std::string cachePath = GetCachePath(cacheKey);
     std::string vertexMSL;
 
@@ -402,9 +406,12 @@ MtShaderManager::CompileShader(const std::string &name,
 
   // Compile fragment shader: GLSL → SPIR-V → MSL → MTLLibrary
   if (!fragmentSource.empty()) {
-    std::string cacheKey = name + "_frag";
+    uint32_t hash = SuperFastHash(fragmentSource.c_str(), fragmentSource.length());
     for (auto &d : defines)
-      cacheKey += d;
+        hash = SuperFastHash(d.c_str(), d.length()) ^ (hash << 1);
+
+    char cacheKey[128];
+    snprintf(cacheKey, sizeof(cacheKey), "%s_%08x_frag", name.c_str(), hash);
     std::string cachePath = GetCachePath(cacheKey);
     std::string fragmentMSL;
 
@@ -746,17 +753,11 @@ void MtShaderManager::ClearCache() {
 
 std::string MtShaderManager::GetCachePath(const std::string &key) {
   FString path = M_GetCachePath(true);
-  path += "/metal_sh_v9_";
-  if (mt_debug) Printf("Metal: Cache path for key %s: %s\n", key.c_str(), path.GetChars());
-  // Simple alphanumeric key
+  path += "/mt_";
+  // Filter key for filesystem safety
   for (char c : key) {
-    if (isalnum(c) || c == '_')
+    if (isalnum(c) || c == '_' || c == '-')
       path += c;
-    else {
-      char hex[8];
-      snprintf(hex, sizeof(hex), "_%02x", (unsigned char)c);
-      path += hex;
-    }
   }
   path += ".msl";
   return path.GetChars();
@@ -869,6 +870,18 @@ MtShaderManager::TranslateSPIRVToMSL(const std::vector<uint32_t> &spirv,
   if (!result.success) {
     Printf("Metal SPIR-V translation error: %s\n", result.errorLog.c_str());
     return "";
+  }
+
+  // FORCE ALPHA 1.0 for Present pass to avoid transparency issues on some hardware
+  if (name.find("present") != std::string::npos && !isVertex) {
+      size_t fpos = result.source.find("out.FragColor = ");
+      if (fpos != std::string::npos) {
+          size_t epos = result.source.find(";", fpos);
+          if (epos != std::string::npos) {
+              std::string expr = result.source.substr(fpos + 16, epos - (fpos + 16));
+              result.source.replace(fpos, epos - fpos + 1, "out.FragColor = float4((" + expr + ").xyz, 1.0);");
+          }
+      }
   }
 
   return result.source;

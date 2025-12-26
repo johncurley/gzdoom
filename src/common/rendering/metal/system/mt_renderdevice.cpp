@@ -66,7 +66,7 @@ EXTERN_CVAR(Int, gl_tonemap)
 EXTERN_CVAR(Int, screenblocks)
 EXTERN_CVAR(Bool, cl_capfps)
 
-CVAR(Bool, mt_debug, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Bool, mt_debug, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 void MetalError(const char *text) { throw CMetalError(text); }
 

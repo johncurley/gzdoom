@@ -42,7 +42,11 @@ void MtHardwareDataBuffer::BindRange(FRenderState *state, size_t start,
 }
 
 void MtHardwareDataBuffer::Upload(size_t offset, size_t size) {
-  // Shared buffers don't need explicit modification range marking on macOS
+  if (mBuffer && mBuffer->storageMode() == MTL::StorageModeShared) {
+    if (size > 0 && offset + size <= mBufferSize) {
+      mBuffer->didModifyRange(NS::Range(offset, size));
+    }
+  }
 }
 
 void MtHardwareDataBuffer::SetData(size_t size, const void *data,
@@ -127,7 +131,11 @@ void MtVertexBuffer::SetFormat(int numBindingPoints, int numAttributes,
 }
 
 void MtVertexBuffer::Upload(size_t offset, size_t size) {
-  // Shared buffers don't need explicit modification range marking on macOS
+  if (mBuffer && mBuffer->storageMode() == MTL::StorageModeShared) {
+    if (size > 0 && offset + size <= mBufferSize) {
+      mBuffer->didModifyRange(NS::Range(offset, size));
+    }
+  }
 }
 
 void MtVertexBuffer::SetData(size_t size, const void *data,
@@ -194,7 +202,11 @@ MtIndexBuffer::~MtIndexBuffer() {
 }
 
 void MtIndexBuffer::Upload(size_t offset, size_t size) {
-  // Shared buffers don't need explicit modification range marking on macOS
+  if (mBuffer && mBuffer->storageMode() == MTL::StorageModeShared) {
+    if (size > 0 && offset + size <= mBufferSize) {
+      mBuffer->didModifyRange(NS::Range(offset, size));
+    }
+  }
 }
 
 void MtIndexBuffer::SetData(size_t size, const void *data,

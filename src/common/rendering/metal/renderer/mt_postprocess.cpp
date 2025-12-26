@@ -310,26 +310,22 @@ void MtPostprocess::ImageTransitionScene(bool undefinedSrcLayout) {
 
 void MtPostprocess::BlitSceneToPostprocess() {
   fb->GetRenderState()->EndRenderPass();
-  fb->GetCommands()->FlushCommands(false); // Commit 3D scene work
 
   auto buffers = fb->GetBuffers();
   mCurrentPipelineImage = 0;
 
-  // Use a dedicated blit command buffer for Intel driver stability
-  MTL::CommandBuffer *blitCmdBuf = fb->GetCommands()->GetBlitCommandBuffer();
+  // Use the main command buffer for the blit (asynchronous)
+  MTL::CommandBuffer *blitCmdBuf = fb->GetCommands()->GetRenderCommandBuffer();
   if (!blitCmdBuf) return;
 
   auto blitEncoder = blitCmdBuf->blitCommandEncoder();
-  if (!blitEncoder) {
-      blitCmdBuf->release();
-      return;
-  }
+  if (!blitEncoder) return;
 
   auto src = buffers->SceneColor->GetTexture();
   auto dst = buffers->PipelineImage[0]->GetTexture();
 
   if (mt_debug) {
-      Printf("Metal: BlitSceneToPostprocess (Synchronous) src=%p dst=%p\n", src, dst);
+      Printf("Metal: BlitSceneToPostprocess (Asynchronous) src=%p dst=%p\n", src, dst);
   }
 
   if (src && dst) {
@@ -338,14 +334,10 @@ void MtPostprocess::BlitSceneToPostprocess() {
   }
 
   blitEncoder->endEncoding();
-  blitCmdBuf->commit();
-  blitCmdBuf->waitUntilCompleted(); // Wait for blit to finish
-  blitCmdBuf->release();
 }
 
 void MtPostprocess::BlitCurrentToImage(MTL::Texture *dstimage) {
   fb->GetRenderState()->EndRenderPass();
-  fb->GetCommands()->FlushCommands(false); // Commit current work
 
   auto srcimage =
       fb->GetBuffers()->PipelineImage[mCurrentPipelineImage]->GetTexture();
@@ -359,23 +351,49 @@ void MtPostprocess::BlitCurrentToImage(MTL::Texture *dstimage) {
 
   // If formats match, use blit encoder
   if (srcimage->pixelFormat() == dstimage->pixelFormat()) {
-    auto blitCmdBuf = fb->GetCommands()->GetBlitCommandBuffer();
+    auto blitCmdBuf = fb->GetCommands()->GetRenderCommandBuffer();
     auto blitEncoder = blitCmdBuf->blitCommandEncoder();
     blitEncoder->copyFromTexture(srcimage, dstimage);
     static_cast<MtRenderState*>(fb->GetRenderState())->MarkAsFilled(dstimage);
     blitEncoder->endEncoding();
-    blitCmdBuf->commit();
-    blitCmdBuf->waitUntilCompleted();
-    blitCmdBuf->release();
   } else {
     // Use a simple draw call to convert formats
-    // We can use a simple draw pass here
     MtPPRenderState renderstate(fb);
-    // This is a stub for now, but will work if formats are same or handled by
-    // Draw.
-    Printf("Metal: BlitCurrentToImage format conversion potentially needed: %d "
-           "-> %d\n",
-           (int)srcimage->pixelFormat(), (int)dstimage->pixelFormat());
+    renderstate.Clear();
+    renderstate.Shader = &hw_postprocess.present.Present; // Use present shader for simple blit
+    PresentUniforms uniforms;
+    uniforms.InvGamma = 1.0f;
+    uniforms.Contrast = 1.0f;
+    uniforms.Brightness = 0.0f;
+    uniforms.Saturation = 1.0f;
+    uniforms.GrayFormula = 0;
+    uniforms.ColorScale = 255.0f;
+    uniforms.Scale = { 1.0f, 1.0f };
+    uniforms.Offset = { 0.0f, 0.0f };
+    uniforms.HdrMode = 0;
+    renderstate.Uniforms.Set(uniforms);
+    renderstate.Viewport = { 0, 0, (int)dstimage->width(), (int)dstimage->height() };
+    renderstate.SetInputCurrent(0, PPFilterMode::Linear);
+    renderstate.SetInputTexture(1, &hw_postprocess.present.Dither,
+                              PPFilterMode::Nearest, PPWrapMode::Repeat);
+    
+    // Determine if dstimage is the swapchain
+    bool isSwap = false;
+    if (fb->mCurrentDrawable && (MTL::Texture*)fb->mCurrentDrawable->texture() == dstimage) {
+        isSwap = true;
+    }
+
+    if (isSwap) {
+        renderstate.SetOutputSwapChain();
+    } else {
+        // Fallback: manually set target if not swapchain (but most blits here are to swapchain or internal images)
+        // For now, let's assume it's swapchain for the common case, or we need a way to pass MTL::Texture directly.
+        // Actually, SetOutputSwapChain() works because PPRenderState::Draw uses mCurrentDrawable.
+        renderstate.SetOutputSwapChain(); 
+    }
+    
+    renderstate.SetNoBlend();
+    renderstate.Draw();
   }
 }
 

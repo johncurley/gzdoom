@@ -144,8 +144,7 @@ unsigned int MtHardwareTexture::CreateTexture(unsigned char *buffer, int w,
     break;
   }
 
-  desc->setMipmapLevelCount(
-      mipmap ? 1 + (int)std::floor(std::log2(std::max(w, h))) : 1);
+  desc->setMipmapLevelCount(1); // Mipmaps disabled for testing
   desc->setUsage(MTL::TextureUsageShaderRead);
   desc->setStorageMode(MTL::StorageModeShared);
 
@@ -169,7 +168,7 @@ unsigned int MtHardwareTexture::CreateTexture(unsigned char *buffer, int w,
   mImage->SetTexture(texture);
   mImage->SetWidth(w);
   mImage->SetHeight(h);
-  mImage->SetFormat((int)desc->pixelFormat());
+  mImage->SetFormat((int)texture->pixelFormat());
 
   if (texCount <= 10)
     Printf("Metal: Texture created successfully: %p\n", texture);
@@ -279,8 +278,7 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
     }
 
     desc->setPixelFormat(format);
-    desc->setMipmapLevelCount(
-        !indexed ? 1 + (int)std::floor(std::log2(std::max(w, h))) : 1);
+    desc->setMipmapLevelCount(1); // Mipmaps disabled for testing
     desc->setUsage(MTL::TextureUsageShaderRead);
     desc->setStorageMode(MTL::StorageModeShared);
 

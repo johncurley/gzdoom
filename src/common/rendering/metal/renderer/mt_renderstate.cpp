@@ -42,11 +42,10 @@
 
 #include <Metal/Metal.hpp>
 #include <QuartzCore/QuartzCore.hpp>
-
-CVAR(Int, mt_submit_size, 64, 0);
+ 
+CVAR(Int, mt_submit_size, 1024, 0);
 EXTERN_CVAR(Bool, r_skipmats)
 EXTERN_CVAR(Bool, mt_debug)
-
 MtRenderState::MtRenderState(MetalRenderDevice *fb)
     : fb(fb), mStreamBufferWriter(fb), mMatrixBufferWriter(fb) {
   Reset();
@@ -586,7 +585,7 @@ void MtRenderState::ApplyMaterial() {
             int f = (filter >= 0 && filter <= 4) ? filter : 4;
             samplerKey.MinFilter = minFilters[f];
             samplerKey.MagFilter = magFilters[f];
-            samplerKey.MipFilter = mipFilters[f];
+            samplerKey.MipFilter = 0; // Force no mipmaps
             samplerKey.AddressU = mMaterial.mClampMode;
             samplerKey.AddressV = mMaterial.mClampMode;
             samplerKey.AddressW = mMaterial.mClampMode;
@@ -725,7 +724,7 @@ void MtRenderState::BindBuffer(int bindingpoint, MTL::Buffer *buffer,
   if (mt_debug) {
     Printf("Metal: BindBuffer bp=%d buffer=%p offset=%u\n", bindingpoint, buffer, offset);
   }
-  if (bindingpoint >= 0 && bindingpoint < 16) {
+  if (bindingpoint >= 0 && bindingpoint < 32) {
     mBoundBuffers[bindingpoint] = buffer;
     mBoundOffsets[bindingpoint] = offset;
     mNeedApply = true;
@@ -796,8 +795,13 @@ void MtRenderState::SetRenderTarget(MTL::Texture *image,
   // End current pass, but DON'T flush. Let Apply() or EndFrame handle it.
   EndRenderPass();
 
+  bool isSwapChain = (image == nullptr);
+  if (isSwapChain && fb->mCurrentDrawable) {
+      image = (MTL::Texture*)fb->mCurrentDrawable->texture();
+  }
+
   mRenderTarget.Image = image;
-  mRenderTarget.IsSwapChain = (image == nullptr);
+  mRenderTarget.IsSwapChain = isSwapChain;
   mRenderTarget.DepthStencil = depthStencilView;
   mRenderTarget.Width = width;
   mRenderTarget.Height = height;
@@ -805,15 +809,13 @@ void MtRenderState::SetRenderTarget(MTL::Texture *image,
   mRenderTarget.Samples = samples;
 }
 
-// FORCE RECOMPILE: December 26 V9 Intel Stability Build
+// FORCE RECOMPILE: December 26 V10 Diagnostic Build
 void MtRenderState::BeginRenderPass() {
   EndRenderPass(); // Ensure previous encoder is ended
   
   MTL::Texture *targetTex = mRenderTarget.Image;
-  if (mRenderTarget.IsSwapChain) {
-      if (fb->mCurrentDrawable) {
-          targetTex = (MTL::Texture*)fb->mCurrentDrawable->texture();
-      }
+  if (mRenderTarget.IsSwapChain && fb->mCurrentDrawable) {
+      targetTex = (MTL::Texture*)fb->mCurrentDrawable->texture();
   }
 
   if (!targetTex) {
@@ -831,8 +833,8 @@ void MtRenderState::BeginRenderPass() {
   if (!pRPD) return;
 
   if (mt_debug) {
-    Printf("Metal: BeginRenderPass target=%p (%dx%d fmt=%llu) clearTargets=%d applyCount=%d\n",
-           targetTex, mRenderTarget.Width, mRenderTarget.Height, (unsigned long long)targetTex->pixelFormat(), mClearTargets, mApplyCount);
+    Printf("Metal: BeginRenderPass target=%p (%dx%d fmt=%llu) clearTargets=%d applyCount=%d isSwap=%d\n",
+           targetTex, mRenderTarget.Width, mRenderTarget.Height, (unsigned long long)targetTex->pixelFormat(), mClearTargets, mApplyCount, (int)mRenderTarget.IsSwapChain);
   }
 
   // Color Attachment
@@ -845,11 +847,6 @@ void MtRenderState::BeginRenderPass() {
   colorAttachment->setLoadAction(clearColor ? MTL::LoadActionClear : MTL::LoadActionLoad);
   colorAttachment->setStoreAction(MTL::StoreActionStore);
   
-  if (mt_debug) {
-      Printf("Metal: BeginRenderPass Color target %p, LoadAction: %s, StoreAction: Store\n", 
-             targetTex, clearColor ? "Clear" : "Load");
-  }
-
   if (clearColor) {
       if (mt_debug) Printf("Metal: BeginRenderPass - Clearing color target %p\n", targetTex);
       colorAttachment->setClearColor(MTL::ClearColor::Make(
