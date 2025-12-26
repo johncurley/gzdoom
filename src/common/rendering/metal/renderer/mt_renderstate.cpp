@@ -43,7 +43,7 @@
 #include <Metal/Metal.hpp>
 #include <QuartzCore/QuartzCore.hpp>
  
-CVAR(Int, mt_submit_size, 1024, 0);
+CVAR(Int, mt_submit_size, 256, 0);
 EXTERN_CVAR(Bool, r_skipmats)
 EXTERN_CVAR(Bool, mt_debug)
 MtRenderState::MtRenderState(MetalRenderDevice *fb)
@@ -72,6 +72,11 @@ void MtRenderState::Draw(int dt, int index, int count, bool apply) {
     Printf("Metal: Draw dt=%d index=%d count=%d apply=%d vbuf=%p stride=%zu\n", 
            dt, index, count, (int)apply, mVertexBuffer, 
            mtVBuf ? mtVBuf->GetStride() : 0);
+    
+    if (mtVBuf && mtVBuf->GetStride() == 24 && count > 0) {
+        float* v = (float*)((uint8_t*)mtVBuf->GetBuffer()->contents() + index * mtVBuf->GetStride());
+        Printf("  2D Vert 0: Pos=(%f, %f, %f) UV=(%f, %f) Color=%08x\n", v[0], v[1], v[2], v[3], v[4], ((uint32_t*)v)[5]);
+    }
   }
   if (dt == DT_TriangleFan) {
     IIndexBuffer *oldIndexBuffer = mIndexBuffer;
@@ -131,6 +136,11 @@ void MtRenderState::DrawIndexed(int dt, int index, int count, bool apply) {
     Printf("Metal: DrawIndexed dt=%d index=%d count=%d apply=%d vbuf=%p stride=%zu\n", 
            dt, index, count, (int)apply, mVertexBuffer, 
            mtVBuf ? mtVBuf->GetStride() : 0);
+    
+    if (mtVBuf && mtVBuf->GetStride() == 24 && count > 0) {
+        float* v = (float*)((uint8_t*)mtVBuf->GetBuffer()->contents() + mVertexOffsets[0] * mtVBuf->GetStride());
+        Printf("  2D Vert 0: Pos=(%f, %f, %f) UV=(%f, %f) Color=%08x\n", v[0], v[1], v[2], v[3], v[4], ((uint32_t*)v)[5]);
+    }
   }
   if (apply || mNeedApply)
     Apply(dt);
@@ -468,8 +478,10 @@ void MtRenderState::ApplyPushConstants() {
   mPushConstants.uDataIndex = mStreamBufferWriter.DataIndex();
 
   if (mt_debug) {
-      Printf("Metal: ApplyPushConstants (21) texMode=%d alpha=%f fog=%d lightLvl=%f dataIndex=%d\n", 
-             mPushConstants.uTextureMode, mPushConstants.uAlphaThreshold, mPushConstants.uFogEnabled, mPushConstants.uLightLevel, mPushConstants.uDataIndex);
+      auto mat = mMaterial.mMaterial;
+      const char* matName = (mat && mat->Source()) ? mat->Source()->GetName().GetChars() : "none";
+      Printf("Metal: ApplyPushConstants (21) texMode=%d alpha=%f fog=%d lightLvl=%f dataIndex=%d material=%s\n", 
+             mPushConstants.uTextureMode, mPushConstants.uAlphaThreshold, mPushConstants.uFogEnabled, mPushConstants.uLightLevel, mPushConstants.uDataIndex, matName);
   }
 
   mEncoder->setVertexBytes(&mPushConstants, sizeof(PushConstants), 21);
@@ -558,21 +570,31 @@ void MtRenderState::ApplyMaterial() {
             if (texelsize == 4 || texelsize == 1 || texelsize == 2) {
                 mtlTexture->replaceRegion(region, 0, mtHwTexture->GetStagingBuffer(), w * texelsize);
             } else if (texelsize == 3) {
-                // Convert RGB to BGRA (assuming engine provides RGB and Metal wants BGRA)
+                // Convert RGB to RGBA (Correct order for RGBA8Unorm)
                 std::vector<uint8_t> tempBuffer(w * h * 4);
                 const uint8_t* src = mtHwTexture->GetStagingBuffer();
                 uint8_t* dst = tempBuffer.data();
                 for (int j = 0; j < w * h; j++) {
-                    dst[j*4 + 0] = src[j*3 + 2]; // B
+                    dst[j*4 + 0] = src[j*3 + 0]; // R
                     dst[j*4 + 1] = src[j*3 + 1]; // G
-                    dst[j*4 + 2] = src[j*3 + 0]; // R
+                    dst[j*4 + 2] = src[j*3 + 2]; // B
                     dst[j*4 + 3] = 255;          // A
                 }
                 mtlTexture->replaceRegion(region, 0, tempBuffer.data(), w * 4);
             }
+            
+            // Clear staging buffer so we don't upload again
+            mtHwTexture->ResetStagingBuffer();
+          }
 
+          MTL::Texture *mtlTexture = image->GetTexture();
+          if (mtlTexture) {
+            mEncoder->setFragmentTexture(mtlTexture, i);
+            mEncoder->setVertexTexture(mtlTexture, i);
+            
             if (mt_debug) {
-                Printf("Metal: ApplyMaterial - Bound texture %p to slot %d (W:%lu H:%lu)\n", mtlTexture, i, mtlTexture->width(), mtlTexture->height());
+                Printf("Metal: ApplyMaterial - Bound texture %p to slot %d (W:%lu H:%lu fmt=%llu)\n", 
+                       mtlTexture, i, mtlTexture->width(), mtlTexture->height(), (unsigned long long)mtlTexture->pixelFormat());
             }
 
             // Sampler
@@ -585,7 +607,7 @@ void MtRenderState::ApplyMaterial() {
             int f = (filter >= 0 && filter <= 4) ? filter : 4;
             samplerKey.MinFilter = minFilters[f];
             samplerKey.MagFilter = magFilters[f];
-            samplerKey.MipFilter = 0; // Force no mipmaps
+            samplerKey.MipFilter = 0; // Force no mipmaps for now
             samplerKey.AddressU = mMaterial.mClampMode;
             samplerKey.AddressV = mMaterial.mClampMode;
             samplerKey.AddressW = mMaterial.mClampMode;
@@ -848,7 +870,11 @@ void MtRenderState::BeginRenderPass() {
   colorAttachment->setStoreAction(MTL::StoreActionStore);
   
   if (clearColor) {
-      if (mt_debug) Printf("Metal: BeginRenderPass - Clearing color target %p\n", targetTex);
+      if (mt_debug) {
+          Printf("Metal: BeginRenderPass - Clearing color target %p with (%f, %f, %f, %f)\n", 
+                 targetTex, screen->mSceneClearColor[0], screen->mSceneClearColor[1],
+                 screen->mSceneClearColor[2], screen->mSceneClearColor[3]);
+      }
       colorAttachment->setClearColor(MTL::ClearColor::Make(
           screen->mSceneClearColor[0], screen->mSceneClearColor[1],
           screen->mSceneClearColor[2], screen->mSceneClearColor[3]));

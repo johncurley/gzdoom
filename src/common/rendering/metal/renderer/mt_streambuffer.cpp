@@ -96,6 +96,11 @@ bool MtStreamBufferWriter::Write(const StreamData &data) {
   if (ptr) {
     memcpy(ptr + mStreamDataOffset + sizeof(StreamData) * mDataIndex, &data,
            sizeof(StreamData));
+    
+    if (mt_debug) {
+        Printf("Metal: StreamData %d: Color=(%.2f, %.2f, %.2f, %.2f) UseVertex=%d Timer=%f\n", 
+               mDataIndex, data.uVertexColor.X, data.uVertexColor.Y, data.uVertexColor.Z, data.uVertexColor.W, data.useVertexData, data.timer);
+    }
   }
 
   return true;

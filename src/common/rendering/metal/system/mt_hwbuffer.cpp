@@ -52,13 +52,19 @@ void MtHardwareDataBuffer::Upload(size_t offset, size_t size) {
 void MtHardwareDataBuffer::SetData(size_t size, const void *data,
                                    BufferUsageType usage) {
   CreateBuffer(size);
-  if (mBuffer && data)
+  if (mBuffer && data) {
     memcpy(mBuffer->contents(), data, size);
+    if (mBuffer->storageMode() == MTL::StorageModeShared)
+        mBuffer->didModifyRange(NS::Range(0, size));
+  }
 }
 void MtHardwareDataBuffer::SetSubData(size_t offset, size_t size,
                                       const void *data) {
-  if (mBuffer && data)
+  if (mBuffer && data) {
     memcpy((uint8_t *)mBuffer->contents() + offset, data, size);
+    if (mBuffer->storageMode() == MTL::StorageModeShared)
+        mBuffer->didModifyRange(NS::Range(offset, size));
+  }
 }
 void MtHardwareDataBuffer::Resize(size_t newsize) { CreateBuffer(newsize); }
 void MtHardwareDataBuffer::Map() {
@@ -145,12 +151,18 @@ void MtVertexBuffer::SetData(size_t size, const void *data,
            data, (int)usage);
   }
   CreateBuffer(size);
-  if (mBuffer && data)
+  if (mBuffer && data) {
     memcpy(mBuffer->contents(), data, size);
+    if (mBuffer->storageMode() == MTL::StorageModeShared)
+        mBuffer->didModifyRange(NS::Range(0, size));
+  }
 }
 void MtVertexBuffer::SetSubData(size_t offset, size_t size, const void *data) {
-  if (mBuffer && data)
+  if (mBuffer && data) {
     memcpy((uint8_t *)mBuffer->contents() + offset, data, size);
+    if (mBuffer->storageMode() == MTL::StorageModeShared)
+        mBuffer->didModifyRange(NS::Range(offset, size));
+  }
 }
 void MtVertexBuffer::Resize(size_t newsize) { CreateBuffer(newsize); }
 void MtVertexBuffer::Map() {
@@ -212,12 +224,18 @@ void MtIndexBuffer::Upload(size_t offset, size_t size) {
 void MtIndexBuffer::SetData(size_t size, const void *data,
                             BufferUsageType usage) {
   CreateBuffer(size);
-  if (mBuffer && data)
+  if (mBuffer && data) {
     memcpy(mBuffer->contents(), data, size);
+    if (mBuffer->storageMode() == MTL::StorageModeShared)
+        mBuffer->didModifyRange(NS::Range(0, size));
+  }
 }
 void MtIndexBuffer::SetSubData(size_t offset, size_t size, const void *data) {
-  if (mBuffer && data)
+  if (mBuffer && data) {
     memcpy((uint8_t *)mBuffer->contents() + offset, data, size);
+    if (mBuffer->storageMode() == MTL::StorageModeShared)
+        mBuffer->didModifyRange(NS::Range(offset, size));
+  }
 }
 void MtIndexBuffer::Resize(size_t newsize) { CreateBuffer(newsize); }
 void MtIndexBuffer::Map() {

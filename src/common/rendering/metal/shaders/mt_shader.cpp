@@ -600,7 +600,7 @@ bool MtShaderManager::CompileNextShader() {
 
 static void PatchVertexShader(std::string &source, const std::string &shadername) {
   // GZDoom shaders expect OpenGL NDC (-1..1 for all axes, Y up)
-  // Metal expects 0..1 for Z, and we want to Y-flip 3D only to match GZDoom's RenderTextureIsFlipped(true)
+  // Metal expects 0..1 for Z, and we want to Y-flip EVERYTHING to match Metal's Y-down coordinate system internally
   
   // Case 1: Standard projection
   size_t pos = source.find("gl_Position = ProjectionMatrix * eyeCoordPos;");
@@ -608,6 +608,7 @@ static void PatchVertexShader(std::string &source, const std::string &shadername
       if (mt_debug) Printf("Metal: Patching vertex shader %s (Standard Projection) for coordinate system.\n", shadername.c_str());
       source.replace(pos, strlen("gl_Position = ProjectionMatrix * eyeCoordPos;"),
           "gl_Position = ProjectionMatrix * eyeCoordPos;\n"
+          "gl_Position.y = -gl_Position.y;\n" // Restore Y flip
           "gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;\n" // Map -1..1 to 0..1
       );
   }
@@ -618,6 +619,7 @@ static void PatchVertexShader(std::string &source, const std::string &shadername
       if (mt_debug) Printf("Metal: Patching vertex shader %s (Direct Projection) for coordinate system.\n", shadername.c_str());
       source.replace(pos2, strlen("gl_Position = PositionInProjection;"),
           "gl_Position = PositionInProjection;\n"
+          "gl_Position.y = -gl_Position.y;\n" // Restore Y flip
           "gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;\n" // Map -1..1 to 0..1
       );
   }

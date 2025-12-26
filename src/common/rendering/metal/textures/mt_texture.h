@@ -61,6 +61,7 @@ public:
   MtTextureImage *GetDepthStencil(FCanvasTexture *tex);
   size_t GetStagingBufferSize() const { return mStagingBuffer.size(); }
   const uint8_t *GetStagingBuffer() const { return mStagingBuffer.data(); }
+  void ResetStagingBuffer() { mStagingBuffer.clear(); }
 
 private:
   std::unique_ptr<MtTextureImage> mImage;

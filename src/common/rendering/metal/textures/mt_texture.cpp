@@ -192,7 +192,7 @@ void MtHardwareTexture::CreateWipeTexture(int w, int h, const char *name) {
   mImage->SetTexture(texture);
   mImage->SetWidth(w);
   mImage->SetHeight(h);
-  mImage->SetFormat((int)MTL::PixelFormatRGBA8Unorm);
+  mImage->SetFormat((int)MTL::PixelFormatBGRA8Unorm);
 
   fb->GetPostprocess()->BlitCurrentToImage(texture);
 }
@@ -316,7 +316,7 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
     int w = tex->GetWidth();
     int h = tex->GetHeight();
     MTL::PixelFormat format =
-        tex->IsHDR() ? MTL::PixelFormatRGBA32Float : MTL::PixelFormatRGBA8Unorm;
+        tex->IsHDR() ? MTL::PixelFormatRGBA32Float : MTL::PixelFormatBGRA8Unorm;
 
     if (createImageCount <= 10)
       Printf("Metal: Creating hardware canvas: %dx%d\n", w, h);
@@ -406,7 +406,7 @@ MtPPTexture::MtPPTexture(MetalRenderDevice *fb, PPTexture *texture) : fb(fb) {
   int bytesPerPixel = 4;
   switch (texture->Format) {
   case PixelFormat::Rgba8:
-    format = MTL::PixelFormatRGBA8Unorm;
+    format = MTL::PixelFormatBGRA8Unorm;
     bytesPerPixel = 4;
     break;
   case PixelFormat::Rgba16f:

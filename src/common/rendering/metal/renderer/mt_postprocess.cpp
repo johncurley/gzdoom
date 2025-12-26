@@ -92,6 +92,23 @@ public:
     } else if (Output.Type == PPTextureType::SceneColor) {
       outputTex = fb->GetBuffers()->SceneColor->GetTexture();
       format = MTL::PixelFormatRGBA16Float;
+    } else if (Output.Type == PPTextureType::SceneFog) {
+      outputTex = fb->GetBuffers()->SceneFog->GetTexture();
+      format = MTL::PixelFormatBGRA8Unorm;
+    } else if (Output.Type == PPTextureType::SceneNormal) {
+      outputTex = fb->GetBuffers()->SceneNormal->GetTexture();
+      format = MTL::PixelFormatBGRA8Unorm;
+    } else if (Output.Type == PPTextureType::SceneDepth) {
+      outputTex = fb->GetBuffers()->SceneDepthStencil->GetTexture();
+      format = MTL::PixelFormatDepth32Float_Stencil8;
+    } else if (Output.Type == PPTextureType::ShadowMap) {
+      outputTex = fb->GetBuffers()->ShadowMap->GetTexture();
+      format = MTL::PixelFormatR32Float;
+    }
+
+    if (outputTex) {
+        width = (int)outputTex->width();
+        height = (int)outputTex->height();
     }
 
     if (mt_debug) {
@@ -102,9 +119,6 @@ public:
     
     // Explicitly set the viewport for the PP pass
     mtRenderState->SetViewport(Viewport.left, Viewport.top, Viewport.width, Viewport.height);
-
-    // Call Apply to ensure batching/flushing logic is processed
-    // mtRenderState->Draw(DT_Triangles, 0, 0, true); // No-op draw to trigger Apply() -> REMOVED causing pipeline errors
 
     // Handle clearing if requested
     if (BlendMode.SrcAlpha == (uint8_t)STYLEALPHA_One &&
@@ -120,13 +134,7 @@ public:
     }
 
     MtShaderProgram *program = fb->GetShaderManager()->GetPPShader(Shader);
-    if (!program) {
-      return;
-    }
-    if (!program->vert) {
-      return;
-    }
-    if (!program->frag) {
+    if (!program || !program->vert || !program->frag) {
       return;
     }
 
@@ -134,8 +142,8 @@ public:
         program, (MTL::PixelFormat)format, BlendMode);
     if (pipeline) {
       if (mt_debug) {
-          Printf("Metal: PPRenderState::Draw - Pipeline created successfully. VertexFunction: %s, FragmentFunction: main0\n", 
-                 program->vert->name.c_str());
+          Printf("Metal: PPRenderState::Draw - Pipeline created successfully. VS: %s, FS: %s\n", 
+                 program->vert->name.c_str(), program->frag->name.c_str());
       }
       // Set vertex buffer on the render state so ApplyRenderPass uses it
       mtRenderState->SetVertexBuffer(screen->mVertexData);
@@ -422,7 +430,7 @@ void MtPostprocess::DrawPresentTexture(IntRect box, bool applyGamma,
     uniforms.Scale = { 1.0f, 1.0f };
     uniforms.Offset = { 0.0f, 0.0f };
   } else {
-    // Metal is Y-down, GZDoom is Y-up. Need to flip vertically when blitting to swapchain.
+    // Flip vertically when blitting to swapchain to correct orientation
     uniforms.Scale = { 1.0f, -1.0f };
     uniforms.Offset = { 0.0f, 1.0f };
   }

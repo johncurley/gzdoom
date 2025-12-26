@@ -30,6 +30,7 @@ public:
   std::unique_ptr<MtTextureImage> SceneDepthStencil;
   std::unique_ptr<MtTextureImage> SceneNormal;
   std::unique_ptr<MtTextureImage> SceneFog;
+  std::unique_ptr<MtTextureImage> ShadowMap;
 
   static const int NumPipelineImages = 2;
   std::unique_ptr<MtTextureImage> PipelineDepthStencil;
@@ -43,6 +44,7 @@ private:
   void CreateSceneDepthStencil(int width, int height, int samples);
   void CreateSceneFog(int width, int height, int samples);
   void CreateSceneNormal(int width, int height, int samples);
+  void CreateShadowMap();
 
   MetalRenderDevice *fb = nullptr;
   int mWidth = 0;

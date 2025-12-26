@@ -2,6 +2,9 @@
 #include "metal/system/mt_renderdevice.h"
 #include "metal/textures/mt_texture.h"
 #include "printf.h" // New include
+#include "c_cvars.h"
+
+EXTERN_CVAR(Int, gl_shadowmap_quality)
 
 #include "i_time.h"
 #define TimeScale TimeScale_GZDOOM
@@ -74,6 +77,28 @@ void MtRenderBuffers::CreateScene(int width, int height, int samples) {
   CreateSceneDepthStencil(width, height, samples);
   CreateSceneNormal(width, height, samples);
   CreateSceneFog(width, height, samples);
+  CreateShadowMap();
+}
+
+void MtRenderBuffers::CreateShadowMap() {
+  ShadowMap = std::make_unique<MtTextureImage>(fb);
+
+  // Default to 1024 for now, engine will resize via BeginFrame if needed (though ShadowMap quality is usually fixed)
+  int quality = gl_shadowmap_quality; 
+  if (quality <= 0) quality = 1024;
+
+  auto desc = MTL::TextureDescriptor::alloc()->init();
+  desc->setWidth(quality);
+  desc->setHeight(1024);
+  desc->setPixelFormat(MTL::PixelFormatR32Float);
+  desc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
+  desc->setStorageMode(MTL::StorageModePrivate);
+
+  MTL::Texture *texture = fb->device->device->newTexture(desc);
+  ShadowMap->SetTexture(texture);
+  ShadowMap->SetWidth(quality);
+  ShadowMap->SetHeight(1024);
+  desc->release();
 }
 
 void MtRenderBuffers::CreateSceneColor(int width, int height, int samples) {
