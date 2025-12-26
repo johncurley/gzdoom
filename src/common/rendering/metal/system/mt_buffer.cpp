@@ -111,7 +111,14 @@ IIndexBuffer *MtBufferManager::CreateIndexBuffer() {
 
 IDataBuffer *MtBufferManager::CreateDataBuffer(int bindingpoint, bool ssbo,
                                                bool needsresize) {
-  return new MtHardwareDataBuffer(fb, bindingpoint, ssbo, needsresize);
+  auto buffer = new MtHardwareDataBuffer(fb, bindingpoint, ssbo, needsresize);
+  switch (bindingpoint)
+  {
+  case VIEWPOINT_BINDINGPOINT: ViewpointUBO = buffer; break;
+  case LIGHTBUF_BINDINGPOINT: LightBufferSSO = buffer; break;
+  case BONEBUF_BINDINGPOINT: BoneBufferSSO = buffer; break;
+  }
+  return buffer;
 }
 
 void MtBufferManager::CreateFanToTrisIndexBuffer() {

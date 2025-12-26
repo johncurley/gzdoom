@@ -20,8 +20,14 @@ MtHardwareDataBuffer::MtHardwareDataBuffer(MetalRenderDevice *fb,
       fb(fb) {}
 
 MtHardwareDataBuffer::~MtHardwareDataBuffer() {
-  if (mBuffer)
-    fb->RecycleBuffer(mBuffer);
+  if (mBuffer) {
+    if (fb && !fb->mIsDestroyed) {
+      fb->RecycleBuffer(mBuffer);
+    } else {
+      mBuffer->release();
+    }
+    mBuffer = nullptr;
+  }
 }
 
 void MtHardwareDataBuffer::BindRange(FRenderState *state, size_t start,
@@ -36,11 +42,7 @@ void MtHardwareDataBuffer::BindRange(FRenderState *state, size_t start,
 }
 
 void MtHardwareDataBuffer::Upload(size_t offset, size_t size) {
-  if (mBuffer && mBuffer->storageMode() == MTL::StorageModeShared) {
-    if (size > 0 && offset + size <= mBufferSize) {
-      mBuffer->didModifyRange(NS::Range(offset, size));
-    }
-  }
+  // Shared buffers don't need explicit modification range marking on macOS
 }
 
 void MtHardwareDataBuffer::SetData(size_t size, const void *data,
@@ -73,10 +75,17 @@ void *MtHardwareDataBuffer::Lock(unsigned int size) {
 void MtHardwareDataBuffer::Unlock() { Unmap(); }
 
 void MtHardwareDataBuffer::CreateBuffer(size_t size) {
-  if (mBuffer)
-    fb->RecycleBuffer(mBuffer);
+  if (mBuffer) {
+    if (fb && !fb->mIsDestroyed) {
+      fb->RecycleBuffer(mBuffer);
+    } else {
+      mBuffer->release();
+    }
+  }
   if (size == 0) size = 16;
   mBuffer = fb->device->device->newBuffer(size, MTL::StorageModeShared);
+  if (!mBuffer) return;
+  
   mBufferSize = size;
   buffersize = size; // Set base class member
   this->map = mBuffer->contents();
@@ -86,8 +95,14 @@ void MtHardwareDataBuffer::CreateBuffer(size_t size) {
 // MtVertexBuffer
 MtVertexBuffer::MtVertexBuffer(MetalRenderDevice *fb) : fb(fb) {}
 MtVertexBuffer::~MtVertexBuffer() {
-  if (mBuffer)
-    fb->RecycleBuffer(mBuffer);
+  if (mBuffer) {
+    if (fb && !fb->mIsDestroyed) {
+      fb->RecycleBuffer(mBuffer);
+    } else {
+      mBuffer->release();
+    }
+    mBuffer = nullptr;
+  }
 }
 
 void MtVertexBuffer::SetFormat(int numBindingPoints, int numAttributes,
@@ -112,14 +127,7 @@ void MtVertexBuffer::SetFormat(int numBindingPoints, int numAttributes,
 }
 
 void MtVertexBuffer::Upload(size_t offset, size_t size) {
-  if (mBuffer && mBuffer->storageMode() == MTL::StorageModeShared) {
-    if (size > 0 && offset + size <= mBufferSize) {
-      if (mt_debug) {
-        Printf("Metal: MtVertexBuffer::Upload didModifyRange offset=%zu size=%zu\n", offset, size);
-      }
-      mBuffer->didModifyRange(NS::Range(offset, size));
-    }
-  }
+  // Shared buffers don't need explicit modification range marking on macOS
 }
 
 void MtVertexBuffer::SetData(size_t size, const void *data,
@@ -155,10 +163,17 @@ void MtVertexBuffer::CreateBuffer(size_t size) {
   if (mt_debug) {
     Printf("Metal: MtVertexBuffer::CreateBuffer size=%zu\n", size);
   }
-  if (mBuffer)
-    fb->RecycleBuffer(mBuffer);
+  if (mBuffer) {
+    if (fb && !fb->mIsDestroyed) {
+      fb->RecycleBuffer(mBuffer);
+    } else {
+      mBuffer->release();
+    }
+  }
   if (size == 0) size = 16;
   mBuffer = fb->device->device->newBuffer(size, MTL::StorageModeShared);
+  if (!mBuffer) return;
+
   mBufferSize = size;
   buffersize = size; // Set base class member
   this->map = mBuffer->contents();
@@ -168,16 +183,18 @@ void MtVertexBuffer::CreateBuffer(size_t size) {
 // MtIndexBuffer
 MtIndexBuffer::MtIndexBuffer(MetalRenderDevice *fb) : fb(fb) {}
 MtIndexBuffer::~MtIndexBuffer() {
-  if (mBuffer)
-    fb->RecycleBuffer(mBuffer);
+  if (mBuffer) {
+    if (fb && !fb->mIsDestroyed) {
+      fb->RecycleBuffer(mBuffer);
+    } else {
+      mBuffer->release();
+    }
+    mBuffer = nullptr;
+  }
 }
 
 void MtIndexBuffer::Upload(size_t offset, size_t size) {
-  if (mBuffer && mBuffer->storageMode() == MTL::StorageModeShared) {
-    if (size > 0 && offset + size <= mBufferSize) {
-      mBuffer->didModifyRange(NS::Range(offset, size));
-    }
-  }
+  // Shared buffers don't need explicit modification range marking on macOS
 }
 
 void MtIndexBuffer::SetData(size_t size, const void *data,
@@ -206,10 +223,17 @@ void *MtIndexBuffer::Lock(unsigned int size) {
 void MtIndexBuffer::Unlock() { Unmap(); }
 
 void MtIndexBuffer::CreateBuffer(size_t size) {
-  if (mBuffer)
-    fb->RecycleBuffer(mBuffer);
+  if (mBuffer) {
+    if (fb && !fb->mIsDestroyed) {
+      fb->RecycleBuffer(mBuffer);
+    } else {
+      mBuffer->release();
+    }
+  }
   if (size == 0) size = 16;
   mBuffer = fb->device->device->newBuffer(size, MTL::StorageModeShared);
+  if (!mBuffer) return;
+
   mBufferSize = size;
   buffersize = size; // Set base class member
   this->map = mBuffer->contents();

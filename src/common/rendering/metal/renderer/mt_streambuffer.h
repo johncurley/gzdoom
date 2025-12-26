@@ -17,24 +17,28 @@ class MetalRenderDevice;
 // Ring buffer for dynamic data (following Vulkan pattern)
 class MtStreamBuffer {
 public:
-  MtStreamBuffer(MetalRenderDevice *fb, size_t structSize);
+  MtStreamBuffer(MetalRenderDevice *fb, size_t structSize, size_t capacity = 0);
   ~MtStreamBuffer();
 
   // Allocate from ring buffer
   uint32_t NextStreamDataBlock();
 
   // Get buffer and offset
-  MTL::Buffer *GetBuffer() const { return mBuffer; }
+  MTL::Buffer *GetBuffer() const { return mBuffers[mBufferIndex]; }
   uint32_t GetOffset() const { return mStreamDataOffset; }
 
   // Get CPU-accessible buffer pointer for writing
   uint8_t *GetBufferPointer() const;
 
-  // Reset for new frame
-  void Reset() { mStreamDataOffset = 0xffffffff; }
+  // Reset for new frame and cycle to next buffer
+  void Reset() { 
+    mStreamDataOffset = 0xffffffff;
+    mBufferIndex = (mBufferIndex + 1) % 2; // Cycle between 2 buffers (matching MaxFramesInFlight)
+  }
 
 private:
-  MTL::Buffer *mBuffer = nullptr;
+  MTL::Buffer *mBuffers[2] = { nullptr, nullptr };
+  int mBufferIndex = 0;
   uint32_t mBlockSize = 0;
   uint32_t mStreamDataOffset = 0xffffffff;
   size_t mBufferSize = 0;

@@ -20,7 +20,11 @@ MtTextureImage::MtTextureImage(MetalRenderDevice *fb) : fb(fb) {}
 
 MtTextureImage::~MtTextureImage() {
   if (mTexture) {
-    fb->RecycleTexture(mTexture);
+    if (fb && !fb->mIsDestroyed) {
+      fb->RecycleTexture(mTexture);
+    } else {
+      mTexture->release();
+    }
     mTexture = nullptr;
   }
 }
@@ -289,6 +293,11 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
       return;
     }
 
+    if (mt_debug) {
+        Printf("Metal: Created GPU texture %p (%dx%d), format=%llu, storageMode=%llu\n", 
+               texture, w, h, (unsigned long long)texture->pixelFormat(), (unsigned long long)texture->storageMode());
+    }
+
     // Upload texture data
     if (texbuffer.mBuffer) {
       MTL::Region region = MTL::Region::Make2D(0, 0, w, h);
@@ -329,6 +338,11 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
     if (!texture) {
       Printf("Metal: Failed to create hardware canvas %dx%d\n", w, h);
       return;
+    }
+
+    if (mt_debug) {
+        Printf("Metal: Created HWCanvas texture %p (%dx%d), format=%llu, storageMode=%llu\n", 
+               texture, w, h, (unsigned long long)texture->pixelFormat(), (unsigned long long)texture->storageMode());
     }
 
     mImage->SetTexture(texture);
@@ -444,6 +458,23 @@ MtPPTexture::MtPPTexture(MetalRenderDevice *fb, PPTexture *texture) : fb(fb) {
 }
 
 MtPPTexture::~MtPPTexture() {
-  // Base class MtTextureImage handles recycling mTexture.
-  // No need to recycle again here.
+
+  if (mTexture) {
+
+    if (fb && !fb->mIsDestroyed) {
+
+      fb->RecycleTexture(mTexture);
+
+    } else {
+
+      mTexture->release();
+
+    }
+
+    mTexture = nullptr;
+
+  }
+
 }
+
+

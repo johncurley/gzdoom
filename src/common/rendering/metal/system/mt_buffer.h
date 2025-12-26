@@ -55,6 +55,10 @@ public:
 
 	std::unique_ptr<IIndexBuffer> FanToTrisIndexBuffer;
 
+	MtHardwareDataBuffer* ViewpointUBO = nullptr;
+	MtHardwareDataBuffer* LightBufferSSO = nullptr;
+	MtHardwareDataBuffer* BoneBufferSSO = nullptr;
+
 private:
 	void CreateFanToTrisIndexBuffer();
 

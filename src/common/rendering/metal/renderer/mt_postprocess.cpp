@@ -103,6 +103,9 @@ public:
     // Explicitly set the viewport for the PP pass
     mtRenderState->SetViewport(Viewport.left, Viewport.top, Viewport.width, Viewport.height);
 
+    // Call Apply to ensure batching/flushing logic is processed
+    // mtRenderState->Draw(DT_Triangles, 0, 0, true); // No-op draw to trigger Apply() -> REMOVED causing pipeline errors
+
     // Handle clearing if requested
     if (BlendMode.SrcAlpha == (uint8_t)STYLEALPHA_One &&
         BlendMode.DestAlpha == (uint8_t)STYLEALPHA_Zero && !ShadowMapBuffers) {
@@ -130,25 +133,33 @@ public:
     auto pipeline = fb->GetPipelineStateManager()->GetPPPipelineState(
         program, (MTL::PixelFormat)format, BlendMode);
     if (pipeline) {
+      if (mt_debug) {
+          Printf("Metal: PPRenderState::Draw - Pipeline created successfully. VertexFunction: %s, FragmentFunction: main0\n", 
+                 program->vert->name.c_str());
+      }
       // Set vertex buffer on the render state so ApplyRenderPass uses it
       mtRenderState->SetVertexBuffer(screen->mVertexData);
       
       // Update pipeline key for tracking and potential future use in ApplyRenderPass
-      auto vb = static_cast<MtVertexBuffer *>(
+      auto vb = dynamic_cast<MtVertexBuffer *>(
           screen->mVertexData->GetBufferObjects().first);
-      int stride = (int)vb->GetStride();
-      MtPipelineKey ppKey;
-      ppKey.VertexFormat = vb->VertexFormat | (stride << 8);
-      mtRenderState->SetPipelineKey(ppKey);
+      if (vb) {
+          int stride = (int)vb->GetStride();
+          MtPipelineKey ppKey;
+          ppKey.VertexFormat = vb->VertexFormat | (stride << 8);
+          mtRenderState->SetPipelineKey(ppKey);
 
-      encoder->setRenderPipelineState(pipeline);
-      
-      // CRITICAL: Explicitly set essential state for the new encoder
-      encoder->setDepthStencilState(fb->GetPipelineStateManager()->GetDisabledDepthStencilState());
-      encoder->setCullMode(MTL::CullModeNone);
-      
-      // Bind vertex buffer (screen->mVertexData) at slot 0 manually too for safety
-      encoder->setVertexBuffer(vb->GetBuffer(), 0, 0);
+          encoder->setRenderPipelineState(pipeline);
+          
+          // CRITICAL: Explicitly set essential state for the new encoder
+          encoder->setDepthStencilState(fb->GetPipelineStateManager()->GetDisabledDepthStencilState());
+          encoder->setCullMode(MTL::CullModeNone);
+          
+          // Bind vertex buffer (screen->mVertexData) at slot 0 manually too for safety
+          encoder->setVertexBuffer(vb->GetBuffer(), 0, 0);
+      } else {
+          if (mt_debug) Printf("Metal: PPRenderState::Draw - WARNING: dynamic_cast to MtVertexBuffer failed!\n");
+      }
 
       // Bind input textures and samplers
       for (int i = 0; i < (int)Textures.Size(); ++i) {
@@ -214,8 +225,8 @@ public:
                                   0);
       }
 
-      // Draw quad (Triangle Strip of 3 vertices = 1 triangle covering the screen)
-      encoder->drawPrimitives(MTL::PrimitiveTypeTriangleStrip, (NS::UInteger)FFlatVertexBuffer::PRESENT_INDEX, (NS::UInteger)3);
+      // Draw quad (1 triangle covering the screen)
+      encoder->drawPrimitives(MTL::PrimitiveTypeTriangle, (NS::UInteger)FFlatVertexBuffer::PRESENT_INDEX, (NS::UInteger)3);
       if (mt_debug) Printf("Metal: PPRenderState::Draw - called drawPrimitives\n");
     } else if (mt_debug) {
         Printf("Metal: PPRenderState::Draw - FAILED to get pipeline state\n");
@@ -299,22 +310,26 @@ void MtPostprocess::ImageTransitionScene(bool undefinedSrcLayout) {
 
 void MtPostprocess::BlitSceneToPostprocess() {
   fb->GetRenderState()->EndRenderPass();
+  fb->GetCommands()->FlushCommands(false); // Commit 3D scene work
 
   auto buffers = fb->GetBuffers();
   mCurrentPipelineImage = 0;
 
-  // Use a temporary command buffer for the blit to ensure absolute isolation on Intel drivers
-  MTL::CommandBuffer *tmpBuffer = fb->device->commandQueue->commandBuffer();
-  if (!tmpBuffer) return;
+  // Use a dedicated blit command buffer for Intel driver stability
+  MTL::CommandBuffer *blitCmdBuf = fb->GetCommands()->GetBlitCommandBuffer();
+  if (!blitCmdBuf) return;
 
-  auto blitEncoder = tmpBuffer->blitCommandEncoder();
-  if (!blitEncoder) return;
+  auto blitEncoder = blitCmdBuf->blitCommandEncoder();
+  if (!blitEncoder) {
+      blitCmdBuf->release();
+      return;
+  }
 
   auto src = buffers->SceneColor->GetTexture();
   auto dst = buffers->PipelineImage[0]->GetTexture();
 
   if (mt_debug) {
-      Printf("Metal: BlitSceneToPostprocess (Isolated) src=%p dst=%p\n", src, dst);
+      Printf("Metal: BlitSceneToPostprocess (Synchronous) src=%p dst=%p\n", src, dst);
   }
 
   if (src && dst) {
@@ -323,12 +338,14 @@ void MtPostprocess::BlitSceneToPostprocess() {
   }
 
   blitEncoder->endEncoding();
-  tmpBuffer->commit();
-  tmpBuffer->waitUntilCompleted(); // Absolute sync
+  blitCmdBuf->commit();
+  blitCmdBuf->waitUntilCompleted(); // Wait for blit to finish
+  blitCmdBuf->release();
 }
 
 void MtPostprocess::BlitCurrentToImage(MTL::Texture *dstimage) {
   fb->GetRenderState()->EndRenderPass();
+  fb->GetCommands()->FlushCommands(false); // Commit current work
 
   auto srcimage =
       fb->GetBuffers()->PipelineImage[mCurrentPipelineImage]->GetTexture();
@@ -342,11 +359,14 @@ void MtPostprocess::BlitCurrentToImage(MTL::Texture *dstimage) {
 
   // If formats match, use blit encoder
   if (srcimage->pixelFormat() == dstimage->pixelFormat()) {
-    auto cmdBuffer = fb->GetCommands()->GetBlitCommandBuffer();
-    auto blitEncoder = cmdBuffer->blitCommandEncoder();
+    auto blitCmdBuf = fb->GetCommands()->GetBlitCommandBuffer();
+    auto blitEncoder = blitCmdBuf->blitCommandEncoder();
     blitEncoder->copyFromTexture(srcimage, dstimage);
     static_cast<MtRenderState*>(fb->GetRenderState())->MarkAsFilled(dstimage);
     blitEncoder->endEncoding();
+    blitCmdBuf->commit();
+    blitCmdBuf->waitUntilCompleted();
+    blitCmdBuf->release();
   } else {
     // Use a simple draw call to convert formats
     // We can use a simple draw pass here

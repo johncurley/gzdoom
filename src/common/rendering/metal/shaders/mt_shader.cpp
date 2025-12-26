@@ -591,6 +591,31 @@ bool MtShaderManager::CompileNextShader() {
   return false; // Not done yet
 }
 
+static void PatchVertexShader(std::string &source, const std::string &shadername) {
+  // GZDoom shaders expect OpenGL NDC (-1..1 for all axes, Y up)
+  // Metal expects 0..1 for Z, and we want to Y-flip 3D only to match GZDoom's RenderTextureIsFlipped(true)
+  
+  // Case 1: Standard projection
+  size_t pos = source.find("gl_Position = ProjectionMatrix * eyeCoordPos;");
+  if (pos != std::string::npos) {
+      if (mt_debug) Printf("Metal: Patching vertex shader %s (Standard Projection) for coordinate system.\n", shadername.c_str());
+      source.replace(pos, strlen("gl_Position = ProjectionMatrix * eyeCoordPos;"),
+          "gl_Position = ProjectionMatrix * eyeCoordPos;\n"
+          "gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;\n" // Map -1..1 to 0..1
+      );
+  }
+  
+  // Case 2: Direct projection (used by PP shaders like screenquad.vp)
+  size_t pos2 = source.find("gl_Position = PositionInProjection;");
+  if (pos2 != std::string::npos) {
+      if (mt_debug) Printf("Metal: Patching vertex shader %s (Direct Projection) for coordinate system.\n", shadername.c_str());
+      source.replace(pos2, strlen("gl_Position = PositionInProjection;"),
+          "gl_Position = PositionInProjection;\n"
+          "gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;\n" // Map -1..1 to 0..1
+      );
+  }
+}
+
 std::shared_ptr<MtShaderModule>
 MtShaderManager::LoadVertShader(const std::string &shadername,
                                 const char *vert_lump, const char *defines) {
@@ -610,20 +635,7 @@ MtShaderManager::LoadVertShader(const std::string &shadername,
   code += "\n#line 1\n";
   std::string source = LoadPrivateShaderLump(vert_lump);
 
-  // Patch source to handle Metal coordinate system (Y-flip and Z range 0..1)
-  // GZDoom shaders expect OpenGL NDC (-1..1 for all axes, Y up)
-  // Metal expects 0..1 for Z, and we want to Y-flip 3D only to match GZDoom's RenderTextureIsFlipped(true)
-  size_t pos = source.find("gl_Position = ProjectionMatrix * eyeCoordPos;");
-  if (pos != std::string::npos) {
-      if (mt_debug) Printf("Metal: Patching vertex shader %s for coordinate system.\n", shadername.c_str());
-      source.replace(pos, strlen("gl_Position = ProjectionMatrix * eyeCoordPos;"),
-          "gl_Position = ProjectionMatrix * eyeCoordPos;\n"
-          "if (ProjectionMatrix[3][3] < 0.5) gl_Position.y = -gl_Position.y;\n" // Flip Y for 3D (perspective) only
-          "gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;\n" // Map -1..1 to 0..1
-      );
-  } else {
-      if (mt_debug) Printf("Metal: WARNING - Failed to patch vertex shader %s! Coordinate system may be wrong.\n", shadername.c_str());
-  }
+  PatchVertexShader(source, shadername);
 
   code += source;
 
@@ -734,7 +746,7 @@ void MtShaderManager::ClearCache() {
 
 std::string MtShaderManager::GetCachePath(const std::string &key) {
   FString path = M_GetCachePath(true);
-  path += "/metal_sh_v8_";
+  path += "/metal_sh_v9_";
   if (mt_debug) Printf("Metal: Cache path for key %s: %s\n", key.c_str(), path.GetChars());
   // Simple alphanumeric key
   for (char c : key) {
@@ -904,8 +916,11 @@ MtPPShader::MtPPShader(MetalRenderDevice *fb, PPShader *shader) : fb(fb) {
   // but we do need the prolog.
   vertCode += prolog.GetChars();
   vertCode += "\n#line 1\n";
-  vertCode += fb->GetShaderManager()->LoadPrivateShaderLump(
+  
+  std::string vertSource = fb->GetShaderManager()->LoadPrivateShaderLump(
       shader->VertexShader.GetChars());
+  PatchVertexShader(vertSource, shader->VertexShader.GetChars());
+  vertCode += vertSource;
 
   // Compile fragment shader
   std::string fragCode = "#version 450\n";

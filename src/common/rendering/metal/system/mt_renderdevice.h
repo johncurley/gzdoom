@@ -25,18 +25,6 @@ class MetalLayer;
 class MetalDrawable;
 } // namespace CA
 
-// RAII guard for the inflight frames semaphore
-struct SemaphoreGuard {
-  dispatch_semaphore_t sem;
-  bool signaled = false;
-  SemaphoreGuard(dispatch_semaphore_t s) : sem(s) {}
-  ~SemaphoreGuard() {
-    if (!signaled)
-      dispatch_semaphore_signal(sem);
-  }
-  void Handled() { signaled = true; }
-};
-
 struct FRenderViewpoint;
 class MtSamplerManager;
 class MtBufferManager;
@@ -64,6 +52,13 @@ class MetalRenderDevice : public SystemBaseFrameBuffer {
 
 public:
   std::shared_ptr<MetalDevice> device;
+  std::mutex mRecycleMutex;
+  bool mIsDestroyed = false;
+
+  // Resource recycling bin to keep buffers alive until GPU is done
+  std::vector<MTL::Buffer *> mBufferRecycleBin[3];
+  std::vector<MTL::Texture *> mTextureRecycleBin[3];
+  int mCurrentFrameRecycleIndex = 0;
 
   // Manager accessors
   MtCommandBufferManager *GetCommands() { return mCommands.get(); }
@@ -145,7 +140,7 @@ private:
                          std::function<void(IntRect &)> renderFunc) override;
   void PrintStartupLog();
   void CopyScreenToBuffer(int w, int h, uint8_t *data) override;
-  void PresentFrame(void *drawable, SemaphoreGuard *guard);
+  void PresentFrame(void *drawable);
 
   // Manager instances (following Vulkan pattern)
   std::unique_ptr<MtCommandBufferManager> mCommands;
@@ -164,12 +159,6 @@ private:
 
   bool mVSync = false;
   dispatch_semaphore_t mInflightFramesSemaphore;
-
-  // Resource recycling bin to keep buffers alive until GPU is done
-  std::vector<MTL::Buffer *> mBufferRecycleBin[3];
-  std::vector<MTL::Texture *> mTextureRecycleBin[3];
-  int mCurrentFrameRecycleIndex = 0;
-  std::mutex mRecycleMutex;
 };
 
 class CMetalError : public CEngineError {

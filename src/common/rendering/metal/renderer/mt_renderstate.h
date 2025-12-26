@@ -60,6 +60,7 @@ public:
   void BeginRenderPass();
   void EndRenderPass();
   void EndFrame();
+  void ResetApplyCount() { mApplyCount = 0; }
 
   MTL::RenderCommandEncoder *GetEncoder() { return mEncoder; }
   const auto &GetRenderTarget() const { return mRenderTarget; }
@@ -111,13 +112,14 @@ protected:
   int mColorMask = 15;
   int mCullMode = 0;
   bool mCullModeChanged = true;
+  bool mPipelineBound = false;
 
   PushConstants mPushConstants = {};
 
-  MTL::Buffer *mBoundBuffers[16] = { nullptr };
-  uint32_t mBoundOffsets[16] = { 0 };
-  MTL::Buffer *mLastBoundBuffers[16] = { nullptr };
-  uint32_t mLastBoundOffsets[16] = { 0 };
+  MTL::Buffer *mBoundBuffers[32] = { nullptr };
+  uint32_t mBoundOffsets[32] = { 0 };
+  MTL::Buffer *mLastBoundBuffers[32] = { nullptr };
+  uint32_t mLastBoundOffsets[32] = { 0 };
 
   uint32_t mLastViewpointOffset = 0xffffffff;
   uint32_t mLastMatricesOffset = 0xffffffff;
@@ -145,5 +147,6 @@ protected:
     int Format = 0;  // MTLPixelFormat
     int Samples = 1; // Sample count
     int DrawBuffers = 1;
+    bool IsSwapChain = false;
   } mRenderTarget;
 };

@@ -132,21 +132,27 @@ MtPipelineStateManager::GetPPPipelineState(MtShaderProgram *program,
   desc->setFragmentFunction(program->frag->fragmentFunction);
 
   auto vertexDesc = MTL::VertexDescriptor::alloc()->init();
-  // Pos (x, z, y) - FFlatVertex layout.
-  // This maps FFlatVertex.x to Position.x, FFlatVertex.z to Position.y, and FFlatVertex.y to Position.z.
-  // For the screen quad, FFlatVertex.y is typically 0, and x/z are used for NDC.
+  
+  // Define standard attributes for PP
   auto attr0 = vertexDesc->attributes()->object(0);
-  attr0->setFormat(MTL::VertexFormatFloat3);
+  attr0->setFormat(MTL::VertexFormatFloat2); 
   attr0->setOffset(offsetof(FFlatVertex, x));
   attr0->setBufferIndex(0);
   
-  // TexCoord (u, v)
   auto attr1 = vertexDesc->attributes()->object(1);
-  attr1->setFormat(MTL::VertexFormatFloat2); // vec2
+  attr1->setFormat(MTL::VertexFormatFloat2); 
   attr1->setOffset(offsetof(FFlatVertex, u));
   attr1->setBufferIndex(0);
 
-  vertexDesc->layouts()->object(0)->setStride(sizeof(FFlatVertex)); // FFlatVertex size
+  // Robustly define all remaining attributes to satisfy Metal driver validation
+  for (int i = 2; i < 16; i++) {
+      auto attr = vertexDesc->attributes()->object(i);
+      attr->setFormat(MTL::VertexFormatFloat4); // Default to something safe
+      attr->setOffset(0);
+      attr->setBufferIndex(0);
+  }
+
+  vertexDesc->layouts()->object(0)->setStride(sizeof(FFlatVertex)); // 32 bytes
   desc->setVertexDescriptor(vertexDesc);
 
   auto colorAttachment = desc->colorAttachments()->object(0);
@@ -287,10 +293,10 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
   size_t stride = vertexBuffer ? vertexBuffer->GetStride() : ((key.VertexFormat >> 8) & 0xFF);
   if (stride == 0) stride = sizeof(FFlatVertex);
 
+  auto vertexDesc = MTL::VertexDescriptor::alloc()->init();
+
   // Configure vertex descriptor
   if (vertexBuffer && vertexBuffer->GetNumAttributes() > 0) {
-    auto vertexDesc = MTL::VertexDescriptor::alloc()->init();
-
     int numAttrs = vertexBuffer->GetNumAttributes();
     const FVertexBufferAttribute *attrs = vertexBuffer->GetAttributes();
 
@@ -329,138 +335,43 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
       attrDesc->setOffset(attrs[i].offset);
       attrDesc->setBufferIndex(attrs[i].binding);
     }
-
-    // Fix: Ensure all potentially required attributes (2-8) are defined if the shader expects them but the buffer doesn't provide them.
-    // This aliases them to existing attributes to satisfy Metal validation.
-    auto attr2 = vertexDesc->attributes()->object(2); // aColor
-    if (attr2->format() == MTL::VertexFormatInvalid) {
-        attr2->setFormat(MTL::VertexFormatUChar4Normalized);
-        attr2->setOffset(0); // Alias to Position (reads first 4 bytes as color)
-        attr2->setBufferIndex(0);
-    }
-    // Attribute 3: aVertex2
-    auto attr3 = vertexDesc->attributes()->object(3);
-    if (attr3->format() == MTL::VertexFormatInvalid) {
-        if (stride == 24) {
-             // Alias to TexCoord (offset 12) for 2D vertex buffer to avoid reading out of bounds
-             // FFlatVertex 24: Pos(0-11), UV(12-19), Color(20-23)
-             attr3->setFormat(MTL::VertexFormatFloat2);
-             attr3->setOffset(offsetof(FFlatVertex, u)); 
-             attr3->setBufferIndex(0);
-        } else {
-             // Alias to Position for 32-byte buffer
-             attr3->setFormat(MTL::VertexFormatFloat2);
-             attr3->setOffset(0); 
-             attr3->setBufferIndex(0);
-        }
-    }
-    auto attr4 = vertexDesc->attributes()->object(4); // aNormal
-    if (attr4->format() == MTL::VertexFormatInvalid) {
-        attr4->setFormat(MTL::VertexFormatFloat3);
-        attr4->setOffset(0); // Alias to Position
-        attr4->setBufferIndex(0);
-    }
-    auto attr5 = vertexDesc->attributes()->object(5); // aNormal2
-    if (attr5->format() == MTL::VertexFormatInvalid) {
-        attr5->setFormat(MTL::VertexFormatFloat3);
-        attr5->setOffset(0); // Alias to Position
-        attr5->setBufferIndex(0);
-    }
-    auto attr6 = vertexDesc->attributes()->object(6); // aLightmap
-    if (attr6->format() == MTL::VertexFormatInvalid) {
-        if (stride == 24) {
-             // Alias to TexCoord (offset 12) for 2D
-             attr6->setFormat(MTL::VertexFormatFloat2);
-             attr6->setOffset(offsetof(FFlatVertex, u));
-             attr6->setBufferIndex(0);
-        } else {
-             // Alias to Position for 32-byte
-             attr6->setFormat(MTL::VertexFormatFloat2);
-             attr6->setOffset(0);
-             attr6->setBufferIndex(0);
-        }
-    }
-    auto attr7 = vertexDesc->attributes()->object(7); // aBoneWeight
-    if (attr7->format() == MTL::VertexFormatInvalid) {
-        attr7->setFormat(MTL::VertexFormatFloat4);
-        attr7->setOffset(0); // Alias to Position
-        attr7->setBufferIndex(0);
-    }
-    auto attr8 = vertexDesc->attributes()->object(8); // aBoneSelector
-    if (attr8->format() == MTL::VertexFormatInvalid) {
-        attr8->setFormat(MTL::VertexFormatUInt4);
-        attr8->setOffset(0); // Alias to Position
-        attr8->setBufferIndex(0);
-    }
-
-    // Configure buffer layouts
-    int numBindings = vertexBuffer->GetBindingPoints();
-    for (int i = 0; i < numBindings; i++) {
-      auto layoutDesc = vertexDesc->layouts()->object(i);
-      layoutDesc->setStride(stride);
-      layoutDesc->setStepFunction(MTL::VertexStepFunctionPerVertex);
-    }
-
-    desc->setVertexDescriptor(vertexDesc);
-    vertexDesc->release();
   } else {
-    // Fallback: Create a basic vertex descriptor for 2D rendering if no buffer
-    // provided This is useful for ClearScreen or other internal draws
-    auto vertexDesc = MTL::VertexDescriptor::alloc()->init();
-
+    // Fallback: Create a basic vertex descriptor for internal draws
     vertexDesc->layouts()->object(0)->setStride(stride);
-    vertexDesc->layouts()->object(0)->setStepFunction(
-        MTL::VertexStepFunctionPerVertex);
+    vertexDesc->layouts()->object(0)->setStepFunction(MTL::VertexStepFunctionPerVertex);
 
-    // Attribute 0: Position (float3)
-    vertexDesc->attributes()->object(0)->setFormat(MTL::VertexFormatFloat3);
-    vertexDesc->attributes()->object(0)->setOffset(offsetof(FFlatVertex, x));
+    // Attribute 0: Position. 
+    vertexDesc->attributes()->object(0)->setFormat(MTL::VertexFormatFloat2);
+    vertexDesc->attributes()->object(0)->setOffset(0); 
     vertexDesc->attributes()->object(0)->setBufferIndex(0);
 
-    // Attribute 1: TexCoord (float2)
+    // Attribute 1: TexCoord.
     vertexDesc->attributes()->object(1)->setFormat(MTL::VertexFormatFloat2);
-    vertexDesc->attributes()->object(1)->setOffset(offsetof(FFlatVertex, u));
+    vertexDesc->attributes()->object(1)->setOffset(12);
     vertexDesc->attributes()->object(1)->setBufferIndex(0);
-
-    // Attribute 2: Color (uchar4 normalized)
-    if (stride == 24) {
-        vertexDesc->attributes()->object(2)->setFormat(MTL::VertexFormatUChar4Normalized);
-        vertexDesc->attributes()->object(2)->setOffset(20); // color0 offset in TwoDVertex
-        vertexDesc->attributes()->object(2)->setBufferIndex(0);
-    } else {
-        // Fallback for FFlatVertex which has no color - alias to position to avoid validation errors
-        vertexDesc->attributes()->object(2)->setFormat(MTL::VertexFormatUChar4Normalized);
-        vertexDesc->attributes()->object(2)->setOffset(offsetof(FFlatVertex, x));
-        vertexDesc->attributes()->object(2)->setBufferIndex(0);
-    }
-
-    // Attribute 3: aVertex2 (float2) - Points to TexCoord if stride is 24, or lindex if 32
-    if (stride == 32) {
-        vertexDesc->attributes()->object(3)->setFormat(MTL::VertexFormatFloat);
-        vertexDesc->attributes()->object(3)->setOffset(offsetof(FFlatVertex, lindex));
-        vertexDesc->attributes()->object(3)->setBufferIndex(0);
-    } else {
-        // Fallback for 24-byte FFlatVertex or TwoDVertex
-        vertexDesc->attributes()->object(3)->setFormat(MTL::VertexFormatFloat2);
-        vertexDesc->attributes()->object(3)->setOffset(offsetof(FFlatVertex, u));
-        vertexDesc->attributes()->object(3)->setBufferIndex(0);
-    }
-
-    // Attribute 6: aLightmap (float2) - Points to lu, lv if 32 bytes
-    if (stride == 32) {
-        vertexDesc->attributes()->object(6)->setFormat(MTL::VertexFormatFloat2);
-        vertexDesc->attributes()->object(6)->setOffset(offsetof(FFlatVertex, lu));
-        vertexDesc->attributes()->object(6)->setBufferIndex(0);
-    } else {
-        // Fallback for 24-byte
-        vertexDesc->attributes()->object(6)->setFormat(MTL::VertexFormatFloat2);
-        vertexDesc->attributes()->object(6)->setOffset(offsetof(FFlatVertex, u));
-        vertexDesc->attributes()->object(6)->setBufferIndex(0);
-    }
-
-    desc->setVertexDescriptor(vertexDesc);
-    vertexDesc->release();
   }
+
+  // Robustly define all attributes 0-15 to satisfy Metal validation for ANY shader
+  for (int i = 0; i < 16; i++) {
+      auto attr = vertexDesc->attributes()->object(i);
+      if (attr->format() == MTL::VertexFormatInvalid) {
+          // Map unknown attributes to a safe default aliasing attribute 0
+          attr->setFormat(MTL::VertexFormatFloat4);
+          attr->setOffset(0);
+          attr->setBufferIndex(0);
+      }
+  }
+
+  // Configure buffer layouts
+  int numBindings = vertexBuffer ? vertexBuffer->GetBindingPoints() : 1;
+  for (int i = 0; i < numBindings; i++) {
+    auto layoutDesc = vertexDesc->layouts()->object(i);
+    layoutDesc->setStride(stride);
+    layoutDesc->setStepFunction(MTL::VertexStepFunctionPerVertex);
+  }
+
+  desc->setVertexDescriptor(vertexDesc);
+  vertexDesc->release();
 
   // Configure color attachments
   int numColorAttachments = key.DrawBufferCount;

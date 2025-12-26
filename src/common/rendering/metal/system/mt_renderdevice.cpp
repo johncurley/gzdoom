@@ -60,13 +60,13 @@
 #endif
 
 // Max number of frames to queue for rendering
-constexpr int MaxFramesInFlight = 3;
+constexpr int MaxFramesInFlight = 2;
 
 EXTERN_CVAR(Int, gl_tonemap)
 EXTERN_CVAR(Int, screenblocks)
 EXTERN_CVAR(Bool, cl_capfps)
 
-CVAR(Bool, mt_debug, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Bool, mt_debug, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 void MetalError(const char *text) { throw CMetalError(text); }
 
@@ -78,6 +78,7 @@ void MetalPrintLog(const char *typestr, const std::string &msg) {
 MetalRenderDevice::MetalRenderDevice(void *hMonitor, bool fullscreen)
     : Super(hMonitor, fullscreen) {
   mInflightFramesSemaphore = dispatch_semaphore_create(MaxFramesInFlight);
+  mPipelineNbr = MaxFramesInFlight; // Match vertex buffer pipelining to frames in flight
   device = std::make_shared<MetalDevice>();
   device->device = MTL::CreateSystemDefaultDevice();
 
@@ -92,6 +93,11 @@ MetalRenderDevice::MetalRenderDevice(void *hMonitor, bool fullscreen)
 }
 
 MetalRenderDevice::~MetalRenderDevice() {
+  mIsDestroyed = true;
+  
+  // Safely reset all post-processing backend resources while we are still alive
+  PPResource::ResetAll();
+
   if (mCommands) {
     mCommands->WaitForCommands(true);
   }
@@ -127,7 +133,7 @@ MetalRenderDevice::~MetalRenderDevice() {
     }
   }
 
-  for (int i = 0; i < 3; i++) {
+  for (int i = 0; i < 2; i++) {
     for (auto *buffer : mBufferRecycleBin[i]) {
       buffer->release();
     }
@@ -192,7 +198,7 @@ void MetalRenderDevice::InitializeState() {
   mShaderManager.reset(new MtShaderManager(this));
   mMtRenderState.reset(new MtRenderState(this));
 
-  mVertexData = new FFlatVertexBuffer(GetWidth(), GetHeight());
+  mVertexData = new FFlatVertexBuffer(GetWidth(), GetHeight(), mPipelineNbr);
   mSkyData = new FSkyVertexBuffer;
   mViewpoints = new HWViewpointBuffer;
   mLights = new FLightBuffer();
@@ -202,8 +208,7 @@ void MetalRenderDevice::InitializeState() {
 }
 
 void MetalRenderDevice::Update() {
-  NS::AutoreleasePool *pool = NS::AutoreleasePool::alloc()->init();
-  SemaphoreGuard guard(mInflightFramesSemaphore);
+  // NS::AutoreleasePool *pool = NS::AutoreleasePool::alloc()->init();
 
   if (mt_debug) Printf("Metal: Update START\n");
 
@@ -211,14 +216,7 @@ void MetalRenderDevice::Update() {
   Flush3D.Reset();
   Flush3D.Clock();
 
-  // 1. Blit scene from SceneColor to PipelineImage[0]
-  if (mPostprocess) {
-    if (mt_debug) Printf("Metal: Update - Blitting scene\n");
-    mPostprocess->BlitSceneToPostprocess();
-  }
-
-  // FORCE RECOMPILE: December 25 V8 Final Audit Build
-  // 2. Set target and Draw 2D into PipelineImage[0] (where the scene is now)
+  // 1. Set target and Draw 2D into PipelineImage[0] (where the scene is now)
   if (mPostprocess) {
     mPostprocess->SetActiveRenderTarget();
   }
@@ -260,10 +258,7 @@ void MetalRenderDevice::Update() {
 
     // 4. Present
     if (mt_debug) Printf("Metal: Update - Presenting frame\n");
-    PresentFrame(mCurrentDrawable, &guard);
-
-    mCurrentDrawable->release();
-    mCurrentDrawable = nullptr;
+    PresentFrame(mCurrentDrawable);
   }
 
   if (mCommands)
@@ -274,10 +269,17 @@ void MetalRenderDevice::Update() {
   if (mt_debug) Printf("Metal: Update END\n");
 
   Super::Update();
-  pool->release();
+  // pool->release();
+
+  // Release drawable AFTER the pool is popped to ensure any references 
+  // in the pool (like in RenderPassDescriptors) are already gone.
+  if (mCurrentDrawable) {
+    mCurrentDrawable->release();
+    mCurrentDrawable = nullptr;
+  }
 }
 
-void MetalRenderDevice::PresentFrame(void *drawablePtr, SemaphoreGuard *guard) {
+void MetalRenderDevice::PresentFrame(void *drawablePtr) {
   if (!drawablePtr)
     return;
 
@@ -287,11 +289,7 @@ void MetalRenderDevice::PresentFrame(void *drawablePtr, SemaphoreGuard *guard) {
     return;
 
   auto commandBuffer = (MTL::CommandBuffer *)cmdBufPtr;
-  // NOTE: Semaphore signal moved to CommandBufferManager::GetRenderCommandBuffer completion handler
-  // to support robust inflight management across multiple command buffers per frame.
-  if (guard) guard->Handled();
   commandBuffer->presentDrawable(drawable);
-  commandBuffer->commit();
 }
 
 void MetalRenderDevice::BeginFrame() {
@@ -306,12 +304,14 @@ void MetalRenderDevice::BeginFrame() {
   mLights->Clear();
   mBones->Clear();
 
-  NS::AutoreleasePool *pool = NS::AutoreleasePool::alloc()->init();
+  // Wait for GPU backpressure
+  if (mt_debug) Printf("Metal: BeginFrame - Waiting for semaphore\n");
   dispatch_semaphore_wait(mInflightFramesSemaphore, DISPATCH_TIME_FOREVER);
+  if (mt_debug) Printf("Metal: BeginFrame - Semaphore acquired\n");
 
   {
     std::lock_guard<std::mutex> lock(mRecycleMutex);
-    mCurrentFrameRecycleIndex = (mCurrentFrameRecycleIndex + 1) % 3;
+    mCurrentFrameRecycleIndex = (mCurrentFrameRecycleIndex + 1) % 2;
     for (auto *buffer : mBufferRecycleBin[mCurrentFrameRecycleIndex]) {
       buffer->release();
     }
@@ -351,6 +351,9 @@ void MetalRenderDevice::BeginFrame() {
   mSaveBuffers->BeginFrame(SAVEPICWIDTH, SAVEPICHEIGHT, SAVEPICWIDTH,
                            SAVEPICHEIGHT);
 
+  // Correctly cycle to the next set of buffers for the new frame
+  mVertexData->NextPipelineBuffer();
+
   if (mCommands)
     mCommands->BeginFrame();
 
@@ -360,8 +363,12 @@ void MetalRenderDevice::BeginFrame() {
   if (mResourceBindingManager)
     mResourceBindingManager->BeginFrame();
 
+  // Set default render target to PipelineImage[0] for 2D/UI drawn before Update()
+  if (mPostprocess) {
+    mPostprocess->SetActiveRenderTarget();
+  }
+
   if (mt_debug) Printf("Metal: BeginFrame END\n");
-  pool->release();
 }
 
 bool MetalRenderDevice::CompileNextShader() {
@@ -409,6 +416,10 @@ void MetalRenderDevice::WaitForCommands(bool finish) {
 
 void MetalRenderDevice::RecycleBuffer(MTL::Buffer *buffer) {
   if (buffer) {
+    if (mIsDestroyed) {
+        buffer->release();
+        return;
+    }
     std::lock_guard<std::mutex> lock(mRecycleMutex);
     mBufferRecycleBin[mCurrentFrameRecycleIndex].push_back(buffer);
   }
@@ -416,6 +427,10 @@ void MetalRenderDevice::RecycleBuffer(MTL::Buffer *buffer) {
 
 void MetalRenderDevice::RecycleTexture(MTL::Texture *texture) {
   if (texture) {
+    if (mIsDestroyed) {
+        texture->release();
+        return;
+    }
     std::lock_guard<std::mutex> lock(mRecycleMutex);
     mTextureRecycleBin[mCurrentFrameRecycleIndex].push_back(texture);
   }
@@ -480,8 +495,12 @@ void MetalRenderDevice::Draw2D() {
   mViewpoints->Set2D(*mMtRenderState, GetWidth(), GetHeight());
 
   if (mt_debug) Printf("Metal: Update - Calling Draw2D\n");
+  
+  // No local pool here - it causes encoders created inside ::Draw2D to be 
+  // destroyed before endEncoding is called when this local pool is released.
   ::Draw2D(twod, *mMtRenderState);
-}void MetalRenderDevice::RenderTextureView(
+}
+void MetalRenderDevice::RenderTextureView(
     FCanvasTexture *tex, std::function<void(IntRect &)> renderFunc) {
   auto baseLayer = static_cast<MtHardwareTexture *>(tex->GetHardwareTexture(0, 0));
   auto image = baseLayer->GetImage();

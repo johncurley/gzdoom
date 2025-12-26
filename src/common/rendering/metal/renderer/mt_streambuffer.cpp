@@ -9,32 +9,45 @@
 #include "matrix.h"
 #include "metal/system/mt_renderdevice.h"
 #include "mt_streambuffer.h"
+#include "c_cvars.h"
+#include "printf.h"
 #include <memory>
 
-MtStreamBuffer::MtStreamBuffer(MetalRenderDevice *fb, size_t structSize)
+EXTERN_CVAR(Bool, mt_debug)
+
+MtStreamBuffer::MtStreamBuffer(MetalRenderDevice *fb, size_t structSize, size_t capacity)
     : fb(fb) {
   // Metal requires 256-byte alignment for buffer offsets
   mBlockSize = (static_cast<uint32_t>(structSize) + 255) & ~255;
 
-  // Allocate 8MB ring buffer (following Vulkan pattern)
-  mBufferSize = 8 * 1024 * 1024;
+  // Use provided capacity or fallback to 8MB if not specified
+  if (capacity > 0)
+      mBufferSize = mBlockSize * capacity;
+  else
+      mBufferSize = 8 * 1024 * 1024;
 
-  // Create MTLBuffer with StorageModeShared for CPU-GPU shared memory
-  // This allows direct CPU writes without explicit synchronization
-  mBuffer = fb->device->device->newBuffer(mBufferSize, MTL::StorageModeShared);
+  if (mt_debug) {
+      Printf("Metal: MtStreamBuffer allocated %zu bytes (structSize=%zu, capacity=%zu)\n", 
+             mBufferSize, structSize, capacity);
+  }
 
-  if (!mBuffer) {
-    I_FatalError(
-        "MtStreamBuffer: Failed to allocate Metal buffer of size %zu bytes",
-        mBufferSize);
+  for (int i = 0; i < 2; i++) {
+    mBuffers[i] = fb->device->device->newBuffer(mBufferSize, MTL::StorageModeShared);
+    if (!mBuffers[i]) {
+      I_FatalError(
+          "MtStreamBuffer: Failed to allocate Metal buffer of size %zu bytes",
+          mBufferSize);
+    }
   }
 }
 
 MtStreamBuffer::~MtStreamBuffer() {
-  // Release Metal buffer
-  if (mBuffer) {
-    mBuffer->release();
-    mBuffer = nullptr;
+  // Release Metal buffers
+  for (int i = 0; i < 2; i++) {
+    if (mBuffers[i]) {
+      mBuffers[i]->release();
+      mBuffers[i] = nullptr;
+    }
   }
 }
 
@@ -53,12 +66,12 @@ uint32_t MtStreamBuffer::NextStreamDataBlock() {
 }
 
 uint8_t *MtStreamBuffer::GetBufferPointer() const {
-  if (!mBuffer)
+  auto buf = mBuffers[mBufferIndex];
+  if (!buf)
     return nullptr;
 
   // Metal buffers with StorageModeShared are CPU-accessible
-  // contents() returns a pointer to the buffer's CPU-side memory
-  return (uint8_t *)mBuffer->contents();
+  return (uint8_t *)buf->contents();
 }
 
 // ============================================================================
@@ -67,7 +80,7 @@ uint8_t *MtStreamBuffer::GetBufferPointer() const {
 
 MtStreamBufferWriter::MtStreamBufferWriter(MetalRenderDevice *fb)
     : mBuffer(std::make_unique<MtStreamBuffer>(fb, sizeof(StreamData) *
-                                                       MAX_STREAM_DATA)) {}
+                                                       MAX_STREAM_DATA, 300)) {}
 
 bool MtStreamBufferWriter::Write(const StreamData &data) {
   mDataIndex++;
@@ -103,7 +116,7 @@ uint32_t MtStreamBufferWriter::StreamDataOffset() const {
 /////////////////////////////////////////////////////////////////////////////
 
 MtMatrixBufferWriter::MtMatrixBufferWriter(MetalRenderDevice *fb)
-    : mBuffer(std::make_unique<MtStreamBuffer>(fb, sizeof(MatricesUBO))) {
+    : mBuffer(std::make_unique<MtStreamBuffer>(fb, sizeof(MatricesUBO), 50000)) {
   mIdentityMatrix.loadIdentity();
 }
 
