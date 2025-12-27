@@ -36,7 +36,7 @@ void PostMouseMove(int x, int y);
 
 enum
 {
-	MAXEVENTS = 128
+	MAXEVENTS = 4096
 };
 
 extern	event_t 		events[MAXEVENTS];

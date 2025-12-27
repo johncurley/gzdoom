@@ -43,6 +43,7 @@
 #include "c_cvars.h"
 #include "cmdlib.h"
 #include "engineerrors.h"
+#include "g_input.h"
 #include "i_system.h"
 #include "m_argv.h"
 #include "printf.h"
@@ -250,8 +251,6 @@ int DoMain(int argc, char** argv)
 
 - (BOOL)application:(NSApplication*)theApplication openFile:(NSString*)filename;
 
-- (void)processEvents:(NSTimer*)timer;
-
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender;
 
 - (void)sendExitEvent:(id)sender;
@@ -309,15 +308,6 @@ extern bool AppActive;
 	// The following call resolves this issue
 	[NSApp activateIgnoringOtherApps:YES];
 
-	// Setup timer for custom event loop using modern block-based API
-
-	__weak ApplicationController* weakSelf = self;
-	NSTimer* timer = [NSTimer scheduledTimerWithTimeInterval:0
-													  repeats:YES
-														block:^(NSTimer* _Nonnull timer) {
-		[weakSelf processEvents:timer];
-	}];
-
 	FConsoleWindow::CreateInstance();
 
 	const size_t argc = s_argv.Size();
@@ -367,31 +357,6 @@ extern bool AppActive;
 	return TRUE;
 }
 
-
-- (void)processEvents:(NSTimer*)timer
-{
-	ZD_UNUSED(timer);
-
-	@autoreleasepool {
-		while (true)
-		{
-			NSEvent* event = [NSApp nextEventMatchingMask:NSEventMaskAny
-												untilDate:[NSDate dateWithTimeIntervalSinceNow:0]
-												   inMode:NSDefaultRunLoopMode
-												  dequeue:YES];
-			if (nil == event)
-			{
-				break;
-			}
-
-			I_ProcessEvent(event);
-
-			[NSApp sendEvent:event];
-		}
-
-		[NSApp updateWindows];
-	}
-}
 
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender
 {

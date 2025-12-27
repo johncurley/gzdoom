@@ -200,7 +200,23 @@ void CheckNativeMouse()
 
 void I_GetEvent()
 {
-	[[NSRunLoop currentRunLoop] limitDateForMode:NSDefaultRunLoopMode];
+	@autoreleasepool {
+		for (;;)
+		{
+			NSEvent* const event = [NSApp nextEventMatchingMask:NSEventMaskAny
+													  untilDate:[NSDate distantPast]
+														 inMode:NSDefaultRunLoopMode
+														dequeue:YES];
+			if (nil == event)
+			{
+				break;
+			}
+
+			I_ProcessEvent(event);
+
+			[NSApp sendEvent:event];
+		}
+	}
 }
 
 void I_StartTic()

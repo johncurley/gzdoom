@@ -41,8 +41,6 @@ MTL::CommandBuffer *MtCommandBufferManager::CreateNewCommandBuffer() {
           const char* errStr = desc ? desc->utf8String() : "Unknown Error";
           fprintf(stderr, "Metal: CommandBuffer %p Error: %s\n", buffer, errStr);
           MetalPrintLog("Error", errStr);
-      } else if (mt_debug) {
-          fprintf(stderr, "Metal: CommandBuffer %p completed successfully\n", buffer);
       }
   });
 

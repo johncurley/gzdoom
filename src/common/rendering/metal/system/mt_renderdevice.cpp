@@ -269,10 +269,6 @@ void MetalRenderDevice::Update() {
     mCommands->EndFrame();
   }
 
-  // Update GZDoom's frame timer after presentation.
-  // This tells the engine exactly when the previous frame finished.
-  I_SetFrameTime();
-
   twod->Clear();
 
   if (mt_debug) Printf(PRINT_LOG, "Metal: Update END\n");
