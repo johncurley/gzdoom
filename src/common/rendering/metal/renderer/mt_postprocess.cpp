@@ -119,6 +119,7 @@ public:
     
     // Explicitly set the viewport for the PP pass
     mtRenderState->SetViewport(Viewport.left, Viewport.top, Viewport.width, Viewport.height);
+    mtRenderState->SetScissor(0, 0, width, height);
 
     // Handle clearing if requested
     if (BlendMode.SrcAlpha == (uint8_t)STYLEALPHA_One &&
