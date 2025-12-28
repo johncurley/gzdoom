@@ -56,7 +56,7 @@ public:
     MTL::Texture *outputTex = nullptr;
     int width = fb->GetBuffers()->GetWidth();
     int height = fb->GetBuffers()->GetHeight();
-    MTL::PixelFormat format = MTL::PixelFormatRGBA16Float;
+    MTL::PixelFormat format = MTL::PixelFormatBGRA8Unorm;
     MTL::Texture *depthStencil = nullptr;
 
     if (customOutputTex) {
@@ -89,15 +89,15 @@ public:
           fb->GetBuffers()
               ->PipelineImage[fb->GetPostprocess()->mCurrentPipelineImage]
               ->GetTexture();
-      format = MTL::PixelFormatRGBA16Float;
+      format = MTL::PixelFormatBGRA8Unorm;
     } else if (Output.Type == PPTextureType::NextPipelineTexture) {
       int next = (fb->GetPostprocess()->mCurrentPipelineImage + 1) %
                  MtRenderBuffers::NumPipelineImages;
       outputTex = fb->GetBuffers()->PipelineImage[next]->GetTexture();
-      format = MTL::PixelFormatRGBA16Float;
+      format = MTL::PixelFormatBGRA8Unorm;
     } else if (Output.Type == PPTextureType::SceneColor) {
       outputTex = fb->GetBuffers()->SceneColor->GetTexture();
-      format = MTL::PixelFormatRGBA16Float;
+      format = MTL::PixelFormatBGRA8Unorm;
     } else if (Output.Type == PPTextureType::SceneFog) {
       outputTex = fb->GetBuffers()->SceneFog->GetTexture();
       format = MTL::PixelFormatBGRA8Unorm;
@@ -297,7 +297,7 @@ void MtPostprocess::SetActiveRenderTarget() {
       buffers->PipelineImage[mCurrentPipelineImage]->GetTexture(),
       buffers->PipelineDepthStencil->GetTexture(),
       buffers->GetWidth(),
-      buffers->GetHeight(), (int)MTL::PixelFormatRGBA16Float, 1);
+      buffers->GetHeight(), (int)MTL::PixelFormatBGRA8Unorm, 1);
   fb->GetRenderState()->SetViewport(0, 0, buffers->GetWidth(), buffers->GetHeight());
 }
 
@@ -488,5 +488,5 @@ void MtPostprocess::SetSceneRenderTarget(bool useSSAO) {
       fb->GetBuffers()->SceneColor->GetTexture(),
       fb->GetBuffers()->SceneDepthStencil->GetTexture(),
       fb->GetBuffers()->GetWidth(), fb->GetBuffers()->GetHeight(),
-      (int)MTL::PixelFormatRGBA16Float, fb->GetBuffers()->GetSceneSamples());
+      (int)MTL::PixelFormatBGRA8Unorm, fb->GetBuffers()->GetSceneSamples());
 }

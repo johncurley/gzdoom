@@ -59,7 +59,7 @@ void MtRenderBuffers::CreatePipeline(int width, int height) {
     auto desc = MTL::TextureDescriptor::alloc()->init();
     desc->setWidth(width);
     desc->setHeight(height);
-    desc->setPixelFormat(MTL::PixelFormatRGBA16Float);
+    desc->setPixelFormat(MTL::PixelFormatBGRA8Unorm);
     desc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
     desc->setStorageMode(MTL::StorageModePrivate);
 
@@ -107,7 +107,7 @@ void MtRenderBuffers::CreateSceneColor(int width, int height, int samples) {
   auto desc = MTL::TextureDescriptor::alloc()->init();
   desc->setWidth(width);
   desc->setHeight(height);
-  desc->setPixelFormat(MTL::PixelFormatRGBA16Float);
+  desc->setPixelFormat(MTL::PixelFormatBGRA8Unorm);
   desc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
   desc->setStorageMode(MTL::StorageModePrivate);
   desc->setSampleCount(samples);

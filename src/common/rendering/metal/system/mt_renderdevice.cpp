@@ -504,7 +504,7 @@ void MetalRenderDevice::SetActiveRenderTarget() {
       mActiveRenderBuffers->SceneColor->GetTexture(),
       mActiveRenderBuffers->SceneDepthStencil->GetTexture(),
       mActiveRenderBuffers->GetWidth(), mActiveRenderBuffers->GetHeight(),
-      (int)MTL::PixelFormatRGBA16Float, 1);
+      (int)MTL::PixelFormatBGRA8Unorm, 1);
 }
 void MetalRenderDevice::Draw2D() {
   if (mPostprocess) {

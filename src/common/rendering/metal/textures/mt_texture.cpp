@@ -271,12 +271,20 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
     if (mImage->GetTexture()) {
         if (mImage->GetWidth() == tex->GetWidth() && mImage->GetHeight() == tex->GetHeight()) {
             // Texture size matches, but we need to upload the new data.
+            // Wait for GPU to finish with this texture before we overwrite it.
+            fb->GetCommands()->WaitForCommands(true);
+
             FTextureBuffer texbuffer = tex->CreateTexBuffer(translation, flags | CTF_ProcessData);
             if (texbuffer.mBuffer) {
-                MTL::Region region = MTL::Region::Make2D(0, 0, mImage->GetWidth(), mImage->GetHeight());
-                mBufferPitch = mImage->GetWidth() * ((flags & CTF_Indexed) ? 1 : 4);
+                int uploadW = texbuffer.mWidth;
+                int uploadH = texbuffer.mHeight;
+                MTL::Region region = MTL::Region::Make2D(0, 0, uploadW, uploadH);
+                mBufferPitch = uploadW * ((flags & CTF_Indexed) ? 1 : 4);
                 mImage->GetTexture()->replaceRegion(region, 0, texbuffer.mBuffer, mBufferPitch);
                 
+                // Mark as filled so the renderer doesn't try to clear it if used as a target
+                static_cast<MtRenderState*>(fb->RenderState())->MarkAsFilled(mImage->GetTexture());
+
                 if (mImage->GetTexture()->mipmapLevelCount() > 1) {
                     fb->GetTextureManager()->GenerateMipmaps(mImage->GetTexture());
                 }
@@ -344,14 +352,19 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
 
     // Upload texture data
     if (texbuffer.mBuffer) {
-      MTL::Region region = MTL::Region::Make2D(0, 0, w, h);
-      mBufferPitch = w * numChannels;
+      int uploadW = texbuffer.mWidth;
+      int uploadH = texbuffer.mHeight;
+      MTL::Region region = MTL::Region::Make2D(0, 0, uploadW, uploadH);
+      mBufferPitch = uploadW * numChannels;
       
       if (mt_debug)
         Printf(PRINT_LOG, "Metal: Uploading to GPU texture %p: region %dx%d, pitch=%d\n", 
-               texture, w, h, mBufferPitch);
+               texture, uploadW, uploadH, mBufferPitch);
 
       texture->replaceRegion(region, 0, texbuffer.mBuffer, mBufferPitch);
+
+      // Mark as filled
+      static_cast<MtRenderState*>(fb->RenderState())->MarkAsFilled(texture);
 
       if (mt_debug)
         Printf(PRINT_LOG, "Metal: Uploaded %d bytes to GPU texture %p\n", 
@@ -524,8 +537,8 @@ MtPPTexture::MtPPTexture(MetalRenderDevice *fb, PPTexture *texture) : fb(fb) {
     bytesPerPixel = 4;
     break;
   case PixelFormat::Rgba16f:
-    format = MTL::PixelFormatRGBA16Float;
-    bytesPerPixel = 8;
+    format = MTL::PixelFormatBGRA8Unorm;
+    bytesPerPixel = 4;
     break;
   case PixelFormat::R32f:
     format = MTL::PixelFormatR32Float;
@@ -540,7 +553,7 @@ MtPPTexture::MtPPTexture(MetalRenderDevice *fb, PPTexture *texture) : fb(fb) {
     bytesPerPixel = 8;
     break;
   default:
-    format = MTL::PixelFormatRGBA8Unorm;
+    format = MTL::PixelFormatBGRA8Unorm;
     bytesPerPixel = 4;
     break;
   }
