@@ -146,6 +146,9 @@ MetalRenderDevice::~MetalRenderDevice() {
     mTextureRecycleBin[i].clear();
   }
 
+  if (mInFrame) {
+      dispatch_semaphore_signal(mInflightFramesSemaphore);
+  }
   dispatch_release(mInflightFramesSemaphore);
 }
 
