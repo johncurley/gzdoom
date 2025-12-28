@@ -14,6 +14,7 @@
 #include <fstream>
 #include <shadertranslator/shader_translator.h>
 #include <sstream>
+#include <regex>
 #include "common/thirdparty/superfasthash.h"
 
 EXTERN_CVAR(Bool, mt_debug)
@@ -602,26 +603,15 @@ static void PatchVertexShader(std::string &source, const std::string &shadername
   // GZDoom shaders expect OpenGL NDC (-1..1 for all axes, Y up)
   // Metal expects 0..1 for Z, and we want to Y-flip EVERYTHING to match Metal's Y-down coordinate system internally
   
-  // Case 1: Standard projection
-  size_t pos = source.find("gl_Position = ProjectionMatrix * eyeCoordPos;");
-  if (pos != std::string::npos) {
-      if (mt_debug) Printf(PRINT_LOG, "Metal: Patching vertex shader %s (Standard Projection) for coordinate system.\n", shadername.c_str());
-      source.replace(pos, strlen("gl_Position = ProjectionMatrix * eyeCoordPos;"),
-          "gl_Position = ProjectionMatrix * eyeCoordPos;\n"
-          "gl_Position.y = -gl_Position.y;\n" // Restore Y flip
-          "gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;\n" // Map -1..1 to 0..1
-      );
-  }
-  
-  // Case 2: Direct projection (used by PP shaders like screenquad.vp)
-  size_t pos2 = source.find("gl_Position = PositionInProjection;");
-  if (pos2 != std::string::npos) {
-      if (mt_debug) Printf(PRINT_LOG, "Metal: Patching vertex shader %s (Direct Projection) for coordinate system.\n", shadername.c_str());
-      source.replace(pos2, strlen("gl_Position = PositionInProjection;"),
-          "gl_Position = PositionInProjection;\n"
-          "gl_Position.y = -gl_Position.y;\n" // Restore Y flip
-          "gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;\n" // Map -1..1 to 0..1
-      );
+  std::regex glPosRegex(R"(gl_Position\s*=\s*([^;]+);)");
+  std::string patch = 
+      "gl_Position = $1;\n"
+      "    gl_Position.y = -gl_Position.y;\n"
+      "    gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;";
+
+  if (std::regex_search(source, glPosRegex)) {
+      if (mt_debug) Printf(PRINT_LOG, "Metal: Patching vertex shader %s for coordinate system.\n", shadername.c_str());
+      source = std::regex_replace(source, glPosRegex, patch);
   }
 }
 

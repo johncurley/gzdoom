@@ -559,7 +559,7 @@ void MtRenderState::ApplyMaterial() {
           }
 
           // Upload staging if needed
-          if (mtHwTexture->GetStagingBufferSize() > 0 && image->GetTexture()) {
+          if (mtHwTexture->NeedsUpload() && mtHwTexture->GetStagingBufferSize() > 0 && image->GetTexture()) {
             MTL::Texture *mtlTexture = image->GetTexture();
             int w = image->GetWidth();
             int h = image->GetHeight();
@@ -589,13 +589,12 @@ void MtRenderState::ApplyMaterial() {
 
           MTL::Texture *mtlTexture = image->GetTexture();
           if (mtlTexture) {
+            if (mt_debug) {
+                Printf(PRINT_LOG, "Metal: Binding texture %s to slot %d (W:%lu H:%lu fmt=%llu)\n", 
+                       mtHwTexture->GetDebugName().c_str(), i, mtlTexture->width(), mtlTexture->height(), (unsigned long long)mtlTexture->pixelFormat());
+            }
             mEncoder->setFragmentTexture(mtlTexture, i);
             mEncoder->setVertexTexture(mtlTexture, i);
-            
-            if (mt_debug) {
-                Printf(PRINT_LOG, "Metal: ApplyMaterial - Bound texture %p to slot %d (W:%lu H:%lu fmt=%llu)\n", 
-                       mtlTexture, i, mtlTexture->width(), mtlTexture->height(), (unsigned long long)mtlTexture->pixelFormat());
-            }
 
             // Sampler
             MtSamplerKey samplerKey;
@@ -939,7 +938,7 @@ void MtRenderState::BeginRenderPass() {
     mEncoder = cmdBuffer->renderCommandEncoder(pRPD);
     mPipelineBound = false;
     if (mEncoder) {
-        mEncoder->setFrontFacingWinding(MTL::WindingCounterClockwise);
+        mEncoder->setFrontFacingWinding(MTL::WindingClockwise);
         
         MTL::Viewport viewport;
         if (mViewportWidth >= 0) {

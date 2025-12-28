@@ -49,6 +49,7 @@
 #include "hw_lightbuffer.h"
 #include "hw_skydome.h"
 #include "hw_vrmodes.h"
+#include "hw_viewpointuniforms.h"
 #include "hwrenderer/data/hw_viewpointbuffer.h"
 #include "hwrenderer/data/shaderuniforms.h"
 #include "v_draw.h"
@@ -221,9 +222,6 @@ void MetalRenderDevice::Update() {
     mPostprocess->SetActiveRenderTarget();
   }
   
-  // Update 2D viewpoint to ensure correct projection matrices for UI
-  mViewpoints->Set2D(*mMtRenderState, GetWidth(), GetHeight());
-
   if (mt_debug) Printf(PRINT_LOG, "Metal: Update - Calling Draw2D\n");
   this->Draw2D();
 
@@ -282,6 +280,12 @@ void MetalRenderDevice::Update() {
     mCurrentDrawable->release();
     mCurrentDrawable = nullptr;
   }
+
+  mInFrame = false;
+
+  // CRITICAL: If we are in a wipe, the engine calls Update() in a loop without calling BeginFrame().
+  // We must ensure the next frame is initialized here.
+  this->BeginFrame();
 }
 
 void MetalRenderDevice::PresentFrame(void *drawablePtr) {
@@ -298,6 +302,9 @@ void MetalRenderDevice::PresentFrame(void *drawablePtr) {
 }
 
 void MetalRenderDevice::BeginFrame() {
+  if (mInFrame) return;
+  mInFrame = true;
+
   if (mt_debug) {
       Printf(PRINT_LOG, "Metal: BeginFrame START. FFlatVertex size = %zu\n", sizeof(FFlatVertex));
   }
@@ -495,9 +502,10 @@ void MetalRenderDevice::Draw2D() {
   if (mPostprocess) {
     mPostprocess->SetActiveRenderTarget();
   }
+  
   mViewpoints->Set2D(*mMtRenderState, GetWidth(), GetHeight());
 
-  if (mt_debug) Printf(PRINT_LOG, "Metal: Update - Calling Draw2D\n");
+  if (mt_debug) Printf(PRINT_LOG, "Metal: Draw2D - Using standard 2D projection\n");
   
   // No local pool here - it causes encoders created inside ::Draw2D to be 
   // destroyed before endEncoding is called when this local pool is released.
@@ -551,6 +559,7 @@ void MetalRenderDevice::CopyScreenToBuffer(int w, int h, uint8_t *data) {
   stagingBuffer->release();
 }
 FTexture *MetalRenderDevice::WipeStartScreen() {
+  if (mt_debug) Printf(PRINT_LOG, "Metal: WipeStartScreen capture starting.\n");
   SetViewportRects(nullptr);
   auto tex = new FWrapperTexture(mScreenViewport.width, mScreenViewport.height, 1);
   auto systex = static_cast<MtHardwareTexture *>(tex->GetSystemTexture());
@@ -558,6 +567,7 @@ FTexture *MetalRenderDevice::WipeStartScreen() {
   return tex;
 }
 FTexture *MetalRenderDevice::WipeEndScreen() {
+  if (mt_debug) Printf(PRINT_LOG, "Metal: WipeEndScreen capture starting.\n");
   GetPostprocess()->SetActiveRenderTarget();
   Draw2D();
   twod->Clear();

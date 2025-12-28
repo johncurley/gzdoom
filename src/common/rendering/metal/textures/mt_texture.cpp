@@ -38,9 +38,8 @@ MtHardwareTexture::MtHardwareTexture(MetalRenderDevice *fb, int numchannels)
 MtHardwareTexture::~MtHardwareTexture() {}
 
 void MtHardwareTexture::AllocateBuffer(int w, int h, int texelsize) {
-  static int allocCount = 0;
-  if (allocCount++ < 10)
-    Printf(PRINT_LOG, "Metal: AllocateBuffer called: %dx%d, texelsize=%d\n", w, h,
+  if (mt_debug)
+    Printf(PRINT_LOG, "Metal: AllocateBuffer %s: %dx%d, texelsize=%d\n", mDebugName.c_str(), w, h,
            texelsize);
 
   // Check if we need to recreate the texture
@@ -91,13 +90,14 @@ void MtHardwareTexture::AllocateBuffer(int w, int h, int texelsize) {
     mImage->SetHeight(h);
     mImage->SetFormat((int)format);
 
-    if (allocCount <= 10)
+    if (mt_debug)
       Printf(PRINT_LOG, "Metal: Texture allocated successfully: %p (%dx%d)\n", texture, w,
              h);
   }
 
   // Allocate staging buffer for CPU writes
   mStagingBuffer.resize(w * h * texelsize);
+  mNeedsUpload = false;
 }
 
 uint8_t *MtHardwareTexture::MapBuffer() {
@@ -113,16 +113,17 @@ uint8_t *MtHardwareTexture::MapBuffer() {
     Printf(PRINT_LOG, "Metal: MapBuffer called, returning %zu byte buffer\n",
            mStagingBuffer.size());
 
+  mNeedsUpload = true;
   return mStagingBuffer.data();
 }
 
 unsigned int MtHardwareTexture::CreateTexture(unsigned char *buffer, int w,
                                               int h, int texunit, bool mipmap,
                                               const char *name) {
-  static int texCount = 0;
-  if (texCount++ < 10)
-    Printf(PRINT_LOG, "Metal: CreateTexture called: %dx%d, mipmap=%d, name=%s\n", w, h,
-           mipmap, name ? name : "null");
+  if (name) mDebugName = name;
+  if (mt_debug)
+    Printf(PRINT_LOG, "Metal: CreateTexture %s: %dx%d, mipmap=%d\n", mDebugName.c_str(), w, h,
+           mipmap);
 
   // Create Metal texture descriptor
   auto desc = MTL::TextureDescriptor::alloc()->init();
@@ -169,14 +170,17 @@ unsigned int MtHardwareTexture::CreateTexture(unsigned char *buffer, int w,
   mImage->SetWidth(w);
   mImage->SetHeight(h);
   mImage->SetFormat((int)texture->pixelFormat());
+  mNeedsUpload = false;
 
-  if (texCount <= 10)
+  if (mt_debug)
     Printf(PRINT_LOG, "Metal: Texture created successfully: %p\n", texture);
 
   return 1; // Success
 }
 
 void MtHardwareTexture::CreateWipeTexture(int w, int h, const char *name) {
+  if (name) mDebugName = name;
+  if (mt_debug) Printf(PRINT_LOG, "Metal: CreateWipeTexture %s (%dx%d)\n", mDebugName.c_str(), w, h);
   Reset();
 
   auto desc = MTL::TextureDescriptor::alloc()->init();
@@ -232,18 +236,32 @@ void MtHardwareTexture::Reset() {
     mImage->SetTexture(nullptr);
   }
   mStagingBuffer.clear();
+  mNeedsUpload = false;
 }
 
 void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
-  static int createImageCount = 0;
-  if (mt_debug || createImageCount++ < 10)
+  if (tex) {
+      char buf[32];
+      snprintf(buf, sizeof(buf), "Tex_%p", tex);
+      mDebugName = buf;
+  }
+  if (mt_debug)
     Printf(PRINT_LOG, 
-        "Metal: CreateImage called for texture %p (translation=%d, flags=%d). HWCanvas=%d\n",
-        tex, translation, flags, tex ? tex->isHardwareCanvas() : -1);
+        "Metal: CreateImage %s (translation=%d, flags=%d). HWCanvas=%d\n",
+        mDebugName.c_str(), translation, flags, tex ? tex->isHardwareCanvas() : -1);
 
   if (!tex) return;
 
   if (!tex->isHardwareCanvas()) {
+    // If we already have a texture, don't recreate it unless the size changed
+    if (mImage->GetTexture()) {
+        if (mImage->GetWidth() == tex->GetWidth() && mImage->GetHeight() == tex->GetHeight()) {
+            if (mt_debug) Printf(PRINT_LOG, "Metal: CreateImage - reusing existing texture %p\n", mImage->GetTexture());
+            return;
+        }
+        Reset();
+    }
+
     // Regular texture - get pixel data from game texture and upload to GPU
     FTextureBuffer texbuffer =
         tex->CreateTexBuffer(translation, flags | CTF_ProcessData);
@@ -252,7 +270,7 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
     int w = texbuffer.mWidth;
     int h = texbuffer.mHeight;
 
-    if (createImageCount <= 10)
+    if (mt_debug)
       Printf(PRINT_LOG, "Metal: Creating GPU texture from buffer: %dx%d, %d channels\n", w,
              h, numChannels);
 
@@ -301,7 +319,7 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
       MTL::Region region = MTL::Region::Make2D(0, 0, w, h);
       texture->replaceRegion(region, 0, texbuffer.mBuffer, w * numChannels);
 
-      if (createImageCount <= 10)
+      if (mt_debug)
         Printf(PRINT_LOG, "Metal: Uploaded %d bytes to GPU texture %p\n",
                w * h * numChannels, texture);
     }
@@ -311,14 +329,23 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
     mImage->SetWidth(w);
     mImage->SetHeight(h);
     mImage->SetFormat((int)format);
+    mNeedsUpload = false;
   } else {
     // Hardware canvas (render target) - create empty texture for rendering
     int w = tex->GetWidth();
     int h = tex->GetHeight();
+
+    if (mImage->GetTexture()) {
+        if (mImage->GetWidth() == w && mImage->GetHeight() == h) {
+            return;
+        }
+        Reset();
+    }
+
     MTL::PixelFormat format =
         tex->IsHDR() ? MTL::PixelFormatRGBA32Float : MTL::PixelFormatBGRA8Unorm;
 
-    if (createImageCount <= 10)
+    if (mt_debug)
       Printf(PRINT_LOG, "Metal: Creating hardware canvas: %dx%d\n", w, h);
 
     auto desc = MTL::TextureDescriptor::alloc()->init();

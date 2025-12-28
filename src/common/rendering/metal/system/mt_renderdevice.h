@@ -82,6 +82,7 @@ public:
   MetalRenderDevice(void *hMonitor, bool fullscreen);
   ~MetalRenderDevice();
   bool IsMetal() override { return true; }
+  bool RenderTextureIsFlipped() const override { return true; }
 
   void Update() override;
 
@@ -136,6 +137,7 @@ public:
   CA::MetalDrawable *mCurrentDrawable = nullptr;
 
 private:
+  bool mInFrame = false;
   void RenderTextureView(FCanvasTexture *tex,
                          std::function<void(IntRect &)> renderFunc) override;
   void PrintStartupLog();

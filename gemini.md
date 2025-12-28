@@ -88,3 +88,22 @@ Based on the parity audit, the primary areas requiring attention for the Metal r
 5.  **Abstraction Layer Parity:** While a design choice, the absence of a `ZVulkan`-like layer for Metal means that common utilities and helper functions present in `ZVulkan` for Vulkan will need to be implemented or carefully managed within the Metal backend's managers.
 
 This audit provides a roadmap for future development, prioritizing the implementation of ray tracing and ensuring robust framebuffer and render pass management.
+
+## Latest Progress (December 28, 2025)
+
+### Metal Renderer Stabilization & Screen Wipe Investigation:
+
+1.  **Culling Correction:** Fixed a persistent culling inversion where front faces were being culled instead of back faces. This was resolved by setting `FrontFacingWinding` to `Clockwise` in `MtRenderState::BeginRenderPass` to correctly account for the Y-flipped coordinate system used in Metal.
+2.  **Robust Shader Patching:** Replaced brittle literal string matching with a regex-based approach in `MtShaderManager::PatchVertexShader`. This ensures that all assignments to `gl_Position` are correctly identified and patched with the necessary Y-flip and Z-mapping ([ -1, 1 ] to [ 0, 1 ]), regardless of whitespace or formatting variations in the GLSL source.
+3.  **Wipe Capture Diagnostics:** Added extensive diagnostic logging to `WipeStartScreen`, `WipeEndScreen`, and `BlitCurrentToImage`. This allows for real-time monitoring of texture formats, capture methods (fast path vs. format conversion), and potential sequencing issues during screen wipes when `mt_debug` is enabled.
+4.  **Wipe Texture Preservation:** Fixed a critical bug in `MtHardwareTexture::CreateImage` where it would always recreate the Metal texture, even if one already existed. This was causing captured screen data during wipes to be overwritten by an empty buffer. Added an idempotency check to reuse existing textures if they match the requested dimensions and format.
+5.  **Coordinate System Synchronization:** Implemented a consistent Y-flip in the vertex shader for all passes to align rendering with Metal's Y-down framebuffer. Standard Y-down projections (0 at top) are used for 2D.
+6.  **Orientation Correction:** Restored the vertical flip in `DrawPresentTexture` (Scale {1, -1}, Offset {0, 1}) to correctly orient the upside-down `PipelineImage` for the swapchain.
+7.  **Wipe Orientation:** Confirmed `RenderTextureIsFlipped()` returns `true`, allowing engine-level wipe logic to correctly handle the inverted internal textures.
+8.  **Dynamic Texture Support:** Implemented `mNeedsUpload` flag and persistent staging buffer in `MtHardwareTexture` to ensure reliable GPU updates for dynamic content.
+9.  **Enhanced Diagnostics:** Added `mDebugName` and detailed logging across texture creation and binding paths.
+10. **Build Verification:** Confirmed that the renderer builds successfully with these orientation and stability fixes.
+
+
+
+

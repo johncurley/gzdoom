@@ -61,13 +61,18 @@ public:
   MtTextureImage *GetDepthStencil(FCanvasTexture *tex);
   size_t GetStagingBufferSize() const { return mStagingBuffer.size(); }
   const uint8_t *GetStagingBuffer() const { return mStagingBuffer.data(); }
-  void ResetStagingBuffer() { mStagingBuffer.clear(); }
+  void ResetStagingBuffer() { mNeedsUpload = false; }
+  bool NeedsUpload() const { return mNeedsUpload; }
+  void SetNeedsUpload(bool needs) { mNeedsUpload = true; }
+  const std::string& GetDebugName() const { return mDebugName; }
 
 private:
   std::unique_ptr<MtTextureImage> mImage;
   MetalRenderDevice *fb = nullptr;
   int mNumChannels = 0;
   std::vector<uint8_t> mStagingBuffer;
+  bool mNeedsUpload = false;
+  std::string mDebugName;
 };
 
 // Texture manager

@@ -142,6 +142,7 @@ public:
 
     MtShaderProgram *program = fb->GetShaderManager()->GetPPShader(Shader);
     if (!program || !program->vert || !program->frag) {
+      if (mt_debug) Printf(PRINT_LOG, "Metal: PPRenderState::Draw - FAILED to get shader program\n");
       return;
     }
 
@@ -249,8 +250,8 @@ public:
 
     mtRenderState->EndRenderPass();
 
-    // Advance pipeline index if output was Next
-    if (Output.Type == PPTextureType::NextPipelineTexture) {
+    // Advance pipeline index if output was Next and no custom output was used
+    if (Output.Type == PPTextureType::NextPipelineTexture && !customOutputTex) {
       fb->GetPostprocess()->mCurrentPipelineImage =
           (fb->GetPostprocess()->mCurrentPipelineImage + 1) %
           MtRenderBuffers::NumPipelineImages;
@@ -358,7 +359,9 @@ void MtPostprocess::BlitCurrentToImage(MTL::Texture *dstimage) {
       fb->GetBuffers()->PipelineImage[mCurrentPipelineImage]->GetTexture();
   
   if (mt_debug) {
-      Printf(PRINT_LOG, "Metal: BlitCurrentToImage src=%p dst=%p\n", srcimage, dstimage);
+      Printf(PRINT_LOG, "Metal: BlitCurrentToImage src=%p (fmt=%llu) dst=%p (fmt=%llu)\n", 
+             srcimage, srcimage ? (unsigned long long)srcimage->pixelFormat() : 0, 
+             dstimage, dstimage ? (unsigned long long)dstimage->pixelFormat() : 0);
   }
 
   if (!srcimage || !dstimage)
@@ -366,12 +369,14 @@ void MtPostprocess::BlitCurrentToImage(MTL::Texture *dstimage) {
 
   // If formats match, use blit encoder
   if (srcimage->pixelFormat() == dstimage->pixelFormat()) {
+    if (mt_debug) Printf(PRINT_LOG, "Metal: BlitCurrentToImage using copyFromTexture (Fast Path)\n");
     auto blitCmdBuf = fb->GetCommands()->GetRenderCommandBuffer();
     auto blitEncoder = blitCmdBuf->blitCommandEncoder();
     blitEncoder->copyFromTexture(srcimage, dstimage);
     static_cast<MtRenderState*>(fb->GetRenderState())->MarkAsFilled(dstimage);
     blitEncoder->endEncoding();
   } else {
+    if (mt_debug) Printf(PRINT_LOG, "Metal: BlitCurrentToImage using Draw call (Format Conversion Path)\n");
     // Use a simple draw call to convert formats
     MtPPRenderState renderstate(fb);
     renderstate.customOutputTex = dstimage;
@@ -410,6 +415,10 @@ void MtPostprocess::BlitCurrentToImage(MTL::Texture *dstimage) {
     renderstate.SetNoBlend();
     renderstate.Draw();
   }
+
+  // CRITICAL: Wipes happen outside the normal frame flow. 
+  // We MUST submit these commands immediately so the texture is ready when the engine draws the wipe.
+  fb->GetCommands()->FlushCommands(true); 
 }
 
 void MtPostprocess::DrawPresentTexture(IntRect box, bool applyGamma,
@@ -437,7 +446,8 @@ void MtPostprocess::DrawPresentTexture(IntRect box, bool applyGamma,
     uniforms.Scale = { 1.0f, 1.0f };
     uniforms.Offset = { 0.0f, 0.0f };
   } else {
-    // Flip vertically when blitting to swapchain to correct orientation
+    // Flip vertically when blitting to swapchain to correct orientation.
+    // PipelineImage content is upside-down due to the vertex shader flip.
     uniforms.Scale = { 1.0f, -1.0f };
     uniforms.Offset = { 0.0f, 1.0f };
   }
