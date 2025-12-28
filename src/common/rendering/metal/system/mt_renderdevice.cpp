@@ -269,7 +269,6 @@ void MetalRenderDevice::Update() {
   NS::AutoreleasePool *pool = NS::AutoreleasePool::alloc()->init();
 
   twoD.Reset();
-  Flush3D.Reset();
   Flush3D.Clock();
 
   // 1. Set target and Draw 2D into PipelineImage[0] (where the scene is now)
@@ -678,7 +677,7 @@ void MetalRenderDevice::SetActiveRenderTarget() {
   mMtRenderState->SetRenderTarget(
       tex, nullptr, // Disable depth for 2D pass
       mActiveRenderBuffers->GetWidth(), mActiveRenderBuffers->GetHeight(),
-      (int)MTL::PixelFormatRGBA16Float, 1);
+      (int)MTL::PixelFormatBGRA8Unorm, 1);
 
   // Mark as filled so the renderer doesn't clear it during secondary passes
   // (like 2D)
