@@ -34,6 +34,7 @@ EXTERN_CVAR(Bool, mt_debug)
 class MtPPRenderState : public PPRenderState {
 public:
   MtPPRenderState(MetalRenderDevice *fb) : fb(fb) {}
+  MTL::Texture *customOutputTex = nullptr;
 
   void PushGroup(const FString &name) override {
     // fb->GetCommands()->PushGroup(name.GetChars());
@@ -58,7 +59,12 @@ public:
     MTL::PixelFormat format = MTL::PixelFormatRGBA16Float;
     MTL::Texture *depthStencil = nullptr;
 
-    if (Output.Type == PPTextureType::SwapChain) {
+    if (customOutputTex) {
+      outputTex = customOutputTex;
+      width = (int)outputTex->width();
+      height = (int)outputTex->height();
+      format = outputTex->pixelFormat();
+    } else if (Output.Type == PPTextureType::SwapChain) {
       outputTex = nullptr;                 // use default/swapchain
       // Match the swapchain format (usually BGRA8Unorm) instead of forcing RGBA16Float
       format = (fb->mCurrentDrawable) ? (MTL::PixelFormat)fb->mCurrentDrawable->texture()->pixelFormat() : MTL::PixelFormatBGRA8Unorm;
@@ -368,6 +374,7 @@ void MtPostprocess::BlitCurrentToImage(MTL::Texture *dstimage) {
   } else {
     // Use a simple draw call to convert formats
     MtPPRenderState renderstate(fb);
+    renderstate.customOutputTex = dstimage;
     renderstate.Clear();
     renderstate.Shader = &hw_postprocess.present.Present; // Use present shader for simple blit
     PresentUniforms uniforms;
@@ -395,10 +402,9 @@ void MtPostprocess::BlitCurrentToImage(MTL::Texture *dstimage) {
     if (isSwap) {
         renderstate.SetOutputSwapChain();
     } else {
-        // Fallback: manually set target if not swapchain (but most blits here are to swapchain or internal images)
-        // For now, let's assume it's swapchain for the common case, or we need a way to pass MTL::Texture directly.
-        // Actually, SetOutputSwapChain() works because PPRenderState::Draw uses mCurrentDrawable.
-        renderstate.SetOutputSwapChain(); 
+        // For internal images (wipes, screenshots), we use customOutputTex
+        // No call to SetOutput... is needed as NextPipelineTexture is the default 
+        // but Draw() will prioritize customOutputTex if set.
     }
     
     renderstate.SetNoBlend();
