@@ -112,6 +112,10 @@ This audit provides a roadmap for future development, prioritizing the implement
 2.  **Color Accuracy:** Corrected a red/blue channel swap in the 3-channel (RGB) to 4-channel (BGRA) conversion loop. Colors are now accurately represented in the Metal backend.
 3.  **Refined Vertex Mapping:** Improved the fallback vertex descriptor to dynamically adjust the color attribute offset based on the vertex stride (24 bytes for 2D vs 32 bytes for 3D).
 4.  **Wipe Stability:** Confirmed that screen wipes are now fully functional and correctly oriented.
+5.  **Mipmap Generation:** Implemented safe, asynchronous hardware mipmap generation using a dedicated command buffer. This eliminates "flashing" artifacts by ensuring the entire mip chain is synchronized with base level updates without interrupting the main render pass.
+6.  **Blending Refinement:** Restored standard alpha blending for `STYLE_Normal` to ensure correct transparency for masked sprites and avoid black backgrounds caused by aggressive opaque-copy optimizations.
+7.  **Final Synchronization:** Verified perfect alignment of `PushConstants` and `StreamData` between C++ and GLSL, ensuring stable lighting and animation timer performance.
+
 
 
 
