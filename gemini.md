@@ -104,6 +104,16 @@ This audit provides a roadmap for future development, prioritizing the implement
 9.  **Enhanced Diagnostics:** Added `mDebugName` and detailed logging across texture creation and binding paths.
 10. **Build Verification:** Confirmed that the renderer builds successfully with these orientation and stability fixes.
 
+## Latest Progress (December 28, 2025 - Evening)
+
+### Breakthrough: Palette Texture Support & Texture Loading Fixes:
+
+1.  **Palette Support Implemented:** Successfully added `GetPaletteTexture` management to `MtTextureManager` and registered the necessary callback in `MetalRenderDevice`. This allows the Metal backend to correctly handle indexed (paletted) textures, which has resolved major issues with "popping geometry" caused by failed texture loads.
+2.  **Color Accuracy:** Corrected a red/blue channel swap in the 3-channel (RGB) to 4-channel (BGRA) conversion loop. Colors are now accurately represented in the Metal backend.
+3.  **Refined Vertex Mapping:** Improved the fallback vertex descriptor to dynamically adjust the color attribute offset based on the vertex stride (24 bytes for 2D vs 32 bytes for 3D).
+4.  **Wipe Stability:** Confirmed that screen wipes are now fully functional and correctly oriented.
+
+
 
 
 

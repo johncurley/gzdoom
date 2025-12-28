@@ -570,15 +570,16 @@ void MtRenderState::ApplyMaterial() {
             if (texelsize == 4 || texelsize == 1 || texelsize == 2) {
                 mtlTexture->replaceRegion(region, 0, mtHwTexture->GetStagingBuffer(), w * texelsize);
             } else if (texelsize == 3) {
-                // Convert RGB to RGBA (Correct order for RGBA8Unorm)
+                // Convert RGB to BGRA (Correct order for BGRA8Unorm)
+                // Metal BGRA8Unorm: 0=Blue, 1=Green, 2=Red, 3=Alpha
                 std::vector<uint8_t> tempBuffer(w * h * 4);
                 const uint8_t* src = mtHwTexture->GetStagingBuffer();
                 uint8_t* dst = tempBuffer.data();
                 for (int j = 0; j < w * h; j++) {
-                    dst[j*4 + 0] = src[j*3 + 0]; // R
-                    dst[j*4 + 1] = src[j*3 + 1]; // G
-                    dst[j*4 + 2] = src[j*3 + 2]; // B
-                    dst[j*4 + 3] = 255;          // A
+                    dst[j*4 + 0] = src[j*3 + 2]; // Blue (from source B)
+                    dst[j*4 + 1] = src[j*3 + 1]; // Green
+                    dst[j*4 + 2] = src[j*3 + 0]; // Red (from source R)
+                    dst[j*4 + 3] = 255;          // Alpha
                 }
                 mtlTexture->replaceRegion(region, 0, tempBuffer.data(), w * 4);
             }

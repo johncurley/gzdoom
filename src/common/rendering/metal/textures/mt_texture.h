@@ -93,12 +93,16 @@ public:
   // PP Texture support
   MTL::Texture *GetPPTexture(PPTexture *texture);
 
+  // Palette support
+  IHardwareTexture *GetPaletteTexture(int translation, bool highlight);
+
   std::unordered_map<FCanvasTexture *, std::unique_ptr<MtTextureImage>>
       mCanvasDepthStencils;
 
 private:
   MetalRenderDevice *fb = nullptr;
   std::unordered_map<PPTexture *, MTL::Texture *> mPPTextures;
+  std::unordered_map<uint32_t, std::unique_ptr<MtHardwareTexture>> mPaletteTextures;
 };
 
 class MtPPTexture : public PPTextureBackend {

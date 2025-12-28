@@ -202,6 +202,11 @@ void MetalRenderDevice::InitializeState() {
   mShaderManager.reset(new MtShaderManager(this));
   mMtRenderState.reset(new MtRenderState(this));
 
+  FMaterial::SetLayerCallback([](int layer, int translation) -> IHardwareTexture* {
+    auto fb = static_cast<MetalRenderDevice*>(screen);
+    return fb->GetTextureManager()->GetPaletteTexture(translation, layer == 2);
+  });
+
   mVertexData = new FFlatVertexBuffer(GetWidth(), GetHeight(), mPipelineNbr);
   mSkyData = new FSkyVertexBuffer;
   mViewpoints = new HWViewpointBuffer;
