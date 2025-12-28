@@ -5,7 +5,9 @@
 
 #include "hwrenderer/postprocessing/hw_postprocess.h"
 #include "metal/renderer/mt_postprocess.h"
+#include "metal/renderer/mt_renderstate.h"
 #include "metal/system/mt_renderdevice.h"
+#include "metal/system/mt_commandbuffer.h"
 #include "mt_texture.h"
 #include "printf.h"
 #include "c_cvars.h"
@@ -95,8 +97,10 @@ void MtHardwareTexture::AllocateBuffer(int w, int h, int texelsize) {
              h);
   }
 
-  // Allocate staging buffer for CPU writes
-  mStagingBuffer.resize(w * h * texelsize);
+  // Allocate staging buffer for CPU writes. 
+  // GZDoom typically provides tightly packed data.
+  mBufferPitch = w * texelsize;
+  mStagingBuffer.resize(mBufferPitch * h);
   mNeedsUpload = false;
 }
 
@@ -145,8 +149,12 @@ unsigned int MtHardwareTexture::CreateTexture(unsigned char *buffer, int w,
     break;
   }
 
-  desc->setMipmapLevelCount(1); // Mipmaps disabled for testing
-  desc->setUsage(MTL::TextureUsageShaderRead);
+  int mipLevels = 1;
+  if (mipmap) {
+      mipLevels = (int)floor(log2(max(w, h))) + 1;
+  }
+  desc->setMipmapLevelCount(mipLevels);
+  desc->setUsage(MTL::TextureUsageShaderRead | MTL::TextureUsageRenderTarget);
   desc->setStorageMode(MTL::StorageModeShared);
 
   // Create the texture
@@ -162,7 +170,12 @@ unsigned int MtHardwareTexture::CreateTexture(unsigned char *buffer, int w,
   if (buffer) {
     MTL::Region region = MTL::Region::Make2D(0, 0, w, h);
     int bytesPerPixel = mNumChannels;
-    texture->replaceRegion(region, 0, buffer, w * bytesPerPixel);
+    mBufferPitch = w * bytesPerPixel;
+    texture->replaceRegion(region, 0, buffer, mBufferPitch);
+    
+    if (mipLevels > 1) {
+        fb->GetTextureManager()->GenerateMipmaps(texture);
+    }
   }
 
   // Store in image
@@ -266,13 +279,12 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
     FTextureBuffer texbuffer =
         tex->CreateTexBuffer(translation, flags | CTF_ProcessData);
     bool indexed = flags & CTF_Indexed;
-    int numChannels = indexed ? 1 : 4;
+    int numChannels = (flags & CTF_Indexed) ? 1 : 4;
+    
+    // GZDoom's CreateTexBuffer can return 3-channel RGB for some images
+    // We need to detect this to avoid distortion
     int w = texbuffer.mWidth;
     int h = texbuffer.mHeight;
-
-    if (mt_debug)
-      Printf(PRINT_LOG, "Metal: Creating GPU texture from buffer: %dx%d, %d channels\n", w,
-             h, numChannels);
 
     // Create Metal texture descriptor
     auto desc = MTL::TextureDescriptor::alloc()->init();
@@ -296,8 +308,12 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
     }
 
     desc->setPixelFormat(format);
-    desc->setMipmapLevelCount(1); // Mipmaps disabled for testing
-    desc->setUsage(MTL::TextureUsageShaderRead);
+    int mipLevels = 1;
+    if (!(flags & CTF_Indexed) && w > 1 && h > 1) {
+        mipLevels = (int)floor(log2(max(w, h))) + 1;
+    }
+    desc->setMipmapLevelCount(mipLevels);
+    desc->setUsage(MTL::TextureUsageShaderRead | MTL::TextureUsageRenderTarget);
     desc->setStorageMode(MTL::StorageModeShared);
 
     // Create the texture
@@ -310,18 +326,24 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
     }
 
     if (mt_debug) {
-        Printf(PRINT_LOG, "Metal: Created GPU texture %p (%dx%d), format=%llu, storageMode=%llu\n", 
-               texture, w, h, (unsigned long long)texture->pixelFormat(), (unsigned long long)texture->storageMode());
+        Printf(PRINT_LOG, "Metal: Created GPU texture %p (%dx%d), format=%llu, storageMode=%llu, mips=%d\n", 
+               texture, w, h, (unsigned long long)texture->pixelFormat(), (unsigned long long)texture->storageMode(), mipLevels);
     }
 
     // Upload texture data
     if (texbuffer.mBuffer) {
       MTL::Region region = MTL::Region::Make2D(0, 0, w, h);
-      texture->replaceRegion(region, 0, texbuffer.mBuffer, w * numChannels);
+      mBufferPitch = w * numChannels;
+      
+      texture->replaceRegion(region, 0, texbuffer.mBuffer, mBufferPitch);
 
       if (mt_debug)
-        Printf(PRINT_LOG, "Metal: Uploaded %d bytes to GPU texture %p\n",
-               w * h * numChannels, texture);
+        Printf(PRINT_LOG, "Metal: Uploaded %d bytes to GPU texture %p (mips=%d)\n", 
+               (int)(mBufferPitch * h), texture, mipLevels);
+      
+      if (mipLevels > 1) {
+          fb->GetTextureManager()->GenerateMipmaps(texture);
+      }
     }
 
     // Store in image
@@ -413,6 +435,25 @@ void MtTextureManager::UpdateTexture(MTL::Texture *texture, int level,
   MTL::Region region =
       MTL::Region::Make2D(0, 0, texture->width(), texture->height());
   texture->replaceRegion(region, level, data, texture->width() * 4);
+}
+
+void MtTextureManager::GenerateMipmaps(MTL::Texture *texture) {
+  if (!texture || texture->mipmapLevelCount() <= 1)
+    return;
+
+  // Use a dedicated command buffer for mipmap generation.
+  // Metal guarantees that command buffers committed to the same queue execute in order.
+  // By committing this now, we ensure it's submitted before the main render buffer.
+  MTL::CommandBuffer *cmdBuf = fb->device->commandQueue->commandBuffer();
+  if (!cmdBuf) return;
+
+  auto blitEncoder = cmdBuf->blitCommandEncoder();
+  if (blitEncoder) {
+      blitEncoder->generateMipmaps(texture);
+      blitEncoder->endEncoding();
+  }
+  cmdBuf->commit();
+  // We do not wait here to avoid CPU stalls; the GPU will handle the ordering.
 }
 
 MTL::Texture *MtTextureManager::GetPPTexture(PPTexture *texture) {

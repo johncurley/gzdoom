@@ -65,6 +65,8 @@ public:
   bool NeedsUpload() const { return mNeedsUpload; }
   void SetNeedsUpload(bool needs) { mNeedsUpload = true; }
   const std::string& GetDebugName() const { return mDebugName; }
+  int GetBufferPitch() const { return mBufferPitch; }
+  int GetNumChannels() const { return mNumChannels; }
 
 private:
   std::unique_ptr<MtTextureImage> mImage;
@@ -73,6 +75,7 @@ private:
   std::vector<uint8_t> mStagingBuffer;
   bool mNeedsUpload = false;
   std::string mDebugName;
+  int mBufferPitch = 0;
 };
 
 // Texture manager
@@ -89,6 +92,7 @@ public:
   // Update texture data
   void UpdateTexture(MTL::Texture *texture, int level, const void *data,
                      size_t size);
+  void GenerateMipmaps(MTL::Texture *texture);
 
   // PP Texture support
   MTL::Texture *GetPPTexture(PPTexture *texture);

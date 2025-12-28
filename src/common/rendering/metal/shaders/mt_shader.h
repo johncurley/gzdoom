@@ -35,31 +35,26 @@ struct MatricesUBO {
 // Metal implementation: passed via setVertexBytes/setFragmentBytes (< 4KB
 // inline data)
 struct PushConstants {
-  int uTextureMode;
-  float uAlphaThreshold;
+  // --- 16-byte alignment group ---
   FVector2 uClipSplit;
+  FVector2 uSpecularMaterial;
 
-  // Lighting + Fog
+  // --- 16-byte alignment group ---
   float uLightLevel;
   float uFogDensity;
   float uLightFactor;
   float uLightDist;
-  int uFogEnabled;
 
-  // Dynamic lights
+  // --- 16-byte alignment group ---
+  int uTextureMode;
+  float uAlphaThreshold;
+  int uFogEnabled;
   int uLightIndex;
 
-  // Blinn glossiness and specular level
-  FVector2 uSpecularMaterial;
-
-  // Bone animation
+  // --- 16-byte alignment group ---
   int uBoneIndexBase;
-
-  // Stream data index
   int uDataIndex;
-
-  // Padding to align to 16 bytes
-  int padding[2];
+  int padding[2]; // Final padding to maintain 16-byte struct size
 };
 
 #define MAX_STREAM_DATA ((int)(65536 / sizeof(StreamData)))

@@ -234,26 +234,20 @@ static const char *shaderBindings = R"(
 	// This must match the PushConstants struct
 	layout(binding = 21, std140) uniform PushConstants
 	{
-		int uTextureMode;
-		float uAlphaThreshold;
 		vec2 uClipSplit;
+		vec2 uSpecularMaterial;
 
-		// Lighting + Fog
 		float uLightLevel;
 		float uFogDensity;
 		float uLightFactor;
 		float uLightDist;
-		int uFogEnabled;
 
-		// dynamic lights
+		int uTextureMode;
+		float uAlphaThreshold;
+		int uFogEnabled;
 		int uLightIndex;
 
-		// Blinn glossiness and specular level
-		vec2 uSpecularMaterial;
-
-		// bone animation
 		int uBoneIndexBase;
-
 		int uDataIndex;
 		int padding2, padding3;
 	};

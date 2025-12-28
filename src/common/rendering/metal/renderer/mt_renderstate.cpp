@@ -458,22 +458,24 @@ void MtRenderState::ApplyPushConstants() {
   if (mMaterial.mMaterial && mMaterial.mMaterial->Source()->isHardwareCanvas())
     tempTM = TM_OPAQUE;
 
-  mPushConstants.uFogEnabled = fogset;
-  mPushConstants.uTextureMode = GetTextureModeAndFlags(tempTM);
-  mPushConstants.uLightDist = mLightParms[0];
-  mPushConstants.uLightFactor = mLightParms[1];
-  mPushConstants.uFogDensity = mLightParms[2];
-  mPushConstants.uLightLevel = mLightParms[3];
-  mPushConstants.uAlphaThreshold = mAlphaThreshold;
   mPushConstants.uClipSplit = {mClipSplit[0], mClipSplit[1]};
-
+  mPushConstants.uSpecularMaterial = {0.0f, 0.0f}; // Default
   if (mMaterial.mMaterial) {
     auto source = mMaterial.mMaterial->Source();
     mPushConstants.uSpecularMaterial = {source->GetGlossiness(),
                                         source->GetSpecularLevel()};
   }
 
+  mPushConstants.uLightLevel = mLightParms[3];
+  mPushConstants.uFogDensity = mLightParms[2];
+  mPushConstants.uLightFactor = mLightParms[1];
+  mPushConstants.uLightDist = mLightParms[0];
+
+  mPushConstants.uTextureMode = GetTextureModeAndFlags(tempTM);
+  mPushConstants.uAlphaThreshold = mAlphaThreshold;
+  mPushConstants.uFogEnabled = fogset;
   mPushConstants.uLightIndex = mLightIndex;
+
   mPushConstants.uBoneIndexBase = mBoneIndexBase;
   mPushConstants.uDataIndex = mStreamBufferWriter.DataIndex();
 
@@ -563,27 +565,15 @@ void MtRenderState::ApplyMaterial() {
             MTL::Texture *mtlTexture = image->GetTexture();
             int w = image->GetWidth();
             int h = image->GetHeight();
-            size_t stagingSize = mtHwTexture->GetStagingBufferSize();
-            int texelsize = (int)(stagingSize / (w * h));
+            int pitch = mtHwTexture->GetBufferPitch();
 
             MTL::Region region = MTL::Region::Make2D(0, 0, w, h);
-            if (texelsize == 4 || texelsize == 1 || texelsize == 2) {
-                mtlTexture->replaceRegion(region, 0, mtHwTexture->GetStagingBuffer(), w * texelsize);
-            } else if (texelsize == 3) {
-                // Convert RGB to BGRA (Correct order for BGRA8Unorm)
-                // Metal BGRA8Unorm: 0=Blue, 1=Green, 2=Red, 3=Alpha
-                std::vector<uint8_t> tempBuffer(w * h * 4);
-                const uint8_t* src = mtHwTexture->GetStagingBuffer();
-                uint8_t* dst = tempBuffer.data();
-                for (int j = 0; j < w * h; j++) {
-                    dst[j*4 + 0] = src[j*3 + 2]; // Blue (from source B)
-                    dst[j*4 + 1] = src[j*3 + 1]; // Green
-                    dst[j*4 + 2] = src[j*3 + 0]; // Red (from source R)
-                    dst[j*4 + 3] = 255;          // Alpha
-                }
-                mtlTexture->replaceRegion(region, 0, tempBuffer.data(), w * 4);
-            }
+            mtlTexture->replaceRegion(region, 0, mtHwTexture->GetStagingBuffer(), pitch);
             
+            if (mtlTexture->mipmapLevelCount() > 1) {
+                fb->GetTextureManager()->GenerateMipmaps(mtlTexture);
+            }
+
             // Clear staging buffer so we don't upload again
             mtHwTexture->ResetStagingBuffer();
           }
@@ -607,7 +597,7 @@ void MtRenderState::ApplyMaterial() {
             int f = (filter >= 0 && filter <= 4) ? filter : 4;
             samplerKey.MinFilter = minFilters[f];
             samplerKey.MagFilter = magFilters[f];
-            samplerKey.MipFilter = 0; // Force no mipmaps for now
+            samplerKey.MipFilter = mipFilters[f];
             samplerKey.AddressU = mMaterial.mClampMode;
             samplerKey.AddressV = mMaterial.mClampMode;
             samplerKey.AddressW = mMaterial.mClampMode;
