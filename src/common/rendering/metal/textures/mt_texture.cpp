@@ -318,7 +318,31 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
                      (fb->GetFrameCount() < 100);
 
   if (!tex->isHardwareCanvas()) {
+<<<<<<< HEAD
     // Get pixel data from game texture using standard engine path
+=======
+    // If we already have a texture, don't recreate it unless the size changed
+    if (mImage->GetTexture()) {
+        if (mImage->GetWidth() == tex->GetWidth() && mImage->GetHeight() == tex->GetHeight()) {
+            // Texture size matches, but we need to upload the new data.
+            FTextureBuffer texbuffer = tex->CreateTexBuffer(translation, flags | CTF_ProcessData);
+            if (texbuffer.mBuffer) {
+                MTL::Region region = MTL::Region::Make2D(0, 0, mImage->GetWidth(), mImage->GetHeight());
+                mBufferPitch = mImage->GetWidth() * ((flags & CTF_Indexed) ? 1 : 4);
+                mImage->GetTexture()->replaceRegion(region, 0, texbuffer.mBuffer, mBufferPitch);
+                
+                if (mImage->GetTexture()->mipmapLevelCount() > 1) {
+                    fb->GetTextureManager()->GenerateMipmaps(mImage->GetTexture());
+                }
+            }
+            mNeedsUpload = false;
+            return;
+        }
+        Reset();
+    }
+
+    // Regular texture - get pixel data from game texture and upload to GPU
+>>>>>>> 87ce8a279 (Metal Renderer: Fix texture memory leak and synchronize mipmap generation.)
     FTextureBuffer texbuffer =
         tex->CreateTexBuffer(translation, flags | CTF_ProcessData);
     if (!texbuffer.mBuffer)
@@ -338,12 +362,37 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
       desiredMipLevels = (int)floor(log2(max(expectedW, expectedH))) + 1;
     }
 
+<<<<<<< HEAD
     // REUSE LOGIC: Reuse existing texture if dimensions match to prevent
     // "flashing".
     if (mImage->GetTexture()) {
       if (mImage->GetWidth() != expectedW || mImage->GetHeight() != expectedH ||
           (int)mImage->GetTexture()->mipmapLevelCount() != desiredMipLevels) {
         Reset();
+=======
+    if (mt_debug) {
+        Printf(PRINT_LOG, "Metal: Created GPU texture %p (%dx%d), format=%llu, storageMode=%llu, mips=%d, numChannels=%d\n", 
+               texture, w, h, (unsigned long long)texture->pixelFormat(), (unsigned long long)texture->storageMode(), mipLevels, numChannels);
+    }
+
+    // Upload texture data
+    if (texbuffer.mBuffer) {
+      MTL::Region region = MTL::Region::Make2D(0, 0, w, h);
+      mBufferPitch = w * numChannels;
+      
+      if (mt_debug)
+        Printf(PRINT_LOG, "Metal: Uploading to GPU texture %p: region %dx%d, pitch=%d\n", 
+               texture, w, h, mBufferPitch);
+
+      texture->replaceRegion(region, 0, texbuffer.mBuffer, mBufferPitch);
+
+      if (mt_debug)
+        Printf(PRINT_LOG, "Metal: Uploaded %d bytes to GPU texture %p\n", 
+               (int)(mBufferPitch * h), texture);
+      
+      if (mipLevels > 1) {
+          fb->GetTextureManager()->GenerateMipmaps(texture);
+>>>>>>> 87ce8a279 (Metal Renderer: Fix texture memory leak and synchronize mipmap generation.)
       }
     }
 
@@ -636,6 +685,7 @@ void MtTextureManager::GenerateMipmaps(MTL::Texture *texture) {
   if (!texture || texture->mipmapLevelCount() <= 1)
     return;
 
+<<<<<<< HEAD
   // Ensure any active render pass is ended before creating a blit encoder.
   // Metal does not allow multiple encoders to be active on the same command
   // buffer.
@@ -649,12 +699,24 @@ void MtTextureManager::GenerateMipmaps(MTL::Texture *texture) {
   auto cmdBuf = fb->GetCommands()->GetRenderCommandBuffer();
   if (!cmdBuf)
     return;
+=======
+  // Use a dedicated blit command buffer and commit it immediately.
+  // This avoids conflicts if we are currently inside a render pass.
+  auto cmdBuf = fb->GetCommands()->GetBlitCommandBuffer();
+  if (!cmdBuf) return;
+>>>>>>> 87ce8a279 (Metal Renderer: Fix texture memory leak and synchronize mipmap generation.)
 
   auto blitEncoder = cmdBuf->blitCommandEncoder();
   if (blitEncoder) {
     blitEncoder->generateMipmaps(texture);
     blitEncoder->endEncoding();
   }
+<<<<<<< HEAD
+=======
+  cmdBuf->commit();
+  cmdBuf->waitUntilCompleted();
+  cmdBuf->release();
+>>>>>>> 87ce8a279 (Metal Renderer: Fix texture memory leak and synchronize mipmap generation.)
 }
 
 MTL::Texture *MtTextureManager::GetPPTexture(PPTexture *texture) {
