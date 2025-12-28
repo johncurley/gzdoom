@@ -659,6 +659,7 @@ void MtRenderState::ApplyMaterial() {
             int w = image->GetWidth();
             int h = image->GetHeight();
             int pitch = mtHwTexture->GetBufferPitch();
+            int texelsize = isIndexed ? 1 : (mtHwTexture->GetNumChannels());
 
             if (mtlTexture->storageMode() == MTL::StorageModePrivate) {
               // If we have an active render pass, we MUST end it before doing a blit
@@ -672,9 +673,24 @@ void MtRenderState::ApplyMaterial() {
                   totalSize, MTL::StorageModeShared);
               if (staging) {
                 uint8_t *dst = (uint8_t *)staging->contents();
-                uint8_t *src = (uint8_t *)mtHwTexture->GetStagingBuffer();
-                for (int y = 0; y < h; y++) {
-                  memcpy(dst + y * alignedPitch, src + y * pitch, pitch);
+                const uint8_t *src = mtHwTexture->GetStagingBuffer();
+                
+                if (texelsize == 3) {
+                    // RGB to BGRA conversion during upload to Private texture
+                    for (int y = 0; y < h; y++) {
+                        uint8_t* rowDst = dst + y * alignedPitch;
+                        const uint8_t* rowSrc = src + y * pitch;
+                        for (int x = 0; x < w; x++) {
+                            rowDst[x*4 + 0] = rowSrc[x*3 + 2]; // B
+                            rowDst[x*4 + 1] = rowSrc[x*3 + 1]; // G
+                            rowDst[x*4 + 2] = rowSrc[x*3 + 0]; // R
+                            rowDst[x*4 + 3] = 255;             // A
+                        }
+                    }
+                } else {
+                    for (int y = 0; y < h; y++) {
+                      memcpy(dst + y * alignedPitch, src + y * pitch, pitch);
+                    }
                 }
 
                 auto cmdBuf = fb->GetCommands()->GetBlitCommandBuffer();
@@ -688,9 +704,10 @@ void MtRenderState::ApplyMaterial() {
                   }
                   blit->endEncoding();
 
-                  cmdBuf->commit();
+                  // CRITICAL: Force synchronization for textures during startup or first frames
                   if (gamestate == GS_STARTUP || fb->GetFrameCount() < 100) {
-                    cmdBuf->waitUntilCompleted();
+                      cmdBuf->commit();
+                      cmdBuf->waitUntilCompleted();
                   }
                 }
                 fb->RecycleBuffer(staging);
@@ -699,8 +716,21 @@ void MtRenderState::ApplyMaterial() {
               // Managed/Shared: Direct upload via replaceRegion. 
               // No need to end render pass!
               MTL::Region region = MTL::Region::Make2D(0, 0, w, h);
-              mtlTexture->replaceRegion(region, 0,
-                                        mtHwTexture->GetStagingBuffer(), pitch);
+              
+              if (texelsize == 3) {
+                  std::vector<uint8_t> temp(w * h * 4);
+                  const uint8_t* src = mtHwTexture->GetStagingBuffer();
+                  for (int j = 0; j < w * h; j++) {
+                      temp[j*4 + 0] = src[j*3 + 2]; // B
+                      temp[j*4 + 1] = src[j*3 + 1]; // G
+                      temp[j*4 + 2] = src[j*3 + 0]; // R
+                      temp[j*4 + 3] = 255;          // A
+                  }
+                  mtlTexture->replaceRegion(region, 0, temp.data(), w * 4);
+              } else {
+                  mtlTexture->replaceRegion(region, 0,
+                                            mtHwTexture->GetStagingBuffer(), pitch);
+              }
 
               if (mtlTexture->mipmapLevelCount() > 1) {
                 // Mipmap generation DOES require a blit encoder, so check that

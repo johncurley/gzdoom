@@ -464,16 +464,13 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
 
     // Attribute 2: Color (for 2D drawer fallback)
     auto attr2 = vertexDesc->attributes()->object(2);
+    attr2->setFormat(MTL::VertexFormatUChar4Normalized);
     if (stride == 24) {
-        attr2->setFormat(MTL::VertexFormatUChar4Normalized);
         attr2->setOffset(20); 
     } else {
-        // For FFlatVertex (32), there is no color. 
-        // Force a safe format and offset that is unlikely to be used, 
-        // or set to an unused buffer slot if possible. 
-        // For now, we set it to offset 0 but use a small format.
-        attr2->setFormat(MTL::VertexFormatUChar4Normalized);
-        attr2->setOffset(0); 
+        // For FFlatVertex (32), there is no color in the struct. 
+        // We set it to offset 0 and hope the shader uses uVertexColor instead.
+        attr2->setOffset(0);
     }
     attr2->setBufferIndex(0);
 

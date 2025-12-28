@@ -670,34 +670,31 @@ MTL::Texture *MtTextureManager::GetPPTexture(PPTexture *texture) {
   return mPPTextures[texture];
 }
 
-IHardwareTexture *MtTextureManager::GetPaletteTexture(int translation,
-                                                      bool highlight) {
+IHardwareTexture *MtTextureManager::GetPaletteTexture(int translation, bool highlight) {
   uint32_t key = (translation << 1) | (highlight ? 1 : 0);
   auto it = mPaletteTextures.find(key);
   if (it != mPaletteTextures.end())
     return it->second.get();
 
   auto hwTex = std::make_unique<MtHardwareTexture>(fb, 4);
-
+  
   // Translation table from palette
-  FRemapTable *remap = GPalette.GetTranslation(
-      GetTranslationType(translation), GetTranslationIndex(translation));
+  FRemapTable *remap = GPalette.GetTranslation(GetTranslationType(translation), GetTranslationIndex(translation));
   const PalEntry *palette = remap ? remap->Palette : GPalette.BaseColors;
 
   PalEntry colors[256];
   for (int i = 0; i < 256; i++) {
-    colors[i] = palette[i];
-    if (highlight) {
-      // Highlight logic matching Vulkan/GL
-      colors[i].r = (colors[i].r + 255) / 2;
-      colors[i].g = (colors[i].g + 255) / 2;
-      colors[i].b = (colors[i].b + 255) / 2;
-    }
+      colors[i] = palette[i];
+      if (highlight) {
+          // Highlight logic matching Vulkan/GL
+          colors[i].r = (colors[i].r + 255) / 2;
+          colors[i].g = (colors[i].g + 255) / 2;
+          colors[i].b = (colors[i].b + 255) / 2;
+      }
   }
 
-  hwTex->CreateTexture((unsigned char *)colors, 256, 1, 0, false,
-                       "PaletteTexture");
-
+  hwTex->CreateTexture((unsigned char *)colors, 256, 1, 0, false, "PaletteTexture");
+  
   auto ptr = hwTex.get();
   mPaletteTextures[key] = std::move(hwTex);
   return ptr;
