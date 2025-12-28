@@ -28,8 +28,10 @@
 #include "hwrenderer/data/shaderuniforms.h"
 #include "hw_viewpointuniforms.h"
 #include "hw_renderstate.h"
+#include "printf.h"
 #include "hw_viewpointbuffer.h"
 #include "hw_cvars.h"
+#include "gamestate.h"
 
 static const int INITIAL_BUFFER_SIZE = 100;	// 100 viewpoints per frame should nearly always be enough
 
@@ -82,6 +84,7 @@ int HWViewpointBuffer::Bind(FRenderState &di, unsigned int index)
 
 void HWViewpointBuffer::Set2D(FRenderState &di, int width, int height, int pll)
 {
+	Printf("HWViewpointBuffer: Set2D %dx%d (pll=%d)\n", width, height, pll);
 	HWViewpointUniforms matrices;
 
 	matrices.mViewMatrix.loadIdentity();

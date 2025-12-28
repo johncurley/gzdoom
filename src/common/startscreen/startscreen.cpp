@@ -716,17 +716,20 @@ void FStartScreen::ValidateTexture()
 {
 	if (StartupTexture == nullptr)
 	{
+		Printf("FStartScreen: Validating StartupTexture (%dx%d)\n", StartupBitmap.GetWidth(), StartupBitmap.GetHeight());
 		auto imgsource = CreateStartScreenTexture(StartupBitmap);
 		StartupTexture = MakeGameTexture(new FImageTexture(imgsource), nullptr, ETextureType::Override);
 		StartupTexture->SetScale(1.f / Scale, 1.f / Scale);
 	}
 	if (HeaderTexture == nullptr && HeaderBitmap.GetWidth() > 0)
 	{
+		Printf("FStartScreen: Validating HeaderTexture (%dx%d)\n", HeaderBitmap.GetWidth(), HeaderBitmap.GetHeight());
 		auto imgsource = CreateStartScreenTexture(HeaderBitmap);
 		HeaderTexture = MakeGameTexture(new FImageTexture(imgsource), nullptr, ETextureType::Override);
 	}
 	if (NetTexture == nullptr && NetBitmap.GetWidth() > 0)
 	{
+		Printf("FStartScreen: Validating NetTexture (%dx%d)\n", NetBitmap.GetWidth(), NetBitmap.GetHeight());
 		auto imgsource = CreateStartScreenTexture(NetBitmap);
 		NetTexture = MakeGameTexture(new FImageTexture(imgsource), nullptr, ETextureType::Override);
 	}

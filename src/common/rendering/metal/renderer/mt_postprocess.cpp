@@ -56,7 +56,7 @@ public:
     MTL::Texture *outputTex = nullptr;
     int width = fb->GetBuffers()->GetWidth();
     int height = fb->GetBuffers()->GetHeight();
-    MTL::PixelFormat format = MTL::PixelFormatBGRA8Unorm;
+    MTL::PixelFormat format = MTL::PixelFormatRGBA16Float;
     MTL::Texture *depthStencil = nullptr;
 
     if (customOutputTex) {
@@ -89,15 +89,15 @@ public:
           fb->GetBuffers()
               ->PipelineImage[fb->GetPostprocess()->mCurrentPipelineImage]
               ->GetTexture();
-      format = MTL::PixelFormatBGRA8Unorm;
+      format = MTL::PixelFormatRGBA16Float;
     } else if (Output.Type == PPTextureType::NextPipelineTexture) {
       int next = (fb->GetPostprocess()->mCurrentPipelineImage + 1) %
                  MtRenderBuffers::NumPipelineImages;
       outputTex = fb->GetBuffers()->PipelineImage[next]->GetTexture();
-      format = MTL::PixelFormatBGRA8Unorm;
+      format = MTL::PixelFormatRGBA16Float;
     } else if (Output.Type == PPTextureType::SceneColor) {
       outputTex = fb->GetBuffers()->SceneColor->GetTexture();
-      format = MTL::PixelFormatBGRA8Unorm;
+      format = MTL::PixelFormatRGBA16Float;
     } else if (Output.Type == PPTextureType::SceneFog) {
       outputTex = fb->GetBuffers()->SceneFog->GetTexture();
       format = MTL::PixelFormatBGRA8Unorm;
@@ -293,12 +293,17 @@ void MtPostprocess::UpdateShadowMap() {
 
 void MtPostprocess::SetActiveRenderTarget() {
   auto buffers = fb->GetBuffers();
+  auto tex = buffers->PipelineImage[mCurrentPipelineImage]->GetTexture();
   fb->GetRenderState()->SetRenderTarget(
-      buffers->PipelineImage[mCurrentPipelineImage]->GetTexture(),
+      tex,
       buffers->PipelineDepthStencil->GetTexture(),
       buffers->GetWidth(),
-      buffers->GetHeight(), (int)MTL::PixelFormatBGRA8Unorm, 1);
+      buffers->GetHeight(), (int)MTL::PixelFormatRGBA16Float, 1);
   fb->GetRenderState()->SetViewport(0, 0, buffers->GetWidth(), buffers->GetHeight());
+  
+  // Mark as filled so we don't clear it if the engine doesn't request it.
+  // This is important for 2D passes that might draw in multiple chunks.
+  static_cast<MtRenderState*>(fb->GetRenderState())->MarkAsFilled(tex);
 }
 
 void MtPostprocess::PostProcessScene(
@@ -346,7 +351,10 @@ void MtPostprocess::BlitSceneToPostprocess() {
 
   if (src && dst) {
     blitEncoder->copyFromTexture(src, dst);
-    static_cast<MtRenderState*>(fb->GetRenderState())->MarkAsFilled(dst);
+    
+    // Explicitly mark destination as filled
+    auto mtRenderState = static_cast<MtRenderState*>(fb->RenderState());
+    mtRenderState->MarkAsFilled(dst);
   }
 
   blitEncoder->endEncoding();
@@ -373,7 +381,10 @@ void MtPostprocess::BlitCurrentToImage(MTL::Texture *dstimage) {
     auto blitCmdBuf = fb->GetCommands()->GetRenderCommandBuffer();
     auto blitEncoder = blitCmdBuf->blitCommandEncoder();
     blitEncoder->copyFromTexture(srcimage, dstimage);
-    static_cast<MtRenderState*>(fb->GetRenderState())->MarkAsFilled(dstimage);
+    
+    auto mtRenderState = static_cast<MtRenderState*>(fb->RenderState());
+    mtRenderState->MarkAsFilled(dstimage);
+
     blitEncoder->endEncoding();
   } else {
     if (mt_debug) Printf(PRINT_LOG, "Metal: BlitCurrentToImage using Draw call (Format Conversion Path)\n");
@@ -455,8 +466,10 @@ void MtPostprocess::DrawPresentTexture(IntRect box, bool applyGamma,
   uniforms.HdrMode = 0;
 
   if (mt_debug) {
-      Printf(PRINT_LOG, "Metal: DrawPresentTexture - Scale: %.2f %.2f Offset: %.2f %.2f Gamma: %.2f\n", 
-             uniforms.Scale.X, uniforms.Scale.Y, uniforms.Offset.X, uniforms.Offset.Y, uniforms.InvGamma);
+      Printf(PRINT_LOG, "Metal: DrawPresentTexture - box: %d,%d %dx%d, Scale: %.2f %.2f Offset: %.2f %.2f Gamma: %.2f, Swap: %d\n", 
+             box.left, box.top, box.width, box.height,
+             uniforms.Scale.X, uniforms.Scale.Y, uniforms.Offset.X, uniforms.Offset.Y, uniforms.InvGamma,
+             (int)!screenshot);
   }
 
   renderstate.Clear();
@@ -469,8 +482,12 @@ void MtPostprocess::DrawPresentTexture(IntRect box, bool applyGamma,
 
   if (screenshot)
     renderstate.SetOutputNext();
-  else
+  else {
     renderstate.SetOutputSwapChain();
+    if (fb->mCurrentDrawable) {
+        static_cast<MtRenderState*>(fb->GetRenderState())->MarkAsFilled((MTL::Texture*)fb->mCurrentDrawable->texture());
+    }
+  }
 
   renderstate.SetNoBlend();
   renderstate.Draw();
@@ -488,5 +505,5 @@ void MtPostprocess::SetSceneRenderTarget(bool useSSAO) {
       fb->GetBuffers()->SceneColor->GetTexture(),
       fb->GetBuffers()->SceneDepthStencil->GetTexture(),
       fb->GetBuffers()->GetWidth(), fb->GetBuffers()->GetHeight(),
-      (int)MTL::PixelFormatBGRA8Unorm, fb->GetBuffers()->GetSceneSamples());
+      (int)MTL::PixelFormatRGBA16Float, fb->GetBuffers()->GetSceneSamples());
 }

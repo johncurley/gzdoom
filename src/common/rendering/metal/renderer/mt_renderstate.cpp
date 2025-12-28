@@ -39,6 +39,7 @@
 #include "hwrenderer/data/hw_viewpointbuffer.h"
 #include "hwrenderer/data/shaderuniforms.h"
 #include "v_text.h"
+#include "gamestate.h"
 
 #include <Metal/Metal.hpp>
 #include <QuartzCore/QuartzCore.hpp>
@@ -538,6 +539,7 @@ void MtRenderState::ApplyMaterial() {
 
   if (mMaterial.mChanged) {
     if (mMaterial.mMaterial) {
+      fprintf(stderr, "Metal: ApplyMaterial - binding %s\n", mMaterial.mMaterial->Source()->GetName().GetChars());
       if (mMaterial.mMaterial->Source()->isHardwareCanvas())
         static_cast<FCanvasTexture *>(
             mMaterial.mMaterial->Source()->GetTexture())
@@ -750,7 +752,7 @@ void MtRenderState::BindBuffer(int bindingpoint, MTL::Buffer *buffer,
 
 void MtRenderState::MarkAsFilled(MTL::Texture *tex) {
   if (tex) {
-    if (mt_debug) Printf(PRINT_LOG, "Metal: MarkAsFilled tex=%p\n", tex);
+    if (mt_debug) Printf(PRINT_LOG, "Metal: MarkAsFilled tex=%p (W:%lu H:%lu)\n", tex, tex->width(), tex->height());
     mClearedTargets.insert(tex);
   }
 }
@@ -759,6 +761,7 @@ void MtRenderState::BeginFrame() {
   mMaterial.Reset();
   mApplyCount = 0;
   mIsFirstPass = true;
+  if (mt_debug) Printf(PRINT_LOG, "Metal: BeginFrame - Clearing mClearedTargets\n");
   mClearedTargets.clear();
   mPipelineBound = false;
   
@@ -810,6 +813,10 @@ void MtRenderState::SetRenderTarget(MTL::Texture *image,
   // End current pass, but DON'T flush. Let Apply() or EndFrame handle it.
   EndRenderPass();
 
+  if (gamestate == GS_STARTUP) {
+      Printf(PRINT_LOG, "Metal: Startup SetRenderTarget target=%p ds=%p %dx%d fmt=%d\n", image, depthStencilView, width, height, format);
+  }
+
   bool isSwapChain = (image == nullptr);
   if (isSwapChain && fb->mCurrentDrawable) {
       image = (MTL::Texture*)fb->mCurrentDrawable->texture();
@@ -859,6 +866,12 @@ void MtRenderState::BeginRenderPass() {
   bool colorFilled = mClearedTargets.find(targetTex) != mClearedTargets.end();
   bool clearColor = (mClearTargets & CT_Color) || !colorFilled;
   
+  if (mt_debug) {
+      Printf(PRINT_LOG, "Metal: BeginRenderPass Color target %p, Filled: %d, ClearRequest: %d -> LoadAction: %s\n", 
+             targetTex, (int)colorFilled, (int)(mClearTargets & CT_Color), 
+             clearColor ? "Clear" : "Load");
+  }
+
   colorAttachment->setLoadAction(clearColor ? MTL::LoadActionClear : MTL::LoadActionLoad);
   colorAttachment->setStoreAction(MTL::StoreActionStore);
   
@@ -884,16 +897,17 @@ void MtRenderState::BeginRenderPass() {
     bool clearStencil = (mClearTargets & CT_Stencil) || clearDS;
 
     if (mt_debug) {
-        Printf(PRINT_LOG, "Metal: BeginRenderPass Depth target %p, ClearDepth: %d, ClearStencil: %d\n", 
-               mRenderTarget.DepthStencil, (int)clearDepth, (int)clearStencil);
+        Printf(PRINT_LOG, "Metal: BeginRenderPass Depth target %p, Filled: %d, ClearRequest: %d -> LoadAction: %s\n", 
+               mRenderTarget.DepthStencil, (int)dsFilled, (int)(mClearTargets & (CT_Depth | CT_Stencil)), 
+               clearDS ? "Clear" : "Load");
     }
 
     auto depthAttachment = pRPD->depthAttachment();
     depthAttachment->setTexture(mRenderTarget.DepthStencil);
     depthAttachment->setLoadAction(clearDepth ? MTL::LoadActionClear : MTL::LoadActionLoad);
     
-    // TBDR Optimization: If we are in the 2D/UI pass, we usually don't need the depth buffer preserved
-    // for the next frame. Discarding it on-chip is much faster on Apple Silicon.
+    // TBDR Optimization (Apple Silicon): If we are in the final swapchain pass, 
+    // we don't need to store the depth/stencil results back to main memory.
     if (mRenderTarget.IsSwapChain) {
         depthAttachment->setStoreAction(MTL::StoreActionDontCare);
     } else {

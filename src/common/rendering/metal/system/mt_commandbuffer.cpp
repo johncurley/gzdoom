@@ -55,9 +55,10 @@ void MtCommandBufferManager::FlushCommands(bool wait) {
   if (mCurrentCommandBuffer) {
     if (mt_debug) Printf(PRINT_LOG, "Metal: Flushing CommandBuffer %p (wait=%d)\n", mCurrentCommandBuffer, (int)wait);
     
-    // Reset apply count in render state since we are starting a new command buffer
+    // Safety check: ensure any active render pass is ended before commit
     auto renderState = dynamic_cast<MtRenderState*>(fb->RenderState());
     if (renderState) {
+        renderState->EndRenderPass();
         renderState->ResetApplyCount();
     }
 

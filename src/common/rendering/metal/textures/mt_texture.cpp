@@ -11,11 +11,14 @@
 #include "mt_texture.h"
 #include "printf.h"
 #include "c_cvars.h"
+#include "bitmap.h"
+#include "image.h"
 
 #include "textures.h"
 #include <cmath>
 
 EXTERN_CVAR(Bool, mt_debug)
+EXTERN_CVAR(Int, gl_texture_filter)
 
 // MtTextureImage
 MtTextureImage::MtTextureImage(MetalRenderDevice *fb) : fb(fb) {}
@@ -40,8 +43,7 @@ MtHardwareTexture::MtHardwareTexture(MetalRenderDevice *fb, int numchannels)
 MtHardwareTexture::~MtHardwareTexture() {}
 
 void MtHardwareTexture::AllocateBuffer(int w, int h, int texelsize) {
-  if (mt_debug)
-    Printf(PRINT_LOG, "Metal: AllocateBuffer %s: %dx%d, texelsize=%d\n", mDebugName.c_str(), w, h,
+  Printf(PRINT_LOG, "Metal: AllocateBuffer %s: %dx%d, texelsize=%d\n", mDebugName.c_str(), w, h,
            texelsize);
 
   // Check if we need to recreate the texture
@@ -113,9 +115,9 @@ uint8_t *MtHardwareTexture::MapBuffer() {
   }
 
   static int mapCount = 0;
-  if (mapCount++ < 5)
-    Printf(PRINT_LOG, "Metal: MapBuffer called, returning %zu byte buffer\n",
-           mStagingBuffer.size());
+  if (mapCount++ < 20) // Increased limit to see more startup activity
+    Printf(PRINT_LOG, "Metal: MapBuffer called for %s, returning %zu byte buffer\n",
+           mDebugName.c_str(), mStagingBuffer.size());
 
   mNeedsUpload = true;
   return mStagingBuffer.data();
@@ -125,8 +127,7 @@ unsigned int MtHardwareTexture::CreateTexture(unsigned char *buffer, int w,
                                               int h, int texunit, bool mipmap,
                                               const char *name) {
   if (name) mDebugName = name;
-  if (mt_debug)
-    Printf(PRINT_LOG, "Metal: CreateTexture %s: %dx%d, mipmap=%d\n", mDebugName.c_str(), w, h,
+  Printf(PRINT_LOG, "Metal: CreateTexture %s: %dx%d, mipmap=%d\n", mDebugName.c_str(), w, h,
            mipmap);
 
   // Create Metal texture descriptor
@@ -255,131 +256,119 @@ void MtHardwareTexture::Reset() {
 
 void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
   if (tex) {
-      char buf[32];
-      snprintf(buf, sizeof(buf), "Tex_%p", tex);
+      char buf[128];
+      const char* lumpName = "";
+      if (tex->GetSourceLump() >= 0) {
+          lumpName = fileSystem.GetFileFullName(tex->GetSourceLump());
+      }
+      snprintf(buf, sizeof(buf), "Tex_%p_Lump_%d_%s", tex, tex->GetSourceLump(), lumpName ? lumpName : "");
       mDebugName = buf;
   }
-  if (mt_debug)
-    Printf(PRINT_LOG, 
-        "Metal: CreateImage %s (translation=%d, flags=%d). HWCanvas=%d\n",
-        mDebugName.c_str(), translation, flags, tex ? tex->isHardwareCanvas() : -1);
+  
+  bool isStartup = (strstr(mDebugName.c_str(), "STARTUP") || strstr(mDebugName.c_str(), "BOOTLOGO") || tex->GetSourceLump() == -1);
+
+  if (mt_debug) {
+      fprintf(stderr, "Metal: CreateImage %s (translation=%d, flags=%d). HWCanvas=%d, isStartup=%d\n",
+          mDebugName.c_str(), translation, flags, tex ? tex->isHardwareCanvas() : -1, (int)isStartup);
+  }
 
   if (!tex) return;
 
   if (!tex->isHardwareCanvas()) {
-    // If we already have a texture, don't recreate it unless the size changed
+    // Get pixel data from game texture using standard engine path
+    FTextureBuffer texbuffer = tex->CreateTexBuffer(translation, flags | CTF_ProcessData);
+    if (!texbuffer.mBuffer) return;
+
+    bool indexed = (flags & CTF_Indexed) != 0;
+    int pitch = texbuffer.mWidth * (indexed ? 1 : 4);
+
+    // If we already have a texture, don't recreate it unless the size changed.
     if (mImage->GetTexture()) {
-        if (mImage->GetWidth() == tex->GetWidth() && mImage->GetHeight() == tex->GetHeight()) {
-            // Texture size matches, but we need to upload the new data.
-            // Wait for GPU to finish with this texture before we overwrite it.
-            fb->GetCommands()->WaitForCommands(true);
-
-            FTextureBuffer texbuffer = tex->CreateTexBuffer(translation, flags | CTF_ProcessData);
-            if (texbuffer.mBuffer) {
-                int uploadW = texbuffer.mWidth;
-                int uploadH = texbuffer.mHeight;
-                MTL::Region region = MTL::Region::Make2D(0, 0, uploadW, uploadH);
-                mBufferPitch = uploadW * ((flags & CTF_Indexed) ? 1 : 4);
-                mImage->GetTexture()->replaceRegion(region, 0, texbuffer.mBuffer, mBufferPitch);
-                
-                // Mark as filled so the renderer doesn't try to clear it if used as a target
-                static_cast<MtRenderState*>(fb->RenderState())->MarkAsFilled(mImage->GetTexture());
-
-                if (mImage->GetTexture()->mipmapLevelCount() > 1) {
-                    fb->GetTextureManager()->GenerateMipmaps(mImage->GetTexture());
-                }
-            }
-            mNeedsUpload = false;
-            return;
+        if (mImage->GetWidth() == texbuffer.mWidth && mImage->GetHeight() == texbuffer.mHeight) {
+            // Texture size matches, we will upload to it later in the unified path below.
+        } else {
+            Reset();
         }
-        Reset();
     }
 
-    // Regular texture - get pixel data from game texture and upload to GPU
-    FTextureBuffer texbuffer =
-        tex->CreateTexBuffer(translation, flags | CTF_ProcessData);
-    bool indexed = flags & CTF_Indexed;
-    int numChannels = (flags & CTF_Indexed) ? 1 : 4;
-    
-    // GZDoom's CreateTexBuffer can return 3-channel RGB for some images
-    // We need to detect this to avoid distortion
-    int w = texbuffer.mWidth;
-    int h = texbuffer.mHeight;
+    MTL::Texture *texture = nullptr;
+    MTL::PixelFormat format = indexed ? MTL::PixelFormatR8Unorm : MTL::PixelFormatBGRA8Unorm;
 
-    // Create Metal texture descriptor
-    auto desc = MTL::TextureDescriptor::alloc()->init();
-    desc->setWidth(w);
-    desc->setHeight(h);
+    if (!mImage->GetTexture()) {
+        // Create Metal texture descriptor
+        auto desc = MTL::TextureDescriptor::alloc()->init();
+        desc->setWidth(texbuffer.mWidth);
+        desc->setHeight(texbuffer.mHeight);
+        desc->setPixelFormat(format);
+        
+        int mipLevels = 1;
+        bool isStartupOrUI = strstr(mDebugName.c_str(), "Lump_-1") != nullptr;
+        bool wantMipmap = (gl_texture_filter > 0) && !indexed && texbuffer.mWidth > 1 && texbuffer.mHeight > 1 && !isStartupOrUI;
+        if (wantMipmap) {
+            mipLevels = (int)floor(log2(max(texbuffer.mWidth, texbuffer.mHeight))) + 1;
+        }
+        desc->setMipmapLevelCount(mipLevels);
+        desc->setUsage(MTL::TextureUsageShaderRead);
+        desc->setStorageMode(MTL::StorageModeShared);
 
-    // Determine pixel format
-    MTL::PixelFormat format;
-    switch (numChannels) {
-    case 1:
-      format = MTL::PixelFormatR8Unorm;
-      break;
-    case 2:
-      format = MTL::PixelFormatRG8Unorm;
-      break;
-    case 3:
-    case 4:
-    default:
-      format = MTL::PixelFormatBGRA8Unorm;
-      break;
-    }
+        // Create the texture
+        texture = fb->device->device->newTexture(desc);
+        desc->release();
 
-    desc->setPixelFormat(format);
-    int mipLevels = 1;
-    if (!(flags & CTF_Indexed) && w > 1 && h > 1) {
-        mipLevels = (int)floor(log2(max(w, h))) + 1;
-    }
-    desc->setMipmapLevelCount(mipLevels);
-    desc->setUsage(MTL::TextureUsageShaderRead | MTL::TextureUsageRenderTarget);
-    desc->setStorageMode(MTL::StorageModeShared);
-
-    // Create the texture
-    MTL::Texture *texture = fb->device->device->newTexture(desc);
-    desc->release();
-
-    if (!texture) {
-      Printf(PRINT_LOG, "Metal: Failed to create GPU texture %dx%d\n", w, h);
-      return;
-    }
-
-    if (mt_debug) {
-        Printf(PRINT_LOG, "Metal: Created GPU texture %p (%dx%d), format=%llu, storageMode=%llu, mips=%d, numChannels=%d\n", 
-               texture, w, h, (unsigned long long)texture->pixelFormat(), (unsigned long long)texture->storageMode(), mipLevels, numChannels);
+        if (!texture) {
+          Printf(PRINT_LOG, "Metal: Failed to create GPU texture %dx%d\n", texbuffer.mWidth, texbuffer.mHeight);
+          return;
+        }
+        
+        mImage->SetTexture(texture);
+        mImage->SetWidth(texbuffer.mWidth);
+        mImage->SetHeight(texbuffer.mHeight);
+        mImage->SetFormat((int)format);
+    } else {
+        texture = mImage->GetTexture();
     }
 
     // Upload texture data
-    if (texbuffer.mBuffer) {
-      int uploadW = texbuffer.mWidth;
-      int uploadH = texbuffer.mHeight;
-      MTL::Region region = MTL::Region::Make2D(0, 0, uploadW, uploadH);
-      mBufferPitch = uploadW * numChannels;
-      
-      if (mt_debug)
-        Printf(PRINT_LOG, "Metal: Uploading to GPU texture %p: region %dx%d, pitch=%d\n", 
-               texture, uploadW, uploadH, mBufferPitch);
-
-      texture->replaceRegion(region, 0, texbuffer.mBuffer, mBufferPitch);
-
-      // Mark as filled
-      static_cast<MtRenderState*>(fb->RenderState())->MarkAsFilled(texture);
-
-      if (mt_debug)
-        Printf(PRINT_LOG, "Metal: Uploaded %d bytes to GPU texture %p\n", 
-               (int)(mBufferPitch * h), texture);
-      
-      if (mipLevels > 1) {
-          fb->GetTextureManager()->GenerateMipmaps(texture);
-      }
+    mBufferPitch = pitch;
+    
+    if (mt_debug || isStartup) {
+        fprintf(stderr, "Metal: CreateImage upload - texture: %p, region: %dx%d, pitch: %d, isStartup: %d\n",
+                texture, texbuffer.mWidth, texbuffer.mHeight, mBufferPitch, (int)isStartup);
     }
 
-    // Store in image
-    mImage->SetTexture(texture);
-    mImage->SetWidth(w);
-    mImage->SetHeight(h);
-    mImage->SetFormat((int)format);
+    if (isStartup) {
+        // Safe blit-based update for startup textures to avoid Intel driver artifacts
+        auto renderState = static_cast<MtRenderState*>(fb->RenderState());
+        renderState->EndRenderPass(); // Must end render pass before using blit encoder
+
+        auto cmdBuf = fb->GetCommands()->GetRenderCommandBuffer();
+        auto blitEncoder = cmdBuf->blitCommandEncoder();
+        
+        // Create a temporary staging buffer for the blit
+        NS::UInteger dataSize = mBufferPitch * texbuffer.mHeight;
+        MTL::Buffer* staging = fb->device->device->newBuffer(dataSize, MTL::ResourceStorageModeShared);
+        memcpy(staging->contents(), texbuffer.mBuffer, dataSize);
+        
+        MTL::Size sourceSize = MTL::Size(texbuffer.mWidth, texbuffer.mHeight, 1);
+        blitEncoder->copyFromBuffer(staging, 0, mBufferPitch, 0, sourceSize, 
+                                    texture, 0, 0, MTL::Origin(0, 0, 0));
+        blitEncoder->endEncoding();
+        
+        // We can't release the staging buffer until the GPU is done, so we add it to the recycle bin
+        fb->RecycleBuffer(staging);
+    } else {
+        MTL::Region region = MTL::Region::Make2D(0, 0, texbuffer.mWidth, texbuffer.mHeight);
+        texture->replaceRegion(region, 0, texbuffer.mBuffer, mBufferPitch);
+    }
+
+    // Mark as filled
+    static_cast<MtRenderState*>(fb->RenderState())->MarkAsFilled(texture);
+
+    int mips = (int)texture->mipmapLevelCount();
+    if (mips > 1) {
+        fb->GetTextureManager()->GenerateMipmaps(texture);
+    }
+
     mNeedsUpload = false;
   } else {
     // Hardware canvas (render target) - create empty texture for rendering
@@ -537,8 +526,8 @@ MtPPTexture::MtPPTexture(MetalRenderDevice *fb, PPTexture *texture) : fb(fb) {
     bytesPerPixel = 4;
     break;
   case PixelFormat::Rgba16f:
-    format = MTL::PixelFormatBGRA8Unorm;
-    bytesPerPixel = 4;
+    format = MTL::PixelFormatRGBA16Float;
+    bytesPerPixel = 8;
     break;
   case PixelFormat::R32f:
     format = MTL::PixelFormatR32Float;
@@ -553,7 +542,7 @@ MtPPTexture::MtPPTexture(MetalRenderDevice *fb, PPTexture *texture) : fb(fb) {
     bytesPerPixel = 8;
     break;
   default:
-    format = MTL::PixelFormatBGRA8Unorm;
+    format = MTL::PixelFormatRGBA8Unorm;
     bytesPerPixel = 4;
     break;
   }

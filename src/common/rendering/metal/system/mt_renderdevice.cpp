@@ -48,6 +48,7 @@
 #include "hw_cvars.h"
 #include "hw_lightbuffer.h"
 #include "hw_skydome.h"
+#include "gamestate.h"
 #include "hw_vrmodes.h"
 #include "hw_viewpointuniforms.h"
 #include "hwrenderer/data/hw_viewpointbuffer.h"
@@ -67,7 +68,7 @@ EXTERN_CVAR(Int, gl_tonemap)
 EXTERN_CVAR(Int, screenblocks)
 EXTERN_CVAR(Bool, cl_capfps)
 
-CVAR(Bool, mt_debug, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Bool, mt_debug, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 void MetalError(const char *text) { throw CMetalError(text); }
 
@@ -185,6 +186,7 @@ void MetalRenderDevice::InitializeState() {
   maxuniformblock = 65536;
 
   Printf(PRINT_LOG, TEXTCOLOR_BLUE "Initializing Metal renderer managers...\n");
+  mt_debug = true;
 
   mCommands.reset(new MtCommandBufferManager(this));
   mSamplerManager.reset(new MtSamplerManager(this));
@@ -257,6 +259,10 @@ void MetalRenderDevice::Update() {
       if (mt_debug) Printf(PRINT_LOG, "Metal: Update - Blitting to swapchain\n");
       IntRect physicalBox = { 0, 0, width, height };
       mPostprocess->DrawPresentTexture(physicalBox, true, false);
+      
+      // Reset viewport/scissor after present blit
+      mMtRenderState->SetViewport(0, 0, width, height);
+      mMtRenderState->SetScissor(0, 0, width, height);
     }
 
     if (mMtRenderState)
@@ -269,6 +275,13 @@ void MetalRenderDevice::Update() {
 
     if (mt_debug) Printf(PRINT_LOG, "Metal: Update - Presenting frame\n");
     PresentFrame(mCurrentDrawable);
+    
+    // During startup, flush immediately to keep CPU/GPU in sync for the progress bar
+    if (gamestate == GS_STARTUP) {
+        static int startupFrameCount = 0;
+        Printf(PRINT_LOG, "Metal: Startup Update frame %d\n", ++startupFrameCount);
+        mCommands->FlushCommands(true);
+    }
   }
 
   if (mCommands) {
@@ -500,24 +513,34 @@ void MetalRenderDevice::ImageTransitionScene(bool unknown) {}
 void MetalRenderDevice::SetActiveRenderTarget() {
   if (mt_debug) Printf(PRINT_LOG, "Metal: SetActiveRenderTarget (SceneColor)\n");
   mActiveRenderBuffers = mScreenBuffers.get();
+  auto tex = mActiveRenderBuffers->SceneColor->GetTexture();
   mMtRenderState->SetRenderTarget(
-      mActiveRenderBuffers->SceneColor->GetTexture(),
+      tex,
       mActiveRenderBuffers->SceneDepthStencil->GetTexture(),
       mActiveRenderBuffers->GetWidth(), mActiveRenderBuffers->GetHeight(),
-      (int)MTL::PixelFormatBGRA8Unorm, 1);
+      (int)MTL::PixelFormatRGBA16Float, 1);
+  
+  // Mark as filled so the renderer doesn't clear it during secondary passes (like 2D)
+  mMtRenderState->MarkAsFilled(tex);
 }
 void MetalRenderDevice::Draw2D() {
+  // Synchronize CPU/GPU before 2D pass to prevent artifacts with frequently updated textures
+  if (mCommands) {
+      mCommands->WaitForCommands(true);
+  }
+
   if (mPostprocess) {
     mPostprocess->SetActiveRenderTarget();
   }
   
-  mViewpoints->Set2D(*mMtRenderState, GetWidth(), GetHeight());
-
-  if (mt_debug) Printf(PRINT_LOG, "Metal: Draw2D - Using standard 2D projection\n");
+  if (mt_debug) Printf(PRINT_LOG, "Metal: Draw2D - Invoking engine 2D drawer\n");
   
   // No local pool here - it causes encoders created inside ::Draw2D to be 
   // destroyed before endEncoding is called when this local pool is released.
   ::Draw2D(twod, *mMtRenderState);
+
+  mMtRenderState->SetViewport(0, 0, GetWidth(), GetHeight());
+  mMtRenderState->SetScissor(0, 0, GetWidth(), GetHeight());
 }
 void MetalRenderDevice::RenderTextureView(
     FCanvasTexture *tex, std::function<void(IntRect &)> renderFunc) {
