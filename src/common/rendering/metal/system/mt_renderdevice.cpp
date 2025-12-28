@@ -134,7 +134,7 @@ MetalRenderDevice::~MetalRenderDevice() {
     }
   }
 
-  for (int i = 0; i < 2; i++) {
+  for (int i = 0; i < 3; i++) {
     for (auto *buffer : mBufferRecycleBin[i]) {
       buffer->release();
     }

@@ -78,6 +78,7 @@ protected:
   void ApplyPushConstants();
   void ApplyHWBufferSet();
   void ApplyVertexBuffers();
+  void PrepareMaterial();
   void ApplyMaterial();
   void ApplyCulling();
 

@@ -245,7 +245,8 @@ MtTextureImage *MtHardwareTexture::GetDepthStencil(FCanvasTexture *tex) {
 }
 
 void MtHardwareTexture::Reset() {
-  if (mImage) {
+  if (mImage && mImage->GetTexture()) {
+    fb->RecycleTexture(mImage->GetTexture());
     mImage->SetTexture(nullptr);
   }
   mStagingBuffer.clear();
@@ -269,7 +270,18 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
     // If we already have a texture, don't recreate it unless the size changed
     if (mImage->GetTexture()) {
         if (mImage->GetWidth() == tex->GetWidth() && mImage->GetHeight() == tex->GetHeight()) {
-            if (mt_debug) Printf(PRINT_LOG, "Metal: CreateImage - reusing existing texture %p\n", mImage->GetTexture());
+            // Texture size matches, but we need to upload the new data.
+            FTextureBuffer texbuffer = tex->CreateTexBuffer(translation, flags | CTF_ProcessData);
+            if (texbuffer.mBuffer) {
+                MTL::Region region = MTL::Region::Make2D(0, 0, mImage->GetWidth(), mImage->GetHeight());
+                mBufferPitch = mImage->GetWidth() * ((flags & CTF_Indexed) ? 1 : 4);
+                mImage->GetTexture()->replaceRegion(region, 0, texbuffer.mBuffer, mBufferPitch);
+                
+                if (mImage->GetTexture()->mipmapLevelCount() > 1) {
+                    fb->GetTextureManager()->GenerateMipmaps(mImage->GetTexture());
+                }
+            }
+            mNeedsUpload = false;
             return;
         }
         Reset();
@@ -326,8 +338,8 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
     }
 
     if (mt_debug) {
-        Printf(PRINT_LOG, "Metal: Created GPU texture %p (%dx%d), format=%llu, storageMode=%llu, mips=%d\n", 
-               texture, w, h, (unsigned long long)texture->pixelFormat(), (unsigned long long)texture->storageMode(), mipLevels);
+        Printf(PRINT_LOG, "Metal: Created GPU texture %p (%dx%d), format=%llu, storageMode=%llu, mips=%d, numChannels=%d\n", 
+               texture, w, h, (unsigned long long)texture->pixelFormat(), (unsigned long long)texture->storageMode(), mipLevels, numChannels);
     }
 
     // Upload texture data
@@ -335,11 +347,15 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
       MTL::Region region = MTL::Region::Make2D(0, 0, w, h);
       mBufferPitch = w * numChannels;
       
+      if (mt_debug)
+        Printf(PRINT_LOG, "Metal: Uploading to GPU texture %p: region %dx%d, pitch=%d\n", 
+               texture, w, h, mBufferPitch);
+
       texture->replaceRegion(region, 0, texbuffer.mBuffer, mBufferPitch);
 
       if (mt_debug)
-        Printf(PRINT_LOG, "Metal: Uploaded %d bytes to GPU texture %p (mips=%d)\n", 
-               (int)(mBufferPitch * h), texture, mipLevels);
+        Printf(PRINT_LOG, "Metal: Uploaded %d bytes to GPU texture %p\n", 
+               (int)(mBufferPitch * h), texture);
       
       if (mipLevels > 1) {
           fb->GetTextureManager()->GenerateMipmaps(texture);
@@ -441,10 +457,9 @@ void MtTextureManager::GenerateMipmaps(MTL::Texture *texture) {
   if (!texture || texture->mipmapLevelCount() <= 1)
     return;
 
-  // Use a dedicated command buffer for mipmap generation.
-  // Metal guarantees that command buffers committed to the same queue execute in order.
-  // By committing this now, we ensure it's submitted before the main render buffer.
-  MTL::CommandBuffer *cmdBuf = fb->device->commandQueue->commandBuffer();
+  // Use a dedicated blit command buffer and commit it immediately.
+  // This avoids conflicts if we are currently inside a render pass.
+  auto cmdBuf = fb->GetCommands()->GetBlitCommandBuffer();
   if (!cmdBuf) return;
 
   auto blitEncoder = cmdBuf->blitCommandEncoder();
@@ -453,7 +468,8 @@ void MtTextureManager::GenerateMipmaps(MTL::Texture *texture) {
       blitEncoder->endEncoding();
   }
   cmdBuf->commit();
-  // We do not wait here to avoid CPU stalls; the GPU will handle the ordering.
+  cmdBuf->waitUntilCompleted();
+  cmdBuf->release();
 }
 
 MTL::Texture *MtTextureManager::GetPPTexture(PPTexture *texture) {
