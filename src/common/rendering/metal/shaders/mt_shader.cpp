@@ -600,13 +600,29 @@ static void PatchVertexShader(std::string &source, const std::string &shadername
   std::regex glPosRegex(R"(gl_Position\s*=\s*([^;]+);)");
   std::string patch = 
       "gl_Position = $1;\n"
-      "    gl_Position.y = -gl_Position.y;\n"
-      "    gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;";
+      "    gl_Position.z = 0.5 * (gl_Position.w - gl_Position.z);";
 
   if (std::regex_search(source, glPosRegex)) {
       if (mt_debug) Printf(PRINT_LOG, "Metal: Patching vertex shader %s for coordinate system.\n", shadername.c_str());
       source = std::regex_replace(source, glPosRegex, patch);
   }
+}
+
+static void PatchFragmentShader(std::string &source, const std::string &shadername) {
+    // 1. Patch ShadowMap generation to use massive default distance
+    if (shadername.find("shadowmap") != std::string::npos) {
+        size_t pos = source.find("FragColor = vec4(1.0, 0.0, 0.0, 1.0);");
+        if (pos != std::string::npos) {
+            source.replace(pos, strlen("FragColor = vec4(1.0, 0.0, 0.0, 1.0);"), "FragColor = vec4(1e20, 0.0, 0.0, 1.0);");
+        }
+    }
+    
+    // 2. Patch main.fp to increase shadow bias
+    if (shadername.find("main") != std::string::npos) {
+        // Use regex to replace ALL instances of "float bias = X.X;" with 16.0
+        std::regex biasRegex(R"(float\s+bias\s*=\s*[0-9\.]+;)");
+        source = std::regex_replace(source, biasRegex, "float bias = 16.0;");
+    }
 }
 
 std::shared_ptr<MtShaderModule>
@@ -616,11 +632,6 @@ MtShaderManager::LoadVertShader(const std::string &shadername,
   code += "#extension GL_GOOGLE_include_directive : enable\n";
   
   std::string definesStr = defines;
-  size_t vpos = definesStr.find("#define VULKAN_COORDINATE_SYSTEM");
-  if (vpos != std::string::npos) {
-      if (mt_debug) Printf(PRINT_LOG, "Metal: Stripping VULKAN_COORDINATE_SYSTEM from %s to use manual Metal patch.\n", shadername.c_str());
-      definesStr.replace(vpos, strlen("#define VULKAN_COORDINATE_SYSTEM"), "//efine VULKAN_COORDINATE_SYSTEM");
-  }
   
   code += definesStr;
   code += "\n#define MAX_STREAM_DATA " + std::to_string(MAX_STREAM_DATA) + "\n";
@@ -651,7 +662,9 @@ std::shared_ptr<MtShaderModule> MtShaderManager::LoadFragShader(
     code += "#define GBUFFER_PASS\n";
 
   code += "\n#line 1\n";
-  code += LoadPrivateShaderLump(frag_lump);
+  std::string fragSource = LoadPrivateShaderLump(frag_lump);
+  PatchFragmentShader(fragSource, shadername);
+  code += fragSource;
 
   if (material_lump) {
     if (material_lump[0] != '#') {

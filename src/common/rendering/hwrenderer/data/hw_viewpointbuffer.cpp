@@ -33,6 +33,8 @@
 #include "hw_cvars.h"
 #include "gamestate.h"
 
+EXTERN_CVAR(Bool, mt_debug)
+
 static const int INITIAL_BUFFER_SIZE = 100;	// 100 viewpoints per frame should nearly always be enough
 
 HWViewpointBuffer::HWViewpointBuffer(int pipelineNbr):
@@ -84,7 +86,6 @@ int HWViewpointBuffer::Bind(FRenderState &di, unsigned int index)
 
 void HWViewpointBuffer::Set2D(FRenderState &di, int width, int height, int pll)
 {
-	Printf("HWViewpointBuffer: Set2D %dx%d (pll=%d)\n", width, height, pll);
 	HWViewpointUniforms matrices;
 
 	matrices.mViewMatrix.loadIdentity();

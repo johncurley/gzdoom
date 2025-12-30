@@ -116,8 +116,87 @@ This audit provides a roadmap for future development, prioritizing the implement
 6.  **Blending Refinement:** Restored standard alpha blending for `STYLE_Normal` to ensure correct transparency for masked sprites and avoid black backgrounds caused by aggressive opaque-copy optimizations.
 7.  **Final Synchronization:** Verified perfect alignment of `PushConstants` and `StreamData` between C++ and GLSL, ensuring stable lighting and animation timer performance.
 
+## Architectural Guidelines for Metal (Intel vs. Apple Silicon)
 
+Optimizing for both Intel (x86_64) and Apple Silicon (aarch64) requires managing Immediate Mode Rendering (IMR) vs. Tile-Based Deferred Rendering (TBDR).
 
+### 1. Memory Storage Strategy
+*   **Unified Memory (Apple Silicon):** Use `MTL::StorageModeShared` for CPU-updated resources. Use `MTL::StorageModeMemoryless` for transient render targets (depth/stencil).
+*   **Managed Memory (Intel):** Use `MTL::StorageModeManaged` for buffers written by CPU (backwards compatibility for 10.13). **Crucial:** Always call `didModifyRange:` after CPU writes.
+*   **Private Memory:** Use `MTL::StorageModePrivate` for GPU-only data (textures, vertex buffers that don't change).
 
+### 2. TBDR Optimization (Apple Silicon)
+*   **Load Actions:** Use `.clear` or `.dontCare`. Avoid `.load` unless necessary.
+*   **Store Actions:** Use `.dontCare` for depth/stencil and intermediate G-buffers to avoid wasting bandwidth writing back to RAM.
 
+### 3. C++17 Runtime Capability Detection (`GPUContext`)
 
+```cpp
+struct GPUContext {
+    MTL::Device* device;
+    bool isTBDR;               // True for Apple Silicon / TBDR
+    bool supportsMemoryless;   // True for A11+ / M1+
+    MTL::StorageMode sharedMode;
+    
+    GPUContext(MTL::Device* pDevice) : device(pDevice) {
+        if (pDevice->supportsFamily(MTL::GPUFamilyApple7)) {
+            isTBDR = true;
+            supportsMemoryless = true;
+            sharedMode = MTL::StorageModeShared;
+        } else {
+            isTBDR = false;
+            supportsMemoryless = false;
+            sharedMode = MTL::StorageModeManaged; 
+        }
+    }
+};
+```
+
+### 4. Universal Resource Allocation Example
+
+```cpp
+MTL::Texture* CreateDepthTexture(const GPUContext& ctx, int width, int height) {
+    auto desc = MTL::TextureDescriptor::alloc()->init();
+    desc->setPixelFormat(MTL::PixelFormatDepth32Float);
+    desc->setWidth(width);
+    desc->setHeight(height);
+    desc->setUsage(MTL::TextureUsageRenderTarget);
+    
+    if (ctx.supportsMemoryless) {
+        desc->setStorageMode(MTL::StorageModeMemoryless);
+    } else {
+        desc->setStorageMode(MTL::StorageModePrivate);
+    }
+    
+    MTL::Texture* pTex = ctx.device->newTexture(desc);
+    desc->release();
+    return pTex;
+}
+```
+
+### 5. Universal Render Pass Example
+
+```cpp
+MTL::RenderPassDescriptor* CreateRenderPass(const GPUContext& ctx, 
+                                            MTL::Texture* pColorTex, 
+                                            MTL::Texture* pDepthTex) {
+    auto pPass = MTL::RenderPassDescriptor::renderPassDescriptor();
+    
+    auto pColorAtt = pPass->colorAttachments()->object(0);
+    pColorAtt->setTexture(pColorTex);
+    pColorAtt->setLoadAction(MTL::LoadActionClear);
+    pColorAtt->setStoreAction(MTL::StoreActionStore);
+    
+    auto pDepthAtt = pPass->depthAttachment();
+    pDepthAtt->setTexture(pDepthTex);
+    pDepthAtt->setLoadAction(MTL::LoadActionClear);
+    
+    if (ctx.isTBDR) {
+        pDepthAtt->setStoreAction(MTL::StoreActionDontCare);
+    } else {
+        pDepthAtt->setStoreAction(MTL::StoreActionDontCare); // Prefer DontCare if not read back
+    }
+    
+    return pPass;
+}
+```

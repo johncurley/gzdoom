@@ -94,8 +94,9 @@ bool MtStreamBufferWriter::Write(const StreamData &data) {
   // Write to Metal buffer's CPU-accessible memory
   uint8_t *ptr = mBuffer->GetBufferPointer();
   if (ptr) {
-    memcpy(ptr + mStreamDataOffset + sizeof(StreamData) * mDataIndex, &data,
-           sizeof(StreamData));
+    size_t offset = mStreamDataOffset + sizeof(StreamData) * mDataIndex;
+    memcpy(ptr + offset, &data, sizeof(StreamData));
+    mBuffer->GetBuffer()->didModifyRange(NS::Range(offset, sizeof(StreamData)));
     
     if (mt_debug) {
         Printf(PRINT_LOG, "Metal: StreamData %d: Color=(%.2f, %.2f, %.2f, %.2f) UseVertex=%d Timer=%f\n", 
@@ -170,6 +171,7 @@ bool MtMatrixBufferWriter::Write(const VSMatrix &modelMatrix,
     uint8_t *ptr = mBuffer->GetBufferPointer();
     if (ptr) {
       memcpy(ptr + mOffset, &mMatrices, sizeof(MatricesUBO));
+      mBuffer->GetBuffer()->didModifyRange(NS::Range(mOffset, sizeof(MatricesUBO)));
     }
   }
 

@@ -90,11 +90,17 @@ void MtRenderBuffers::CreateShadowMap() {
   auto desc = MTL::TextureDescriptor::alloc()->init();
   desc->setWidth(quality);
   desc->setHeight(1024);
-  desc->setPixelFormat(MTL::PixelFormatR32Float);
+  // GZDoom 1D shadow maps store squared distance as data, must use R32Float.
+  desc->setPixelFormat(MTL::PixelFormatR32Float); 
   desc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
   desc->setStorageMode(MTL::StorageModePrivate);
 
   MTL::Texture *texture = fb->device->device->newTexture(desc);
+  if (texture) {
+      Printf(PRINT_LOG, "Metal: Created ShadowMap texture %p (%dx1024) R32Float\n", texture, quality);
+  } else {
+      Printf(PRINT_LOG, "Metal: FAILED to create ShadowMap texture!\n");
+  }
   ShadowMap->SetTexture(texture);
   ShadowMap->SetWidth(quality);
   ShadowMap->SetHeight(1024);

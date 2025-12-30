@@ -73,6 +73,7 @@ private:
   MetalRenderDevice *fb = nullptr;
   int mNumChannels = 0;
   std::vector<uint8_t> mStagingBuffer;
+  MTL::Buffer *mBackingBuffer = nullptr; // For zero-copy dynamic textures
   bool mNeedsUpload = false;
   std::string mDebugName;
   int mBufferPitch = 0;

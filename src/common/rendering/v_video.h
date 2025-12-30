@@ -249,6 +249,11 @@ public:
 		return true;
 	}
 
+	virtual bool IsReverseZ() const
+	{
+		return false;
+	}
+
 	// Report a game restart
 	void SetClearColor(int color);
 	virtual int Backend() { return 0; }

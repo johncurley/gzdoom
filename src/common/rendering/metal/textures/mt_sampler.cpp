@@ -36,8 +36,9 @@ static MTL::SamplerMinMagFilter MapMinMagFilter(int filter) {
 }
 
 static MTL::SamplerMipFilter MapMipFilter(int filter) {
-  return (filter == 0) ? MTL::SamplerMipFilterNearest
-                       : MTL::SamplerMipFilterLinear;
+  if (filter == 0) return MTL::SamplerMipFilterNotMipmapped;
+  if (filter == 1) return MTL::SamplerMipFilterNearest;
+  return MTL::SamplerMipFilterLinear;
 }
 
 static MTL::SamplerAddressMode MapAddressMode(int clampMode, bool isV) {

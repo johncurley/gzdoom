@@ -28,6 +28,7 @@
 #include "metal/renderer/mt_postprocess.h"
 #include "metal/renderer/mt_renderbuffers.h"
 #include "metal/renderer/mt_renderstate.h"
+#include "hw_renderstate.h"
 #include "metal/renderer/mt_resourcebinding.h"
 #include "metal/shaders/mt_shader.h"
 #include "metal/textures/mt_sampler.h"
@@ -80,7 +81,7 @@ void MetalPrintLog(const char *typestr, const std::string &msg) {
 MetalRenderDevice::MetalRenderDevice(void *hMonitor, bool fullscreen)
     : Super(hMonitor, fullscreen) {
   mInflightFramesSemaphore = dispatch_semaphore_create(MaxFramesInFlight);
-  mPipelineNbr = MaxFramesInFlight; // Match vertex buffer pipelining to frames in flight
+  mPipelineNbr = MaxFramesInFlight; // Match vertex buffer pipelining to frames in flight (2)
   device = std::make_shared<MetalDevice>();
   device->device = MTL::CreateSystemDefaultDevice();
 
@@ -186,8 +187,7 @@ void MetalRenderDevice::InitializeState() {
   maxuniformblock = 65536;
 
   Printf(PRINT_LOG, TEXTCOLOR_BLUE "Initializing Metal renderer managers...\n");
-  mt_debug = true;
-
+  
   mCommands.reset(new MtCommandBufferManager(this));
   mSamplerManager.reset(new MtSamplerManager(this));
   mTextureManager.reset(new MtTextureManager(this));
@@ -278,8 +278,6 @@ void MetalRenderDevice::Update() {
     
     // During startup, flush immediately to keep CPU/GPU in sync for the progress bar
     if (gamestate == GS_STARTUP) {
-        static int startupFrameCount = 0;
-        Printf(PRINT_LOG, "Metal: Startup Update frame %d\n", ++startupFrameCount);
         mCommands->FlushCommands(true);
     }
   }
@@ -438,7 +436,7 @@ const char *MetalRenderDevice::DeviceName() const {
   return "Metal Device";
 }
 
-FRenderState *MetalRenderDevice::RenderState() { return mMtRenderState.get(); }
+FRenderState *MetalRenderDevice::RenderState() { return static_cast<FRenderState*>(mMtRenderState.get()); }
 
 void MetalRenderDevice::WaitForCommands(bool finish) {
   if (mCommands)
@@ -524,11 +522,6 @@ void MetalRenderDevice::SetActiveRenderTarget() {
   mMtRenderState->MarkAsFilled(tex);
 }
 void MetalRenderDevice::Draw2D() {
-  // Synchronize CPU/GPU before 2D pass to prevent artifacts with frequently updated textures
-  if (mCommands) {
-      mCommands->WaitForCommands(true);
-  }
-
   if (mPostprocess) {
     mPostprocess->SetActiveRenderTarget();
   }
@@ -537,10 +530,7 @@ void MetalRenderDevice::Draw2D() {
   
   // No local pool here - it causes encoders created inside ::Draw2D to be 
   // destroyed before endEncoding is called when this local pool is released.
-  ::Draw2D(twod, *mMtRenderState);
-
-  mMtRenderState->SetViewport(0, 0, GetWidth(), GetHeight());
-  mMtRenderState->SetScissor(0, 0, GetWidth(), GetHeight());
+  ::Draw2D(twod, static_cast<FRenderState&>(*mMtRenderState));
 }
 void MetalRenderDevice::RenderTextureView(
     FCanvasTexture *tex, std::function<void(IntRect &)> renderFunc) {
@@ -559,7 +549,11 @@ void MetalRenderDevice::RenderTextureView(
   bounds.width = min(tex->GetWidth(), image->GetWidth());
   bounds.height = min(tex->GetHeight(), image->GetHeight());
   if (mt_debug) Printf(PRINT_LOG, "Metal: RenderTextureView bounds %d,%d %dx%d\n", bounds.left, bounds.top, bounds.width, bounds.height);
+  
+  mMtRenderState->SetInRenderTextureView(true);
   renderFunc(bounds);
+  mMtRenderState->SetInRenderTextureView(false);
+
   mMtRenderState->EndRenderPass();
   mMtRenderState->SetRenderTarget(
       oldTarget.Image, oldTarget.DepthStencil, 

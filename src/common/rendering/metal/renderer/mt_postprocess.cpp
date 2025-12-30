@@ -458,7 +458,7 @@ void MtPostprocess::DrawPresentTexture(IntRect box, bool applyGamma,
     uniforms.Offset = { 0.0f, 0.0f };
   } else {
     // Flip vertically when blitting to swapchain to correct orientation.
-    // PipelineImage content is upside-down due to the vertex shader flip.
+    // Vertex shader is now standard Y-up, so we flip at the final step.
     uniforms.Scale = { 1.0f, -1.0f };
     uniforms.Offset = { 0.0f, 1.0f };
   }

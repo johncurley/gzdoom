@@ -750,8 +750,23 @@ void PPAmbientOcclusion::Render(PPRenderState *renderstate, float m5, int sceneW
 	linearUniforms.SampleIndex = 0;
 	linearUniforms.LinearizeDepthA = 1.0f / screen->GetZFar() - 1.0f / screen->GetZNear();
 	linearUniforms.LinearizeDepthB = max(1.0f / screen->GetZNear(), 1.e-8f);
-	linearUniforms.InverseDepthRangeA = 1.0f;
-	linearUniforms.InverseDepthRangeB = 0.0f;
+	
+	if (screen->IsReverseZ())
+	{
+		// Metal uses Reverse-Z (Near=1, Far=0).
+		// We need to map [1, 0] back to [0, 1] for the linearizer to work.
+		// Formula: Z_new = 1.0 - Z_old.
+		// InverseDepthRangeA * Z + InverseDepthRangeB
+		// -1.0 * Z + 1.0
+		linearUniforms.InverseDepthRangeA = -1.0f;
+		linearUniforms.InverseDepthRangeB = 1.0f;
+	}
+	else
+	{
+		linearUniforms.InverseDepthRangeA = 1.0f;
+		linearUniforms.InverseDepthRangeB = 0.0f;
+	}
+	
 	linearUniforms.Scale = sceneScale;
 	linearUniforms.Offset = sceneOffset;
 

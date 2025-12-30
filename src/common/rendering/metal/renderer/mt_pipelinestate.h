@@ -19,6 +19,7 @@ struct MtPipelineKey {
   int BlendMode = 0;
   int DepthFunc = 0;
   int StencilOp = 0;
+  int StencilFunc = 0; // New: Compare function for stencil
   int ColorMask = 0;
   int CullMode = 0;
   int DepthClampMode = 0;

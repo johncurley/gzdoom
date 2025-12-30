@@ -61,6 +61,7 @@ public:
   void EndRenderPass();
   void EndFrame();
   void ResetApplyCount() { mApplyCount = 0; }
+  void SetInRenderTextureView(bool on);
 
   MTL::RenderCommandEncoder *GetEncoder() { return mEncoder; }
   const auto &GetRenderTarget() const { return mRenderTarget; }
@@ -78,6 +79,7 @@ protected:
   void ApplyPushConstants();
   void ApplyHWBufferSet();
   void ApplyVertexBuffers();
+  void ApplyFixedTextures();
   void PrepareMaterial();
   void ApplyMaterial();
   void ApplyCulling();
@@ -103,12 +105,14 @@ protected:
   bool mDepthTest = false;
   bool mDepthWrite = false;
   bool mStencilTest = false;
+  bool mInRenderTextureView = false;
   int mClipDistanceMask = 0;
   bool mIsFirstPass = true;
 
   bool mStencilRefChanged = false;
   int mStencilRef = 0;
   int mStencilOp = 0;
+  int mStencilFunc = 0;
   int mDepthFunc = 0;
   int mColorMask = 15;
   int mCullMode = 0;

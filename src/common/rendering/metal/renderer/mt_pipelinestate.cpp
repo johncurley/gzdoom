@@ -16,7 +16,8 @@ bool MtPipelineKey::operator==(const MtPipelineKey &other) const {
          SpecialEffect == other.SpecialEffect &&
          EffectState == other.EffectState && AlphaTest == other.AlphaTest &&
          BlendMode == other.BlendMode && DepthFunc == other.DepthFunc &&
-         StencilOp == other.StencilOp && ColorMask == other.ColorMask &&
+         StencilOp == other.StencilOp && StencilFunc == other.StencilFunc &&
+         ColorMask == other.ColorMask &&
          CullMode == other.CullMode && DepthClampMode == other.DepthClampMode &&
          DepthWrite == other.DepthWrite && StencilTest == other.StencilTest &&
          SampleCount == other.SampleCount &&
@@ -35,16 +36,17 @@ size_t std::hash<MtPipelineKey>::operator()(const MtPipelineKey &key) const {
   hash ^= std::hash<int>()(key.BlendMode) << 4;
   hash ^= std::hash<int>()(key.DepthFunc) << 5;
   hash ^= std::hash<int>()(key.StencilOp) << 6;
-  hash ^= std::hash<int>()(key.ColorMask) << 7;
-  hash ^= std::hash<int>()(key.CullMode) << 8;
-  hash ^= std::hash<int>()(key.DepthClampMode) << 9;
-  hash ^= std::hash<int>()(key.DepthWrite) << 10;
-  hash ^= std::hash<int>()(key.StencilTest) << 11;
-  hash ^= std::hash<int>()(key.SampleCount) << 12;
-  hash ^= std::hash<int>()(key.DrawBufferCount) << 13;
-  hash ^= std::hash<int>()(key.PixelFormat) << 14;
-  hash ^= std::hash<int>()(key.DepthStencilFormat) << 15;
-  hash ^= std::hash<int>()(key.ClipDistanceMask) << 16;
+  hash ^= std::hash<int>()(key.StencilFunc) << 7;
+  hash ^= std::hash<int>()(key.ColorMask) << 8;
+  hash ^= std::hash<int>()(key.CullMode) << 9;
+  hash ^= std::hash<int>()(key.DepthClampMode) << 10;
+  hash ^= std::hash<int>()(key.DepthWrite) << 11;
+  hash ^= std::hash<int>()(key.StencilTest) << 12;
+  hash ^= std::hash<int>()(key.SampleCount) << 13;
+  hash ^= std::hash<int>()(key.DrawBufferCount) << 14;
+  hash ^= std::hash<int>()(key.PixelFormat) << 15;
+  hash ^= std::hash<int>()(key.DepthStencilFormat) << 16;
+  hash ^= std::hash<int>()(key.ClipDistanceMask) << 17;
   return hash;
 }
 
@@ -201,14 +203,20 @@ MTL::DepthStencilState *
 MtPipelineStateManager::CreateDepthStencilState(const MtPipelineKey &key) {
   auto desc = MTL::DepthStencilDescriptor::alloc()->init();
 
-  // Map depth function enum to Metal
+  // Map depth functions to Metal (GZDoom EDepthFunc has only 3 values)
+  // REVERSE-Z: Invert logic (Less -> Greater)
   static const MTL::CompareFunction depthFuncs[] = {
-      MTL::CompareFunctionLess,
-      MTL::CompareFunctionLessEqual,
-      MTL::CompareFunctionAlways
+      MTL::CompareFunctionGreater,       // 0: DF_Less (reversed)
+      MTL::CompareFunctionGreaterEqual,  // 1: DF_LEqual (reversed)
+      MTL::CompareFunctionAlways,        // 2: DF_Always
+      // Fallbacks / Extended range if needed
+      MTL::CompareFunctionEqual,         
+      MTL::CompareFunctionNotEqual,      
+      MTL::CompareFunctionLess,          // Reversed Greater
+      MTL::CompareFunctionLessEqual,     // Reversed GreaterEqual
+      MTL::CompareFunctionNever          
   };
 
-  // Configure depth test
   if (key.DepthFunc >= 0 && key.DepthFunc < 3) {
     desc->setDepthCompareFunction(depthFuncs[key.DepthFunc]);
   } else {
@@ -216,19 +224,43 @@ MtPipelineStateManager::CreateDepthStencilState(const MtPipelineKey &key) {
   }
   desc->setDepthWriteEnabled(key.DepthWrite != 0);
 
-  // Configure stencil operations
+  // Map GZDoom stencil operations to Metal (Correct 3-value mapping)
   static const MTL::StencilOperation stencilOps[] = {
-      MTL::StencilOperationKeep,
-      MTL::StencilOperationIncrementClamp,
-      MTL::StencilOperationDecrementClamp
+      MTL::StencilOperationKeep,           // SOP_Keep (0)
+      MTL::StencilOperationIncrementClamp, // SOP_Increment (1)
+      MTL::StencilOperationDecrementClamp  // SOP_Decrement (2)
   };
 
-  if (key.StencilTest != 0 && key.StencilOp >= 0 && key.StencilOp < 3) {
+  if (key.StencilTest != 0) {
     auto stencilDesc = MTL::StencilDescriptor::alloc()->init();
-    stencilDesc->setStencilCompareFunction(MTL::CompareFunctionEqual);
+    
+    // Stencil functions often use a wider range (e.g. SetStencil uses index 3 for Equal)
+    static const MTL::CompareFunction stencilFuncs[] = {
+        MTL::CompareFunctionLess,          // 0
+        MTL::CompareFunctionLessEqual,     // 1
+        MTL::CompareFunctionAlways,        // 2
+        MTL::CompareFunctionEqual,         // 3: Used by SetStencil
+        MTL::CompareFunctionNotEqual,      // 4
+        MTL::CompareFunctionGreater,       // 5
+        MTL::CompareFunctionGreaterEqual,  // 6
+        MTL::CompareFunctionNever          // 7
+    };
+
+    if (key.StencilFunc >= 0 && key.StencilFunc < 8) {
+        stencilDesc->setStencilCompareFunction(stencilFuncs[key.StencilFunc]);
+    } else {
+        stencilDesc->setStencilCompareFunction(MTL::CompareFunctionAlways);
+    }
+
     stencilDesc->setStencilFailureOperation(MTL::StencilOperationKeep);
     stencilDesc->setDepthFailureOperation(MTL::StencilOperationKeep);
-    stencilDesc->setDepthStencilPassOperation(stencilOps[key.StencilOp]);
+    
+    if (key.StencilOp >= 0 && key.StencilOp < 3) {
+        stencilDesc->setDepthStencilPassOperation(stencilOps[key.StencilOp]);
+    } else {
+        stencilDesc->setDepthStencilPassOperation(MTL::StencilOperationKeep);
+    }
+
     stencilDesc->setReadMask(0xFFFFFFFF);
     stencilDesc->setWriteMask(0xFFFFFFFF);
 
@@ -379,13 +411,16 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
 
     // Attribute 2: Color (for 2D drawer fallback)
     auto attr2 = vertexDesc->attributes()->object(2);
-    attr2->setFormat(MTL::VertexFormatUChar4Normalized);
     if (stride == 24) {
+        attr2->setFormat(MTL::VertexFormatUChar4Normalized);
         attr2->setOffset(20); 
     } else {
-        // For FFlatVertex (32), there is no color in the struct. 
-        // We set it to offset 0 and hope the shader uses uVertexColor instead.
-        attr2->setOffset(0);
+        // For FFlatVertex (32), there is no color. 
+        // Force a safe format and offset that is unlikely to be used, 
+        // or set to an unused buffer slot if possible. 
+        // For now, we set it to offset 0 but use a small format.
+        attr2->setFormat(MTL::VertexFormatUChar4Normalized);
+        attr2->setOffset(0); 
     }
     attr2->setBufferIndex(0);
 

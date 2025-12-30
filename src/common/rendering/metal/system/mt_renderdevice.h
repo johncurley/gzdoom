@@ -83,6 +83,7 @@ public:
   ~MetalRenderDevice();
   bool IsMetal() override { return true; }
   bool RenderTextureIsFlipped() const override { return true; }
+  bool IsReverseZ() const override { return true; }
 
   void Update() override;
 

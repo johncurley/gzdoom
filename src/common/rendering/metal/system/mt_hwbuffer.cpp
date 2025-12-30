@@ -74,8 +74,11 @@ void MtHardwareDataBuffer::Map() {
   }
 }
 void MtHardwareDataBuffer::Unmap() { 
-  // For Metal StorageModeShared, we keep the buffer mapped as it's persistently accessible.
-  // Clearing this->map here would cause crashes in the generic HW renderer logic.
+  if (mBuffer && mBuffer->storageMode() == MTL::StorageModeShared) {
+      // Notify the GPU that the entire buffer has been modified.
+      // This is required for correctness on many Intel drivers.
+      mBuffer->didModifyRange(NS::Range(0, mBufferSize));
+  }
 }
 void *MtHardwareDataBuffer::Lock(unsigned int size) {
   if (!mBuffer) CreateBuffer(size);
@@ -171,7 +174,11 @@ void MtVertexBuffer::Map() {
     this->mMappedMemory = this->map;
   }
 }
-void MtVertexBuffer::Unmap() { }
+void MtVertexBuffer::Unmap() { 
+  if (mBuffer && mBuffer->storageMode() == MTL::StorageModeShared) {
+      mBuffer->didModifyRange(NS::Range(0, mBufferSize));
+  }
+}
 void *MtVertexBuffer::Lock(unsigned int size) {
   if (!mBuffer) CreateBuffer(size);
   Map();
