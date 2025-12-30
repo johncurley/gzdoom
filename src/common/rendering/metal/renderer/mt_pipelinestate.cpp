@@ -301,10 +301,10 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
 
   if (!program || !program->vert || !program->frag) {
     static int warnCount = 0;
-    if (warnCount++ < 5)
+    if (warnCount++ < 5 || mt_debug)
       Printf(PRINT_LOG, 
-          "Metal: Failed to get shader for effect=%d state=%d alphaTest=%d\n",
-          key.SpecialEffect, key.EffectState, key.AlphaTest);
+          "Metal: Failed to get shader for effect=%d state=%d alphaTest=%d (program=%p)\n",
+          key.SpecialEffect, key.EffectState, key.AlphaTest, program);
     desc->release();
     return nullptr;
   }
@@ -314,7 +314,8 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
   auto fragmentFunction = program->frag->fragmentFunction;
 
   if (!vertexFunction || !fragmentFunction) {
-    Printf(PRINT_LOG, "Metal: Failed to load shader functions from default library\n");
+    Printf(PRINT_LOG, "Metal: Failed to load shader functions for %s (V:%p F:%p)\n", 
+           module->name.c_str(), vertexFunction, fragmentFunction);
     desc->release();
     return nullptr;
   }
@@ -326,6 +327,10 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
   if (stride == 0) stride = sizeof(FFlatVertex);
 
   auto vertexDesc = MTL::VertexDescriptor::alloc()->init();
+
+  if (mt_debug) {
+      Printf(PRINT_LOG, "Metal: Configuring vertex descriptor for %s (stride=%zu)\n", module->name.c_str(), stride);
+  }
 
   // Configure vertex descriptor
   if (vertexBuffer && vertexBuffer->GetNumAttributes() > 0) {
@@ -368,18 +373,17 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
       attrDesc->setBufferIndex(attrs[i].binding);
     }
 
-    // Robustly define all attributes 0-15 to satisfy Metal validation for ANY shader
-    for (int i = 0; i < 16; i++) {
+    // Robustly define attributes 0-11 to satisfy Metal validation for standard shaders
+    for (int i = 0; i < 12; i++) {
         auto attr = vertexDesc->attributes()->object(i);
         if (attr->format() == MTL::VertexFormatInvalid) {
-            // Map unknown attributes to a safe default aliasing attribute 0
-            // aBoneSelector (slot 8) is uint4 in shaders, must match format.
+            // Map unknown attributes to a safe dummy slot (30)
             if (i == 8)
                 attr->setFormat(MTL::VertexFormatUInt4);
             else
                 attr->setFormat(MTL::VertexFormatFloat4);
             attr->setOffset(0);
-            attr->setBufferIndex(0);
+            attr->setBufferIndex(30); 
         }
     }
 
@@ -390,6 +394,12 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
       layoutDesc->setStride(stride);
       layoutDesc->setStepFunction(MTL::VertexStepFunctionPerVertex);
     }
+    
+    // CRITICAL: Must also define layout for our dummy index 30
+    auto dummyLayout = vertexDesc->layouts()->object(30);
+    dummyLayout->setStride(16); // Non-zero stride to satisfy Intel driver validation
+    dummyLayout->setStepFunction(MTL::VertexStepFunctionConstant);
+    dummyLayout->setStepRate(0); // MUST be 0 for Constant step function
 
     desc->setVertexDescriptor(vertexDesc);
     vertexDesc->release();
@@ -424,8 +434,8 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
     }
     attr2->setBufferIndex(0);
 
-    // Robustly define all attributes 0-15 to satisfy Metal validation for ANY shader
-    for (int i = 0; i < 16; i++) {
+    // Robustly define attributes 0-11 to satisfy Metal validation for ANY shader
+    for (int i = 0; i < 12; i++) {
         auto attr = vertexDesc->attributes()->object(i);
         if (attr->format() == MTL::VertexFormatInvalid) {
             if (i == 8)
@@ -433,9 +443,15 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
             else
                 attr->setFormat(MTL::VertexFormatFloat4);
             attr->setOffset(0);
-            attr->setBufferIndex(0);
+            attr->setBufferIndex(30);
         }
     }
+
+    // Define layout for dummy index 30
+    auto dummyLayout = vertexDesc->layouts()->object(30);
+    dummyLayout->setStride(16);
+    dummyLayout->setStepFunction(MTL::VertexStepFunctionConstant);
+    dummyLayout->setStepRate(0);
 
     desc->setVertexDescriptor(vertexDesc);
     vertexDesc->release();

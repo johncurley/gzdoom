@@ -378,7 +378,7 @@ void MtPostprocess::BlitCurrentToImage(MTL::Texture *dstimage) {
   // If formats match, use blit encoder
   if (srcimage->pixelFormat() == dstimage->pixelFormat()) {
     if (mt_debug) Printf(PRINT_LOG, "Metal: BlitCurrentToImage using copyFromTexture (Fast Path)\n");
-    auto blitCmdBuf = fb->GetCommands()->GetRenderCommandBuffer();
+    auto blitCmdBuf = fb->GetCommands()->GetBlitCommandBuffer();
     auto blitEncoder = blitCmdBuf->blitCommandEncoder();
     blitEncoder->copyFromTexture(srcimage, dstimage);
     
@@ -386,6 +386,12 @@ void MtPostprocess::BlitCurrentToImage(MTL::Texture *dstimage) {
     mtRenderState->MarkAsFilled(dstimage);
 
     blitEncoder->endEncoding();
+    
+    // Safety: For these specific blits (usually for wipes or screenshots), 
+    // wait for completion to avoid flashes of uninitialized data.
+    blitCmdBuf->commit();
+    blitCmdBuf->waitUntilCompleted();
+    blitCmdBuf->release();
   } else {
     if (mt_debug) Printf(PRINT_LOG, "Metal: BlitCurrentToImage using Draw call (Format Conversion Path)\n");
     // Use a simple draw call to convert formats

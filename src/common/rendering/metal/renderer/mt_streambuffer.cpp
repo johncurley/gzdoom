@@ -80,7 +80,7 @@ uint8_t *MtStreamBuffer::GetBufferPointer() const {
 
 MtStreamBufferWriter::MtStreamBufferWriter(MetalRenderDevice *fb)
     : mBuffer(std::make_unique<MtStreamBuffer>(fb, sizeof(StreamData) *
-                                                       MAX_STREAM_DATA, 16384)) {}
+                                                       MAX_STREAM_DATA, 512)) {}
 
 bool MtStreamBufferWriter::Write(const StreamData &data) {
   mDataIndex++;
@@ -122,7 +122,7 @@ uint32_t MtStreamBufferWriter::StreamDataOffset() const {
 /////////////////////////////////////////////////////////////////////////////
 
 MtMatrixBufferWriter::MtMatrixBufferWriter(MetalRenderDevice *fb)
-    : mBuffer(std::make_unique<MtStreamBuffer>(fb, sizeof(MatricesUBO), 16384)) {
+    : mBuffer(std::make_unique<MtStreamBuffer>(fb, sizeof(MatricesUBO), 1024)) {
   mIdentityMatrix.loadIdentity();
 }
 

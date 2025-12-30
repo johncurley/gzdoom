@@ -101,6 +101,10 @@ public:
   // Palette support
   IHardwareTexture *GetPaletteTexture(int translation, bool highlight);
 
+  // Lightmap support
+  void SetLightmap(int LMTextureSize, int LMTextureCount, const TArray<uint16_t>& LMTextureData);
+  MTL::Texture* GetLightmap() { return mLightmap ? mLightmap->GetTexture() : nullptr; }
+
   std::unordered_map<FCanvasTexture *, std::unique_ptr<MtTextureImage>>
       mCanvasDepthStencils;
 
@@ -108,6 +112,7 @@ private:
   MetalRenderDevice *fb = nullptr;
   std::unordered_map<PPTexture *, MTL::Texture *> mPPTextures;
   std::unordered_map<uint32_t, std::unique_ptr<MtHardwareTexture>> mPaletteTextures;
+  std::unique_ptr<MtTextureImage> mLightmap;
 };
 
 class MtPPTexture : public PPTextureBackend {

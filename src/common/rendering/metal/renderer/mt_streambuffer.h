@@ -52,7 +52,10 @@ public:
 
   bool Write(const StreamData &data);
   void Reset();
-  void BeginFrame() { mBuffer->Reset(); }
+  void BeginFrame() { 
+    mBuffer->Reset(); 
+    mDataIndex = MAX_STREAM_DATA - 1;
+  }
 
   uint32_t DataIndex() const;
   uint32_t StreamDataOffset() const;
@@ -75,7 +78,10 @@ public:
   bool Write(const VSMatrix &modelMatrix, bool modelMatrixEnabled,
              const VSMatrix &textureMatrix, bool textureMatrixEnabled);
   void Reset();
-  void BeginFrame() { mBuffer->Reset(); }
+  void BeginFrame() { 
+    mBuffer->Reset(); 
+    mOffset = 0xffffffff;
+  }
 
   uint32_t Offset() const;
 

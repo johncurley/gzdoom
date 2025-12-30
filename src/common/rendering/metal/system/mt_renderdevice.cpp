@@ -69,7 +69,7 @@ EXTERN_CVAR(Int, gl_tonemap)
 EXTERN_CVAR(Int, screenblocks)
 EXTERN_CVAR(Bool, cl_capfps)
 
-CVAR(Bool, mt_debug, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Bool, mt_debug, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 void MetalError(const char *text) { throw CMetalError(text); }
 
@@ -136,7 +136,7 @@ MetalRenderDevice::~MetalRenderDevice() {
     }
   }
 
-  for (int i = 0; i < 3; i++) {
+  for (int i = 0; i < 2; i++) {
     for (auto *buffer : mBufferRecycleBin[i]) {
       buffer->release();
     }
@@ -340,7 +340,7 @@ void MetalRenderDevice::BeginFrame() {
 
   {
     std::lock_guard<std::mutex> lock(mRecycleMutex);
-    mCurrentFrameRecycleIndex = (mCurrentFrameRecycleIndex + 1) % 3;
+    mCurrentFrameRecycleIndex = (mCurrentFrameRecycleIndex + 1) % 2;
     for (auto *buffer : mBufferRecycleBin[mCurrentFrameRecycleIndex]) {
       buffer->release();
     }
@@ -465,6 +465,10 @@ void MetalRenderDevice::RecycleTexture(MTL::Texture *texture) {
   }
 }
 
+int MetalRenderDevice::GetFrameCount() {
+    return mCommands ? mCommands->GetFrameIndex() : 0;
+}
+
 unsigned int MetalRenderDevice::GetLightBufferBlockSize() const {
   return 256;
 }
@@ -474,7 +478,11 @@ void MetalRenderDevice::UpdatePalette() {}
 void MetalRenderDevice::SetTextureFilterMode() {}
 void MetalRenderDevice::StartPrecaching() {}
 void MetalRenderDevice::InitLightmap(int LMTextureSize, int LMTextureCount,
-                                     TArray<uint16_t> &LMTextureData) {}
+                                     TArray<uint16_t> &LMTextureData) {
+  if (mTextureManager) {
+      mTextureManager->SetLightmap(LMTextureSize, LMTextureCount, LMTextureData);
+  }
+}
 void MetalRenderDevice::BlurScene(float amount) {
   if (mPostprocess)
     mPostprocess->BlurScene(amount);

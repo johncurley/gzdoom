@@ -166,7 +166,7 @@ void MtRenderState::DrawIndexed(int dt, int index, int count, bool apply) {
 }
 
 bool MtRenderState::SetDepthClamp(bool on) {
-  if (mt_debug) fprintf(stderr, "Metal: SetDepthClamp %d\n", (int)on);
+  if (mt_debug) Printf(PRINT_LOG, "Metal: SetDepthClamp %d\n", (int)on);
   bool lastValue = mDepthClamp;
   mDepthClamp = on;
   mNeedApply = true;
@@ -174,19 +174,19 @@ bool MtRenderState::SetDepthClamp(bool on) {
 }
 
 void MtRenderState::SetDepthMask(bool on) {
-  if (mt_debug) fprintf(stderr, "Metal: SetDepthMask %d\n", (int)on);
+  if (mt_debug) Printf(PRINT_LOG, "Metal: SetDepthMask %d\n", (int)on);
   mDepthWrite = on;
   mNeedApply = true;
 }
 
 void MtRenderState::SetDepthFunc(int func) {
-  if (mt_debug) fprintf(stderr, "Metal: SetDepthFunc %d\n", func);
+  if (mt_debug) Printf(PRINT_LOG, "Metal: SetDepthFunc %d\n", func);
   mDepthFunc = func;
   mNeedApply = true;
 }
 
 void MtRenderState::SetDepthRange(float min, float max) {
-  if (mt_debug) fprintf(stderr, "Metal: SetDepthRange %f..%f\n", min, max);
+  if (mt_debug) Printf(PRINT_LOG, "Metal: SetDepthRange %f..%f\n", min, max);
   mViewportDepthMin = min;
   mViewportDepthMax = max;
   mViewportChanged = true;
@@ -208,7 +208,7 @@ void MtRenderState::SetStencil(int offs, int op, int flags) {
   // We use our internal index 3 which maps to MTL::CompareFunctionEqual in stencilFuncs.
   mStencilFunc = 3; 
 
-  if (mt_debug) fprintf(stderr, "Metal: SetStencil offset=%d op=%d ref=%d\n", offs, op, mStencilRef);
+  if (mt_debug) Printf(PRINT_LOG, "Metal: SetStencil offset=%d op=%d ref=%d\n", offs, op, mStencilRef);
 
   if (flags != -1) {
     bool cmon = !(flags & SF_ColorMaskOff);
@@ -219,7 +219,7 @@ void MtRenderState::SetStencil(int offs, int op, int flags) {
 }
 
 void MtRenderState::SetCulling(int mode) {
-  if (mt_debug) fprintf(stderr, "Metal: SetCulling %d\n", mode);
+  if (mt_debug) Printf(PRINT_LOG, "Metal: SetCulling %d\n", mode);
   mCullMode = mode;
   mCullModeChanged = true;
   mNeedApply = true;
@@ -245,7 +245,7 @@ void MtRenderState::EnableStencil(bool on) {
 
 void MtRenderState::SetScissor(int x, int y, int w, int h) {
   if (gamestate == GS_STARTUP) {
-      fprintf(stderr, "Metal: Startup SetScissor %d,%d %dx%d\n", x, y, w, h);
+      Printf(PRINT_LOG, "Metal: Startup SetScissor %d,%d %dx%d\n", x, y, w, h);
   }
   mScissorX = x;
   mScissorY = y;
@@ -257,7 +257,7 @@ void MtRenderState::SetScissor(int x, int y, int w, int h) {
 
 void MtRenderState::SetViewport(int x, int y, int w, int h) {
   if (mt_debug) {
-      fprintf(stderr, "Metal: SetViewport %d,%d %dx%d (gamestate=%d)\n", x, y, w, h, (int)gamestate);
+      Printf(PRINT_LOG, "Metal: SetViewport %d,%d %dx%d (gamestate=%d)\n", x, y, w, h, (int)gamestate);
   }
   mViewportX = x;
   mViewportY = y;
@@ -337,6 +337,28 @@ void MtRenderState::ApplyFixedTextures() {
       mEncoder->setVertexSamplerState(sampler, 14);
     }
   }
+
+  MTL::Texture* lmTex = fb->GetTextureManager()->GetLightmap();
+  if (lmTex) {
+      mEncoder->setFragmentTexture(lmTex, 15);
+      mEncoder->setVertexTexture(lmTex, 15);
+      
+      // Lightmap sampler: Linear, Clamp
+      MtSamplerKey sk;
+      sk.MinFilter = 1; // Linear
+      sk.MagFilter = 1; // Linear
+      sk.MipFilter = 0; // None
+      sk.AddressU = 2; // Clamp
+      sk.AddressV = 2; // Clamp
+      sk.AddressW = 2; // Clamp
+      sk.MaxAnisotropy = 1.0f;
+      
+      MTL::SamplerState *sampler = fb->GetSamplerManager()->GetSamplerState(sk);
+      if (sampler) {
+          mEncoder->setFragmentSamplerState(sampler, 15);
+          mEncoder->setVertexSamplerState(sampler, 15);
+      }
+  }
 }
 
 void MtRenderState::ApplyRenderPass(int dt) {
@@ -403,8 +425,9 @@ void MtRenderState::ApplyRenderPass(int dt) {
     if (pipelineState && pipelineState->pipelineState) {
       if (mEncoder) {
         if (mt_debug) {
-            Printf(PRINT_LOG, "Metal: Changed PipelineState effect=%d state=%d vfmt=%d\n", 
-                   pipelineKey.SpecialEffect, pipelineKey.EffectState, pipelineKey.VertexFormat);
+            Printf(PRINT_LOG, "Metal: Changed PipelineState effect=%d state=%d vfmt=%d. DepthFunc=%d Write=%d Stencil=%d Blend=%08x\n", 
+                   pipelineKey.SpecialEffect, pipelineKey.EffectState, pipelineKey.VertexFormat,
+                   pipelineKey.DepthFunc, pipelineKey.DepthWrite, pipelineKey.StencilTest, pipelineKey.BlendMode);
         }
         mEncoder->setRenderPipelineState(pipelineState->pipelineState);
         mEncoder->setDepthStencilState(pipelineState->depthStencilState);
@@ -417,6 +440,7 @@ void MtRenderState::ApplyRenderPass(int dt) {
 
 void MtRenderState::ApplyStencilRef() {
   if (mStencilRefChanged && mEncoder) {
+    if (mt_debug) Printf(PRINT_LOG, "Metal: ApplyStencilRef %d\n", mStencilRef);
     mEncoder->setStencilReferenceValue(mStencilRef);
     mStencilRefChanged = false;
   }
@@ -455,11 +479,11 @@ void MtRenderState::ApplyDepthBias() {
     // REVERSE-Z: Near is 1.0, Far is 0.0. 
     // GZDoom sends negative bias values (OpenGL style) to pull closer.
     // We negate these to push towards 1.0 in Metal, and scale for Depth32Float.
-    float scale = 32.0f; 
+    float scale = 1.0f; 
     float units = -mBias.mUnits * scale;
     float factor = -mBias.mFactor * scale;
     if (mt_debug) {
-        fprintf(stderr, "Metal: ApplyDepthBias units=%f (raw %f) factor=%f (raw %f) [Reverse-Z]\n", 
+        Printf(PRINT_LOG, "Metal: ApplyDepthBias units=%f (raw %f) factor=%f (raw %f) [Reverse-Z]\n", 
                units, mBias.mUnits, factor, mBias.mFactor);
     }
     mEncoder->setDepthBias(units, factor, 0.0f);
@@ -485,7 +509,7 @@ void MtRenderState::ApplyViewport() {
     viewport.znear = 1.0 - mViewportDepthMax;
     viewport.zfar = 1.0 - mViewportDepthMin;
     if (mt_debug) {
-        fprintf(stderr, "Metal: ApplyViewport %f,%f %f x %f range %f..%f\n", viewport.originX, viewport.originY, viewport.width, viewport.height, viewport.znear, viewport.zfar);
+        Printf(PRINT_LOG, "Metal: ApplyViewport %f,%f %f x %f range %f..%f\n", viewport.originX, viewport.originY, viewport.width, viewport.height, viewport.znear, viewport.zfar);
     }
     mEncoder->setViewport(viewport);
     mViewportChanged = false;
@@ -737,7 +761,7 @@ void MtRenderState::ApplyCulling() {
       mEncoder->setCullMode(MTL::CullModeBack);
     
     if (mt_debug) {
-        fprintf(stderr, "Metal: ApplyCulling mode=%d\n", mCullMode);
+        Printf(PRINT_LOG, "Metal: ApplyCulling mode=%d\n", mCullMode);
     }
     mCullModeChanged = false;
   }
@@ -860,8 +884,16 @@ void MtRenderState::BindBuffer(int bindingpoint, MTL::Buffer *buffer,
 
 void MtRenderState::MarkAsFilled(MTL::Texture *tex) {
   if (tex) {
-    if (mt_debug) Printf(PRINT_LOG, "Metal: MarkAsFilled tex=%p (W:%lu H:%lu)\n", tex, tex->width(), tex->height());
-    mClearedTargets.insert(tex);
+    auto buffers = fb->GetBuffers();
+    bool isPersistentTarget = (buffers->ShadowMap && tex == buffers->ShadowMap->GetTexture()) || 
+                               (buffers->SceneColor && tex == buffers->SceneColor->GetTexture());
+    
+    // SceneColor and ShadowMap should NOT be marked as filled by this function,
+    // as we want to respect the engine's clear requests for them every frame.
+    if (!isPersistentTarget) {
+        if (mt_debug) Printf(PRINT_LOG, "Metal: MarkAsFilled tex=%p (W:%lu H:%lu)\n", tex, tex->width(), tex->height());
+        mClearedTargets.insert(tex);
+    }
   }
 }
 
@@ -970,7 +1002,7 @@ void MtRenderState::BeginRenderPass() {
   if (!pRPD) return;
 
   if (mt_debug) {
-    fprintf(stderr, "Metal: BeginRenderPass target=%p (%dx%d fmt=%llu) clearTargets=%d applyCount=%d isSwap=%d\n",
+    Printf(PRINT_LOG, "Metal: BeginRenderPass target=%p (%dx%d fmt=%llu) clearTargets=%d applyCount=%d isSwap=%d\n",
            targetTex, mRenderTarget.Width, mRenderTarget.Height, (unsigned long long)targetTex->pixelFormat(), mClearTargets, mApplyCount, (int)mRenderTarget.IsSwapChain);
   }
 
@@ -982,7 +1014,7 @@ void MtRenderState::BeginRenderPass() {
   bool clearColor = (mClearTargets & CT_Color) || !colorFilled;
   
   if (mt_debug) {
-      fprintf(stderr, "Metal: BeginRenderPass Color target %p, Filled: %d, ClearRequest: %d -> LoadAction: %s\n", 
+      Printf(PRINT_LOG, "Metal: BeginRenderPass Color target %p, Filled: %d, ClearRequest: %d -> LoadAction: %s\n", 
              targetTex, (int)colorFilled, (int)(mClearTargets & CT_Color), 
              clearColor ? "Clear" : "Load");
   }
@@ -1002,7 +1034,7 @@ void MtRenderState::BeginRenderPass() {
       }
 
       if (mt_debug) {
-          fprintf(stderr, "Metal: BeginRenderPass - Clearing color target %p with (%f, %f, %f, %f)\n", 
+          Printf(PRINT_LOG, "Metal: BeginRenderPass - Clearing color target %p with (%f, %f, %f, %f)\n", 
                  targetTex, cc.red, cc.green, cc.blue, cc.alpha);
       }
       colorAttachment->setClearColor(cc);
@@ -1019,7 +1051,7 @@ void MtRenderState::BeginRenderPass() {
     bool clearStencil = (mClearTargets & CT_Stencil) || clearDS;
 
     if (mt_debug) {
-        fprintf(stderr, "Metal: BeginRenderPass Depth target %p, Filled: %d, ClearRequest: %d -> LoadAction: %s\n", 
+        Printf(PRINT_LOG, "Metal: BeginRenderPass Depth target %p, Filled: %d, ClearRequest: %d -> LoadAction: %s\n", 
                mRenderTarget.DepthStencil, (int)dsFilled, (int)(mClearTargets & (CT_Depth | CT_Stencil)), 
                clearDS ? "Clear" : "Load");
     }
@@ -1037,13 +1069,14 @@ void MtRenderState::BeginRenderPass() {
     }
 
     if (mt_debug) {
-        fprintf(stderr, "Metal:   Depth Load: %s, Store: %s, Write: %d, Func: %d\n", 
+        Printf(PRINT_LOG, "Metal:   Depth Load: %s, Store: %s, Write: %d, Func: %d\n", 
                depthAttachment->loadAction() == MTL::LoadActionClear ? "Clear" : "Load",
                depthAttachment->storeAction() == MTL::StoreActionStore ? "Store" : "DontCare",
                (int)mDepthWrite, mDepthFunc);
     }
 
     if (clearDepth) {
+        if (mt_debug) Printf(PRINT_LOG, "Metal: BeginRenderPass - Clearing depth target %p to 0.0 (Reverse-Z)\n", mRenderTarget.DepthStencil);
         depthAttachment->setClearDepth(0.0); // Reverse-Z: Clear to 0.0 (Far)
         mClearedTargets.insert(mRenderTarget.DepthStencil);
     }
@@ -1059,13 +1092,14 @@ void MtRenderState::BeginRenderPass() {
     }
 
     if (mt_debug) {
-        fprintf(stderr, "Metal:   Stencil Load: %s, Store: %s, Ref: %d, Func: %d, Op: %d\n", 
+        Printf(PRINT_LOG, "Metal:   Stencil Load: %s, Store: %s, Ref: %d, Func: %d, Op: %d\n", 
                stencilAttachment->loadAction() == MTL::LoadActionClear ? "Clear" : "Load",
                stencilAttachment->storeAction() == MTL::StoreActionStore ? "Store" : "DontCare",
                mStencilRef, mStencilFunc, mStencilOp);
     }
 
     if (clearStencil) {
+        if (mt_debug) Printf(PRINT_LOG, "Metal: BeginRenderPass - Clearing stencil target %p to 0\n", mRenderTarget.DepthStencil);
         stencilAttachment->setClearStencil(0);
         mClearedTargets.insert(mRenderTarget.DepthStencil);
     }
@@ -1079,8 +1113,13 @@ void MtRenderState::BeginRenderPass() {
     mEncoder = cmdBuffer->renderCommandEncoder(pRPD);
     mPipelineBound = false;
     if (mEncoder) {
-        mEncoder->setFrontFacingWinding(MTL::WindingCounterClockwise);
+        mEncoder->setFrontFacingWinding(MTL::WindingClockwise);
         
+        // Satisfy vertex descriptor aliases
+        if (fb->GetBufferManager()->DummyBuffer) {
+            mEncoder->setVertexBuffer(fb->GetBufferManager()->DummyBuffer, 0, 30);
+        }
+
         // Use current state if set, otherwise default to full target
         MTL::Viewport viewport;
         if (mViewportWidth > 0) {
@@ -1094,8 +1133,9 @@ void MtRenderState::BeginRenderPass() {
             viewport.width = (double)mRenderTarget.Width;
             viewport.height = (double)mRenderTarget.Height;
         }
-        viewport.znear = mViewportDepthMin;
-        viewport.zfar = mViewportDepthMax;
+        // REVERSE-Z: Map engine range [min, max] to [1-max, 1-min]
+        viewport.znear = 1.0 - mViewportDepthMax;
+        viewport.zfar = 1.0 - mViewportDepthMin;
         mEncoder->setViewport(viewport);
         
         MTL::ScissorRect scissor;
@@ -1131,13 +1171,11 @@ void MtRenderState::BeginRenderPass() {
 
   mMaterial.mChanged = true;
   mClearTargets = 0;
-  mScissorChanged = true;
-  mViewportChanged = true;
+  mScissorChanged = false;
+  mViewportChanged = false;
   mStencilRefChanged = true;
   mCullModeChanged = true;
-  mBias.mUnits = 0.0f;
-  mBias.mFactor = 0.0f;
-  mBias.mChanged = true;
+  mBias.mChanged = true; // Ensure depth bias is re-applied to the new encoder
   mPipelineKey = {};
   mPipelineBound = false;
   

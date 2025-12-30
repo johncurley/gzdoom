@@ -21,9 +21,10 @@ public:
   void BindRange(FRenderState *state, size_t start, size_t length) override;
   void Upload(size_t offset, size_t size) override;
 
-  MTL::Buffer *GetBuffer() const { return mBuffer; }
+  MTL::Buffer *GetBuffer() const;
 
 protected:
+  void PrepareForWrite();
   void SetData(size_t size, const void *data, BufferUsageType usage) override;
   void SetSubData(size_t offset, size_t size, const void *data) override;
   void Resize(size_t newsize) override;
@@ -35,11 +36,14 @@ protected:
 private:
   void CreateBuffer(size_t size);
 
-  MTL::Buffer *mBuffer = nullptr;
+  MTL::Buffer *mBuffers[2] = { nullptr, nullptr };
+  int mActiveBufferIndex = 0;
+  uint64_t mLastWriteFrame = 0xFFFFFFFFFFFFFFFF;
   size_t mBufferSize = 0;
   int mBindingPoint = 0;
   bool mSSBO = false;
   bool mNeedsResize = false;
+  BufferUsageType mUsage = BufferUsageType::Static;
   MetalRenderDevice *fb = nullptr;
   void *mMappedMemory = nullptr;
 };
@@ -54,7 +58,7 @@ public:
                  const FVertexBufferAttribute *attrs) override;
   void Upload(size_t offset, size_t size) override;
 
-  MTL::Buffer *GetBuffer() const { return mBuffer; }
+  MTL::Buffer *GetBuffer() const;
 
   // Vertex format info (needed for binding)
   size_t GetStride() const { return mStride; }
@@ -69,6 +73,7 @@ public:
   bool HasColor() const { return mHasColor; }
 
 protected:
+  void PrepareForWrite();
   void SetData(size_t size, const void *data, BufferUsageType usage) override;
   void SetSubData(size_t offset, size_t size, const void *data) override;
   void Resize(size_t newsize) override;
@@ -80,12 +85,15 @@ protected:
 private:
   void CreateBuffer(size_t size);
 
-  MTL::Buffer *mBuffer = nullptr;
+  MTL::Buffer *mBuffers[2] = { nullptr, nullptr };
+  int mActiveBufferIndex = 0;
+  uint64_t mLastWriteFrame = 0xFFFFFFFFFFFFFFFF;
   size_t mBufferSize = 0;
   size_t mStride = 0;
   int mNumBindingPoints = 0;
   std::vector<FVertexBufferAttribute> mAttributes;
   bool mHasColor = false;
+  BufferUsageType mUsage = BufferUsageType::Static;
   MetalRenderDevice *fb = nullptr;
   void *mMappedMemory = nullptr;
 };
@@ -96,10 +104,11 @@ public:
   MtIndexBuffer(MetalRenderDevice *fb);
   ~MtIndexBuffer();
 
-  MTL::Buffer *GetBuffer() const { return mBuffer; }
+  MTL::Buffer *GetBuffer() const;
   void Upload(size_t offset, size_t size) override;
 
 protected:
+  void PrepareForWrite();
   void SetData(size_t size, const void *data, BufferUsageType usage) override;
   void SetSubData(size_t offset, size_t size, const void *data) override;
   void Resize(size_t newsize) override;
@@ -111,8 +120,11 @@ protected:
 private:
   void CreateBuffer(size_t size);
 
-  MTL::Buffer *mBuffer = nullptr;
+  MTL::Buffer *mBuffers[2] = { nullptr, nullptr };
+  int mActiveBufferIndex = 0;
+  uint64_t mLastWriteFrame = 0xFFFFFFFFFFFFFFFF;
   size_t mBufferSize = 0;
+  BufferUsageType mUsage = BufferUsageType::Static;
   MetalRenderDevice *fb = nullptr;
   void *mMappedMemory = nullptr;
 };

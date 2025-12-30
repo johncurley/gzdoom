@@ -619,9 +619,9 @@ static void PatchFragmentShader(std::string &source, const std::string &shaderna
     
     // 2. Patch main.fp to increase shadow bias
     if (shadername.find("main") != std::string::npos) {
-        // Use regex to replace ALL instances of "float bias = X.X;" with 16.0
+        // Use regex to replace ALL instances of "float bias = X.X;" with 2.0
         std::regex biasRegex(R"(float\s+bias\s*=\s*[0-9\.]+;)");
-        source = std::regex_replace(source, biasRegex, "float bias = 16.0;");
+        source = std::regex_replace(source, biasRegex, "float bias = 2.0;");
     }
 }
 

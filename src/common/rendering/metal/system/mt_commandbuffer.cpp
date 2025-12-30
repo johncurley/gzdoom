@@ -36,12 +36,10 @@ MTL::CommandBuffer *MtCommandBufferManager::CreateNewCommandBuffer() {
 
   // Add error logging to every buffer
   cmdBuf->addCompletedHandler([=](MTL::CommandBuffer* buffer) {
-      if (buffer->status() == MTL::CommandBufferStatusError && buffer->error()) {
-          NS::String* desc = buffer->error()->localizedDescription();
-          const char* errStr = desc ? desc->utf8String() : "Unknown Error";
-          fprintf(stderr, "Metal: CommandBuffer %p Error: %s\n", buffer, errStr);
-          MetalPrintLog("Error", errStr);
-      }
+    if (buffer->status() == MTL::CommandBufferStatusError && buffer->error()) {
+        const char *errStr = buffer->error()->localizedDescription()->utf8String();
+        Printf(PRINT_LOG, "Metal: CommandBuffer %p Error: %s\n", buffer, errStr);
+    }
   });
 
   return cmdBuf;

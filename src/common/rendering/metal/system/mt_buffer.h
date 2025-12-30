@@ -58,6 +58,7 @@ public:
 	MtHardwareDataBuffer* ViewpointUBO = nullptr;
 	MtHardwareDataBuffer* LightBufferSSO = nullptr;
 	MtHardwareDataBuffer* BoneBufferSSO = nullptr;
+	MTL::Buffer* DummyBuffer = nullptr;
 
 private:
 	void CreateFanToTrisIndexBuffer();

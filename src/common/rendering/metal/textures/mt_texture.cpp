@@ -36,6 +36,82 @@ MtTextureImage::~MtTextureImage() {
   }
 }
 
+void MtTextureManager::SetLightmap(int LMTextureSize, int LMTextureCount, const TArray<uint16_t>& LMTextureData) {
+    if (LMTextureSize <= 0 || LMTextureCount <= 0) {
+        if (mt_debug) Printf(PRINT_LOG, "Metal: SetLightmap ignored - invalid dimensions %dx%dx%d\n", LMTextureSize, LMTextureSize, LMTextureCount);
+        return;
+    }
+
+    int w = LMTextureSize;
+    int h = LMTextureSize;
+    int count = LMTextureCount;
+    int pixelsize = 8; // RGBA16Float
+
+    // Verify data size to prevent overflow
+    if (LMTextureData.Size() < (unsigned int)(w * h * count * 3)) {
+        Printf(PRINT_LOG, "Metal: SetLightmap error - data size mismatch (%u expected, %u provided)\n", 
+               (unsigned int)(w * h * count * 3), LMTextureData.Size());
+        return;
+    }
+
+    if (mLightmap && mLightmap->GetWidth() == w && 
+        mLightmap->GetHeight() == h && 
+        mLightmap->GetTexture() && 
+        (int)mLightmap->GetTexture()->arrayLength() == count) {
+        // Reuse existing
+    } else {
+        if (mt_debug) Printf(PRINT_LOG, "Metal: Creating Lightmap array %dx%dx%d RGBA16Float\n", w, h, count);
+        mLightmap = std::make_unique<MtTextureImage>(fb);
+        auto desc = MTL::TextureDescriptor::alloc()->init();
+        desc->setWidth(w);
+        desc->setHeight(h);
+        desc->setPixelFormat(MTL::PixelFormatRGBA16Float);
+        desc->setTextureType(MTL::TextureType2DArray);
+        desc->setArrayLength(count);
+        desc->setMipmapLevelCount(1);
+        desc->setUsage(MTL::TextureUsageShaderRead);
+        
+        // On Intel Macs, Managed mode is often more reliable than Private for array uploads
+        desc->setStorageMode(MTL::StorageModeManaged);
+        
+        MTL::Texture* tex = fb->device->device->newTexture(desc);
+        if (!tex) {
+            Printf(PRINT_LOG, "Metal: FAILED to create Lightmap texture array!\n");
+            desc->release();
+            return;
+        }
+        
+        mLightmap->SetTexture(tex);
+        mLightmap->SetWidth(w);
+        mLightmap->SetHeight(h);
+        desc->release();
+    }
+    
+    if (mLightmap->GetTexture()) {
+        std::vector<uint16_t> stagingBuffer(w * h * count * 4);
+        uint16_t one = 0x3c00; // half-float 1.0
+        const uint16_t* src = LMTextureData.Data();
+        uint16_t* dst = stagingBuffer.data();
+        
+        for (int i = 0; i < w * h * count; i++) {
+            *(dst++) = *(src++); // R
+            *(dst++) = *(src++); // G
+            *(dst++) = *(src++); // B
+            *(dst++) = one;      // A
+        }
+        
+        for (int i = 0; i < count; i++) {
+            MTL::Region region = MTL::Region::Make2D(0, 0, w, h);
+            mLightmap->GetTexture()->replaceRegion(region, 0, i, 
+                                                  &stagingBuffer[i * w * h * 4], 
+                                                  w * pixelsize,
+                                                  w * h * pixelsize);
+        }
+        // Managed textures need to know they were modified if we used replaceRegion on some drivers,
+        // though replaceRegion usually handles it. Explicitly calling it for safety.
+    }
+}
+
 // MtHardwareTexture
 MtHardwareTexture::MtHardwareTexture(MetalRenderDevice *fb, int numchannels)
     : fb(fb), mNumChannels(numchannels) {

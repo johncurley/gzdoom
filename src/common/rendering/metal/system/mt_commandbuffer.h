@@ -32,6 +32,7 @@ public:
   // Frame synchronization
   void BeginFrame();
   void EndFrame();
+  int GetFrameIndex() const { return mFrameIndex; }
 
   // Add completion handler
   void AddCompletedHandler(MTL::CommandBuffer *cmdBuffer,

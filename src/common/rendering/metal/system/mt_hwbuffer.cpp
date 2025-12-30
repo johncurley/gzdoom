@@ -20,14 +20,40 @@ MtHardwareDataBuffer::MtHardwareDataBuffer(MetalRenderDevice *fb,
       fb(fb) {}
 
 MtHardwareDataBuffer::~MtHardwareDataBuffer() {
-  if (mBuffer) {
-    if (fb && !fb->mIsDestroyed) {
-      fb->RecycleBuffer(mBuffer);
-    } else {
-      mBuffer->release();
+  for (int i = 0; i < 2; i++) {
+    if (mBuffers[i]) {
+      if (fb && !fb->mIsDestroyed) {
+        fb->RecycleBuffer(mBuffers[i]);
+      } else {
+        mBuffers[i]->release();
+      }
+      mBuffers[i] = nullptr;
     }
-    mBuffer = nullptr;
   }
+}
+
+MTL::Buffer *MtHardwareDataBuffer::GetBuffer() const {
+  return mBuffers[mActiveBufferIndex];
+}
+
+void MtHardwareDataBuffer::PrepareForWrite() {
+    if (mUsage == BufferUsageType::Static) return;
+    if (!mBuffers[1]) CreateBuffer(mBufferSize); // Ensure we have 2 buffers for dynamic usage
+
+    uint64_t frame = fb->GetFrameCount();
+    if (mLastWriteFrame != frame) {
+        int oldIndex = mActiveBufferIndex;
+        mActiveBufferIndex = (mActiveBufferIndex + 1) % 2;
+        mLastWriteFrame = frame;
+
+        if (mt_debug) Printf(PRINT_LOG, "Metal: MtHardwareDataBuffer::PrepareForWrite bp=%d rotating to %d (frame %llu)\n", mBindingPoint, mActiveBufferIndex, frame);
+
+        // CRITICAL: Copy old data to new slot to support partial updates (SetSubData) 
+        // and ensure the new slot isn't empty if the engine only writes a small piece.
+        if (mBuffers[oldIndex] && mBuffers[mActiveBufferIndex]) {
+            memcpy(mBuffers[mActiveBufferIndex]->contents(), mBuffers[oldIndex]->contents(), mBufferSize);
+        }
+    }
 }
 
 void MtHardwareDataBuffer::BindRange(FRenderState *state, size_t start,
@@ -38,84 +64,143 @@ void MtHardwareDataBuffer::BindRange(FRenderState *state, size_t start,
   }
 
   auto mt_state = static_cast<MtRenderState *>(state ? state : fb->GetRenderState());
-  mt_state->BindBuffer(mBindingPoint, mBuffer, (uint32_t)start);
+  mt_state->BindBuffer(mBindingPoint, GetBuffer(), (uint32_t)start);
 }
 
 void MtHardwareDataBuffer::Upload(size_t offset, size_t size) {
-  if (mBuffer && mBuffer->storageMode() == MTL::StorageModeShared) {
+  auto buffer = GetBuffer();
+  if (buffer && buffer->storageMode() == MTL::StorageModeShared) {
     if (size > 0 && offset + size <= mBufferSize) {
-      mBuffer->didModifyRange(NS::Range(offset, size));
+      buffer->didModifyRange(NS::Range(offset, size));
     }
   }
 }
 
 void MtHardwareDataBuffer::SetData(size_t size, const void *data,
                                    BufferUsageType usage) {
-  CreateBuffer(size);
-  if (mBuffer && data) {
-    memcpy(mBuffer->contents(), data, size);
-    if (mBuffer->storageMode() == MTL::StorageModeShared)
-        mBuffer->didModifyRange(NS::Range(0, size));
+  mUsage = usage;
+  if (!mBuffers[0] || mBufferSize < size) {
+      CreateBuffer(size);
+  } else {
+      PrepareForWrite();
+  }
+
+  auto buffer = GetBuffer();
+  if (buffer && data) {
+    memcpy(buffer->contents(), data, size);
+    if (buffer->storageMode() == MTL::StorageModeShared)
+        buffer->didModifyRange(NS::Range(0, size));
   }
 }
 void MtHardwareDataBuffer::SetSubData(size_t offset, size_t size,
                                       const void *data) {
-  if (mBuffer && data) {
-    memcpy((uint8_t *)mBuffer->contents() + offset, data, size);
-    if (mBuffer->storageMode() == MTL::StorageModeShared)
-        mBuffer->didModifyRange(NS::Range(offset, size));
+  PrepareForWrite();
+  auto buffer = GetBuffer();
+  if (buffer && data) {
+    memcpy((uint8_t *)buffer->contents() + offset, data, size);
+    if (buffer->storageMode() == MTL::StorageModeShared)
+        buffer->didModifyRange(NS::Range(offset, size));
   }
 }
 void MtHardwareDataBuffer::Resize(size_t newsize) { CreateBuffer(newsize); }
 void MtHardwareDataBuffer::Map() {
-  if (mBuffer) {
-    this->map = mBuffer->contents();
+  auto buffer = GetBuffer();
+  if (buffer) {
+    this->map = buffer->contents();
     this->mMappedMemory = this->map;
   }
 }
 void MtHardwareDataBuffer::Unmap() { 
-  if (mBuffer && mBuffer->storageMode() == MTL::StorageModeShared) {
-      // Notify the GPU that the entire buffer has been modified.
-      // This is required for correctness on many Intel drivers.
-      mBuffer->didModifyRange(NS::Range(0, mBufferSize));
+  auto buffer = GetBuffer();
+  if (buffer && buffer->storageMode() == MTL::StorageModeShared) {
+      buffer->didModifyRange(NS::Range(0, mBufferSize));
   }
 }
 void *MtHardwareDataBuffer::Lock(unsigned int size) {
-  if (!mBuffer) CreateBuffer(size);
+  if (!mBuffers[0] || mBufferSize < size) {
+      CreateBuffer(size);
+  } else {
+      PrepareForWrite();
+  }
   Map();
   return this->map;
 }
 void MtHardwareDataBuffer::Unlock() { Unmap(); }
 
 void MtHardwareDataBuffer::CreateBuffer(size_t size) {
-  if (mBuffer) {
-    if (fb && !fb->mIsDestroyed) {
-      fb->RecycleBuffer(mBuffer);
-    } else {
-      mBuffer->release();
+  if (size == 0) size = 16;
+  
+  bool dynamic = (mUsage != BufferUsageType::Static);
+  int count = dynamic ? 2 : 1;
+
+  // Check if we need to recreate
+  if (mBuffers[0] && mBufferSize >= size) {
+      if (dynamic && !mBuffers[1]) {
+          // Upgrade to dynamic - fall through to recreation
+      } else {
+          return;
+      }
+  }
+
+  for (int i = 0; i < 2; i++) {
+    if (mBuffers[i]) {
+      if (fb && !fb->mIsDestroyed) {
+        fb->RecycleBuffer(mBuffers[i]);
+      } else {
+        mBuffers[i]->release();
+      }
+      mBuffers[i] = nullptr;
+    }
+    if (i < count) {
+        mBuffers[i] = fb->device->device->newBuffer(size, MTL::StorageModeShared);
     }
   }
-  if (size == 0) size = 16;
-  mBuffer = fb->device->device->newBuffer(size, MTL::StorageModeShared);
-  if (!mBuffer) return;
   
+  mActiveBufferIndex = 0;
   mBufferSize = size;
   buffersize = size; // Set base class member
-  this->map = mBuffer->contents();
-  this->mMappedMemory = this->map;
+  auto buffer = GetBuffer();
+  if (buffer) {
+      this->map = buffer->contents();
+      this->mMappedMemory = this->map;
+  }
 }
 
 // MtVertexBuffer
 MtVertexBuffer::MtVertexBuffer(MetalRenderDevice *fb) : fb(fb) {}
 MtVertexBuffer::~MtVertexBuffer() {
-  if (mBuffer) {
-    if (fb && !fb->mIsDestroyed) {
-      fb->RecycleBuffer(mBuffer);
-    } else {
-      mBuffer->release();
+  for (int i = 0; i < 2; i++) {
+    if (mBuffers[i]) {
+      if (fb && !fb->mIsDestroyed) {
+        fb->RecycleBuffer(mBuffers[i]);
+      } else {
+        mBuffers[i]->release();
+      }
+      mBuffers[i] = nullptr;
     }
-    mBuffer = nullptr;
   }
+}
+
+MTL::Buffer *MtVertexBuffer::GetBuffer() const {
+  return mBuffers[mActiveBufferIndex];
+}
+
+void MtVertexBuffer::PrepareForWrite() {
+    if (mUsage == BufferUsageType::Static) return;
+    if (!mBuffers[1]) CreateBuffer(mBufferSize);
+
+    uint64_t frame = fb->GetFrameCount();
+    if (mLastWriteFrame != frame) {
+        int oldIndex = mActiveBufferIndex;
+        mActiveBufferIndex = (mActiveBufferIndex + 1) % 2;
+        mLastWriteFrame = frame;
+
+        if (mt_debug) Printf(PRINT_LOG, "Metal: MtVertexBuffer::PrepareForWrite rotating to %d (frame %llu)\n", mActiveBufferIndex, frame);
+
+        if (mBuffers[oldIndex] && mBuffers[mActiveBufferIndex]) {
+            memcpy(mBuffers[mActiveBufferIndex]->contents(), mBuffers[oldIndex]->contents(), mBufferSize);
+        }
+    }
 }
 
 void MtVertexBuffer::SetFormat(int numBindingPoints, int numAttributes,
@@ -140,9 +225,10 @@ void MtVertexBuffer::SetFormat(int numBindingPoints, int numAttributes,
 }
 
 void MtVertexBuffer::Upload(size_t offset, size_t size) {
-  if (mBuffer && mBuffer->storageMode() == MTL::StorageModeShared) {
+  auto buffer = GetBuffer();
+  if (buffer && buffer->storageMode() == MTL::StorageModeShared) {
     if (size > 0 && offset + size <= mBufferSize) {
-      mBuffer->didModifyRange(NS::Range(offset, size));
+      buffer->didModifyRange(NS::Range(offset, size));
     }
   }
 }
@@ -153,34 +239,49 @@ void MtVertexBuffer::SetData(size_t size, const void *data,
     Printf(PRINT_LOG, "Metal: MtVertexBuffer::SetData size=%zu data=%p usage=%d\n", size,
            data, (int)usage);
   }
-  CreateBuffer(size);
-  if (mBuffer && data) {
-    memcpy(mBuffer->contents(), data, size);
-    if (mBuffer->storageMode() == MTL::StorageModeShared)
-        mBuffer->didModifyRange(NS::Range(0, size));
+  mUsage = usage;
+  if (!mBuffers[0] || mBufferSize < size) {
+      CreateBuffer(size);
+  } else {
+      PrepareForWrite();
+  }
+
+  auto buffer = GetBuffer();
+  if (buffer && data) {
+    memcpy(buffer->contents(), data, size);
+    if (buffer->storageMode() == MTL::StorageModeShared)
+        buffer->didModifyRange(NS::Range(0, size));
   }
 }
 void MtVertexBuffer::SetSubData(size_t offset, size_t size, const void *data) {
-  if (mBuffer && data) {
-    memcpy((uint8_t *)mBuffer->contents() + offset, data, size);
-    if (mBuffer->storageMode() == MTL::StorageModeShared)
-        mBuffer->didModifyRange(NS::Range(offset, size));
+  PrepareForWrite();
+  auto buffer = GetBuffer();
+  if (buffer && data) {
+    memcpy((uint8_t *)buffer->contents() + offset, data, size);
+    if (buffer->storageMode() == MTL::StorageModeShared)
+        buffer->didModifyRange(NS::Range(offset, size));
   }
 }
 void MtVertexBuffer::Resize(size_t newsize) { CreateBuffer(newsize); }
 void MtVertexBuffer::Map() {
-  if (mBuffer) {
-    this->map = mBuffer->contents();
+  auto buffer = GetBuffer();
+  if (buffer) {
+    this->map = buffer->contents();
     this->mMappedMemory = this->map;
   }
 }
 void MtVertexBuffer::Unmap() { 
-  if (mBuffer && mBuffer->storageMode() == MTL::StorageModeShared) {
-      mBuffer->didModifyRange(NS::Range(0, mBufferSize));
+  auto buffer = GetBuffer();
+  if (buffer && buffer->storageMode() == MTL::StorageModeShared) {
+      buffer->didModifyRange(NS::Range(0, mBufferSize));
   }
 }
 void *MtVertexBuffer::Lock(unsigned int size) {
-  if (!mBuffer) CreateBuffer(size);
+  if (!mBuffers[0] || mBufferSize < size) {
+      CreateBuffer(size);
+  } else {
+      PrepareForWrite();
+  }
   Map();
   return this->map;
 }
@@ -190,89 +291,170 @@ void MtVertexBuffer::CreateBuffer(size_t size) {
   if (mt_debug) {
     Printf(PRINT_LOG, "Metal: MtVertexBuffer::CreateBuffer size=%zu\n", size);
   }
-  if (mBuffer) {
-    if (fb && !fb->mIsDestroyed) {
-      fb->RecycleBuffer(mBuffer);
-    } else {
-      mBuffer->release();
+  if (size == 0) size = 16;
+
+  bool dynamic = (mUsage != BufferUsageType::Static);
+  int count = dynamic ? 2 : 1;
+
+  if (mBuffers[0] && mBufferSize >= size) {
+      if (dynamic && !mBuffers[1]) {
+          // Upgrade
+      } else {
+          return;
+      }
+  }
+
+  for (int i = 0; i < 2; i++) {
+    if (mBuffers[i]) {
+      if (fb && !fb->mIsDestroyed) {
+        fb->RecycleBuffer(mBuffers[i]);
+      } else {
+        mBuffers[i]->release();
+      }
+      mBuffers[i] = nullptr;
+    }
+    if (i < count) {
+        mBuffers[i] = fb->device->device->newBuffer(size, MTL::StorageModeShared);
     }
   }
-  if (size == 0) size = 16;
-  mBuffer = fb->device->device->newBuffer(size, MTL::StorageModeShared);
-  if (!mBuffer) return;
 
+  mActiveBufferIndex = 0;
   mBufferSize = size;
   buffersize = size; // Set base class member
-  this->map = mBuffer->contents();
-  this->mMappedMemory = this->map;
+  auto buffer = GetBuffer();
+  if (buffer) {
+      this->map = buffer->contents();
+      this->mMappedMemory = this->map;
+  }
 }
 
 // MtIndexBuffer
 MtIndexBuffer::MtIndexBuffer(MetalRenderDevice *fb) : fb(fb) {}
 MtIndexBuffer::~MtIndexBuffer() {
-  if (mBuffer) {
-    if (fb && !fb->mIsDestroyed) {
-      fb->RecycleBuffer(mBuffer);
-    } else {
-      mBuffer->release();
+  for (int i = 0; i < 2; i++) {
+    if (mBuffers[i]) {
+      if (fb && !fb->mIsDestroyed) {
+        fb->RecycleBuffer(mBuffers[i]);
+      }
+      else {
+        mBuffers[i]->release();
+      }
+      mBuffers[i] = nullptr;
     }
-    mBuffer = nullptr;
   }
 }
 
+MTL::Buffer *MtIndexBuffer::GetBuffer() const {
+  if (mUsage == BufferUsageType::Static) return mBuffers[0];
+  return mBuffers[mActiveBufferIndex];
+}
+
+void MtIndexBuffer::PrepareForWrite() {
+    if (mUsage == BufferUsageType::Static) return;
+    if (!mBuffers[1]) CreateBuffer(mBufferSize);
+
+    uint64_t frame = fb->GetFrameCount();
+    if (mLastWriteFrame != frame) {
+        int oldIndex = mActiveBufferIndex;
+        mActiveBufferIndex = (mActiveBufferIndex + 1) % 2;
+        mLastWriteFrame = frame;
+
+        if (mt_debug) Printf(PRINT_LOG, "Metal: MtIndexBuffer::PrepareForWrite rotating to %d (frame %llu)\n", mActiveBufferIndex, frame);
+
+        if (mBuffers[oldIndex] && mBuffers[mActiveBufferIndex]) {
+            memcpy(mBuffers[mActiveBufferIndex]->contents(), mBuffers[oldIndex]->contents(), mBufferSize);
+        }
+    }
+}
+
 void MtIndexBuffer::Upload(size_t offset, size_t size) {
-  if (mBuffer && mBuffer->storageMode() == MTL::StorageModeShared) {
+  auto buffer = GetBuffer();
+  if (buffer && buffer->storageMode() == MTL::StorageModeShared) {
     if (size > 0 && offset + size <= mBufferSize) {
-      mBuffer->didModifyRange(NS::Range(offset, size));
+      buffer->didModifyRange(NS::Range(offset, size));
     }
   }
 }
 
 void MtIndexBuffer::SetData(size_t size, const void *data,
                             BufferUsageType usage) {
-  CreateBuffer(size);
-  if (mBuffer && data) {
-    memcpy(mBuffer->contents(), data, size);
-    if (mBuffer->storageMode() == MTL::StorageModeShared)
-        mBuffer->didModifyRange(NS::Range(0, size));
+  mUsage = usage;
+  if (!mBuffers[0] || mBufferSize < size) {
+      CreateBuffer(size);
+  } else {
+      PrepareForWrite();
+  }
+
+  auto buffer = GetBuffer();
+  if (buffer && data) {
+    memcpy(buffer->contents(), data, size);
+    if (buffer->storageMode() == MTL::StorageModeShared)
+        buffer->didModifyRange(NS::Range(0, size));
   }
 }
 void MtIndexBuffer::SetSubData(size_t offset, size_t size, const void *data) {
-  if (mBuffer && data) {
-    memcpy((uint8_t *)mBuffer->contents() + offset, data, size);
-    if (mBuffer->storageMode() == MTL::StorageModeShared)
-        mBuffer->didModifyRange(NS::Range(offset, size));
+  PrepareForWrite();
+  auto buffer = GetBuffer();
+  if (buffer && data) {
+    memcpy((uint8_t *)buffer->contents() + offset, data, size);
+    if (buffer->storageMode() == MTL::StorageModeShared)
+        buffer->didModifyRange(NS::Range(offset, size));
   }
 }
 void MtIndexBuffer::Resize(size_t newsize) { CreateBuffer(newsize); }
 void MtIndexBuffer::Map() {
-  if (mBuffer) {
-    this->map = mBuffer->contents();
+  auto buffer = GetBuffer();
+  if (buffer) {
+    this->map = buffer->contents();
     this->mMappedMemory = this->map;
   }
 }
 void MtIndexBuffer::Unmap() { }
 void *MtIndexBuffer::Lock(unsigned int size) {
-  if (!mBuffer) CreateBuffer(size);
+  if (!mBuffers[0] || mBufferSize < size) {
+      CreateBuffer(size);
+  } else {
+      PrepareForWrite();
+  }
   Map();
   return this->map;
 }
 void MtIndexBuffer::Unlock() { Unmap(); }
 
 void MtIndexBuffer::CreateBuffer(size_t size) {
-  if (mBuffer) {
-    if (fb && !fb->mIsDestroyed) {
-      fb->RecycleBuffer(mBuffer);
-    } else {
-      mBuffer->release();
+  if (size == 0) size = 16;
+
+  bool dynamic = (mUsage != BufferUsageType::Static);
+  int count = dynamic ? 2 : 1;
+
+  if (mBuffers[0] && mBufferSize >= size) {
+      if (dynamic && !mBuffers[1]) {
+          // Upgrade
+      } else {
+          return;
+      }
+  }
+
+  for (int i = 0; i < 2; i++) {
+    if (mBuffers[i]) {
+      if (fb && !fb->mIsDestroyed) {
+        fb->RecycleBuffer(mBuffers[i]);
+      } else {
+        mBuffers[i]->release();
+      }
+      mBuffers[i] = nullptr;
+    }
+    if (i < count) {
+        mBuffers[i] = fb->device->device->newBuffer(size, MTL::StorageModeShared);
     }
   }
-  if (size == 0) size = 16;
-  mBuffer = fb->device->device->newBuffer(size, MTL::StorageModeShared);
-  if (!mBuffer) return;
 
+  mActiveBufferIndex = 0;
   mBufferSize = size;
   buffersize = size; // Set base class member
-  this->map = mBuffer->contents();
-  this->mMappedMemory = this->map;
+  auto buffer = GetBuffer();
+  if (buffer) {
+      this->map = buffer->contents();
+      this->mMappedMemory = this->map;
+  }
 }

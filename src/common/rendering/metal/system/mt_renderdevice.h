@@ -56,8 +56,8 @@ public:
   bool mIsDestroyed = false;
 
   // Resource recycling bin to keep buffers alive until GPU is done
-  std::vector<MTL::Buffer *> mBufferRecycleBin[3];
-  std::vector<MTL::Texture *> mTextureRecycleBin[3];
+  std::vector<MTL::Buffer *> mBufferRecycleBin[2];
+  std::vector<MTL::Texture *> mTextureRecycleBin[2];
   int mCurrentFrameRecycleIndex = 0;
 
   // Manager accessors
@@ -134,6 +134,7 @@ public:
   void RecycleTexture(MTL::Texture *texture);
   
   dispatch_semaphore_t GetInflightSemaphore() { return mInflightFramesSemaphore; }
+  int GetFrameCount();
 
   CA::MetalDrawable *mCurrentDrawable = nullptr;
 

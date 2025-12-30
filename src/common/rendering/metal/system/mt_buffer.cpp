@@ -92,9 +92,19 @@ void MtBufferManager::Init() {
 
   // Create fan to triangle index buffer
   CreateFanToTrisIndexBuffer();
+
+  // Create constant dummy buffer for unused attributes
+  DummyBuffer = fb->device->device->newBuffer(256, MTL::StorageModeShared);
+  if (DummyBuffer) {
+      memset(DummyBuffer->contents(), 0, 256);
+  }
 }
 
 void MtBufferManager::Deinit() {
+  if (DummyBuffer) {
+      DummyBuffer->release();
+      DummyBuffer = nullptr;
+  }
   // Clean up stream buffers
   MatrixBuffer.reset();
   StreamBuffer.reset();
