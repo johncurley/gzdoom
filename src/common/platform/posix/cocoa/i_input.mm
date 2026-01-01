@@ -108,7 +108,6 @@ void CheckGUICapture()
 	if (wantCapt != GUICapture)
 	{
 		GUICapture = wantCapt;
-		Printf("Metal: GUICapture changed to %d\n", (int)GUICapture);
 		if (wantCapt)
 		{
 			buttonMap.ResetButtonStates();
@@ -707,7 +706,6 @@ void ProcessMouseButtonEvent(NSEvent* theEvent)
 
 		if (event.type != EV_None)
 		{
-			NSEventToGameMousePosition(theEvent, &event);
 			D_PostEvent(&event);
 		}
 	}

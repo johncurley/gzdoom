@@ -59,6 +59,8 @@
 #include "v_draw.h"
 #include "v_text.h"
 #include "version.h"
+#include "menustate.h"
+#include "c_console.h"
 
 #ifdef __APPLE__
 #include <zwidget/window/cocoanativehandle.h>
@@ -71,7 +73,7 @@ EXTERN_CVAR(Int, gl_tonemap)
 EXTERN_CVAR(Int, screenblocks)
 EXTERN_CVAR(Bool, cl_capfps)
 
-CVAR(Bool, mt_debug, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Bool, mt_debug, false, 0)
 
 void MetalError(const char *text) { throw CMetalError(text); }
 
@@ -539,6 +541,10 @@ void MetalRenderDevice::SetActiveRenderTarget() {
   mMtRenderState->MarkAsFilled(tex);
 }
 void MetalRenderDevice::Draw2D() {
+  if (mt_debug) {
+      Printf(PRINT_LOG, "Metal: Draw2D called (menuactive=%d, ConsoleState=%d, twod empty=%d)\n", 
+             (int)menuactive, (int)ConsoleState, twod->DrawCount() == 0);
+  }
   if (mPostprocess) {
     mPostprocess->SetActiveRenderTarget();
   }

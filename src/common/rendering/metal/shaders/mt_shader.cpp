@@ -601,6 +601,7 @@ static void PatchVertexShader(std::string &source, const std::string &shadername
   std::regex glPosRegex(R"(gl_Position\s*=\s*([^;]+);)");
   std::string patch = 
       "gl_Position = $1;\n"
+      "    gl_Position.y = -gl_Position.y;\n"
       "    gl_Position.z = 0.5 * (gl_Position.w - gl_Position.z);";
 
   if (std::regex_search(source, glPosRegex)) {

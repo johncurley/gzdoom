@@ -243,8 +243,8 @@ void MtRenderState::EnableStencil(bool on) {
 }
 
 void MtRenderState::SetScissor(int x, int y, int w, int h) {
-  if (gamestate == GS_STARTUP) {
-      Printf(PRINT_LOG, "Metal: Startup SetScissor %d,%d %dx%d\n", x, y, w, h);
+  if (mt_debug) {
+      Printf(PRINT_LOG, "Metal: SetScissor %d,%d %dx%d (gamestate=%d)\n", x, y, w, h, (int)gamestate);
   }
   mScissorX = x;
   mScissorY = y;
