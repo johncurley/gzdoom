@@ -559,12 +559,6 @@ void ProcessKeyboardEvent(NSEvent* theEvent)
 	const bool isARepeat = [theEvent isARepeat];
 	const NSEventType cocoaType = [theEvent type];
 
-	if (cocoaType == NSEventTypeKeyDown) {
-		Printf("Metal: Cocoa KeyDown code=0x%02x repeat=%d GUICapture=%d\n", (int)keyCode, (int)isARepeat, (int)GUICapture);
-	} else if (cocoaType == NSEventTypeKeyUp) {
-		Printf("Metal: Cocoa KeyUp code=0x%02x GUICapture=%d\n", (int)keyCode, (int)isARepeat);
-	}
-
 	if (k_allowfullscreentoggle
 		&& (kVK_ANSI_F == keyCode)
 		&& (NSEventModifierFlagCommand & [theEvent modifierFlags])
@@ -759,6 +753,8 @@ void ProcessMouseWheelEvent(NSEvent* theEvent)
 
 void I_ProcessEvent(NSEvent* event)
 {
+	CheckGUICapture();
+
 	const NSEventType eventType = [event type];
 
 	if (eventType == NSEventTypeKeyDown || eventType == NSEventTypeKeyUp ||
