@@ -1068,7 +1068,7 @@ void MtRenderState::BeginRenderPass() {
     mEncoder = cmdBuffer->renderCommandEncoder(pRPD);
     mPipelineBound = false;
     if (mEncoder) {
-        mCurrentWinding = MTL::WindingCounterClockwise;
+        mCurrentWinding = MTL::WindingClockwise;
         mEncoder->setFrontFacingWinding(mCurrentWinding);
         
         // Satisfy vertex descriptor aliases

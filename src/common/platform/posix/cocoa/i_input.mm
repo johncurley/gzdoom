@@ -678,8 +678,10 @@ void ProcessMouseButtonEvent(NSEvent* theEvent)
 
 		NSEventToGameMousePosition(theEvent, &event);
 
-		Printf("Metal: GUI Mouse Click subtype=%d pos=%d,%d\n", event.subtype, event.data1, event.data2);
-		D_PostEvent(&event);
+		if (event.subtype != EV_GUI_None)
+		{
+			D_PostEvent(&event);
+		}
 	}
 	else
 	{
@@ -688,9 +690,6 @@ void ProcessMouseButtonEvent(NSEvent* theEvent)
 			case NSEventTypeLeftMouseDown:
 			case NSEventTypeRightMouseDown:
 			case NSEventTypeOtherMouseDown:
-			case NSEventTypeLeftMouseDragged:
-			case NSEventTypeRightMouseDragged:
-			case NSEventTypeOtherMouseDragged:
 				event.type = EV_KeyDown;
 				break;
 
@@ -706,7 +705,8 @@ void ProcessMouseButtonEvent(NSEvent* theEvent)
 
 		event.data1 = min(KEY_MOUSE1 + [theEvent buttonNumber], NSInteger(KEY_MOUSE8));
 
-		if (event.type != EV_None) {
+		if (event.type != EV_None)
+		{
 			D_PostEvent(&event);
 		}
 	}
