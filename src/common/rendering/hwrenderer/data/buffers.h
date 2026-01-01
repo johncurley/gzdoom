@@ -9,8 +9,9 @@ class FRenderState;
 #define HW_MAX_PIPELINE_BUFFERS 4
 #define HW_BLOCK_SSBO 1
 #else
-// On desktop this is only useful fpr letting the GPU run in parallel with the playsim and for that 2 buffers are enough.
-#define HW_MAX_PIPELINE_BUFFERS 2
+// On desktop this is only useful fpr letting the GPU run in parallel with the playsim.
+// We use 3 for full triple-buffering.
+#define HW_MAX_PIPELINE_BUFFERS 3
 #endif
 
 // The low level code needs to know which attributes exist.

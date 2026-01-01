@@ -60,8 +60,8 @@ public:
   bool mIsDestroyed = false;
 
   // Resource recycling bin to keep buffers alive until GPU is done
-  std::vector<MTL::Buffer *> mBufferRecycleBin[1];
-  std::vector<MTL::Texture *> mTextureRecycleBin[1];
+  std::vector<MTL::Buffer *> mBufferRecycleBin[3];
+  std::vector<MTL::Texture *> mTextureRecycleBin[3];
   int mCurrentFrameRecycleIndex = 0;
 
   // Manager accessors

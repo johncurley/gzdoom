@@ -115,7 +115,9 @@ void D_ProcessEvents (void)
 					continue;				// console ate the event
 				}
 				if (M_Responder(ev)) {
-					// Printf("Event consumed by Menu: type=%d active=%d\n", ev->type, (int)menuactive);
+					if (ev->type == EV_KeyDown) {
+						Printf("Event consumed by Menu: type=%d data1=%d (active=%d)\n", ev->type, ev->data1, (int)menuactive);
+					}
 					continue;				// menu ate the event
 				}
 			}

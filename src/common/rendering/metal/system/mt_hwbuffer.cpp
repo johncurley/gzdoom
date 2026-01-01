@@ -126,6 +126,8 @@ void MtHardwareDataBuffer::Unmap() {
 void *MtHardwareDataBuffer::Lock(unsigned int size) {
   if (!mBuffers[0] || mBufferSize < size) {
       CreateBuffer(size);
+  } else {
+      PrepareForWrite();
   }
   Map();
   return this->map;
@@ -296,6 +298,8 @@ void MtVertexBuffer::Unmap() {
 void *MtVertexBuffer::Lock(unsigned int size) {
   if (!mBuffers[0] || mBufferSize < size) {
       CreateBuffer(size);
+  } else {
+      PrepareForWrite();
   }
   Map();
   return this->map;
@@ -442,6 +446,8 @@ void MtIndexBuffer::Unmap() {
 void *MtIndexBuffer::Lock(unsigned int size) {
   if (!mBuffers[0] || mBufferSize < size) {
       CreateBuffer(size);
+  } else {
+      PrepareForWrite();
   }
   Map();
   return this->map;

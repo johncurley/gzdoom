@@ -65,7 +65,7 @@
 #endif
 
 // Max number of frames to queue for rendering
-constexpr int MaxFramesInFlight = 1;
+constexpr int MaxFramesInFlight = 2;
 
 EXTERN_CVAR(Int, gl_tonemap)
 EXTERN_CVAR(Int, screenblocks)
@@ -83,7 +83,7 @@ void MetalPrintLog(const char *typestr, const std::string &msg) {
 MetalRenderDevice::MetalRenderDevice(void *hMonitor, bool fullscreen)
     : Super(hMonitor, fullscreen) {
   mInflightFramesSemaphore = dispatch_semaphore_create(MaxFramesInFlight);
-  mPipelineNbr = MaxFramesInFlight; // Match vertex buffer pipelining to frames in flight (2)
+  mPipelineNbr = 3; 
   device = std::make_shared<MetalDevice>();
   device->device = MTL::CreateSystemDefaultDevice();
 
@@ -138,7 +138,7 @@ MetalRenderDevice::~MetalRenderDevice() {
     }
   }
 
-  for (int i = 0; i < 1; i++) {
+  for (int i = 0; i < 3; i++) {
     for (auto *buffer : mBufferRecycleBin[i]) {
       buffer->release();
     }
@@ -349,7 +349,7 @@ void MetalRenderDevice::BeginFrame() {
 
   {
     std::lock_guard<std::mutex> lock(mRecycleMutex);
-    mCurrentFrameRecycleIndex = (mCurrentFrameRecycleIndex + 1) % 1;
+    mCurrentFrameRecycleIndex = (mCurrentFrameRecycleIndex + 1) % 3;
     for (auto *buffer : mBufferRecycleBin[mCurrentFrameRecycleIndex]) {
       buffer->release();
     }
