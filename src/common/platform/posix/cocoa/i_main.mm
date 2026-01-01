@@ -284,7 +284,6 @@ extern bool AppActive;
 - (void)applicationDidBecomeActive:(NSNotification*)aNotification
 {
 	ZD_UNUSED(aNotification);
-	Printf("Metal: applicationDidBecomeActive\n");
 
 	if (GSnd)
 		S_SetSoundPaused(1);
@@ -295,7 +294,6 @@ extern bool AppActive;
 - (void)applicationWillResignActive:(NSNotification*)aNotification
 {
 	ZD_UNUSED(aNotification);
-	Printf("Metal: applicationWillResignActive\n");
 
 	if (GSnd)
 		S_SetSoundPaused(0);

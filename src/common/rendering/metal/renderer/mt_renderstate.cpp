@@ -1014,10 +1014,6 @@ void MtRenderState::BeginRenderPass() {
           } else {
               cc = MTL::ClearColor::Make(0, 0, 0, 0); // Fog and Normal clear to zero
           }
-          if (mt_debug) {
-              Printf(PRINT_LOG, "Metal: BeginRenderPass - Clearing attachment %d (tex %p) to [%.2f, %.2f, %.2f, %.2f]\n", 
-                     i, tex, cc.red, cc.green, cc.blue, cc.alpha);
-          }
           colorAtt->setClearColor(cc);
           mClearedTargets.insert(tex);
       }
@@ -1032,12 +1028,6 @@ void MtRenderState::BeginRenderPass() {
     bool clearDepth = (mClearTargets & CT_Depth) || clearDS;
     bool clearStencil = (mClearTargets & CT_Stencil) || clearDS;
 
-    if (mt_debug) {
-        Printf(PRINT_LOG, "Metal: BeginRenderPass Depth target %p, Filled: %d, ClearRequest: %d -> LoadAction: %s\n", 
-               mRenderTarget.DepthStencil, (int)dsFilled, (int)(mClearTargets & (CT_Depth | CT_Stencil)), 
-               clearDS ? "Clear" : "Load");
-    }
-
     auto depthAttachment = pRPD->depthAttachment();
     depthAttachment->setTexture(mRenderTarget.DepthStencil);
     depthAttachment->setLoadAction(clearDepth ? MTL::LoadActionClear : MTL::LoadActionLoad);
@@ -1050,15 +1040,7 @@ void MtRenderState::BeginRenderPass() {
         depthAttachment->setStoreAction(MTL::StoreActionStore);
     }
 
-    if (mt_debug) {
-        Printf(PRINT_LOG, "Metal:   Depth Load: %s, Store: %s, Write: %d, Func: %d\n", 
-               depthAttachment->loadAction() == MTL::LoadActionClear ? "Clear" : "Load",
-               depthAttachment->storeAction() == MTL::StoreActionStore ? "Store" : "DontCare",
-               (int)mDepthWrite, mDepthFunc);
-    }
-
     if (clearDepth) {
-        if (mt_debug) Printf(PRINT_LOG, "Metal: BeginRenderPass - Clearing depth target %p to 0.0 (Reverse-Z)\n", mRenderTarget.DepthStencil);
         depthAttachment->setClearDepth(0.0); // Reverse-Z: Clear to 0.0 (Far)
         mClearedTargets.insert(mRenderTarget.DepthStencil);
     }
@@ -1073,15 +1055,7 @@ void MtRenderState::BeginRenderPass() {
         stencilAttachment->setStoreAction(MTL::StoreActionStore);
     }
 
-    if (mt_debug) {
-        Printf(PRINT_LOG, "Metal:   Stencil Load: %s, Store: %s, Ref: %d, Func: %d, Op: %d\n", 
-               stencilAttachment->loadAction() == MTL::LoadActionClear ? "Clear" : "Load",
-               stencilAttachment->storeAction() == MTL::StoreActionStore ? "Store" : "DontCare",
-               mStencilRef, mStencilFunc, mStencilOp);
-    }
-
     if (clearStencil) {
-        if (mt_debug) Printf(PRINT_LOG, "Metal: BeginRenderPass - Clearing stencil target %p to 0\n", mRenderTarget.DepthStencil);
         stencilAttachment->setClearStencil(0);
         mClearedTargets.insert(mRenderTarget.DepthStencil);
     }

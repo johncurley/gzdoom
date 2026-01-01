@@ -707,7 +707,6 @@ void ProcessMouseButtonEvent(NSEvent* theEvent)
 		event.data1 = min(KEY_MOUSE1 + [theEvent buttonNumber], NSInteger(KEY_MOUSE8));
 
 		if (event.type != EV_None) {
-			Printf("Metal: Game Mouse Click type=%d button=%d\n", event.type, event.data1);
 			D_PostEvent(&event);
 		}
 	}
@@ -791,11 +790,6 @@ void I_ProcessEvent(NSEvent* event)
 		case NSEventTypeFlagsChanged:
 			ProcessKeyboardFlagsEvent(event);
 			break;
-
-		default:
-			break;
-	}
-}
 
 		default:
 			break;
