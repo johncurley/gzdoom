@@ -45,6 +45,7 @@
 #include "vm.h"
 #include "v_video.h"
 #include "i_system.h"
+#include "printf.h"
 #include "types.h"
 #include "texturemanager.h"
 #include "v_draw.h"
