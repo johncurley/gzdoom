@@ -23,6 +23,7 @@ struct MtVersionManager {
     bool isTBDR = false;
     bool supportsMemoryless = false;
     bool supportsAppleGPU = false;
+    bool supportsRGB10A2 = false;
     
     // Feature flags for workarounds
     bool useManagedStorage = false;
@@ -74,8 +75,12 @@ struct MtVersionManager {
         }
 
         // Feature detection
-        if (device->supportsFamily(MTL::GPUFamilyApple7) || device->supportsFamily(MTL::GPUFamilyMac2)) {
-            supportsMemoryless = true;
+        // Disable memoryless for now: we need to read depth/fog/normal in separate encoders (SSAO/PostProcess)
+        supportsMemoryless = false;
+
+        if (device->supportsFamily(MTL::GPUFamilyApple1) || device->supportsFamily(MTL::GPUFamilyMac1)) {
+            // Most modern Metal GPUs support RGB10A2
+            supportsRGB10A2 = true;
         }
 
         // Metal Version (rough estimation based on GPU family)

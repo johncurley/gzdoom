@@ -100,7 +100,8 @@ void MtHardwareDataBuffer::SetData(size_t size, const void *data,
 }
 void MtHardwareDataBuffer::SetSubData(size_t offset, size_t size,
                                       const void *data) {
-  PrepareForWrite();
+  if (mUsage != BufferUsageType::Static)
+      PrepareForWrite();
   auto buffer = GetBuffer();
   if (buffer && data) {
     memcpy((uint8_t *)buffer->contents() + offset, data, size);
@@ -125,8 +126,6 @@ void MtHardwareDataBuffer::Unmap() {
 void *MtHardwareDataBuffer::Lock(unsigned int size) {
   if (!mBuffers[0] || mBufferSize < size) {
       CreateBuffer(size);
-  } else {
-      PrepareForWrite();
   }
   Map();
   return this->map;
@@ -271,7 +270,8 @@ void MtVertexBuffer::SetData(size_t size, const void *data,
   }
 }
 void MtVertexBuffer::SetSubData(size_t offset, size_t size, const void *data) {
-  PrepareForWrite();
+  if (mUsage != BufferUsageType::Static)
+      PrepareForWrite();
   auto buffer = GetBuffer();
   if (buffer && data) {
     memcpy((uint8_t *)buffer->contents() + offset, data, size);
@@ -296,8 +296,6 @@ void MtVertexBuffer::Unmap() {
 void *MtVertexBuffer::Lock(unsigned int size) {
   if (!mBuffers[0] || mBufferSize < size) {
       CreateBuffer(size);
-  } else {
-      PrepareForWrite();
   }
   Map();
   return this->map;
@@ -418,7 +416,8 @@ void MtIndexBuffer::SetData(size_t size, const void *data,
   }
 }
 void MtIndexBuffer::SetSubData(size_t offset, size_t size, const void *data) {
-  PrepareForWrite();
+  if (mUsage != BufferUsageType::Static)
+      PrepareForWrite();
   auto buffer = GetBuffer();
   if (buffer && data) {
     memcpy((uint8_t *)buffer->contents() + offset, data, size);
@@ -443,8 +442,6 @@ void MtIndexBuffer::Unmap() {
 void *MtIndexBuffer::Lock(unsigned int size) {
   if (!mBuffers[0] || mBufferSize < size) {
       CreateBuffer(size);
-  } else {
-      PrepareForWrite();
   }
   Map();
   return this->map;

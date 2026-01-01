@@ -608,10 +608,11 @@ static void PatchVertexShader(std::string &source, const std::string &shadername
       source = std::regex_replace(source, glPosRegex, patch);
   }
 
-  // Normalize vNormal if assigned to stabilize lighting
-  std::regex normalRegex(R"(vNormal\s*=\s*([^;]+);)");
+  // Normalize normals if assigned to stabilize lighting
+  // Use a tiny epsilon to avoid NaN on zero-length vectors (potential source of pixel sparks)
+  std::regex normalRegex(R"((vNormal|vWorldNormal|vEyeNormal)\s*=\s*([^;]+);)");
   if (std::regex_search(source, normalRegex)) {
-      source = std::regex_replace(source, normalRegex, "vNormal = normalize($1);");
+      source = std::regex_replace(source, normalRegex, "$1 = vec4(normalize($2.xyz + 1e-10), $2.w);");
   }
 }
 
@@ -640,6 +641,12 @@ MtShaderManager::LoadVertShader(const std::string &shadername,
   
   std::string definesStr = defines;
   
+  // Strip VULKAN_COORDINATE_SYSTEM if present to avoid conflict with our manual patch
+  size_t vpos = definesStr.find("#define VULKAN_COORDINATE_SYSTEM");
+  if (vpos != std::string::npos) {
+      definesStr.erase(vpos, strlen("#define VULKAN_COORDINATE_SYSTEM"));
+  }
+
   code += definesStr;
   code += "\n#define MAX_STREAM_DATA " + std::to_string(MAX_STREAM_DATA) + "\n";
   code += shaderBindings;
@@ -659,7 +666,12 @@ std::shared_ptr<MtShaderModule> MtShaderManager::LoadFragShader(
     bool alphatest, bool gbufferpass) {
   std::string code = "#version 450\n";
   code += "#extension GL_GOOGLE_include_directive : enable\n";
-  code += defines;
+  std::string definesStr = defines;
+  size_t vpos = definesStr.find("#define VULKAN_COORDINATE_SYSTEM");
+  if (vpos != std::string::npos) {
+      definesStr.erase(vpos, strlen("#define VULKAN_COORDINATE_SYSTEM"));
+  }
+  code += definesStr;
   code += "\n#define MAX_STREAM_DATA " + std::to_string(MAX_STREAM_DATA) + "\n";
   code += shaderBindings;
 

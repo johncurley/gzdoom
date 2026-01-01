@@ -110,14 +110,23 @@ void D_ProcessEvents (void)
 		{
 			if (gamestate != GS_INTRO) // GS_INTRO blocks the UI.
 			{
-				if (C_Responder(ev))
+				if (C_Responder(ev)) {
+					// Printf("Event consumed by Console: type=%d\n", ev->type);
 					continue;				// console ate the event
-				if (M_Responder(ev))
+				}
+				if (M_Responder(ev)) {
+					// Printf("Event consumed by Menu: type=%d active=%d\n", ev->type, (int)menuactive);
 					continue;				// menu ate the event
+				}
 			}
 		}
 
-		if (sysCallbacks.G_Responder(ev) && ev->type == EV_KeyDown) keywasdown.Set(ev->data1);
+		if (sysCallbacks.G_Responder(ev)) {
+			// Printf("Event consumed by Game: type=%d\n", ev->type);
+			if (ev->type == EV_KeyDown) keywasdown.Set(ev->data1);
+		} else {
+			// Printf("Event NOT consumed: type=%d\n", ev->type);
+		}
 	}
 
 	for (auto ev: delayedevents)
@@ -177,6 +186,9 @@ void D_PostEvent(event_t* ev)
 	{
 		return;
 	}
+
+	// Printf("PostEvent: type=%d subtype=%d d1=%d d2=%d d3=%d\n", ev->type, ev->subtype, ev->data1, ev->data2, ev->data3);
+
 	if (sysCallbacks.DispatchEvent && sysCallbacks.DispatchEvent(ev))
 		return;
 

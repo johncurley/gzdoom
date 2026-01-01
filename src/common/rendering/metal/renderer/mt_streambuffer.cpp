@@ -80,7 +80,7 @@ uint8_t *MtStreamBuffer::GetBufferPointer() const {
 
 MtStreamBufferWriter::MtStreamBufferWriter(MetalRenderDevice *fb)
     : mBuffer(std::make_unique<MtStreamBuffer>(fb, sizeof(StreamData) *
-                                                       MAX_STREAM_DATA, 512)) {}
+                                                       MAX_STREAM_DATA, 0)) {}
 
 bool MtStreamBufferWriter::Write(const StreamData &data) {
   mDataIndex++;
@@ -97,11 +97,6 @@ bool MtStreamBufferWriter::Write(const StreamData &data) {
     size_t offset = mStreamDataOffset + sizeof(StreamData) * mDataIndex;
     memcpy(ptr + offset, &data, sizeof(StreamData));
     mBuffer->GetBuffer()->didModifyRange(NS::Range(offset, sizeof(StreamData)));
-    
-    if (mt_debug) {
-        Printf(PRINT_LOG, "Metal: StreamData %d: Color=(%.2f, %.2f, %.2f, %.2f) UseVertex=%d Timer=%f\n", 
-               mDataIndex, data.uVertexColor.X, data.uVertexColor.Y, data.uVertexColor.Z, data.uVertexColor.W, data.useVertexData, data.timer);
-    }
   }
 
   return true;

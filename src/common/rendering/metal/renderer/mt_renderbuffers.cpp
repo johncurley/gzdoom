@@ -165,9 +165,13 @@ void MtRenderBuffers::CreateSceneNormal(int width, int height, int samples) {
   auto desc = MTL::TextureDescriptor::alloc()->init();
   desc->setWidth(width);
   desc->setHeight(height);
-  desc->setPixelFormat(
-      MTL::PixelFormatBGRA8Unorm); // Match Vulkan A2R10G10B10 if possible, but
-                                   // BGRA8 is safe for now
+  
+  MTL::PixelFormat format = MTL::PixelFormatBGRA8Unorm;
+  if (fb->mVersionManager.supportsRGB10A2) {
+      format = MTL::PixelFormatRGB10A2Unorm;
+  }
+  
+  desc->setPixelFormat(format);
   desc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
   desc->setStorageMode(MTL::StorageModePrivate);
   desc->setSampleCount(samples);

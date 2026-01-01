@@ -479,9 +479,11 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
     MTL::PixelFormat format = MTL::PixelFormatBGRA8Unorm;
     if (i == 0) {
         format = (key.PixelFormat != 0) ? (MTL::PixelFormat)key.PixelFormat : MTL::PixelFormatBGRA8Unorm;
-    } else {
-        // GZDoom secondary G-Buffer targets are BGRA8Unorm
-        format = MTL::PixelFormatBGRA8Unorm;
+    } else if (i == 1) {
+        format = MTL::PixelFormatBGRA8Unorm; // Fog
+    } else if (i == 2) {
+        // Normal
+        format = fb->mVersionManager.supportsRGB10A2 ? MTL::PixelFormatRGB10A2Unorm : MTL::PixelFormatBGRA8Unorm;
     }
     colorAttachment->setPixelFormat(format);
 

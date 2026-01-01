@@ -65,7 +65,7 @@
 #endif
 
 // Max number of frames to queue for rendering
-constexpr int MaxFramesInFlight = 2;
+constexpr int MaxFramesInFlight = 1;
 
 EXTERN_CVAR(Int, gl_tonemap)
 EXTERN_CVAR(Int, screenblocks)
@@ -138,7 +138,7 @@ MetalRenderDevice::~MetalRenderDevice() {
     }
   }
 
-  for (int i = 0; i < 2; i++) {
+  for (int i = 0; i < 1; i++) {
     for (auto *buffer : mBufferRecycleBin[i]) {
       buffer->release();
     }
@@ -245,13 +245,7 @@ void MetalRenderDevice::InitializeState() {
 }
 
 void MetalRenderDevice::Update() {
-  if (mt_debug) {
-      fprintf(stderr, "Metal: [Frame %d] Update() called\n", GetFrameCount());
-      fflush(stderr);
-  }
   NS::AutoreleasePool *pool = NS::AutoreleasePool::alloc()->init();
-
-  if (mt_debug) Printf(PRINT_LOG, "Metal: Update START\n");
 
   twoD.Reset();
   Flush3D.Reset();
@@ -262,11 +256,9 @@ void MetalRenderDevice::Update() {
     mPostprocess->SetActiveRenderTarget();
   }
   
-  if (mt_debug) Printf(PRINT_LOG, "Metal: Update - Calling Draw2D\n");
   this->Draw2D();
 
   if (mMtRenderState) {
-    if (mt_debug) Printf(PRINT_LOG, "Metal: Update - Ending 2D pass\n");
     mMtRenderState->EndRenderPass();
     mMtRenderState->EndFrame();
   }
@@ -278,15 +270,8 @@ void MetalRenderDevice::Update() {
     int width = (int)drawableTexture->width();
     int height = (int)drawableTexture->height();
 
-    if (mt_debug) {
-        Printf(PRINT_LOG, "Metal: Update - drawable: %d x %d, letterbox: %d,%d %dx%d\n", 
-               width, height,
-               mOutputLetterbox.left, mOutputLetterbox.top, mOutputLetterbox.width, mOutputLetterbox.height);
-    }
-
     // 3. Blit the final result (3D + 2D) from PipelineImage[0] to the swapchain
     if (mPostprocess) {
-      if (mt_debug) Printf(PRINT_LOG, "Metal: Update - Blitting to swapchain\n");
       IntRect physicalBox = { 0, 0, width, height };
       mPostprocess->DrawPresentTexture(physicalBox, true, false);
       
@@ -303,7 +288,6 @@ void MetalRenderDevice::Update() {
         this->FPSLimit();
     }
 
-    if (mt_debug) Printf(PRINT_LOG, "Metal: Update - Presenting frame\n");
     PresentFrame(mCurrentDrawable);
     
     // During startup, flush immediately to keep CPU/GPU in sync for the progress bar
@@ -317,8 +301,6 @@ void MetalRenderDevice::Update() {
   }
 
   twod->Clear();
-
-  if (mt_debug) Printf(PRINT_LOG, "Metal: Update END\n");
 
   Super::Update();
   pool->release();
@@ -354,9 +336,6 @@ void MetalRenderDevice::BeginFrame() {
   if (mInFrame) return;
   mInFrame = true;
 
-  if (mt_debug) {
-      Printf(PRINT_LOG, "Metal: [Frame %d] BeginFrame START. FFlatVertex size = %zu\n", GetFrameCount(), sizeof(FFlatVertex));
-  }
   if (mCurrentDrawable)
     return;
 
@@ -370,7 +349,7 @@ void MetalRenderDevice::BeginFrame() {
 
   {
     std::lock_guard<std::mutex> lock(mRecycleMutex);
-    mCurrentFrameRecycleIndex = (mCurrentFrameRecycleIndex + 1) % 2;
+    mCurrentFrameRecycleIndex = (mCurrentFrameRecycleIndex + 1) % 1;
     for (auto *buffer : mBufferRecycleBin[mCurrentFrameRecycleIndex]) {
       buffer->release();
     }
@@ -426,8 +405,6 @@ void MetalRenderDevice::BeginFrame() {
   if (mPostprocess) {
     mPostprocess->SetActiveRenderTarget();
   }
-
-  if (mt_debug) Printf(PRINT_LOG, "Metal: [Frame %d] BeginFrame END\n", GetFrameCount());
 }
 
 bool MetalRenderDevice::CompileNextShader() {
@@ -557,18 +534,10 @@ void MetalRenderDevice::SetActiveRenderTarget() {
       mActiveRenderBuffers->SceneDepthStencil->GetTexture(),
       mActiveRenderBuffers->GetWidth(), mActiveRenderBuffers->GetHeight(),
       (int)MTL::PixelFormatRGBA16Float, 1);
-  
-  // Mark as filled so the renderer doesn't clear it during secondary passes (like 2D)
-  mMtRenderState->MarkAsFilled(tex);
 }
 void MetalRenderDevice::Draw2D() {
   if (mPostprocess) {
     mPostprocess->SetActiveRenderTarget();
-  }
-  
-  if (mt_debug) {
-      fprintf(stderr, "Metal: Draw2D - Invoking engine 2D drawer\n");
-      fflush(stderr);
   }
   
   // Force disable culling and depth for 2D pass to avoid winding/occlusion issues

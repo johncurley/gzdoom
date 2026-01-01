@@ -126,7 +126,7 @@ MtHardwareTexture::~MtHardwareTexture() {
 }
 
 void MtHardwareTexture::AllocateBuffer(int w, int h, int texelsize) {
-  Printf(PRINT_LOG, "Metal: AllocateBuffer %s: %dx%d, texelsize=%d\n", mDebugName.c_str(), w, h,
+  if (mt_debug) Printf(PRINT_LOG, "Metal: AllocateBuffer %s: %dx%d, texelsize=%d\n", mDebugName.c_str(), w, h,
            texelsize);
 
   // Check if we need to recreate the texture
@@ -210,7 +210,7 @@ unsigned int MtHardwareTexture::CreateTexture(unsigned char *buffer, int w,
                                               int h, int texunit, bool mipmap,
                                               const char *name) {
   if (name) mDebugName = name;
-  Printf(PRINT_LOG, "Metal: CreateTexture %s: %dx%d, mipmap=%d\n", mDebugName.c_str(), w, h,
+  if (mt_debug) Printf(PRINT_LOG, "Metal: CreateTexture %s: %dx%d, mipmap=%d\n", mDebugName.c_str(), w, h,
            mipmap);
 
   // Create Metal texture descriptor

@@ -219,10 +219,6 @@ void MtRenderState::SetStencil(int offs, int op, int flags) {
 }
 
 void MtRenderState::SetCulling(int mode) {
-  if (mt_debug) {
-      fprintf(stderr, "Metal: SetCulling %d\n", mode);
-      fflush(stderr);
-  }
   mCullMode = mode;
   mCullModeChanged = true;
   mNeedApply = true;
@@ -299,7 +295,7 @@ void MtRenderState::Apply(int dt) {
   
   // Implement Depth Clamping (Depth Clip Mode)
   if (mEncoder) {
-      mEncoder->setDepthClipMode(MTL::DepthClipModeClip);
+      mEncoder->setDepthClipMode(mDepthClamp ? MTL::DepthClipModeClamp : MTL::DepthClipModeClip);
   }
 
   ApplyViewport();
@@ -344,14 +340,14 @@ void MtRenderState::ApplyFixedTextures() {
       mEncoder->setFragmentTexture(lmTex, 15);
       mEncoder->setVertexTexture(lmTex, 15);
       
-      // Lightmap sampler: Nearest, Repeat (Debug)
+      // Lightmap sampler: Linear, Clamp (Vulkan Parity)
       MtSamplerKey sk;
-      sk.MinFilter = 0; // Nearest
-      sk.MagFilter = 0; 
+      sk.MinFilter = 1; // Linear
+      sk.MagFilter = 1; 
       sk.MipFilter = 0; 
-      sk.AddressU = 0; // Repeat
-      sk.AddressV = 0;
-      sk.AddressW = 0;
+      sk.AddressU = 2; // Clamp
+      sk.AddressV = 2;
+      sk.AddressW = 2;
       sk.MaxAnisotropy = 1.0f;
       
       MTL::SamplerState *sampler = fb->GetSamplerManager()->GetSamplerState(sk);
@@ -425,11 +421,6 @@ void MtRenderState::ApplyRenderPass(int dt) {
         pipelineKey, mtVBuf);
     if (pipelineState && pipelineState->pipelineState) {
       if (mEncoder) {
-        if (mt_debug) {
-            Printf(PRINT_LOG, "Metal: Changed PipelineState effect=%d state=%d vfmt=%d. DepthFunc=%d Write=%d Stencil=%d Blend=%08x\n", 
-                   pipelineKey.SpecialEffect, pipelineKey.EffectState, pipelineKey.VertexFormat,
-                   pipelineKey.DepthFunc, pipelineKey.DepthWrite, pipelineKey.StencilTest, pipelineKey.BlendMode);
-        }
         mEncoder->setRenderPipelineState(pipelineState->pipelineState);
         mEncoder->setDepthStencilState(pipelineState->depthStencilState);
         mPipelineBound = true;
@@ -467,9 +458,6 @@ void MtRenderState::ApplyScissor() {
       scissor.width = (NS::UInteger)mRenderTarget.Width;
       scissor.height = (NS::UInteger)mRenderTarget.Height;
     }
-    if (mt_debug) {
-        Printf(PRINT_LOG, "Metal: ApplyScissor %lu,%lu %lu x %lu\n", (unsigned long)scissor.x, (unsigned long)scissor.y, (unsigned long)scissor.width, (unsigned long)scissor.height);
-    }
     mEncoder->setScissorRect(scissor);
     mScissorChanged = false;
   }
@@ -479,10 +467,12 @@ void MtRenderState::ApplyDepthBias() {
   if (mBias.mChanged && mEncoder) {
     // REVERSE-Z: Near is 1.0, Far is 0.0. 
     // GZDoom sends negative bias values (OpenGL style) to pull closer.
-    // We negate these to push towards 1.0 in Metal, and scale for Depth32Float.
-    float scale = 1.0f; 
-    mCurrentBiasUnits = -mBias.mUnits * scale;
-    mCurrentBiasFactor = -mBias.mFactor * scale;
+    // We negate these to push towards 1.0 in Metal.
+    // For Depth32Float, the constant bias 'units' must be scaled by r (min resolvable difference).
+    // We use 1/2^24 as a reasonable epsilon for 32-bit float buffers to simulate 24-bit precision.
+    float unitsScale = 1.0f / 16777216.0f; 
+    mCurrentBiasUnits = -mBias.mUnits * unitsScale;
+    mCurrentBiasFactor = -mBias.mFactor; 
     mEncoder->setDepthBias(mCurrentBiasUnits, mCurrentBiasFactor, 0.0f);
     mBias.mChanged = false;
   }
@@ -505,9 +495,6 @@ void MtRenderState::ApplyViewport() {
     // REVERSE-Z: Map engine range [min, max] to [1-max, 1-min]
     viewport.znear = 1.0 - mViewportDepthMax;
     viewport.zfar = 1.0 - mViewportDepthMin;
-    if (mt_debug) {
-        Printf(PRINT_LOG, "Metal: ApplyViewport %f,%f %f x %f range %f..%f\n", viewport.originX, viewport.originY, viewport.width, viewport.height, viewport.znear, viewport.zfar);
-    }
     mEncoder->setViewport(viewport);
     mViewportChanged = false;
   }
@@ -695,6 +682,9 @@ void MtRenderState::ApplyMaterial() {
             mEncoder->setFragmentTexture(mtlTexture, i);
             mEncoder->setVertexTexture(mtlTexture, i);
 
+            // Sampler
+            MtSamplerKey samplerKey;
+            
             // 2. Identify UI textures for special sampler handling
             const char* texName = mtHwTexture->GetDebugName().c_str();
             bool isUI = (strstr(texName, "STARTUP") || strstr(texName, "BOOTLOGO") || 
@@ -702,19 +692,28 @@ void MtRenderState::ApplyMaterial() {
                          strstr(texName, "TITLE") || strstr(texName, "INTER") || 
                          strstr(texName, "HELP") || strstr(texName, "CREDIT") || strstr(texName, "CONBACK") ||
                          strstr(texName, "Font") || strstr(texName, "FONT") ||
-                         mtlTexture->width() == 640); // 640 is common for old UI graphics
+                         mtlTexture->width() == 640);
 
-            // Sampler
-            MtSamplerKey samplerKey;
-            // USER: "Adjust texture filtering/wrap mode: Change from linear to nearest. Ensure wrap is repeat."
-            samplerKey.MinFilter = 0; // Nearest
-            samplerKey.MagFilter = 0; // Nearest
-            samplerKey.MipFilter = 0; // NotMipmapped
+            int filter = isUI ? 0 : gl_texture_filter;
+            // Vulkan-parity filter table: 0=Nearest, 1=Linear. Mip: 0=None, 1=Nearest, 2=Linear
+            static const int minFilters[] = {0, 0, 1, 1, 1, 0, 1}; 
+            static const int magFilters[] = {0, 0, 1, 1, 1, 0, 0}; 
+            static const int mipFilters[] = {0, 1, 0, 1, 2, 2, 2}; 
+
+            int f = (filter >= 0 && filter <= 6) ? filter : 0;
+            samplerKey.MinFilter = minFilters[f];
+            samplerKey.MagFilter = magFilters[f];
+            samplerKey.MipFilter = mipFilters[f];
             
-            samplerKey.AddressU = 0; // Repeat (MapAddressMode maps 0 to Repeat)
-            samplerKey.AddressV = 0; 
-            samplerKey.AddressW = 0;
-            samplerKey.MaxAnisotropy = 1.0f;
+            // CRITICAL: If texture has no mips, force sampler to NotMipmapped
+            if (mtlTexture->mipmapLevelCount() == 1) {
+                samplerKey.MipFilter = 0;
+            }
+
+            samplerKey.AddressU = mMaterial.mClampMode;
+            samplerKey.AddressV = mMaterial.mClampMode;
+            samplerKey.AddressW = mMaterial.mClampMode;
+            samplerKey.MaxAnisotropy = isUI ? 1.0f : (float)gl_texture_filter_anisotropic;
 
             MTL::SamplerState *sampler =
                 fb->GetSamplerManager()->GetSamplerState(samplerKey);
@@ -979,11 +978,6 @@ void MtRenderState::BeginRenderPass() {
   // Use manually allocated descriptor for maximum control and stability
   MTL::RenderPassDescriptor *pRPD = MTL::RenderPassDescriptor::alloc()->init();
   if (!pRPD) return;
-
-  if (mt_debug) {
-    Printf(PRINT_LOG, "Metal: BeginRenderPass target=%p (%dx%d fmt=%llu) clearTargets=%d applyCount=%d isSwap=%d\n",
-           targetTex, mRenderTarget.Width, mRenderTarget.Height, (unsigned long long)targetTex->pixelFormat(), mClearTargets, mApplyCount, (int)mRenderTarget.IsSwapChain);
-  }
 
   auto buffers = fb->GetBuffers();
   int numAttachments = mRenderTarget.DrawBuffers;

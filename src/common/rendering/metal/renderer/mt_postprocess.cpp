@@ -300,10 +300,6 @@ void MtPostprocess::SetActiveRenderTarget() {
       buffers->GetWidth(),
       buffers->GetHeight(), (int)MTL::PixelFormatRGBA16Float, 1);
   fb->GetRenderState()->SetViewport(0, 0, buffers->GetWidth(), buffers->GetHeight());
-  
-  // Mark as filled so we don't clear it if the engine doesn't request it.
-  // This is important for 2D passes that might draw in multiple chunks.
-  static_cast<MtRenderState*>(fb->GetRenderState())->MarkAsFilled(tex);
 }
 
 void MtPostprocess::PostProcessScene(
