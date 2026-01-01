@@ -1014,6 +1014,10 @@ void MtRenderState::BeginRenderPass() {
           } else {
               cc = MTL::ClearColor::Make(0, 0, 0, 0); // Fog and Normal clear to zero
           }
+          if (mt_debug) {
+              Printf(PRINT_LOG, "Metal: BeginRenderPass - Clearing attachment %d (tex %p) to [%.2f, %.2f, %.2f, %.2f]\n", 
+                     i, tex, cc.red, cc.green, cc.blue, cc.alpha);
+          }
           colorAtt->setClearColor(cc);
           mClearedTargets.insert(tex);
       }
