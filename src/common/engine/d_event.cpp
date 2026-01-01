@@ -125,6 +125,13 @@ void D_ProcessEvents (void)
 			}
 		}
 
+		// Safety: if menu is active but CurrentMenu is NULL, something is wrong.
+		// Force clear it so the player isn't stuck.
+		if (menuactive != MENU_Off && CurrentMenu == nullptr)
+		{
+			M_ClearMenus();
+		}
+
 		if (sysCallbacks.G_Responder(ev)) {
 			// Printf("Event consumed by Game: type=%d\n", ev->type);
 			if (ev->type == EV_KeyDown) keywasdown.Set(ev->data1);
