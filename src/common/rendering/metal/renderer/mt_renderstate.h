@@ -121,6 +121,10 @@ protected:
 
   PushConstants mPushConstants = {};
 
+  float mCurrentBiasUnits = 0.0f;
+  float mCurrentBiasFactor = 0.0f;
+  MTL::Winding mCurrentWinding = MTL::WindingCounterClockwise;
+
   MTL::Buffer *mBoundBuffers[32] = { nullptr };
   uint32_t mBoundOffsets[32] = { 0 };
   MTL::Buffer *mLastBoundBuffers[32] = { nullptr };

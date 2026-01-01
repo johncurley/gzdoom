@@ -234,23 +234,24 @@ static const char *shaderBindings = R"(
 	// This must match the PushConstants struct
 	layout(binding = 21, std140) uniform PushConstants
 	{
-		vec2 uClipSplit;
-		vec2 uSpecularMaterial;
-
-		float uLightLevel;
-		float uFogDensity;
-		float uLightFactor;
-		float uLightDist;
-
-		int uTextureMode;
-		float uAlphaThreshold;
-		int uFogEnabled;
-		int uLightIndex;
-
-		int uBoneIndexBase;
-		int uDataIndex;
-		int padding2, padding3;
+		vec4 group1; // xy: uClipSplit, zw: uSpecularMaterial
+		vec4 group2; // x: uLightLevel, y: uFogDensity, z: uLightFactor, w: uLightDist
+		vec4 group3; // x: uTextureMode, y: uAlphaThreshold, z: uFogEnabled, w: uLightIndex
+		vec4 group4; // x: uBoneIndexBase, y: uDataIndex
 	};
+
+	#define uClipSplit group1.xy
+	#define uSpecularMaterial group1.zw
+	#define uLightLevel group2.x
+	#define uFogDensity group2.y
+	#define uLightFactor group2.z
+	#define uLightDist group2.w
+	#define uTextureMode int(group3.x)
+	#define uAlphaThreshold group3.y
+	#define uFogEnabled int(group3.z)
+	#define uLightIndex int(group3.w)
+	#define uBoneIndexBase int(group4.x)
+	#define uDataIndex int(group4.y)
 
 	// material types
 	#if defined(SPECULAR)
@@ -563,7 +564,7 @@ bool MtShaderManager::CompileNextShader() {
     mMaterialShadersNAT[compilePass].push_back(std::move(natprog));
 
     compileIndex++;
-    if (compileIndex == 4) // SHADER_NoTexture
+    if (defaultshaders[compileIndex].ShaderName == nullptr)
     {
       compileIndex = 0;
       compileState = 3; // Skip user shaders for now
@@ -605,6 +606,12 @@ static void PatchVertexShader(std::string &source, const std::string &shadername
   if (std::regex_search(source, glPosRegex)) {
       if (mt_debug) Printf(PRINT_LOG, "Metal: Patching vertex shader %s for coordinate system.\n", shadername.c_str());
       source = std::regex_replace(source, glPosRegex, patch);
+  }
+
+  // Normalize vNormal if assigned to stabilize lighting
+  std::regex normalRegex(R"(vNormal\s*=\s*([^;]+);)");
+  if (std::regex_search(source, normalRegex)) {
+      source = std::regex_replace(source, normalRegex, "vNormal = normalize($1);");
   }
 }
 

@@ -219,7 +219,10 @@ void MtRenderState::SetStencil(int offs, int op, int flags) {
 }
 
 void MtRenderState::SetCulling(int mode) {
-  if (mt_debug) Printf(PRINT_LOG, "Metal: SetCulling %d\n", mode);
+  if (mt_debug) {
+      fprintf(stderr, "Metal: SetCulling %d\n", mode);
+      fflush(stderr);
+  }
   mCullMode = mode;
   mCullModeChanged = true;
   mNeedApply = true;
@@ -296,7 +299,7 @@ void MtRenderState::Apply(int dt) {
   
   // Implement Depth Clamping (Depth Clip Mode)
   if (mEncoder) {
-      mEncoder->setDepthClipMode(mDepthClamp ? MTL::DepthClipModeClamp : MTL::DepthClipModeClip);
+      mEncoder->setDepthClipMode(MTL::DepthClipModeClip);
   }
 
   ApplyViewport();
@@ -308,8 +311,6 @@ void MtRenderState::Apply(int dt) {
   ApplyMaterial();
   ApplyFixedTextures();
   mNeedApply = false;
-
-  // drawcalls.Unclock();
 }
 
 void MtRenderState::ApplyFixedTextures() {
@@ -343,14 +344,14 @@ void MtRenderState::ApplyFixedTextures() {
       mEncoder->setFragmentTexture(lmTex, 15);
       mEncoder->setVertexTexture(lmTex, 15);
       
-      // Lightmap sampler: Linear, Clamp
+      // Lightmap sampler: Nearest, Repeat (Debug)
       MtSamplerKey sk;
-      sk.MinFilter = 1; // Linear
-      sk.MagFilter = 1; // Linear
-      sk.MipFilter = 0; // None
-      sk.AddressU = 2; // Clamp
-      sk.AddressV = 2; // Clamp
-      sk.AddressW = 2; // Clamp
+      sk.MinFilter = 0; // Nearest
+      sk.MagFilter = 0; 
+      sk.MipFilter = 0; 
+      sk.AddressU = 0; // Repeat
+      sk.AddressV = 0;
+      sk.AddressW = 0;
       sk.MaxAnisotropy = 1.0f;
       
       MTL::SamplerState *sampler = fb->GetSamplerManager()->GetSamplerState(sk);
@@ -480,13 +481,9 @@ void MtRenderState::ApplyDepthBias() {
     // GZDoom sends negative bias values (OpenGL style) to pull closer.
     // We negate these to push towards 1.0 in Metal, and scale for Depth32Float.
     float scale = 1.0f; 
-    float units = -mBias.mUnits * scale;
-    float factor = -mBias.mFactor * scale;
-    if (mt_debug) {
-        Printf(PRINT_LOG, "Metal: ApplyDepthBias units=%f (raw %f) factor=%f (raw %f) [Reverse-Z]\n", 
-               units, mBias.mUnits, factor, mBias.mFactor);
-    }
-    mEncoder->setDepthBias(units, factor, 0.0f);
+    mCurrentBiasUnits = -mBias.mUnits * scale;
+    mCurrentBiasFactor = -mBias.mFactor * scale;
+    mEncoder->setDepthBias(mCurrentBiasUnits, mCurrentBiasFactor, 0.0f);
     mBias.mChanged = false;
   }
 }
@@ -558,33 +555,34 @@ void MtRenderState::ApplyPushConstants() {
   if (mMaterial.mMaterial && mMaterial.mMaterial->Source()->isHardwareCanvas())
     tempTM = TM_OPAQUE;
 
-  mPushConstants.uClipSplit = {mClipSplit[0], mClipSplit[1]};
-  mPushConstants.uSpecularMaterial = {0.0f, 0.0f}; // Default
+  // Group 1
+  mPushConstants.group1[0] = mClipSplit[0];
+  mPushConstants.group1[1] = mClipSplit[1];
+  mPushConstants.group1[2] = 0.0f;
+  mPushConstants.group1[3] = 0.0f;
   if (mMaterial.mMaterial) {
     auto source = mMaterial.mMaterial->Source();
-    mPushConstants.uSpecularMaterial = {source->GetGlossiness(),
-                                        source->GetSpecularLevel()};
+    mPushConstants.group1[2] = source->GetGlossiness();
+    mPushConstants.group1[3] = source->GetSpecularLevel();
   }
 
-  mPushConstants.uLightLevel = mLightParms[3];
-  mPushConstants.uFogDensity = mLightParms[2];
-  mPushConstants.uLightFactor = mLightParms[1];
-  mPushConstants.uLightDist = mLightParms[0];
+  // Group 2
+  mPushConstants.group2[0] = mLightParms[3];
+  mPushConstants.group2[1] = mLightParms[2];
+  mPushConstants.group2[2] = mLightParms[1];
+  mPushConstants.group2[3] = mLightParms[0];
 
-  mPushConstants.uTextureMode = GetTextureModeAndFlags(tempTM);
-  mPushConstants.uAlphaThreshold = mAlphaThreshold;
-  mPushConstants.uFogEnabled = fogset;
-  mPushConstants.uLightIndex = mLightIndex;
+  // Group 3
+  mPushConstants.group3[0] = (float)GetTextureModeAndFlags(tempTM);
+  mPushConstants.group3[1] = mAlphaThreshold;
+  mPushConstants.group3[2] = (float)fogset;
+  mPushConstants.group3[3] = (float)mLightIndex;
 
-  mPushConstants.uBoneIndexBase = mBoneIndexBase;
-  mPushConstants.uDataIndex = mStreamBufferWriter.DataIndex();
-
-  if (mt_debug) {
-      auto mat = mMaterial.mMaterial;
-      const char* matName = (mat && mat->Source()) ? mat->Source()->GetName().GetChars() : "none";
-      Printf(PRINT_LOG, "Metal: ApplyPushConstants (21) texMode=%d alpha=%f fog=%d lightLvl=%f dataIndex=%d material=%s\n", 
-             mPushConstants.uTextureMode, mPushConstants.uAlphaThreshold, mPushConstants.uFogEnabled, mPushConstants.uLightLevel, mPushConstants.uDataIndex, matName);
-  }
+  // Group 4
+  mPushConstants.group4[0] = (float)mBoneIndexBase;
+  mPushConstants.group4[1] = (float)mStreamBufferWriter.DataIndex();
+  mPushConstants.group4[2] = 0.0f;
+  mPushConstants.group4[3] = 0.0f;
 
   mEncoder->setVertexBytes(&mPushConstants, sizeof(PushConstants), 21);
   mEncoder->setFragmentBytes(&mPushConstants, sizeof(PushConstants), 21);
@@ -708,25 +706,15 @@ void MtRenderState::ApplyMaterial() {
 
             // Sampler
             MtSamplerKey samplerKey;
-            int filter = isUI ? 0 : gl_texture_filter; // Force Nearest for UI
-            static const int minFilters[] = {0, 1, 0, 1, 1};
-            static const int magFilters[] = {0, 1, 0, 1, 1};
-            static const int mipFilters[] = {0, 0, 0, 2, 2}; // 0 = NotMipmapped, 2 = Linear
-
-            int f = (filter >= 0 && filter <= 4) ? filter : 4;
-            samplerKey.MinFilter = minFilters[f];
-            samplerKey.MagFilter = magFilters[f];
-            samplerKey.MipFilter = mipFilters[f];
+            // USER: "Adjust texture filtering/wrap mode: Change from linear to nearest. Ensure wrap is repeat."
+            samplerKey.MinFilter = 0; // Nearest
+            samplerKey.MagFilter = 0; // Nearest
+            samplerKey.MipFilter = 0; // NotMipmapped
             
-            // CRITICAL: If texture has no mips, force sampler to NotMipmapped
-            if (mtlTexture->mipmapLevelCount() == 1) {
-                samplerKey.MipFilter = 0;
-            }
-
-            samplerKey.AddressU = mMaterial.mClampMode;
-            samplerKey.AddressV = mMaterial.mClampMode;
-            samplerKey.AddressW = mMaterial.mClampMode;
-            samplerKey.MaxAnisotropy = isUI ? 1.0f : gl_texture_filter_anisotropic;
+            samplerKey.AddressU = 0; // Repeat (MapAddressMode maps 0 to Repeat)
+            samplerKey.AddressV = 0; 
+            samplerKey.AddressW = 0;
+            samplerKey.MaxAnisotropy = 1.0f;
 
             MTL::SamplerState *sampler =
                 fb->GetSamplerManager()->GetSamplerState(samplerKey);
@@ -756,9 +744,9 @@ void MtRenderState::ApplyCulling() {
     if (mCullMode == Cull_None)
       mEncoder->setCullMode(MTL::CullModeNone);
     else if (mCullMode == Cull_CW)
-      mEncoder->setCullMode(MTL::CullModeFront); 
+      mEncoder->setCullMode(MTL::CullModeBack); 
     else // Cull_CCW
-      mEncoder->setCullMode(MTL::CullModeBack);
+      mEncoder->setCullMode(MTL::CullModeFront);
     
     if (mt_debug) {
         Printf(PRINT_LOG, "Metal: ApplyCulling mode=%d\n", mCullMode);
@@ -771,82 +759,78 @@ void MtRenderState::ApplyHWBufferSet() {
   if (!mEncoder)
     return;
 
-  if (mt_debug) Printf(PRINT_LOG, "Metal: ApplyHWBufferSet\n");
-
   // Binding Indices (Matching shaderBindings in mt_shader.cpp)
-  // Viewpoint = 17, Light = 16, Bone = 18, Matrix = 19, Stream = 20, PushConstants = 21
+  // Viewpoint = 17, Light = 16, Bone = 18, Matrix = 19, Stream = 20
   
-  // 1. Viewpoint
+  auto dummyBuf = fb->GetBufferManager()->DummyBuffer;
+
+  // 1. Viewpoint (17)
   MTL::Buffer* vpBuf = mBoundBuffers[VIEWPOINT_BINDINGPOINT];
   if (!vpBuf && fb->GetBufferManager()->ViewpointUBO) {
       vpBuf = fb->GetBufferManager()->ViewpointUBO->GetBuffer();
   }
   uint32_t vpOff = mBoundOffsets[VIEWPOINT_BINDINGPOINT];
+  if (!vpBuf) { vpBuf = dummyBuf; vpOff = 0; }
+
   if (vpBuf && (vpBuf != mLastBoundBuffers[17] || vpOff != mLastBoundOffsets[17])) {
       mEncoder->setVertexBuffer(vpBuf, vpOff, 17);
       mEncoder->setFragmentBuffer(vpBuf, vpOff, 17);
       mLastBoundBuffers[17] = vpBuf;
       mLastBoundOffsets[17] = vpOff;
-      if (mt_debug) {
-          float* m = (float*)((uint8_t*)vpBuf->contents() + vpOff);
-          Printf(PRINT_LOG, "Metal: Bound Viewpoint (17) buf=%p off=%u. Matrix[0]=%.6f %.6f %.6f %.6f\n", vpBuf, vpOff, m[0], m[1], m[2], m[3]);
-      }
   }
 
-  // 2. Light
+  // 2. Light (16)
   MTL::Buffer* ltBuf = mBoundBuffers[LIGHTBUF_BINDINGPOINT];
   if (!ltBuf && fb->GetBufferManager()->LightBufferSSO) {
       ltBuf = fb->GetBufferManager()->LightBufferSSO->GetBuffer();
   }
   uint32_t ltOff = mBoundOffsets[LIGHTBUF_BINDINGPOINT];
+  if (!ltBuf) { ltBuf = dummyBuf; ltOff = 0; }
+
   if (ltBuf && (ltBuf != mLastBoundBuffers[16] || ltOff != mLastBoundOffsets[16])) {
       mEncoder->setVertexBuffer(ltBuf, ltOff, 16);
       mEncoder->setFragmentBuffer(ltBuf, ltOff, 16);
       mLastBoundBuffers[16] = ltBuf;
       mLastBoundOffsets[16] = ltOff;
-      if (mt_debug) Printf(PRINT_LOG, "Metal: Bound Light (16) buf=%p off=%u\n", ltBuf, ltOff);
   }
 
-  // 3. Bone
+  // 3. Bone (18)
   MTL::Buffer* bnBuf = mBoundBuffers[BONEBUF_BINDINGPOINT];
   if (!bnBuf && fb->GetBufferManager()->BoneBufferSSO) {
       bnBuf = fb->GetBufferManager()->BoneBufferSSO->GetBuffer();
   }
   uint32_t bnOff = mBoundOffsets[BONEBUF_BINDINGPOINT];
+  if (!bnBuf) { bnBuf = dummyBuf; bnOff = 0; }
+
   if (bnBuf && (bnBuf != mLastBoundBuffers[18] || bnOff != mLastBoundOffsets[18])) {
       mEncoder->setVertexBuffer(bnBuf, bnOff, 18);
       mEncoder->setFragmentBuffer(bnBuf, bnOff, 18);
       mLastBoundBuffers[18] = bnBuf;
       mLastBoundOffsets[18] = bnOff;
-      if (mt_debug) Printf(PRINT_LOG, "Metal: Bound Bone (18) buf=%p off=%u\n", bnBuf, bnOff);
   }
 
-  // 4. Matrix (Model/Texture)
+  // 4. Matrix (Model/Texture) (19)
   uint32_t matrixOffset = mMatrixBufferWriter.Offset();
   MTL::Buffer *matrixBuffer = mMatrixBufferWriter.GetBuffer();
+  if (matrixOffset == 0xffffffff) { matrixBuffer = dummyBuf; matrixOffset = 0; }
+
   if (matrixBuffer && (matrixBuffer != mLastBoundBuffers[19] || matrixOffset != mLastBoundOffsets[19])) {
     mEncoder->setVertexBuffer(matrixBuffer, matrixOffset, 19);
     mEncoder->setFragmentBuffer(matrixBuffer, matrixOffset, 19);
     mLastBoundBuffers[19] = matrixBuffer;
     mLastBoundOffsets[19] = matrixOffset;
-    if (mt_debug) {
-        float* m = (float*)((uint8_t*)matrixBuffer->contents() + matrixOffset);
-        Printf(PRINT_LOG, "Metal: Bound Matrix (19) buf=%p off=%u. ModelMatrix[0]=%.6f %.6f %.6f %.6f\n", matrixBuffer, matrixOffset, m[0], m[1], m[2], m[3]);
-    }
   }
 
-  // 5. Stream (Per-draw uniforms)
+  // 5. Stream (Per-draw uniforms) (20)
   uint32_t streamDataOffset = mStreamBufferWriter.StreamDataOffset();
   MTL::Buffer *streamBuffer = mStreamBufferWriter.GetBuffer();
+  if (streamDataOffset == 0xffffffff) { streamBuffer = dummyBuf; streamDataOffset = 0; }
+
   if (streamBuffer && (streamBuffer != mLastBoundBuffers[20] || streamDataOffset != mLastBoundOffsets[20])) {
     mEncoder->setVertexBuffer(streamBuffer, streamDataOffset, 20);
     mEncoder->setFragmentBuffer(streamBuffer, streamDataOffset, 20);
     mLastBoundBuffers[20] = streamBuffer;
     mLastBoundOffsets[20] = streamDataOffset;
-    if (mt_debug) {
-        float* m = (float*)((uint8_t*)streamBuffer->contents() + streamDataOffset);
-        Printf(PRINT_LOG, "Metal: Bound Stream (20) buf=%p off=%u. uObjectColor=%.6f %.6f %.6f %.6f\n", streamBuffer, streamDataOffset, m[0], m[1], m[2], m[3]);
-    }
   }
 }
 
@@ -884,16 +868,8 @@ void MtRenderState::BindBuffer(int bindingpoint, MTL::Buffer *buffer,
 
 void MtRenderState::MarkAsFilled(MTL::Texture *tex) {
   if (tex) {
-    auto buffers = fb->GetBuffers();
-    bool isPersistentTarget = (buffers->ShadowMap && tex == buffers->ShadowMap->GetTexture()) || 
-                               (buffers->SceneColor && tex == buffers->SceneColor->GetTexture());
-    
-    // SceneColor and ShadowMap should NOT be marked as filled by this function,
-    // as we want to respect the engine's clear requests for them every frame.
-    if (!isPersistentTarget) {
-        if (mt_debug) Printf(PRINT_LOG, "Metal: MarkAsFilled tex=%p (W:%lu H:%lu)\n", tex, tex->width(), tex->height());
-        mClearedTargets.insert(tex);
-    }
+    if (mt_debug) Printf(PRINT_LOG, "Metal: MarkAsFilled tex=%p (W:%lu H:%lu)\n", tex, tex->width(), tex->height());
+    mClearedTargets.insert(tex);
   }
 }
 
@@ -918,6 +894,9 @@ void MtRenderState::BeginFrame() {
   mBias.mUnits = 0.0f;
   mBias.mFactor = 0.0f;
   mBias.mChanged = true;
+  mCurrentBiasUnits = 0.0f;
+  mCurrentBiasFactor = 0.0f;
+  mCurrentWinding = MTL::WindingCounterClockwise;
 
   for (int i = 0; i < 32; i++) {
       mBoundBuffers[i] = nullptr;
@@ -1006,39 +985,44 @@ void MtRenderState::BeginRenderPass() {
            targetTex, mRenderTarget.Width, mRenderTarget.Height, (unsigned long long)targetTex->pixelFormat(), mClearTargets, mApplyCount, (int)mRenderTarget.IsSwapChain);
   }
 
-  // Color Attachment
-  auto colorAttachment = pRPD->colorAttachments()->object(0);
-  colorAttachment->setTexture(targetTex);
-  
-  bool colorFilled = mClearedTargets.find(targetTex) != mClearedTargets.end();
-  bool clearColor = (mClearTargets & CT_Color) || !colorFilled;
-  
-  if (mt_debug) {
-      Printf(PRINT_LOG, "Metal: BeginRenderPass Color target %p, Filled: %d, ClearRequest: %d -> LoadAction: %s\n", 
-             targetTex, (int)colorFilled, (int)(mClearTargets & CT_Color), 
-             clearColor ? "Clear" : "Load");
+  auto buffers = fb->GetBuffers();
+  int numAttachments = mRenderTarget.DrawBuffers;
+  // GZDoom extra attachments (Fog, Normal) only exist for the scene target.
+  if (numAttachments > 1 && (!buffers || targetTex != buffers->SceneColor->GetTexture())) {
+      numAttachments = 1;
   }
 
-  colorAttachment->setLoadAction(clearColor ? MTL::LoadActionClear : MTL::LoadActionLoad);
-  colorAttachment->setStoreAction(MTL::StoreActionStore);
-  
-  if (clearColor) {
-      MTL::ClearColor cc;
-      // Shadow maps must be cleared to a large value (max distance) to avoid artifacts
-      if (targetTex == fb->GetBuffers()->ShadowMap->GetTexture()) {
-          cc = MTL::ClearColor::Make(1e20, 0.0, 0.0, 1.0);
-      } else {
-          cc = MTL::ClearColor::Make(
-              screen->mSceneClearColor[0], screen->mSceneClearColor[1],
-              screen->mSceneClearColor[2], screen->mSceneClearColor[3]);
+  for (int i = 0; i < numAttachments; i++) {
+      auto colorAtt = pRPD->colorAttachments()->object(i);
+      MTL::Texture *tex = (i == 0) ? targetTex : 
+                          (i == 1 && buffers) ? buffers->SceneFog->GetTexture() : 
+                          (i == 2 && buffers) ? buffers->SceneNormal->GetTexture() : nullptr;
+      
+      if (!tex) continue;
+      colorAtt->setTexture(tex);
+      
+      bool filled = mClearedTargets.find(tex) != mClearedTargets.end();
+      bool clear = (mClearTargets & CT_Color) || !filled;
+      
+      colorAtt->setLoadAction(clear ? MTL::LoadActionClear : MTL::LoadActionLoad);
+      colorAtt->setStoreAction(MTL::StoreActionStore);
+      
+      if (clear) {
+          MTL::ClearColor cc;
+          if (i == 0) {
+              if (targetTex == fb->GetBuffers()->ShadowMap->GetTexture()) {
+                  cc = MTL::ClearColor::Make(1e20, 0.0, 0.0, 1.0);
+              } else {
+                  cc = MTL::ClearColor::Make(
+                      screen->mSceneClearColor[0], screen->mSceneClearColor[1],
+                      screen->mSceneClearColor[2], screen->mSceneClearColor[3]);
+              }
+          } else {
+              cc = MTL::ClearColor::Make(0, 0, 0, 0); // Fog and Normal clear to zero
+          }
+          colorAtt->setClearColor(cc);
+          mClearedTargets.insert(tex);
       }
-
-      if (mt_debug) {
-          Printf(PRINT_LOG, "Metal: BeginRenderPass - Clearing color target %p with (%f, %f, %f, %f)\n", 
-                 targetTex, cc.red, cc.green, cc.blue, cc.alpha);
-      }
-      colorAttachment->setClearColor(cc);
-      mClearedTargets.insert(targetTex);
   }
 
 
@@ -1113,7 +1097,8 @@ void MtRenderState::BeginRenderPass() {
     mEncoder = cmdBuffer->renderCommandEncoder(pRPD);
     mPipelineBound = false;
     if (mEncoder) {
-        mEncoder->setFrontFacingWinding(MTL::WindingClockwise);
+        mCurrentWinding = MTL::WindingClockwise;
+        mEncoder->setFrontFacingWinding(mCurrentWinding);
         
         // Satisfy vertex descriptor aliases
         if (fb->GetBufferManager()->DummyBuffer) {

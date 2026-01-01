@@ -4,6 +4,7 @@
 #include "metal/shaders/mt_shader.h"
 #include "metal/system/mt_hwbuffer.h"
 #include "metal/system/mt_renderdevice.h"
+#include "metal/system/mt_binaryarchive.h"
 #include "printf.h"
 #include "renderstyle.h"
 #include <Foundation/Foundation.hpp>
@@ -179,6 +180,13 @@ MtPipelineStateManager::GetPPPipelineState(MtShaderProgram *program,
         MTL::BlendFactorOneMinusSourceAlpha);
   }
 
+  // Use Binary Archive for caching if available
+  auto archive = fb->GetBinaryArchive() ? fb->GetBinaryArchive()->GetArchive() : nullptr;
+  if (archive) {
+      auto archives = NS::Array::array((NS::Object* const *)&archive, 1);
+      desc->setBinaryArchives(archives);
+  }
+
   NS::Error *error = nullptr;
   MTL::RenderPipelineState *pipeline =
       fb->device->device->newRenderPipelineState(desc, &error);
@@ -186,6 +194,11 @@ MtPipelineStateManager::GetPPPipelineState(MtShaderProgram *program,
   if (!pipeline && error) {
     Printf(PRINT_LOG, "Metal: Failed to create PP pipeline: %s\n",
            error->localizedDescription()->utf8String());
+  } else if (pipeline) {
+      // Add to archive for persistence
+      if (fb->GetBinaryArchive()) {
+          fb->GetBinaryArchive()->AddRenderPipeline(desc);
+      }
   }
 
   vertexDesc->release();
@@ -463,10 +476,14 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
     auto colorAttachment = desc->colorAttachments()->object(i);
 
     // Set pixel format
-    if (key.PixelFormat != 0)
-      colorAttachment->setPixelFormat((MTL::PixelFormat)key.PixelFormat);
-    else
-      colorAttachment->setPixelFormat(MTL::PixelFormatBGRA8Unorm); // Default
+    MTL::PixelFormat format = MTL::PixelFormatBGRA8Unorm;
+    if (i == 0) {
+        format = (key.PixelFormat != 0) ? (MTL::PixelFormat)key.PixelFormat : MTL::PixelFormatBGRA8Unorm;
+    } else {
+        // GZDoom secondary G-Buffer targets are BGRA8Unorm
+        format = MTL::PixelFormatBGRA8Unorm;
+    }
+    colorAttachment->setPixelFormat(format);
 
     // Configure blend mode
     ConfigureBlendMode(colorAttachment, key.BlendMode);
@@ -499,6 +516,13 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
   // state Metal doesn't support depth clamp in pipeline descriptor (requires
   // feature check)
 
+  // Use Binary Archive for caching if available
+  auto archive = fb->GetBinaryArchive() ? fb->GetBinaryArchive()->GetArchive() : nullptr;
+  if (archive) {
+      auto archives = NS::Array::array((NS::Object* const *)&archive, 1);
+      desc->setBinaryArchives(archives);
+  }
+
   // Create the pipeline state
   NS::Error *error = nullptr;
   auto state = device->newRenderPipelineState(desc, &error);
@@ -507,10 +531,17 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
     Printf(PRINT_LOG, "Metal: Failed to create render pipeline state: %s\n",
            error->localizedDescription()->utf8String());
     error->release();
-  } else if (state && mt_debug) {
-    Printf(PRINT_LOG, "Metal: Pipeline state created successfully (effect=%d, state=%d, "
-           "alpha=%d, vfmt=%d)\n",
-           key.SpecialEffect, key.EffectState, key.AlphaTest, key.VertexFormat);
+  } else if (state) {
+    if (mt_debug) {
+        Printf(PRINT_LOG, "Metal: Pipeline state created successfully (effect=%d, state=%d, "
+               "alpha=%d, vfmt=%d)\n",
+               key.SpecialEffect, key.EffectState, key.AlphaTest, key.VertexFormat);
+    }
+    
+    // Add to archive for persistence
+    if (fb->GetBinaryArchive()) {
+        fb->GetBinaryArchive()->AddRenderPipeline(desc);
+    }
   }
 
   desc->release();

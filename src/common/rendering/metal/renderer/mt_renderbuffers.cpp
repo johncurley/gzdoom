@@ -40,7 +40,12 @@ void MtRenderBuffers::CreatePipelineDepthStencil(int width, int height) {
   desc->setHeight(height);
   desc->setPixelFormat(MTL::PixelFormatDepth32Float_Stencil8); 
   desc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
-  desc->setStorageMode(MTL::StorageModePrivate);
+  
+  if (fb->mVersionManager.supportsMemoryless) {
+      desc->setStorageMode(MTL::StorageModeMemoryless);
+  } else {
+      desc->setStorageMode(MTL::StorageModePrivate);
+  }
 
   MTL::Texture *texture = fb->device->device->newTexture(desc);
   if (!texture) {
@@ -136,7 +141,13 @@ void MtRenderBuffers::CreateSceneDepthStencil(int width, int height,
   desc->setHeight(height);
   desc->setPixelFormat(MTL::PixelFormatDepth32Float_Stencil8); 
   desc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
-  desc->setStorageMode(MTL::StorageModePrivate);
+  
+  if (fb->mVersionManager.supportsMemoryless) {
+      desc->setStorageMode(MTL::StorageModeMemoryless);
+  } else {
+      desc->setStorageMode(MTL::StorageModePrivate);
+  }
+
   desc->setSampleCount(samples);
   if (samples > 1)
     desc->setTextureType(MTL::TextureType2DMultisample);

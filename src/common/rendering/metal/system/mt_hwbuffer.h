@@ -36,7 +36,7 @@ protected:
 private:
   void CreateBuffer(size_t size);
 
-  MTL::Buffer *mBuffers[2] = { nullptr, nullptr };
+  MTL::Buffer *mBuffers[3] = { nullptr, nullptr, nullptr };
   int mActiveBufferIndex = 0;
   uint64_t mLastWriteFrame = 0xFFFFFFFFFFFFFFFF;
   size_t mBufferSize = 0;
@@ -85,7 +85,7 @@ protected:
 private:
   void CreateBuffer(size_t size);
 
-  MTL::Buffer *mBuffers[2] = { nullptr, nullptr };
+  MTL::Buffer *mBuffers[3] = { nullptr, nullptr, nullptr };
   int mActiveBufferIndex = 0;
   uint64_t mLastWriteFrame = 0xFFFFFFFFFFFFFFFF;
   size_t mBufferSize = 0;
@@ -120,7 +120,7 @@ protected:
 private:
   void CreateBuffer(size_t size);
 
-  MTL::Buffer *mBuffers[2] = { nullptr, nullptr };
+  MTL::Buffer *mBuffers[3] = { nullptr, nullptr, nullptr };
   int mActiveBufferIndex = 0;
   uint64_t mLastWriteFrame = 0xFFFFFFFFFFFFFFFF;
   size_t mBufferSize = 0;

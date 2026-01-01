@@ -104,10 +104,8 @@ private:
   struct PPKeyHash {
     size_t operator()(const PPKey &key) const {
       size_t h = std::hash<void *>{}(key.program);
-      h ^= std::hash<int>{}((int)key.colorFormat) + 0x9e3779b9 + (h << 6) +
-           (h >> 2);
-      h ^= std::hash<int>{}(key.blendMode.BlendOp) + 0x9e3779b9 + (h << 6) +
-           (h >> 2);
+      h ^= std::hash<int>{}((int)key.colorFormat) + 0x9e3779b9 + (h << 6) + (h >> 2);
+      h ^= std::hash<uint32_t>{}(key.blendMode.AsDWORD) + 0x9e3779b9 + (h << 6) + (h >> 2);
       return h;
     }
   };

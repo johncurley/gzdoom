@@ -778,6 +778,7 @@ set (VULKAN_SOURCES
 # Metal renderer (macOS only)
 set (METAL_SOURCES
 	common/rendering/metal/system/mt_renderdevice.cpp
+	common/rendering/metal/system/mt_binaryarchive.cpp
 	common/rendering/metal/system/mt_commandbuffer.cpp
 	common/rendering/metal/system/mt_buffer.cpp
 	common/rendering/metal/system/mt_hwbuffer.cpp

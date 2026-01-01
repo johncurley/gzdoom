@@ -38,6 +38,8 @@
 #include "mt_hwbuffer.h"
 #include "mt_renderdevice.h"
 
+#include "mt_binaryarchive.h"
+
 #include "m_png.h"
 #include "r_videoscale.h"
 #include "v_video.h"
@@ -176,10 +178,32 @@ void MetalRenderDevice::InitializeState() {
       metalLayer->setDrawableSize(CGSizeMake(GetWidth(), GetHeight()));
     }
     metalLayer->setDisplaySyncEnabled(false);
+    metalLayer->setMaximumDrawableCount((NS::UInteger)mVersionManager.maxDrawableCount);
+    metalLayer->setAllowsNextDrawableTimeout(true);
+
+    if (mVersionManager.presentsWithTransaction) {
+        // Synchronize with Cocoa transactions for smoother UI integration
+        // Note: presentsWithTransaction is not explicitly in metal-cpp CAMetalLayer class
+        // but we can use the selector if we really needed it. 
+        // For now we rely on the standard presentation.
+    }
+
+    CGColorSpaceRef srgb = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    if (srgb) {
+        metalLayer->setColorspace(srgb);
+        CGColorSpaceRelease(srgb);
+    }
   }
 #endif
 
   const char *deviceName = device->device->name()->utf8String();
+  mVersionManager.Initialize(device->device);
+  
+  if (mt_debug) {
+      Printf(PRINT_LOG, "Metal: Tuning for OS %d.%d: maxDrawableCount=%d, presentsWithTransaction=%d\n", 
+             mVersionManager.osMajor, mVersionManager.osMinor, mVersionManager.maxDrawableCount, (int)mVersionManager.presentsWithTransaction);
+  }
+
   vendorstring = deviceName;
   hwcaps = RFL_SHADER_STORAGE_BUFFER | RFL_BUFFER_STORAGE;
   glslversion = 4.50f;
@@ -199,6 +223,8 @@ void MetalRenderDevice::InitializeState() {
   mActiveRenderBuffers = mScreenBuffers.get();
 
   mPostprocess.reset(new MtPostprocess(this));
+  mBinaryArchive.reset(new MtBinaryArchive(this));
+  mBinaryArchive->Init();
   mResourceBindingManager.reset(new MtResourceBindingManager(this));
   mPipelineStateManager.reset(new MtPipelineStateManager(this));
   mShaderManager.reset(new MtShaderManager(this));
@@ -219,7 +245,11 @@ void MetalRenderDevice::InitializeState() {
 }
 
 void MetalRenderDevice::Update() {
-  // NS::AutoreleasePool *pool = NS::AutoreleasePool::alloc()->init();
+  if (mt_debug) {
+      fprintf(stderr, "Metal: [Frame %d] Update() called\n", GetFrameCount());
+      fflush(stderr);
+  }
+  NS::AutoreleasePool *pool = NS::AutoreleasePool::alloc()->init();
 
   if (mt_debug) Printf(PRINT_LOG, "Metal: Update START\n");
 
@@ -291,7 +321,7 @@ void MetalRenderDevice::Update() {
   if (mt_debug) Printf(PRINT_LOG, "Metal: Update END\n");
 
   Super::Update();
-  // pool->release();
+  pool->release();
 
   // Release drawable AFTER the pool is popped to ensure any references 
   // in the pool (like in RenderPassDescriptors) are already gone.
@@ -325,7 +355,7 @@ void MetalRenderDevice::BeginFrame() {
   mInFrame = true;
 
   if (mt_debug) {
-      Printf(PRINT_LOG, "Metal: BeginFrame START. FFlatVertex size = %zu\n", sizeof(FFlatVertex));
+      Printf(PRINT_LOG, "Metal: [Frame %d] BeginFrame START. FFlatVertex size = %zu\n", GetFrameCount(), sizeof(FFlatVertex));
   }
   if (mCurrentDrawable)
     return;
@@ -397,7 +427,7 @@ void MetalRenderDevice::BeginFrame() {
     mPostprocess->SetActiveRenderTarget();
   }
 
-  if (mt_debug) Printf(PRINT_LOG, "Metal: BeginFrame END\n");
+  if (mt_debug) Printf(PRINT_LOG, "Metal: [Frame %d] BeginFrame END\n", GetFrameCount());
 }
 
 bool MetalRenderDevice::CompileNextShader() {
@@ -425,7 +455,9 @@ void MetalRenderDevice::PrintStartupLog() {
   const char *deviceName = device->device->name()->utf8String();
   Printf(PRINT_LOG, TEXTCOLOR_CYAN "Metal Renderer for GZDoom\n");
   Printf(PRINT_LOG, "  Device: %s\n", deviceName);
-  Printf(PRINT_LOG, "  API Version: Metal 2.0+\n");
+  Printf(PRINT_LOG, "  Architecture: %s\n", mVersionManager.GetArchName());
+  Printf(PRINT_LOG, "  OS Version: macOS %d.%d.%d\n", mVersionManager.osMajor, mVersionManager.osMinor, mVersionManager.osPatch);
+  Printf(PRINT_LOG, "  API Version: Metal %d.%d\n", mVersionManager.metalVersion / 10, mVersionManager.metalVersion % 10);
   Printf(PRINT_LOG, "  Backend: Native Metal (metal-cpp)\n");
   Printf(PRINT_LOG, "\n");
 }
@@ -534,8 +566,16 @@ void MetalRenderDevice::Draw2D() {
     mPostprocess->SetActiveRenderTarget();
   }
   
-  if (mt_debug) Printf(PRINT_LOG, "Metal: Draw2D - Invoking engine 2D drawer\n");
+  if (mt_debug) {
+      fprintf(stderr, "Metal: Draw2D - Invoking engine 2D drawer\n");
+      fflush(stderr);
+  }
   
+  // Force disable culling and depth for 2D pass to avoid winding/occlusion issues
+  mMtRenderState->SetCulling(Cull_None);
+  mMtRenderState->EnableDepthTest(false);
+  mMtRenderState->SetDepthMask(false);
+
   // No local pool here - it causes encoders created inside ::Draw2D to be 
   // destroyed before endEncoding is called when this local pool is released.
   ::Draw2D(twod, static_cast<FRenderState&>(*mMtRenderState));

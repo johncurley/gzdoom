@@ -72,7 +72,7 @@ void MtTextureManager::SetLightmap(int LMTextureSize, int LMTextureCount, const 
         desc->setUsage(MTL::TextureUsageShaderRead);
         
         // On Intel Macs, Managed mode is often more reliable than Private for array uploads
-        desc->setStorageMode(MTL::StorageModeManaged);
+        desc->setStorageMode(fb->mVersionManager.GetDynamicStorageMode());
         
         MTL::Texture* tex = fb->device->device->newTexture(desc);
         if (!tex) {
@@ -160,7 +160,7 @@ void MtHardwareTexture::AllocateBuffer(int w, int h, int texelsize) {
     desc->setPixelFormat(format);
     desc->setMipmapLevelCount(1); // No mipmaps for AllocateBuffer textures
     desc->setUsage(MTL::TextureUsageShaderRead);
-    desc->setStorageMode(MTL::StorageModeShared); // Shared for CPU access
+    desc->setStorageMode(fb->mVersionManager.GetDynamicStorageMode()); // Managed for robustness on Intel/macOS // Shared for CPU access
 
     // Create the texture
     MTL::Texture *texture = fb->device->device->newTexture(desc);
@@ -239,8 +239,7 @@ unsigned int MtHardwareTexture::CreateTexture(unsigned char *buffer, int w,
   }
   desc->setMipmapLevelCount(mipLevels);
   desc->setUsage(MTL::TextureUsageShaderRead | MTL::TextureUsageRenderTarget);
-  desc->setStorageMode(MTL::StorageModeShared);
-
+      desc->setStorageMode(fb->mVersionManager.GetDynamicStorageMode()); // Managed for robustness on Intel/macOS
   // Create the texture
   MTL::Texture *texture = fb->device->device->newTexture(desc);
   desc->release();
@@ -313,7 +312,12 @@ MtTextureImage *MtHardwareTexture::GetDepthStencil(FCanvasTexture *tex) {
     desc->setHeight(tex->GetHeight());
     desc->setPixelFormat(MTL::PixelFormatDepth32Float_Stencil8);
     desc->setUsage(MTL::TextureUsageRenderTarget);
-    desc->setStorageMode(MTL::StorageModePrivate);
+    
+    if (fb->mVersionManager.supportsMemoryless) {
+        desc->setStorageMode(MTL::StorageModeMemoryless);
+    } else {
+        desc->setStorageMode(MTL::StorageModePrivate);
+    }
 
     MTL::Texture *texture = fb->device->device->newTexture(desc);
     ds->SetTexture(texture);
@@ -416,7 +420,7 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
         desc->setPixelFormat(format);
         desc->setMipmapLevelCount(desiredMipLevels);
         desc->setUsage(MTL::TextureUsageShaderRead | MTL::TextureUsageRenderTarget);
-        desc->setStorageMode(MTL::StorageModeShared);
+        desc->setStorageMode(fb->mVersionManager.GetDynamicStorageMode()); // Managed for robustness on Intel/macOS
 
         texture = fb->device->device->newTexture(desc);
         mBufferPitch = pitch;
@@ -639,7 +643,7 @@ MtPPTexture::MtPPTexture(MetalRenderDevice *fb, PPTexture *texture) : fb(fb) {
   desc->setUsage(MTL::TextureUsageShaderRead | MTL::TextureUsageRenderTarget);
 
   if (texture->Data) {
-    desc->setStorageMode(MTL::StorageModeShared);
+    desc->setStorageMode(fb->mVersionManager.GetDynamicStorageMode()); // Shared for robustness on Intel/macOS
   } else {
     desc->setStorageMode(MTL::StorageModePrivate);
   }

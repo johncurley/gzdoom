@@ -33,11 +33,11 @@ public:
   // Reset for new frame and cycle to next buffer
   void Reset() { 
     mStreamDataOffset = 0xffffffff;
-    mBufferIndex = (mBufferIndex + 1) % 2; // Cycle between 2 buffers (matching MaxFramesInFlight)
+    mBufferIndex = (mBufferIndex + 1) % 3; // Cycle between 3 buffers (Triple Buffering)
   }
 
 private:
-  MTL::Buffer *mBuffers[2] = { nullptr, nullptr };
+  MTL::Buffer *mBuffers[3] = { nullptr, nullptr, nullptr };
   int mBufferIndex = 0;
   uint32_t mBlockSize = 0;
   uint32_t mStreamDataOffset = 0xffffffff;

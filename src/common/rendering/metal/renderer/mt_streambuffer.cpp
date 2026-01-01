@@ -20,19 +20,19 @@ MtStreamBuffer::MtStreamBuffer(MetalRenderDevice *fb, size_t structSize, size_t 
   // Metal requires 256-byte alignment for buffer offsets
   mBlockSize = (static_cast<uint32_t>(structSize) + 255) & ~255;
 
-  // Use provided capacity or fallback to 8MB if not specified
+  // Use provided capacity or fallback to 4MB if not specified
   if (capacity > 0)
       mBufferSize = mBlockSize * capacity;
   else
-      mBufferSize = 8 * 1024 * 1024;
+      mBufferSize = 4 * 1024 * 1024;
 
   if (mt_debug) {
       Printf(PRINT_LOG, "Metal: MtStreamBuffer allocated %zu bytes (structSize=%zu, capacity=%zu)\n", 
              mBufferSize, structSize, capacity);
   }
 
-  for (int i = 0; i < 2; i++) {
-    mBuffers[i] = fb->device->device->newBuffer(mBufferSize, MTL::StorageModeShared);
+  for (int i = 0; i < 3; i++) {
+    mBuffers[i] = fb->device->device->newBuffer(mBufferSize, fb->mVersionManager.GetDynamicStorageMode());
     if (!mBuffers[i]) {
       I_FatalError(
           "MtStreamBuffer: Failed to allocate Metal buffer of size %zu bytes",
@@ -43,7 +43,7 @@ MtStreamBuffer::MtStreamBuffer(MetalRenderDevice *fb, size_t structSize, size_t 
 
 MtStreamBuffer::~MtStreamBuffer() {
   // Release Metal buffers
-  for (int i = 0; i < 2; i++) {
+  for (int i = 0; i < 3; i++) {
     if (mBuffers[i]) {
       mBuffers[i]->release();
       mBuffers[i] = nullptr;

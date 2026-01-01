@@ -9,6 +9,8 @@
 // temporarily
 #define TimeScale TimeScale_GZDOOM
 
+#include "mt_version.h"
+
 // Forward declarations (no Metal headers in public interface unless needed)
 namespace MTL {
 class Device;
@@ -39,6 +41,7 @@ class MtHardwareDataBuffer;
 class MtHardwareTexture;
 class MtRenderBuffers;
 class MtPostprocess;
+class MtBinaryArchive;
 class SWSceneDrawer;
 
 // Metal device wrapper
@@ -52,6 +55,7 @@ class MetalRenderDevice : public SystemBaseFrameBuffer {
 
 public:
   std::shared_ptr<MetalDevice> device;
+  MtVersionManager mVersionManager;
   std::mutex mRecycleMutex;
   bool mIsDestroyed = false;
 
@@ -74,6 +78,7 @@ public:
   }
   MtRenderState *GetRenderState() { return mMtRenderState.get(); }
   MtPostprocess *GetPostprocess() { return mPostprocess.get(); }
+  MtBinaryArchive *GetBinaryArchive() { return mBinaryArchive.get(); }
   MtRenderBuffers *GetBuffers() { return mActiveRenderBuffers; }
   FRenderState *RenderState() override;
 
@@ -155,6 +160,7 @@ private:
   std::unique_ptr<MtRenderBuffers> mScreenBuffers;
   std::unique_ptr<MtRenderBuffers> mSaveBuffers;
   std::unique_ptr<MtPostprocess> mPostprocess;
+  std::unique_ptr<MtBinaryArchive> mBinaryArchive;
   std::unique_ptr<MtResourceBindingManager> mResourceBindingManager;
   std::unique_ptr<MtPipelineStateManager> mPipelineStateManager;
   std::unique_ptr<MtRenderState> mMtRenderState;
