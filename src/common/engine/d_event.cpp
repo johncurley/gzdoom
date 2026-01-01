@@ -43,6 +43,8 @@
 #include "keydef.h"
 #include "m_joy.h"
 #include "menu.h"
+#include "menustate.h"
+#include "printf.h"
 #include "utf8.h"
 #include "vm.h"
 
