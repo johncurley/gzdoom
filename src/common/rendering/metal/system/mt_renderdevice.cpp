@@ -540,6 +540,10 @@ void MetalRenderDevice::Draw2D() {
     mPostprocess->SetActiveRenderTarget();
   }
   
+  if (mt_debug) {
+      Printf(PRINT_LOG, "Metal: Draw2D with %d commands\n", twod->mData.Size());
+  }
+
   // Force disable culling and depth for 2D pass to avoid winding/occlusion issues
   mMtRenderState->SetCulling(Cull_None);
   mMtRenderState->EnableDepthTest(false);

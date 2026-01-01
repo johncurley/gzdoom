@@ -106,6 +106,7 @@ void CheckGUICapture()
 	if (wantCapt != GUICapture)
 	{
 		GUICapture = wantCapt;
+		Printf("Metal: GUICapture changed to %d\n", (int)GUICapture);
 		if (wantCapt)
 		{
 			buttonMap.ResetButtonStates();
@@ -481,6 +482,8 @@ void ProcessKeyboardEventInMenu(NSEvent* theEvent)
 
 void NSEventToGameMousePosition(NSEvent* inEvent, event_t* outEvent)
 {
+	if (screen == nullptr) return;
+
 	const NSWindow* window = [inEvent window];
 	const NSView*     view = [window contentView];
 
@@ -492,7 +495,13 @@ void NSEventToGameMousePosition(NSEvent* inEvent, event_t* outEvent)
 	NSSize  viewSize;
 	CGFloat scale;
 
-	if (view.layer == nil)
+	if (!vid_hidpi)
+	{
+		viewPos  = windowRect.origin;
+		viewSize = view.frame.size;
+		scale    = 1.0;
+	}
+	else if (view.layer == nil)
 	{
 		viewPos  = [view convertPointToBacking:windowRect.origin];
 		viewSize = [view convertSizeToBacking:view.frame.size];
@@ -546,6 +555,11 @@ void ProcessKeyboardEvent(NSEvent* theEvent)
 	}
 
 	const bool isARepeat = [theEvent isARepeat];
+	const NSEventType cocoaType = [theEvent type];
+
+	if (cocoaType == NSEventTypeKeyDown) {
+		Printf("Metal: Cocoa KeyDown code=0x%02x repeat=%d GUICapture=%d\n", (int)keyCode, (int)isARepeat, (int)GUICapture);
+	}
 
 	if (k_allowfullscreentoggle
 		&& (kVK_ANSI_F == keyCode)
@@ -666,6 +680,7 @@ void ProcessMouseButtonEvent(NSEvent* theEvent)
 
 		NSEventToGameMousePosition(theEvent, &event);
 
+		Printf("Metal: GUI Mouse Click subtype=%d pos=%d,%d\n", event.subtype, event.data1, event.data2);
 		D_PostEvent(&event);
 	}
 	else
@@ -690,6 +705,7 @@ void ProcessMouseButtonEvent(NSEvent* theEvent)
 
 		event.data1 = min(KEY_MOUSE1 + [theEvent buttonNumber], NSInteger(KEY_MOUSE8));
 
+		Printf("Metal: Game Mouse Click type=%d button=%d\n", event.type, event.data1);
 		D_PostEvent(&event);
 	}
 }
@@ -735,6 +751,10 @@ void ProcessMouseWheelEvent(NSEvent* theEvent)
 void I_ProcessEvent(NSEvent* event)
 {
 	const NSEventType eventType = [event type];
+
+	if (eventType == NSEventTypeKeyDown || eventType == NSEventTypeLeftMouseDown) {
+		Printf("Metal: Cocoa Event type=%d GUICapture=%d\n", (int)eventType, (int)GUICapture);
+	}
 
 	switch (eventType)
 	{
