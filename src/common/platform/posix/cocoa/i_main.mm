@@ -311,6 +311,9 @@ extern bool AppActive;
 	// The following call resolves this issue
 	[NSApp activateIgnoringOtherApps:YES];
 
+	// Manually trigger activation logic since we are about to block the main thread
+	[self applicationDidBecomeActive:aNotification];
+
 	FConsoleWindow::CreateInstance();
 
 	const size_t argc = s_argv.Size();
