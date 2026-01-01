@@ -692,6 +692,9 @@ void ProcessMouseButtonEvent(NSEvent* theEvent)
 			case NSEventTypeLeftMouseDown:
 			case NSEventTypeRightMouseDown:
 			case NSEventTypeOtherMouseDown:
+			case NSEventTypeLeftMouseDragged:
+			case NSEventTypeRightMouseDragged:
+			case NSEventTypeOtherMouseDragged:
 				event.type = EV_KeyDown;
 				break;
 
@@ -707,8 +710,10 @@ void ProcessMouseButtonEvent(NSEvent* theEvent)
 
 		event.data1 = min(KEY_MOUSE1 + [theEvent buttonNumber], NSInteger(KEY_MOUSE8));
 
-		Printf("Metal: Game Mouse Click type=%d button=%d\n", event.type, event.data1);
-		D_PostEvent(&event);
+		if (event.type != EV_None) {
+			Printf("Metal: Game Mouse Click type=%d button=%d\n", event.type, event.data1);
+			D_PostEvent(&event);
+		}
 	}
 }
 
