@@ -851,11 +851,6 @@ void M_Drawer (void)
 
 	if (CurrentMenu != nullptr && menuactive != MENU_Off) 
 	{
-		static int lastMenuLog = -1;
-		if (gametic != lastMenuLog) {
-			Printf("Metal: M_Drawer drawing %s\n", CurrentMenu->GetClass()->TypeName.GetChars());
-			lastMenuLog = gametic;
-		}
 		if (!CurrentMenu->DontBlur) screen->BlurScene(menuBlurAmount);
 		if (!CurrentMenu->DontDim)
 		{

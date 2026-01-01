@@ -534,6 +534,9 @@ void MetalRenderDevice::SetActiveRenderTarget() {
       mActiveRenderBuffers->SceneDepthStencil->GetTexture(),
       mActiveRenderBuffers->GetWidth(), mActiveRenderBuffers->GetHeight(),
       (int)MTL::PixelFormatRGBA16Float, 1);
+  
+  // Mark as filled so the renderer doesn't clear it during secondary passes (like 2D)
+  mMtRenderState->MarkAsFilled(tex);
 }
 void MetalRenderDevice::Draw2D() {
   if (mPostprocess) {

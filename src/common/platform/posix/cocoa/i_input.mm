@@ -757,11 +757,6 @@ void I_ProcessEvent(NSEvent* event)
 
 	const NSEventType eventType = [event type];
 
-	if (eventType == NSEventTypeKeyDown || eventType == NSEventTypeKeyUp ||
-		eventType == NSEventTypeLeftMouseDown || eventType == NSEventTypeLeftMouseUp) {
-		Printf("Metal: Cocoa Event type=%d GUICapture=%d\n", (int)eventType, (int)GUICapture);
-	}
-
 	switch (eventType)
 	{
 		case NSEventTypeMouseMoved:
@@ -780,7 +775,7 @@ void I_ProcessEvent(NSEvent* event)
 		case NSEventTypeLeftMouseDragged:
 		case NSEventTypeRightMouseDragged:
 		case NSEventTypeOtherMouseDragged:
-			ProcessMouseButtonEvent(event);
+			// Dragging should only update position, not send button events
 			ProcessMouseMoveEvent(event);
 			break;
 
@@ -796,6 +791,11 @@ void I_ProcessEvent(NSEvent* event)
 		case NSEventTypeFlagsChanged:
 			ProcessKeyboardFlagsEvent(event);
 			break;
+
+		default:
+			break;
+	}
+}
 
 		default:
 			break;
