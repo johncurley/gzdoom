@@ -309,9 +309,6 @@ extern bool AppActive;
 	// The following call resolves this issue
 	[NSApp activateIgnoringOtherApps:YES];
 
-	// Manually trigger activation logic since we are about to block the main thread
-	[self applicationDidBecomeActive:aNotification];
-
 	FConsoleWindow::CreateInstance();
 
 	const size_t argc = s_argv.Size();
@@ -324,7 +321,10 @@ extern bool AppActive;
 
 	argv[argc] = nullptr;
 
-	exit(DoMain(argc, &argv[0]));
+	// Defer game startup so that applicationDidFinishLaunching can return
+	dispatch_async(dispatch_get_main_queue(), ^{
+		exit(DoMain(argc, &argv[0]));
+	});
 }
 
 

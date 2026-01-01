@@ -107,11 +107,12 @@ void* CocoaDisplayBackend::StartTimer(int timeoutMilliseconds, std::function<voi
     timerData->callback = onTimer;
 
     ZWidgetTimerTarget* target = [[ZWidgetTimerTarget alloc] initWithTimerData:timerData];
-    NSTimer* nstimer = [NSTimer scheduledTimerWithTimeInterval:timeoutMilliseconds / 1000.0
-                                                        target:target
-                                                      selector:@selector(timerFired:)
-                                                      userInfo:nil
-                                                       repeats:YES];
+    NSTimer* nstimer = [NSTimer timerWithTimeInterval:timeoutMilliseconds / 1000.0
+                                               target:target
+                                             selector:@selector(timerFired:)
+                                             userInfo:nil
+                                              repeats:YES];
+    [[NSRunLoop currentRunLoop] addTimer:nstimer forMode:NSRunLoopCommonModes];
     timerData->nstimer = nstimer;
 
     return timerData;
