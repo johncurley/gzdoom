@@ -707,6 +707,7 @@ void ProcessMouseButtonEvent(NSEvent* theEvent)
 
 		if (event.type != EV_None)
 		{
+			NSEventToGameMousePosition(theEvent, &event);
 			D_PostEvent(&event);
 		}
 	}

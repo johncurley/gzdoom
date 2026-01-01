@@ -890,6 +890,7 @@ bool C_DoKey (event_t *ev, FKeyBindings *binds, FKeyBindings *doublebinds)
 
 	if (ev->type == EV_KeyUp && binding[0] != '+')
 	{
+		if (ev->data1 >= 256) Printf("KeyUp d1=%d NOT consumed: binding is '%s'\n", ev->data1, binding.GetChars());
 		return false;
 	}
 
@@ -899,6 +900,7 @@ bool C_DoKey (event_t *ev, FKeyBindings *binds, FKeyBindings *doublebinds)
 
 		if (ev->type == EV_KeyUp)
 		{
+			if (ev->data1 >= 256) Printf("KeyUp d1=%d consumed: binding is '%s'\n", ev->data1, copy);
 			copy[0] = '-';
 		}
 
