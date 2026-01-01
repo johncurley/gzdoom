@@ -113,30 +113,21 @@ void D_ProcessEvents (void)
 			if (gamestate != GS_INTRO) // GS_INTRO blocks the UI.
 			{
 				if (C_Responder(ev)) {
-					// Printf("Event consumed by Console: type=%d\n", ev->type);
+					if (ev->type != EV_Mouse) Printf("Event type=%d d1=%d consumed by Console\n", ev->type, ev->data1);
 					continue;				// console ate the event
 				}
 				if (M_Responder(ev)) {
-					if (ev->type == EV_KeyDown) {
-						Printf("Event consumed by Menu: type=%d data1=%d (active=%d)\n", ev->type, ev->data1, (int)menuactive);
-					}
+					if (ev->type != EV_Mouse) Printf("Event type=%d d1=%d consumed by Menu\n", ev->type, ev->data1);
 					continue;				// menu ate the event
 				}
 			}
 		}
 
-		// Safety: if menu is active but CurrentMenu is NULL, something is wrong.
-		// Force clear it so the player isn't stuck.
-		if (menuactive != MENU_Off && CurrentMenu == nullptr)
-		{
-			M_ClearMenus();
-		}
-
 		if (sysCallbacks.G_Responder(ev)) {
-			// Printf("Event consumed by Game: type=%d\n", ev->type);
+			if (ev->type != EV_Mouse) Printf("Event type=%d d1=%d consumed by Game\n", ev->type, ev->data1);
 			if (ev->type == EV_KeyDown) keywasdown.Set(ev->data1);
 		} else {
-			// Printf("Event NOT consumed: type=%d\n", ev->type);
+			if (ev->type != EV_Mouse) Printf("Event type=%d d1=%d NOT consumed (state=%d menu=%d)\n", ev->type, ev->data1, (int)gamestate, (int)menuactive);
 		}
 	}
 
