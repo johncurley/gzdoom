@@ -573,7 +573,7 @@ void ProcessKeyboardEvent(NSEvent* theEvent)
 	{
 		ProcessKeyboardEventInMenu(theEvent);
 	}
-	else 
+	else if (!isARepeat)
 	{
 		event_t event = {};
 

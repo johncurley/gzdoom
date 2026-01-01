@@ -113,21 +113,17 @@ void D_ProcessEvents (void)
 			if (gamestate != GS_INTRO) // GS_INTRO blocks the UI.
 			{
 				if (C_Responder(ev)) {
-					if (ev->type != EV_Mouse) Printf("Event type=%d d1=%d consumed by Console\n", ev->type, ev->data1);
 					continue;				// console ate the event
 				}
 				if (M_Responder(ev)) {
-					if (ev->type != EV_Mouse) Printf("Event type=%d d1=%d consumed by Menu\n", ev->type, ev->data1);
 					continue;				// menu ate the event
 				}
 			}
 		}
 
 		if (sysCallbacks.G_Responder(ev)) {
-			if (ev->type != EV_Mouse) Printf("Event type=%d d1=%d consumed by Game\n", ev->type, ev->data1);
 			if (ev->type == EV_KeyDown) keywasdown.Set(ev->data1);
 		} else {
-			if (ev->type != EV_Mouse) Printf("Event type=%d d1=%d NOT consumed (state=%d menu=%d)\n", ev->type, ev->data1, (int)gamestate, (int)menuactive);
 		}
 	}
 
