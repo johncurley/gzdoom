@@ -38,6 +38,7 @@
 #include "c_console.h"
 #include "c_bind.h"
 #include "d_eventbase.h"
+#include "doomstat.h"
 #include "g_input.h"
 #include "configfile.h"
 #include "gstrings.h"
