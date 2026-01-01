@@ -217,17 +217,11 @@ MtPipelineStateManager::CreateDepthStencilState(const MtPipelineKey &key) {
   auto desc = MTL::DepthStencilDescriptor::alloc()->init();
 
   // Map depth functions to Metal (GZDoom EDepthFunc has only 3 values)
-  // REVERSE-Z: Invert logic (Less -> Greater)
+  // REVERSE-Z: Near is 1.0, Far is 0.0. Mapping must be inverted.
   static const MTL::CompareFunction depthFuncs[] = {
-      MTL::CompareFunctionGreater,       // 0: DF_Less (reversed)
-      MTL::CompareFunctionGreaterEqual,  // 1: DF_LEqual (reversed)
-      MTL::CompareFunctionAlways,        // 2: DF_Always
-      // Fallbacks / Extended range if needed
-      MTL::CompareFunctionEqual,         
-      MTL::CompareFunctionNotEqual,      
-      MTL::CompareFunctionLess,          // Reversed Greater
-      MTL::CompareFunctionLessEqual,     // Reversed GreaterEqual
-      MTL::CompareFunctionNever          
+      MTL::CompareFunctionGreater,       // 0: DF_Less (becomes Greater)
+      MTL::CompareFunctionGreaterEqual,  // 1: DF_LEqual (becomes GreaterEqual)
+      MTL::CompareFunctionAlways         // 2: DF_Always
   };
 
   if (key.DepthFunc >= 0 && key.DepthFunc < 3) {
