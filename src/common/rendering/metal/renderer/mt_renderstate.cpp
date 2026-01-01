@@ -1065,11 +1065,10 @@ void MtRenderState::BeginRenderPass() {
 
   MTL::CommandBuffer *cmdBuffer = fb->GetCommands()->GetRenderCommandBuffer();
   if (cmdBuffer) {
-    if (mt_debug) Printf(PRINT_LOG, "Metal: renderCommandEncoder status=%d\n", (int)cmdBuffer->status());
     mEncoder = cmdBuffer->renderCommandEncoder(pRPD);
     mPipelineBound = false;
     if (mEncoder) {
-        mCurrentWinding = MTL::WindingClockwise;
+        mCurrentWinding = MTL::WindingCounterClockwise;
         mEncoder->setFrontFacingWinding(mCurrentWinding);
         
         // Satisfy vertex descriptor aliases
