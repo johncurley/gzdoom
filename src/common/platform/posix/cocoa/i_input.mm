@@ -76,9 +76,11 @@ enum {
 #include "menustate.h"
 #include "engineerrors.h"
 #include "keydef.h"
+#include "printf.h"
 
 
 EXTERN_CVAR(Int, m_use_mouse)
+EXTERN_CVAR(Bool, vid_hidpi)
 
 CVAR(Bool, use_mouse,    true,  CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
