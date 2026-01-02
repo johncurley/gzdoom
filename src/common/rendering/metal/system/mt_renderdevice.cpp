@@ -541,10 +541,6 @@ void MetalRenderDevice::SetActiveRenderTarget() {
   mMtRenderState->MarkAsFilled(tex);
 }
 void MetalRenderDevice::Draw2D() {
-  if (mt_debug) {
-      Printf(PRINT_LOG, "Metal: Draw2D called (menuactive=%d, ConsoleState=%d, twod empty=%d)\n", 
-             (int)menuactive, (int)ConsoleState, twod->DrawCount() == 0);
-  }
   if (mPostprocess) {
     mPostprocess->SetActiveRenderTarget();
   }

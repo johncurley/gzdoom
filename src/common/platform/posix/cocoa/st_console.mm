@@ -208,7 +208,10 @@ struct TimedUpdater
 
 			function();
 
-			[[NSRunLoop currentRunLoop] limitDateForMode:NSDefaultRunLoopMode];
+			NSRunLoop* runLoop = [NSRunLoop currentRunLoop];
+			NSString* mode = [runLoop currentMode];
+			if (mode == nil) mode = NSDefaultRunLoopMode;
+			[runLoop limitDateForMode:mode];
 		}
 	}
 
@@ -318,7 +321,10 @@ void FConsoleWindow::ScrollTextToBottom()
 {
 	[m_textView scrollRangeToVisible:NSMakeRange(m_characterCount, 0)];
 
-	[[NSRunLoop currentRunLoop] limitDateForMode:NSDefaultRunLoopMode];
+	NSRunLoop* runLoop = [NSRunLoop currentRunLoop];
+	NSString* mode = [runLoop currentMode];
+	if (mode == nil) mode = NSDefaultRunLoopMode;
+	[runLoop limitDateForMode:mode];
 }
 
 

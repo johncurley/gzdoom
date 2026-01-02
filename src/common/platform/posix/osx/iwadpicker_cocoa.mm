@@ -80,20 +80,23 @@ static const char* const tableHeaders[NUM_COLUMNS] = { "IWAD", "Game" };
 
 - (IWADTableData *)init:(WadStuff *) wads num:(int) numwads
 {
-	self.data = [[NSMutableArray alloc] initWithCapacity:numwads];
-
-	for(int i = 0;i < numwads;i++)
+	self = [super init];
+	if (self != nil)
 	{
-		NSMutableDictionary *record = [[NSMutableDictionary alloc] initWithCapacity:NUM_COLUMNS];
-		const char* filename = strrchr(wads[i].Path.GetChars(), '/');
-		if(filename == NULL)
-			filename = wads[i].Path.GetChars();
-		else
-			filename++;
-		[record setObject:[NSString stringWithUTF8String:filename] forKey:[NSString stringWithUTF8String:tableHeaders[COLUMN_IWAD]]];
-		[record setObject:[NSString stringWithUTF8String:wads[i].Name.GetChars()] forKey:[NSString stringWithUTF8String:tableHeaders[COLUMN_GAME]]];
-		[self.data addObject:record];
-		// ARC handles memory management automatically
+		self.data = [[NSMutableArray alloc] initWithCapacity:numwads];
+
+		for(int i = 0;i < numwads;i++)
+		{
+			NSMutableDictionary *record = [[NSMutableDictionary alloc] initWithCapacity:NUM_COLUMNS];
+			const char* filename = strrchr(wads[i].Path.GetChars(), '/');
+			if(filename == NULL)
+				filename = wads[i].Path.GetChars();
+			else
+				filename++;
+			[record setObject:[NSString stringWithUTF8String:filename] forKey:[NSString stringWithUTF8String:tableHeaders[COLUMN_IWAD]]];
+			[record setObject:[NSString stringWithUTF8String:wads[i].Name.GetChars()] forKey:[NSString stringWithUTF8String:tableHeaders[COLUMN_GAME]]];
+			[self.data addObject:record];
+		}
 	}
 
 	return self;
@@ -356,6 +359,7 @@ static NSArray* GetKnownExtensions()
 	[center addObserver:self selector:@selector(menuActionSent:) name:NSMenuDidSendActionNotification object:nil];
 
 	[window center];
+	[window makeKeyAndOrderFront:nil];
 	[app runModalForWindow:window];
 
 	[center removeObserver:self name:NSMenuDidSendActionNotification object:nil];
@@ -460,7 +464,7 @@ int I_PickIWad_Cocoa (WadStuff *wads, int numwads, bool showwin, int defaultiwad
 {
 	@autoreleasepool {
 
-	IWADPicker *picker = [IWADPicker alloc];
+	IWADPicker *picker = [[IWADPicker alloc] init];
 	int ret = [picker pickIWad:wads num:numwads showWindow:showwin defaultWad:defaultiwad];
 
 	if (ret >= 0)
