@@ -1060,9 +1060,9 @@ void I_InitGraphics()
 
 // ---------------------------------------------------------------------------
 
-CUSTOM_CVAR(Bool, vid_hidpi, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL)
+void I_UseHiDPI(bool enable)
 {
-	SystemBaseFrameBuffer::UseHiDPI(self);
+	SystemBaseFrameBuffer::UseHiDPI(enable);
 }
 
 

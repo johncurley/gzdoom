@@ -696,18 +696,18 @@ void G_BuildTiccmd (usercmd_t *cmd)
 		side -= sidemove[speed];
 
 	// buttons
-	if (buttonMap.ButtonDown(Button_Attack))		cmd->buttons |= BT_ATTACK;
-	if (buttonMap.ButtonDown(Button_AltAttack))		cmd->buttons |= BT_ALTATTACK;
-	if (buttonMap.ButtonDown(Button_Use))			cmd->buttons |= BT_USE;
-	if (buttonMap.ButtonDown(Button_Jump))			cmd->buttons |= BT_JUMP;
-	if (buttonMap.ButtonDown(Button_Crouch))		cmd->buttons |= BT_CROUCH;
-	if (buttonMap.ButtonDown(Button_Zoom))			cmd->buttons |= BT_ZOOM;
-	if (buttonMap.ButtonDown(Button_Reload))		cmd->buttons |= BT_RELOAD;
+	if (buttonMap.ButtonDown(Button_Attack) || buttonMap.ButtonPressed(Button_Attack))		cmd->buttons |= BT_ATTACK;
+	if (buttonMap.ButtonDown(Button_AltAttack) || buttonMap.ButtonPressed(Button_AltAttack))	cmd->buttons |= BT_ALTATTACK;
+	if (buttonMap.ButtonDown(Button_Use) || buttonMap.ButtonPressed(Button_Use))			cmd->buttons |= BT_USE;
+	if (buttonMap.ButtonDown(Button_Jump) || buttonMap.ButtonPressed(Button_Jump))			cmd->buttons |= BT_JUMP;
+	if (buttonMap.ButtonDown(Button_Crouch) || buttonMap.ButtonPressed(Button_Crouch))		cmd->buttons |= BT_CROUCH;
+	if (buttonMap.ButtonDown(Button_Zoom) || buttonMap.ButtonPressed(Button_Zoom))			cmd->buttons |= BT_ZOOM;
+	if (buttonMap.ButtonDown(Button_Reload) || buttonMap.ButtonPressed(Button_Reload))		cmd->buttons |= BT_RELOAD;
 
-	if (buttonMap.ButtonDown(Button_User1))			cmd->buttons |= BT_USER1;
-	if (buttonMap.ButtonDown(Button_User2))			cmd->buttons |= BT_USER2;
-	if (buttonMap.ButtonDown(Button_User3))			cmd->buttons |= BT_USER3;
-	if (buttonMap.ButtonDown(Button_User4))			cmd->buttons |= BT_USER4;
+	if (buttonMap.ButtonDown(Button_User1) || buttonMap.ButtonPressed(Button_User1))			cmd->buttons |= BT_USER1;
+	if (buttonMap.ButtonDown(Button_User2) || buttonMap.ButtonPressed(Button_User2))			cmd->buttons |= BT_USER2;
+	if (buttonMap.ButtonDown(Button_User3) || buttonMap.ButtonPressed(Button_User3))			cmd->buttons |= BT_USER3;
+	if (buttonMap.ButtonDown(Button_User4) || buttonMap.ButtonPressed(Button_User4))			cmd->buttons |= BT_USER4;
 
 	if (buttonMap.ButtonDown(Button_Speed))			cmd->buttons |= BT_SPEED;
 	if (buttonMap.ButtonDown(Button_Strafe))		cmd->buttons |= BT_STRAFE;
@@ -721,7 +721,7 @@ void G_BuildTiccmd (usercmd_t *cmd)
 	if (buttonMap.ButtonDown(Button_Left))			cmd->buttons |= BT_LEFT;
 	if (buttonMap.ButtonDown(Button_MoveDown))		cmd->buttons |= BT_MOVEDOWN;
 	if (buttonMap.ButtonDown(Button_MoveUp))		cmd->buttons |= BT_MOVEUP;
-	if (buttonMap.ButtonDown(Button_ShowScores))	cmd->buttons |= BT_SHOWSCORES;
+	if (buttonMap.ButtonDown(Button_ShowScores) || buttonMap.ButtonPressed(Button_ShowScores))	cmd->buttons |= BT_SHOWSCORES;
 	if (speed) cmd->buttons |= BT_RUN;
 
 	// Remap some axes depending on button state.

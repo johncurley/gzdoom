@@ -39,6 +39,7 @@
 #include "palentry.h"
 #include "v_video.h"
 #include "v_font.h"
+#include "gamestate.h"
 
 static NSColor* RGB(const uint8_t red, const uint8_t green, const uint8_t blue)
 {
@@ -341,11 +342,13 @@ void FConsoleWindow::AddText(const char* message)
 	}
 
 	[textStorage endEditing];
-
 	if ([m_window isVisible])
 	{
 		[m_textView scrollRangeToVisible:NSMakeRange(m_characterCount, 0)];
-		UpdateTimed([&](){ PumpRunLoop(); });
+		if (gamestate == GS_STARTUP)
+		{
+			UpdateTimed([&](){ PumpRunLoop(); });
+		}
 	}
 }
 

@@ -225,7 +225,6 @@ void I_GetEvent()
 
 void I_StartTic()
 {
-	buttonMap.ResetButtonTriggers();
 	CheckGUICapture();
 	CheckNativeMouse();
 

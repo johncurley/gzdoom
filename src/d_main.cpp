@@ -1259,14 +1259,11 @@ void D_DoomLoop ()
 			}
 			I_SetFrameTime();
 
-			// 1. Gather and process input first
+			TryRunTics (); // will run at least one tic
+			// Update display, next frame, with current state.
 			I_StartTic ();
 			D_ProcessEvents();
 
-			// 2. Run game logic based on that input
-			TryRunTics (); 
-
-			// 3. Render the result
 			D_Display ();
 			S_UpdateMusic();
 

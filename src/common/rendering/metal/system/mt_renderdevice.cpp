@@ -173,7 +173,7 @@ void MetalRenderDevice::InitializeState() {
     metalLayer->setDevice(device->device);
     metalLayer->setPixelFormat(MTL::PixelFormatBGRA8Unorm);
 
-    MetalViewSize viewSize = GetMetalViewDrawableSize(m_window);
+    MetalViewSize viewSize = GetMetalViewDrawableSize(nativeHandle.nsWindow);
     if (viewSize.width > 0 && viewSize.height > 0) {
       CGSize drawableSize = CGSizeMake(viewSize.width, viewSize.height);
       metalLayer->setDrawableSize(drawableSize);
@@ -368,7 +368,7 @@ void MetalRenderDevice::BeginFrame() {
   if (nativeHandle.metalLayer) {
     CA::MetalLayer *metalLayer = (CA::MetalLayer *)nativeHandle.metalLayer;
 
-    MetalViewSize viewSize = GetMetalViewDrawableSize(m_window);
+    MetalViewSize viewSize = GetMetalViewDrawableSize(nativeHandle.nsWindow);
     if (viewSize.width > 0 && viewSize.height > 0) {
       CGSize drawableSize = CGSizeMake(viewSize.width, viewSize.height);
       if (metalLayer->drawableSize().width != drawableSize.width ||

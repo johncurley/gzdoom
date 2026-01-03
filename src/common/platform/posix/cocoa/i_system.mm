@@ -212,12 +212,19 @@ bool I_IsDarkMode()
 {
 	#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 101400
 		// currently the new startup popup on Mac is not active, so this won't get used
-	    NSAppearance *appearance = [NSApp effectiveAppearance];
-	    NSAppearanceName name = [appearance bestMatchFromAppearancesWithNames:@ [
-	        NSAppearanceNameAqua,
-	        NSAppearanceNameDarkAqua
-	    ]];
-	    return [name isEqualToString:NSAppearanceNameDarkAqua];
+	    if (@available(macOS 10.14, *))
+        {
+            NSAppearance *appearance = [NSApp effectiveAppearance];
+            NSAppearanceName name = [appearance bestMatchFromAppearancesWithNames:@ [
+                (NSAppearanceName)@"NSAppearanceNameAqua",
+                (NSAppearanceName)@"NSAppearanceNameDarkAqua"
+            ]];
+            return [name isEqualToString:(NSAppearanceName)@"NSAppearanceNameDarkAqua"];
+        }
+        else
+        {
+            return NO;
+        }
 	#else
 		// Fallback for older macOS versions
 		return NO;

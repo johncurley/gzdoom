@@ -483,6 +483,14 @@ CCMD(vid_listadapters)
 
 bool vid_hdr_active = false;
 
+#ifdef __APPLE__
+extern void I_UseHiDPI(bool enable);
+CUSTOM_CVAR(Bool, vid_hidpi, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL)
+{
+	I_UseHiDPI(self);
+}
+#endif
+
 DEFINE_GLOBAL(SmallFont)
 DEFINE_GLOBAL(SmallFont2)
 DEFINE_GLOBAL(BigFont)

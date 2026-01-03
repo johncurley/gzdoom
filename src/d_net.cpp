@@ -2187,6 +2187,12 @@ void TryRunTics()
 	if (!netgame && !AppActive && vid_lowerinbackground)
 		doWait = true;
 
+#ifdef __APPLE__
+	// macOS timing can be unreliable with uncapped framerates.
+	// Force a wait to ensure 35Hz game tics for physics and input stability.
+	doWait = true;
+#endif
+
 	// Get the full number of tics the client can run.
 	if (doWait)
 		EnterTic = I_WaitForTic(LastEnterTic);
@@ -2318,6 +2324,11 @@ void TryRunTics()
 	// Make sure it always comes after so the HUD has the correct game state when updating.
 	for (int i = 0; i < totalTics; ++i)
 		P_RunClientSideLogic();
+
+    if (processedTics > 0)
+    {
+        buttonMap.ResetButtonTriggers();
+    }
 }
 
 void Net_NewClientTic()
