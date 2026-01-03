@@ -185,8 +185,6 @@ void D_PostEvent(event_t* ev)
 		return;
 	}
 
-	// Printf("PostEvent: type=%d subtype=%d d1=%d d2=%d d3=%d\n", ev->type, ev->subtype, ev->data1, ev->data2, ev->data3);
-
 	if (sysCallbacks.DispatchEvent && sysCallbacks.DispatchEvent(ev))
 		return;
 

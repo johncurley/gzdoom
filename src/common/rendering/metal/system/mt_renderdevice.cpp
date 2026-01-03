@@ -60,6 +60,7 @@
 #include "v_text.h"
 #include "version.h"
 #include "menustate.h"
+#include "menu.h"
 #include "c_console.h"
 
 #ifdef __APPLE__
@@ -552,6 +553,9 @@ void MetalRenderDevice::Draw2D() {
   mMtRenderState->SetCulling(Cull_None);
   mMtRenderState->EnableDepthTest(false);
   mMtRenderState->SetDepthMask(false);
+  
+  // Reset Scissor to full screen (disable scissoring) to ensure UI is not clipped by previous passes
+  mMtRenderState->SetScissor(0, 0, -1, -1);
 
   // No local pool here - it causes encoders created inside ::Draw2D to be 
   // destroyed before endEncoding is called when this local pool is released.

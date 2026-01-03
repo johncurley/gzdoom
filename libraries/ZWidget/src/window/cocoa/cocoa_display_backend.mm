@@ -115,6 +115,7 @@ void* CocoaDisplayBackend::StartTimer(int timeoutMilliseconds, std::function<voi
                                              userInfo:nil
                                               repeats:YES];
     [[NSRunLoop currentRunLoop] addTimer:nstimer forMode:NSRunLoopCommonModes];
+    [[NSRunLoop currentRunLoop] addTimer:nstimer forMode:NSModalPanelRunLoopMode];
     timerData->nstimer = nstimer;
 
     return timerData;

@@ -4,45 +4,49 @@
 #include <SDL2/SDL.h>
 
 #include "v_video.h"
+#include "zwidget/window/cocoanativehandle.h"
 
-class SystemBaseFrameBuffer : public DFrameBuffer
-{
-	typedef DFrameBuffer Super;
+class SystemBaseFrameBuffer : public DFrameBuffer {
+  typedef DFrameBuffer Super;
 
 public:
-	// this must have the same parameters as the Windows version, even if they are not used!
-	SystemBaseFrameBuffer (void *hMonitor, bool fullscreen);
+  // this must have the same parameters as the Windows version, even if they are
+  // not used!
+  SystemBaseFrameBuffer(void *hMonitor, bool fullscreen);
 
-	bool IsFullscreen() override;
+  bool IsFullscreen() override;
 
-	int GetClientWidth() override;
-	int GetClientHeight() override;
+  int GetClientWidth() override;
+  int GetClientHeight() override;
 
-	void ToggleFullscreen(bool yes) override;
-	void SetWindowSize(int client_w, int client_h) override;
+  void ToggleFullscreen(bool yes) override;
+  void SetWindowSize(int client_w, int client_h) override;
+
+  // Metal support bridge
+  virtual void SetMode(bool fullscreen, bool hiDPI) {}
+  virtual CocoaNativeHandle GetNativeHandle() const { return {}; }
 
 protected:
-	SystemBaseFrameBuffer () {}
+  SystemBaseFrameBuffer() {}
 };
 
-class SystemGLFrameBuffer : public SystemBaseFrameBuffer
-{
-	typedef SystemBaseFrameBuffer Super;
+class SystemGLFrameBuffer : public SystemBaseFrameBuffer {
+  typedef SystemBaseFrameBuffer Super;
 
 public:
-	SystemGLFrameBuffer(void *hMonitor, bool fullscreen);
-	~SystemGLFrameBuffer();
+  SystemGLFrameBuffer(void *hMonitor, bool fullscreen);
+  ~SystemGLFrameBuffer();
 
-	int GetClientWidth() override;
-	int GetClientHeight() override;
+  int GetClientWidth() override;
+  int GetClientHeight() override;
 
-	virtual void SetVSync(bool vsync) override;
-	void SwapBuffers();
+  virtual void SetVSync(bool vsync) override;
+  void SwapBuffers();
 
 protected:
-	SDL_GLContext GLContext;
+  SDL_GLContext GLContext;
 
-	SystemGLFrameBuffer() {}
+  SystemGLFrameBuffer() {}
 };
 
 #endif // __POSIX_SDL_GL_SYSFB_H__

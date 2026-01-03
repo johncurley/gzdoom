@@ -173,6 +173,11 @@ void P_Ticker (void)
 {
 	unsigned int i;
 
+    if (!(primaryLevel->maptime & 63))
+    {
+        Printf("P_Ticker running. MapTime: %d\n", primaryLevel->maptime);
+    }
+
 	for (auto Level : AllLevels())
 	{
 		Level->interpolator.UpdateInterpolations();

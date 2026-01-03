@@ -149,7 +149,7 @@ void SettingsPage::UpdateLanguage()
 	VulkanCheckbox->SetText(GStrings.GetString("OPTVAL_VULKAN"));
 	OpenGLCheckbox->SetText(GStrings.GetString("OPTVAL_OPENGL"));
 	GLESCheckbox->SetText(GStrings.GetString("OPTVAL_OPENGLES"));
-	MetalCheckbox->SetText("Metal");
+	MetalCheckbox->SetText(GStrings.GetString("OPTVAL_METAL"));
 #endif
 }
 

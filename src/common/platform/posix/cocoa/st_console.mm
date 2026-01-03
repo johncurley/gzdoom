@@ -192,7 +192,7 @@ void FConsoleWindow::ShowFatalError(const char* const message)
 
 
 static const unsigned int THIRTY_FPS = 33; // milliseconds per update
-
+static const NSUInteger MAX_CONSOLE_LINES = 1000;
 
 template <typename Function, unsigned int interval = THIRTY_FPS>
 struct TimedUpdater
@@ -200,18 +200,12 @@ struct TimedUpdater
 	explicit TimedUpdater(const Function& function)
 	{
 		extern uint64_t I_msTime();
-		const unsigned int currentTime = I_msTime();
+		const unsigned int currentTime = (unsigned int)I_msTime();
 
 		if (currentTime - m_previousTime > interval)
 		{
 			m_previousTime = currentTime;
-
 			function();
-
-			NSRunLoop* runLoop = [NSRunLoop currentRunLoop];
-			NSString* mode = [runLoop currentMode];
-			if (mode == nil) mode = NSDefaultRunLoopMode;
-			[runLoop limitDateForMode:mode];
 		}
 	}
 
@@ -219,7 +213,7 @@ struct TimedUpdater
 };
 
 template <typename Function, unsigned int interval>
-unsigned int TimedUpdater<Function, interval>::m_previousTime;
+unsigned int TimedUpdater<Function, interval>::m_previousTime = 0;
 
 template <typename Function, unsigned int interval = THIRTY_FPS>
 static void UpdateTimed(const Function& function)
@@ -228,13 +222,43 @@ static void UpdateTimed(const Function& function)
 }
 
 
+static void PumpRunLoop()
+{
+	NSRunLoop* runLoop = [NSRunLoop currentRunLoop];
+	NSString* mode = [runLoop currentMode];
+	
+	// If we are already in a modal loop or event tracking loop, 
+	// don't pump manually to avoid recursive re-entrancy issues.
+	if (mode != nil && ([mode isEqualToString:NSModalPanelRunLoopMode] || 
+					    [mode isEqualToString:NSEventTrackingRunLoopMode]))
+	{
+		return;
+	}
+
+	if (mode == nil) mode = NSDefaultRunLoopMode;
+	[runLoop runMode:mode beforeDate:[NSDate distantPast]];
+}
+
+
 void FConsoleWindow::AddText(const char* message)
 {
+	if (![NSThread isMainThread])
+	{
+		FString msg = message;
+		dispatch_async(dispatch_get_main_queue(), ^{
+			AddText(msg.GetChars());
+		});
+		return;
+	}
+
 	PalEntry color(223, 223, 223);
 
 	char buffer[1024] = {};
 	size_t pos = 0;
 	bool reset = false;
+
+	NSTextStorage* textStorage = [m_textView textStorage];
+	[textStorage beginEditing];
 
 	while (*message != '\0')
 	{
@@ -285,16 +309,43 @@ void FConsoleWindow::AddText(const char* message)
 	if (0 != pos)
 	{
 		buffer[pos] = '\0';
-
 		AddText(color, buffer);
 	}
 
+	// Limit console lines to maintain performance
+	NSString* string = [textStorage string];
+	NSUInteger length = [string length];
+	if (length > 0)
+	{
+		NSUInteger lineCount = 0;
+		NSRange range = NSMakeRange(0, length);
+		while (range.location < length)
+		{
+			range = [string lineRangeForRange:NSMakeRange(range.location, 0)];
+			lineCount++;
+			range.location = NSMaxRange(range);
+		}
+
+		if (lineCount > MAX_CONSOLE_LINES)
+		{
+			NSUInteger linesToRemove = lineCount - MAX_CONSOLE_LINES;
+			NSRange removeRange = NSMakeRange(0, 0);
+			for (NSUInteger i = 0; i < linesToRemove; ++i)
+			{
+				removeRange = [string lineRangeForRange:NSMakeRange(removeRange.location, 0)];
+				removeRange.location = NSMaxRange(removeRange);
+			}
+			[textStorage deleteCharactersInRange:NSMakeRange(0, removeRange.location)];
+			m_characterCount = [textStorage length];
+		}
+	}
+
+	[textStorage endEditing];
+
 	if ([m_window isVisible])
 	{
-		UpdateTimed([&]()
-		{
-			[m_textView scrollRangeToVisible:NSMakeRange(m_characterCount, 0)];
-		});
+		[m_textView scrollRangeToVisible:NSMakeRange(m_characterCount, 0)];
+		UpdateTimed([&](){ PumpRunLoop(); });
 	}
 }
 
@@ -319,12 +370,15 @@ void FConsoleWindow::AddText(const PalEntry& color, const char* const message)
 
 void FConsoleWindow::ScrollTextToBottom()
 {
-	[m_textView scrollRangeToVisible:NSMakeRange(m_characterCount, 0)];
+	if (![NSThread isMainThread])
+	{
+		dispatch_async(dispatch_get_main_queue(), ^{
+			ScrollTextToBottom();
+		});
+		return;
+	}
 
-	NSRunLoop* runLoop = [NSRunLoop currentRunLoop];
-	NSString* mode = [runLoop currentMode];
-	if (mode == nil) mode = NSDefaultRunLoopMode;
-	[runLoop limitDateForMode:mode];
+	[m_textView scrollRangeToVisible:NSMakeRange(m_characterCount, 0)];
 }
 
 
@@ -414,11 +468,17 @@ void FConsoleWindow::Progress(const int current, const int maximum)
 		return;
 	}
 
-	UpdateTimed([&]()
+	if (![NSThread isMainThread])
 	{
-		[m_progressBar setMaxValue:maximum];
-		[m_progressBar setDoubleValue:current];
-	});
+		dispatch_async(dispatch_get_main_queue(), ^{
+			Progress(current, maximum);
+		});
+		return;
+	}
+
+    [m_progressBar setMaxValue:maximum];
+    [m_progressBar setDoubleValue:current];
+    [m_progressBar displayIfNeeded];
 }
 
 

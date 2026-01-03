@@ -282,7 +282,7 @@ static NSArray* GetKnownExtensions()
 	id windowTitle = [NSString stringWithFormat:@"%s %s", GAMENAME, GetVersionString()];
 
 	NSRect frame = NSMakeRect(0, 0, 440, 450);
-	window = [[NSWindow alloc] initWithContentRect:frame styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
+	window = [[NSWindow alloc] initWithContentRect:frame styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable backing:NSBackingStoreBuffered defer:NO];
 	[window setTitle:windowTitle];
 
 	NSTextField *description = [[NSTextField alloc] initWithFrame:NSMakeRect(18, 384, 402, 50)];
@@ -384,7 +384,9 @@ static NSArray* GetKnownExtensions()
 
 	if ( @selector(terminate:) == [menuItem action] )
 	{
-		throw CExitEvent(0);
+		cancelled = true;
+		[window orderOut:self];
+		[app stopModal];
 	}
 }
 
@@ -434,7 +436,7 @@ static void RestartWithParameters(const WadStuff& wad, NSString* parameters)
 
 		wordexp_t expansion = {};
 
-		if (0 == wordexp([parameters UTF8String], &expansion, 0))
+		if (0 == wordexp([parameters UTF8String], &expansion, WRDE_NOCMD))
 		{
 			for (size_t i = 0; i < expansion.we_wordc; ++i)
 			{

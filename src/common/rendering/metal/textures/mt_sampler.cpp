@@ -44,16 +44,19 @@ static MTL::SamplerMipFilter MapMipFilter(int filter) {
 static MTL::SamplerAddressMode MapAddressMode(int clampMode, bool isV) {
   switch (clampMode) {
   case 1: // CLAMP_X
+  case 6: // CLAMP_NOFILTER_X
     return isV ? MTL::SamplerAddressModeRepeat
                : MTL::SamplerAddressModeClampToEdge;
   case 2: // CLAMP_Y
+  case 7: // CLAMP_NOFILTER_Y
     return isV ? MTL::SamplerAddressModeClampToEdge
                : MTL::SamplerAddressModeRepeat;
   case 3: // CLAMP_XY
   case 4: // CLAMP_XY_NOMIP
+  case 5: // CLAMP_NOFILTER
   case 8: // CLAMP_NOFILTER_XY
-    return MTL::SamplerAddressModeClampToEdge;
   case 0: // CLAMP_NONE
+  case 9: // CLAMP_CAMTEX
   default:
     return MTL::SamplerAddressModeRepeat;
   }
@@ -80,6 +83,13 @@ MTL::SamplerState *MtSamplerManager::GetSamplerState(const MtSamplerKey &key) {
   desc->setSAddressMode(MapAddressMode(key.AddressU, false));
   desc->setTAddressMode(MapAddressMode(key.AddressV, true));
   desc->setRAddressMode(MapAddressMode(key.AddressW, false));
+
+  // Set LOD clamps (Vulkan parity)
+  if (key.MipFilter == 0) { // MTL::SamplerMipFilterNotMipmapped
+    desc->setLodMaxClamp(0.25f);
+  } else {
+    desc->setLodMaxClamp(100.0f);
+  }
 
   // Set anisotropy
   if (key.MaxAnisotropy > 1.0f) {

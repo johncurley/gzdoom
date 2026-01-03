@@ -217,11 +217,15 @@ void I_GetEvent()
 
 			[NSApp sendEvent:event];
 		}
+
+		// Pump the run loop to handle display updates and other non-event tasks
+		[[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate distantPast]];
 	}
 }
 
 void I_StartTic()
 {
+	buttonMap.ResetButtonTriggers();
 	CheckGUICapture();
 	CheckNativeMouse();
 

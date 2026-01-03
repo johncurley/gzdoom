@@ -22,21 +22,23 @@ if (UNIX AND NOT APPLE)
 	pkg_check_modules(FONTCONFIG fontconfig)
 endif()
 
-# SDL3 finding stuff
-# Optional on all platforms
-# If both SDL3 and SDL2 are available, only SDL3 support will be enabled.
-find_package(SDL3 QUIET)
-if(NOT ${SDL3_FOUND})
-	include(FindPkgConfig)
-	pkg_search_module(SDL3 sdl3)
-endif()
-
 # SDL2 finding stuff
 # Optional on all platforms
 find_package(SDL2 QUIET)
 if(NOT ${SDL2_FOUND})
 	include(FindPkgConfig)
 	pkg_search_module(SDL2 sdl2)
+endif()
+
+# SDL3 finding stuff
+# Optional on all platforms
+# CRITICAL: Always skip SDL3 if SDL2 is found, or if we are building inside GZDoom
+if(NOT SDL2_FOUND AND NOT GZDOOM_ROOT_DIR)
+	find_package(SDL3 QUIET)
+	if(NOT ${SDL3_FOUND})
+		include(FindPkgConfig)
+		pkg_search_module(SDL3 sdl3)
+	endif()
 endif()
 
 set(ZWIDGET_SOURCES

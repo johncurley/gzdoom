@@ -330,7 +330,9 @@ if (HAVE_VULKAN)
 	list( APPEND PROJECT_LIBRARIES "zvulkan" )
 endif()
 
-list( APPEND PROJECT_LIBRARIES "shader-translator" )
+if (HAVE_METAL)
+	list( APPEND PROJECT_LIBRARIES "shader-translator" )
+endif()
 list( APPEND PROJECT_LIBRARIES "zwidget" )
 list( APPEND PROJECT_LIBRARIES "webp" )
 

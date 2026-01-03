@@ -366,7 +366,8 @@ void S_PrecacheLevel(FLevelLocals* Level)
 
 void S_InitData()
 {
-	Printf("Metal: Entered S_InitData.\n");
+	if (!batchrun) Printf("S_InitData: Load sound definitions.\n");
+
 
 	LastLocalSndInfo = LastLocalSndSeq = "";
 	S_ParseSndInfo(false);

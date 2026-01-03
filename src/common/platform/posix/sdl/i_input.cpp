@@ -607,6 +607,7 @@ void I_GetEvent ()
 
 void I_StartTic ()
 {
+	buttonMap.ResetButtonTriggers ();
 	I_CheckGUICapture ();
 	I_CheckNativeMouse ();
 	I_GetEvent ();
