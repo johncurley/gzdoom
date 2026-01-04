@@ -928,57 +928,56 @@ CUSTOM_CVAR(Bool, vid_hidpi, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINI
 
 bool I_SetCursor(FGameTexture *cursorpic)
 {
-	NSAutoreleasePool* pool = [[NSAutoreleasePool alloc] init];
-	NSCursor* cursor = nil;
+	@autoreleasepool {
+		NSCursor* cursor = nil;
 
-	if (NULL != cursorpic && cursorpic->isValid())
-	{
-		// Create bitmap image representation
-
-		auto sbuffer = cursorpic->GetTexture()->CreateTexBuffer(0);
-
-		const NSInteger imageWidth  = sbuffer.mWidth;
-		const NSInteger imageHeight = sbuffer.mHeight;
-		const NSInteger imagePitch  = sbuffer.mWidth * 4;
-
-		NSBitmapImageRep* bitmapImageRep = [NSBitmapImageRep alloc];
-		[bitmapImageRep initWithBitmapDataPlanes:NULL
-									  pixelsWide:imageWidth
-									  pixelsHigh:imageHeight
-								   bitsPerSample:8
-								 samplesPerPixel:4
-										hasAlpha:YES
-										isPlanar:NO
-								  colorSpaceName:NSDeviceRGBColorSpace
-									 bytesPerRow:imagePitch
-									bitsPerPixel:0];
-
-		// Load bitmap data to representation
-
-		uint8_t* buffer = [bitmapImageRep bitmapData];
-		memcpy(buffer, sbuffer.mBuffer, imagePitch * imageHeight);
-
-		// Swap red and blue components in each pixel
-
-		for (size_t i = 0; i < size_t(imageWidth * imageHeight); ++i)
+		if (NULL != cursorpic && cursorpic->isValid())
 		{
-			const size_t offset = i * 4;
-			std::swap(buffer[offset    ], buffer[offset + 2]);
+			// Create bitmap image representation
+
+			auto sbuffer = cursorpic->GetTexture()->CreateTexBuffer(0);
+
+			const NSInteger imageWidth  = sbuffer.mWidth;
+			const NSInteger imageHeight = sbuffer.mHeight;
+			const NSInteger imagePitch  = sbuffer.mWidth * 4;
+
+			NSBitmapImageRep* bitmapImageRep = [NSBitmapImageRep alloc];
+			[bitmapImageRep initWithBitmapDataPlanes:NULL
+										  pixelsWide:imageWidth
+										  pixelsHigh:imageHeight
+									   bitsPerSample:8
+									 samplesPerPixel:4
+											hasAlpha:YES
+											isPlanar:NO
+									  colorSpaceName:NSDeviceRGBColorSpace
+										 bytesPerRow:imagePitch
+										bitsPerPixel:0];
+
+			// Load bitmap data to representation
+
+			uint8_t* buffer = [bitmapImageRep bitmapData];
+			memcpy(buffer, sbuffer.mBuffer, imagePitch * imageHeight);
+
+			// Swap red and blue components in each pixel
+
+			for (size_t i = 0; i < size_t(imageWidth * imageHeight); ++i)
+			{
+				const size_t offset = i * 4;
+				std::swap(buffer[offset    ], buffer[offset + 2]);
+			}
+
+			// Create image from representation and set it as cursor
+
+			NSData* imageData = [bitmapImageRep representationUsingType:NSPNGFileType
+															 properties:[NSDictionary dictionary]];
+			NSImage* cursorImage = [[NSImage alloc] initWithData:imageData];
+
+			cursor = [[NSCursor alloc] initWithImage:cursorImage
+											 hotSpot:NSMakePoint(0.0f, 0.0f)];
 		}
 
-		// Create image from representation and set it as cursor
-
-		NSData* imageData = [bitmapImageRep representationUsingType:NSPNGFileType
-														 properties:[NSDictionary dictionary]];
-		NSImage* cursorImage = [[NSImage alloc] initWithData:imageData];
-
-		cursor = [[NSCursor alloc] initWithImage:cursorImage
-										 hotSpot:NSMakePoint(0.0f, 0.0f)];
+		SystemBaseFrameBuffer::SetCursor(cursor);
 	}
-
-	SystemBaseFrameBuffer::SetCursor(cursor);
-
-	[pool release];
 
 	return true;
 }
