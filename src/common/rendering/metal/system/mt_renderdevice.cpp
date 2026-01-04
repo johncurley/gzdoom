@@ -541,13 +541,31 @@ void MetalRenderDevice::SetActiveRenderTarget() {
   // Mark as filled so the renderer doesn't clear it during secondary passes (like 2D)
   mMtRenderState->MarkAsFilled(tex);
 }
+extern int paused;
 void MetalRenderDevice::Draw2D() {
   if (mPostprocess) {
     mPostprocess->SetActiveRenderTarget();
   }
   
+  // Explicitly set viewport for 2D pass
+  mMtRenderState->SetViewport(0, 0, GetWidth(), GetHeight());
+
   // Set up 2D projection matrix
-  mViewpoints->Set2D(*mMtRenderState, GetWidth(), GetHeight());
+  {
+    HWViewpointUniforms matrices;
+    matrices.mViewMatrix.loadIdentity();
+    matrices.mNormalViewMatrix.loadIdentity();
+    matrices.mViewHeight = 0;
+    matrices.mGlobVis = 1.f;
+    matrices.mPalLightLevels = 0;
+    matrices.mClipLine.X = -10000000.0f;
+    matrices.mShadowmapFilter = 0;
+    matrices.mLightBlendMode = 0;
+    // Use Y-up ortho matrix (0 at bottom) to counteract vertex shader flip.
+    matrices.mProjectionMatrix.ortho(0, (float)GetWidth(), 0, (float)GetHeight(), -1.0f, 1.0f);
+    matrices.CalcDependencies();
+    mViewpoints->SetViewpoint(*mMtRenderState, &matrices);
+  }
 
   // Force disable culling and depth for 2D pass to avoid winding/occlusion issues
   mMtRenderState->SetCulling(Cull_None);
@@ -557,8 +575,6 @@ void MetalRenderDevice::Draw2D() {
   // Reset Scissor to full screen (disable scissoring) to ensure UI is not clipped by previous passes
   mMtRenderState->SetScissor(0, 0, -1, -1);
 
-  // No local pool here - it causes encoders created inside ::Draw2D to be 
-  // destroyed before endEncoding is called when this local pool is released.
   ::Draw2D(twod, static_cast<FRenderState&>(*mMtRenderState));
 }
 void MetalRenderDevice::RenderTextureView(

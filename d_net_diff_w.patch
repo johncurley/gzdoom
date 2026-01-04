@@ -1,0 +1,3882 @@
+diff --git a/src/d_net.cpp b/src/d_net.cpp
+index 2571e2ae9..a1dd0c21c 100644
+--- a/src/d_net.cpp
++++ b/src/d_net.cpp
+@@ -82,22 +82,19 @@ extern bool AppActive;
+ 
+ void P_ClearLevelInterpolation();
+ 
+-enum ELevelStartStatus
+-{
++enum ELevelStartStatus {
+   LST_READY,
+   LST_HOST,
+   LST_WAITING,
+ };
+ 
+-enum EReadyType
+-{
++enum EReadyType {
+   RT_VOTE,
+   RT_ANYONE,
+   RT_HOST_ONLY,
+ };
+ 
+-enum ELagType
+-{
++enum ELagType {
+   LAG_NONE,
+   LAG_PREDICTING,
+   LAG_WAITING,
+@@ -113,7 +110,8 @@ enum ELagType
+ 
+ int ClientTic = 0;
+ usercmd_t LocalCmds[LOCALCMDTICS] = {};
+-int					LastSentConsistency = 0;		// Last consistency we sent out. If < CurrentConsistency, send them out.
++int LastSentConsistency =
++    0; // Last consistency we sent out. If < CurrentConsistency, send them out.
+ int CurrentConsistency = 0; // Last consistency we generated.
+ FClientNetState ClientStates[MAXPLAYERS] = {};
+ 
+@@ -125,42 +123,61 @@ static int			PrevAvailableDiff = 0;
+ static size_t CurStabilityTic = 0u;
+ static int StabilityTics[STABILITYTICS] = {};
+ 
+-// If we're sending a packet to ourselves, store it here instead. This is the simplest way to execute
+-// playback as it means in the world running code itself all player commands are built the exact same way
+-// instead of having to rely on pulling from the correct local buffers. It also ensures all commands are
++// If we're sending a packet to ourselves, store it here instead. This is the
++// simplest way to execute playback as it means in the world running code itself
++// all player commands are built the exact same way instead of having to rely on
++// pulling from the correct local buffers. It also ensures all commands are
+ // executed over the net at the exact same tick.
+ static size_t LocalNetBufferSize = 0;
+ static uint8_t LocalNetBuffer[MAX_MSGLEN] = {};
+ 
+-static uint8_t	CurrentLobbyID = 0u;	// Ignore commands not from this lobby (useful when transitioning levels).
+-static int		LastGameUpdate = 0;		// Track the last time the game actually ran the world.
++static uint8_t CurrentLobbyID = 0u; // Ignore commands not from this lobby
++                                    // (useful when transitioning levels).
++static int LastGameUpdate =
++    0; // Track the last time the game actually ran the world.
+ static uint64_t MutedClients = 0u; // Ignore messages from these clients.
+ 
+-static int CutsceneCountdown = 0;	// If enough people are ready, count down the timer. This won't reset between unreadies, only on intermission entrance.
+-static uint64_t CutsceneReady = 0u; // If in a cutscene, check if we're ready to move to move past it.
++static int CutsceneCountdown =
++    0; // If enough people are ready, count down the timer. This won't reset
++       // between unreadies, only on intermission entrance.
++static uint64_t CutsceneReady =
++    0u; // If in a cutscene, check if we're ready to move to move past it.
+ 
+ static int LevelStartDebug = 0;
+-static int	LevelStartDelay = 0; // While this is > 0, don't start generating packets yet.
+-static ELevelStartStatus LevelStartStatus = LST_READY; // Listen for when to actually start making tics.
+-static uint64_t	LevelStartAck = 0u; // Used by the host to determine if everyone has loaded in.
+-
+-static int FullLatencyCycle = MAXSENDTICS * 3;	// Give ~3 seconds to gather latency info about clients on boot up.
++static int LevelStartDelay =
++    0; // While this is > 0, don't start generating packets yet.
++static ELevelStartStatus LevelStartStatus =
++    LST_READY; // Listen for when to actually start making tics.
++static uint64_t LevelStartAck =
++    0u; // Used by the host to determine if everyone has loaded in.
++
++static int FullLatencyCycle =
++    MAXSENDTICS *
++    3; // Give ~3 seconds to gather latency info about clients on boot up.
+ static int LastLatencyUpdate = 0; // Update average latency every ~1 second.
+ 
+-static ELagType	LagState = LAG_NONE;	// What kind of lag the game is currently getting.
++static ELagType LagState =
++    LAG_NONE; // What kind of lag the game is currently getting.
+ static int EnterTic = 0;
+ static int LastEnterTic = 0;
+-static bool bCommandsReset = false;		// If true, commands were recently cleared. Don't generate any more tics.
+-
+-static int	CommandsAhead = 0;		// In packet server mode, the host will let us know if we're outpacing them.
+-static int	SkipCommandTimer = 0;	// Tracker for when to check for skipping commands. ~0.5 seconds in a row of being ahead will start skipping.
+-static int	SkipCommandAmount = 0;	// Amount of commands to skip. Try and batch skip them all at once since we won't be able to get an update until the full RTT.
++static bool bCommandsReset = false; // If true, commands were recently cleared.
++                                    // Don't generate any more tics.
++
++static int CommandsAhead = 0; // In packet server mode, the host will let us
++                              // know if we're outpacing them.
++static int SkipCommandTimer =
++    0; // Tracker for when to check for skipping commands. ~0.5 seconds in a row
++       // of being ahead will start skipping.
++static int SkipCommandAmount =
++    0; // Amount of commands to skip. Try and batch skip them all at once since
++       // we won't be able to get an update until the full RTT.
+ 
+ void D_ProcessEvents(void);
+ void G_BuildTiccmd(usercmd_t *cmd);
+ void D_DoAdvanceDemo(void);
+ 
+-static void RunScript(TArrayView<uint8_t>& stream, AActor *pawn, int snum, int argn, int always);
++static void RunScript(TArrayView<uint8_t> &stream, AActor *pawn, int snum,
++                      int argn, int always);
+ 
+ extern bool advancedemo;
+ 
+@@ -172,22 +189,21 @@ CVAR(Bool, net_extratic, false, CVAR_SERVERINFO | CVAR_NOSAVE)
+ CVAR(Bool, net_limitsaves, true, CVAR_SERVERINFO | CVAR_NOSAVE)
+ CVAR(Bool, net_repeatableactioncooldown, true, CVAR_SERVERINFO | CVAR_NOSAVE)
+ CVAR(Bool, net_limitconversations, false, CVAR_SERVERINFO | CVAR_NOSAVE)
+-CUSTOM_CVAR(Int, net_disablepause, 0, CVAR_SERVERINFO | CVAR_NOSAVE)
+-{
++CUSTOM_CVAR(Int, net_disablepause, 0, CVAR_SERVERINFO | CVAR_NOSAVE) {
+   if (self < 0)
+     self = 0;
+   else if (self > 2)
+     self = 2;
+ }
+-CUSTOM_CVAR(Int, net_cutscenereadytype, RT_VOTE, CVAR_SERVERINFO | CVAR_NOSAVE)
+-{
++CUSTOM_CVAR(Int, net_cutscenereadytype, RT_VOTE,
++            CVAR_SERVERINFO | CVAR_NOSAVE) {
+   if (self < RT_VOTE)
+     self = RT_VOTE;
+   else if (self > RT_HOST_ONLY)
+     self = RT_HOST_ONLY;
+ }
+-CUSTOM_CVAR(Float, net_cutscenereadypercent, 0.5f, CVAR_SERVERINFO | CVAR_NOSAVE)
+-{
++CUSTOM_CVAR(Float, net_cutscenereadypercent, 0.5f,
++            CVAR_SERVERINFO | CVAR_NOSAVE) {
+   if (self < 0.0f)
+     self = 0.0f;
+   else if (self > 1.0f)
+@@ -197,44 +213,35 @@ CVAR(Float, net_cutscenecountdown, 30.0f, CVAR_SERVERINFO | CVAR_NOSAVE)
+ 
+ CVAR(Bool, cl_noboldchat, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+ CVAR(Bool, cl_nochatsound, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+-CUSTOM_CVAR(Int, cl_showchat, CHAT_GLOBAL, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+-{
++CUSTOM_CVAR(Int, cl_showchat, CHAT_GLOBAL, CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+   if (self < CHAT_DISABLED)
+     self = CHAT_DISABLED;
+   else if (self > CHAT_GLOBAL)
+     self = CHAT_GLOBAL;
+ }
+ 
+-CUSTOM_CVAR(Int, cl_debugprediction, 0, CVAR_CHEAT)
+-{
++CUSTOM_CVAR(Int, cl_debugprediction, 0, CVAR_CHEAT) {
+   if (self < 0)
+     self = 0;
+   else if (self > BACKUPTICS - 1)
+     self = BACKUPTICS - 1;
+ }
+ 
+-// Used to write out all network events that occured leading up to the next tick.
+-static struct NetEventData
+-{
++// Used to write out all network events that occured leading up to the next
++// tick.
++static struct NetEventData {
+   struct FStream {
+     uint8_t *Stream;
+     size_t Used = 0;
+ 
+-		FStream()
+-		{
+-			Grow(256);
+-		}
++    FStream() { Grow(256); }
+ 
+-		~FStream()
+-		{
++    ~FStream() {
+       if (Stream != nullptr)
+         M_Free(Stream);
+     }
+ 
+-		void Grow(size_t size)
+-		{
+-			Stream = (uint8_t*)M_Realloc(Stream, size);
+-		}
++    void Grow(size_t size) { Stream = (uint8_t *)M_Realloc(Stream, size); }
+   } Streams[BACKUPTICS];
+ 
+ private:
+@@ -243,8 +250,7 @@ private:
+   int CurrentClientTic = 0;
+ 
+   // Make more room for special Command.
+-	void GetMoreBytes(size_t newSize)
+-	{
++  void GetMoreBytes(size_t newSize) {
+     MaxSize = max<size_t>(MaxSize * 2, newSize + 30);
+ 
+     DPrintf(DMSG_NOTIFY, "Expanding special size to %zu\n", MaxSize);
+@@ -255,8 +261,7 @@ private:
+     CurrentStream = Streams[CurrentClientTic % BACKUPTICS].Stream + CurrentSize;
+   }
+ 
+-	void AddBytes(size_t bytes)
+-	{
++  void AddBytes(size_t bytes) {
+     if (CurrentSize + bytes >= MaxSize)
+       GetMoreBytes(CurrentSize + bytes);
+ 
+@@ -268,21 +273,18 @@ public:
+ 
+   // Boot up does some faux network events so we need to wait until after
+   // everything is initialized to actually set up the network stream.
+-	void InitializeEventData()
+-	{
++  void InitializeEventData() {
+     CurrentStream = Streams[0].Stream;
+     CurrentSize = 0;
+   }
+ 
+-	void ResetStream()
+-	{
++  void ResetStream() {
+     CurrentClientTic = ClientTic / TicDup;
+     CurrentStream = Streams[CurrentClientTic % BACKUPTICS].Stream;
+     CurrentSize = 0;
+   }
+ 
+-	void NewClientTic()
+-	{
++  void NewClientTic() {
+     const int tic = ClientTic / TicDup;
+     if (CurrentClientTic == tic)
+       return;
+@@ -294,70 +296,56 @@ public:
+     CurrentSize = 0;
+   }
+ 
+-	NetEventData& operator<<(uint8_t it)
+-	{
+-		if (CurrentStream != nullptr)
+-		{
++  NetEventData &operator<<(uint8_t it) {
++    if (CurrentStream != nullptr) {
+       AddBytes(1);
+       UncheckedWriteInt8(it, &CurrentStream);
+     }
+     return *this;
+   }
+ 
+-	NetEventData& operator<<(int16_t it)
+-	{
+-		if (CurrentStream != nullptr)
+-		{
++  NetEventData &operator<<(int16_t it) {
++    if (CurrentStream != nullptr) {
+       AddBytes(2);
+       UncheckedWriteInt16(it, &CurrentStream);
+     }
+     return *this;
+   }
+ 
+-	NetEventData& operator<<(int32_t it)
+-	{
+-		if (CurrentStream != nullptr)
+-		{
++  NetEventData &operator<<(int32_t it) {
++    if (CurrentStream != nullptr) {
+       AddBytes(4);
+       UncheckedWriteInt32(it, &CurrentStream);
+     }
+     return *this;
+   }
+ 
+-	NetEventData& operator<<(int64_t it)
+-	{
+-		if (CurrentStream != nullptr)
+-		{
++  NetEventData &operator<<(int64_t it) {
++    if (CurrentStream != nullptr) {
+       AddBytes(8);
+       UncheckedWriteInt64(it, &CurrentStream);
+     }
+     return *this;
+   }
+ 
+-	NetEventData& operator<<(float it)
+-	{
+-		if (CurrentStream != nullptr)
+-		{
++  NetEventData &operator<<(float it) {
++    if (CurrentStream != nullptr) {
+       AddBytes(4);
+       UncheckedWriteFloat(it, &CurrentStream);
+     }
+     return *this;
+   }
+ 
+-	NetEventData& operator<<(double it)
+-	{
+-		if (CurrentStream != nullptr)
+-		{
++  NetEventData &operator<<(double it) {
++    if (CurrentStream != nullptr) {
+       AddBytes(8);
+       UncheckedWriteDouble(it, &CurrentStream);
+     }
+     return *this;
+   }
+ 
+-	NetEventData& operator<<(const char *it)
+-	{
+-		if (CurrentStream != nullptr)
+-		{
++  NetEventData &operator<<(const char *it) {
++    if (CurrentStream != nullptr) {
+       AddBytes(strlen(it) + 1);
+       UncheckedWriteString(it, &CurrentStream);
+     }
+@@ -365,12 +353,10 @@ public:
+   }
+ } NetEvents;
+ 
+-void Net_ClearBuffers()
+-{
++void Net_ClearBuffers() {
+   CloseNetwork();
+ 
+-	for (unsigned int i = 0; i < MAXPLAYERS; ++i)
+-	{
++  for (unsigned int i = 0; i < MAXPLAYERS; ++i) {
+     playeringame[i] = false;
+     players[i].waiting = players[i].inconsistant = false;
+ 
+@@ -381,7 +367,8 @@ void Net_ClearBuffers()
+     state.bNewLatency = true;
+ 
+     state.ResendID = state.StabilityBuffer = 0u;
+-		state.CurrentNetConsistency = state.LastVerifiedConsistency = state.ConsistencyAck = state.ResendConsistencyFrom = -1;
++    state.CurrentNetConsistency = state.LastVerifiedConsistency =
++        state.ConsistencyAck = state.ResendConsistencyFrom = -1;
+     state.CurrentSequence = state.SequenceAck = state.ResendSequenceFrom = -1;
+     state.Flags = 0;
+ 
+@@ -426,13 +413,11 @@ void Net_ClearBuffers()
+   NetworkClients += 0;
+ }
+ 
+-bool Net_IsPlayerReady(int player)
+-{
++bool Net_IsPlayerReady(int player) {
+   if (demoplayback || net_cutscenereadytype != RT_VOTE)
+     return false;
+ 
+-	if (cutscene.runner)
+-	{
++  if (cutscene.runner) {
+     int type = ST_VOTE;
+     IFVM(ScreenJobRunner, GetSkipType)
+     type = VMCallSingle<int>(func, cutscene.runner);
+@@ -441,12 +426,12 @@ bool Net_IsPlayerReady(int player)
+       return false;
+   }
+ 
+-	return players[player].Bot != nullptr || (CutsceneReady & ((uint64_t)1u << player));
++  return players[player].Bot != nullptr ||
++         (CutsceneReady & ((uint64_t)1u << player));
+ }
+ 
+ // Check if every client is ready to move on from the current cutscene.
+-void Net_PlayerReadiedUp(int player)
+-{
++void Net_PlayerReadiedUp(int player) {
+   if (!netgame || demoplayback)
+     return;
+ 
+@@ -457,14 +442,15 @@ void Net_PlayerReadiedUp(int player)
+     CutsceneReady |= (uint64_t)1u << player;
+ }
+ 
+-void Net_StartCutscene()
+-{
+-	CutsceneCountdown = netgame && !demoplayback && net_cutscenecountdown > 0.0f ? static_cast<int>(ceil(net_cutscenecountdown * TICRATE)) : 0;
++void Net_StartCutscene() {
++  CutsceneCountdown =
++      netgame && !demoplayback && net_cutscenecountdown > 0.0f
++          ? static_cast<int>(ceil(net_cutscenecountdown * TICRATE))
++          : 0;
+ }
+ 
+ // Allow the game to automatically start after a set amount of time.
+-bool Net_CheckCutsceneReady()
+-{
++bool Net_CheckCutsceneReady() {
+   if (!cutscene.runner)
+     return false;
+ 
+@@ -484,8 +470,7 @@ bool Net_CheckCutsceneReady()
+   uint64_t mask = 0u;
+   int totalReady = 0;
+   // Bots will be automatically assumed to be ready, so we don't include them.
+-	for (auto client : NetworkClients)
+-	{
++  for (auto client : NetworkClients) {
+     mask |= (uint64_t)1u << client;
+     totalReady += Net_IsPlayerReady(client);
+   }
+@@ -503,37 +488,32 @@ bool Net_CheckCutsceneReady()
+   return false;
+ }
+ 
+-void Net_AdvanceCutscene()
+-{
++void Net_AdvanceCutscene() {
+   CutsceneReady = 0u;
+   CutsceneCountdown = 0;
+   if (consoleplayer == Net_Arbitrator)
+     Net_WriteInt8(DEM_ENDSCREENJOB);
+ }
+ 
+-bool Net_IsWaiting()
+-{
+-	return LagState == LAG_WAITING;
+-}
++bool Net_IsWaiting() { return LagState == LAG_WAITING; }
+ 
+-// This is needed for handling PSprite bobbing specifically since it's predicted.
+-double Net_ModifyFrac(double ticFrac)
+-{
++// This is needed for handling PSprite bobbing specifically since it's
++// predicted.
++double Net_ModifyFrac(double ticFrac) {
+   return LagState < LAG_WAITING ? ticFrac : 1.0;
+ }
+ 
+-double Net_ModifyObjectFrac(DObject* obj, double ticFrac)
+-{
+-	return LagState == LAG_NONE || LagState == LAG_SKIPPING || obj->IsClientSide() ? ticFrac : 1.0;
++double Net_ModifyObjectFrac(DObject *obj, double ticFrac) {
++  return LagState == LAG_NONE || LagState == LAG_SKIPPING || obj->IsClientSide()
++             ? ticFrac
++             : 1.0;
+ }
+ 
+-double Net_ModifyParticleFrac(particle_t* part, double ticFrac)
+-{
++double Net_ModifyParticleFrac(particle_t *part, double ticFrac) {
+   return LagState == LAG_NONE || LagState == LAG_SKIPPING ? ticFrac : 0.0;
+ }
+ 
+-void Net_ResetCommands(bool midTic)
+-{
++void Net_ResetCommands(bool midTic) {
+   bCommandsReset = midTic;
+   ++CurrentLobbyID;
+   SkipCommandTimer = SkipCommandAmount = CommandsAhead = 0;
+@@ -542,21 +522,17 @@ void Net_ResetCommands(bool midTic)
+   memset(StabilityTics, 0, sizeof(StabilityTics));
+ 
+   int tic = gametic / TicDup;
+-	if (midTic)
+-	{
+-		// If we're mid ticdup cycle, make sure we immediately enter the next one after
+-		// the current tic we're in finishes.
++  if (midTic) {
++    // If we're mid ticdup cycle, make sure we immediately enter the next one
++    // after the current tic we're in finishes.
+     ClientTic = (tic + 1) * TicDup;
+     gametic = (tic * TicDup) + (TicDup - 1);
+-	}
+-	else
+-	{
++  } else {
+     ClientTic = gametic = tic * TicDup;
+     --tic;
+   }
+ 
+-	for (auto client : NetworkClients)
+-	{
++  for (auto client : NetworkClients) {
+     auto &state = ClientStates[client];
+     state.Flags &= CF_QUIT;
+     state.StabilityBuffer = 0u;
+@@ -567,7 +543,8 @@ void Net_ResetCommands(bool midTic)
+ 
+     // Make sure not to run its current command either.
+     auto &curTic = state.Tics[tic % BACKUPTICS];
+-		const int running = (curTic.Command.buttons & BT_RUN); // This isn't delta'd so needs to be kept.
++    const int running = (curTic.Command.buttons &
++                         BT_RUN); // This isn't delta'd so needs to be kept.
+     memset(&curTic.Command, 0, sizeof(curTic.Command));
+     curTic.Command.buttons |= running;
+   }
+@@ -575,16 +552,14 @@ void Net_ResetCommands(bool midTic)
+   NetEvents.ResetStream();
+ }
+ 
+-void Net_SetWaiting()
+-{
++void Net_SetWaiting() {
+   if (netgame && !demoplayback && NetworkClients.Size() > 1)
+     LevelStartStatus = LST_WAITING;
+ }
+ 
+ // [RH] Rewritten to properly calculate the packet size
+ //		with our variable length Command.
+-static size_t GetNetBufferSize()
+-{
++static size_t GetNetBufferSize() {
+   if (NetBuffer[0] & NCMD_EXIT)
+     return 1 + (NetMode == NET_PacketServer && RemoteClient == Net_Arbitrator);
+   // TODO: Need a skipper for this.
+@@ -593,8 +568,7 @@ static size_t GetNetBufferSize()
+   if (NetBuffer[0] & (NCMD_LATENCY | NCMD_LATENCYACK))
+     return 2;
+ 
+-	if (NetBuffer[0] & NCMD_LEVELREADY)
+-	{
++  if (NetBuffer[0] & NCMD_LEVELREADY) {
+     int bytes = 2;
+     if (NetMode == NET_PacketServer && RemoteClient == Net_Arbitrator)
+       bytes += 2;
+@@ -620,16 +594,17 @@ static size_t GetNetBufferSize()
+ 
+   // Minimum additional packet size per player:
+   // 1 byte for player number
+-	// If in packet server mode and from the host, 2 bytes for the latency to the host
++  // If in packet server mode and from the host, 2 bytes for the latency to the
++  // host
+   int padding = 1;
+   if (NetMode == NET_PacketServer && RemoteClient == Net_Arbitrator)
+     padding += 2;
+   if (NetBufferLength < totalBytes + playerCount * padding)
+     return totalBytes + playerCount * padding;
+ 
+-	TArrayView<uint8_t> skipper = TArrayView(&NetBuffer[totalBytes], MAX_MSGLEN - totalBytes);
+-	for (int p = 0; p < playerCount; ++p)
+-	{
++  TArrayView<uint8_t> skipper =
++      TArrayView(&NetBuffer[totalBytes], MAX_MSGLEN - totalBytes);
++  for (int p = 0; p < playerCount; ++p) {
+     AdvanceStream(skipper, 1);
+     if (NetMode == NET_PacketServer && RemoteClient == Net_Arbitrator)
+       AdvanceStream(skipper, 2);
+@@ -637,8 +612,7 @@ static size_t GetNetBufferSize()
+     for (int i = 0; i < ranTics; ++i)
+       AdvanceStream(skipper, 3);
+ 
+-		for (int i = 0; i < numTics; ++i)
+-		{
++    for (int i = 0; i < numTics; ++i) {
+       AdvanceStream(skipper, 1);
+       SkipUserCmdMessage(skipper);
+     }
+@@ -650,16 +624,14 @@ static size_t GetNetBufferSize()
+ //
+ // HSendPacket
+ //
+-static void HSendPacket(int client, size_t size)
+-{
++static void HSendPacket(int client, size_t size) {
+   // This data already exists locally in the demo file, so don't write it out.
+   if (demoplayback)
+     return;
+ 
+   RemoteClient = client;
+   NetBufferLength = size;
+-	if (client == consoleplayer)
+-	{
++  if (client == consoleplayer) {
+     memcpy(LocalNetBuffer, NetBuffer, size);
+     LocalNetBufferSize = size;
+     return;
+@@ -673,13 +645,11 @@ static void HSendPacket(int client, size_t size)
+ 
+ // HGetPacket
+ // Returns false if no packet is waiting
+-static bool HGetPacket()
+-{
++static bool HGetPacket() {
+   if (demoplayback)
+     return false;
+ 
+-	if (LocalNetBufferSize)
+-	{
++  if (LocalNetBufferSize) {
+     memcpy(NetBuffer, LocalNetBuffer, LocalNetBufferSize);
+     NetBufferLength = LocalNetBufferSize;
+     RemoteClient = consoleplayer;
+@@ -695,25 +665,23 @@ static bool HGetPacket()
+     return false;
+ 
+   size_t sizeCheck = GetNetBufferSize();
+-	if (NetBufferLength != sizeCheck)
+-	{
+-		Printf("Incorrect packet size %zu (expected %zu)\n", NetBufferLength, sizeCheck);
++  if (NetBufferLength != sizeCheck) {
++    Printf("Incorrect packet size %zu (expected %zu)\n", NetBufferLength,
++           sizeCheck);
+     return false;
+   }
+ 
+   return true;
+ }
+ 
+-static void ClientConnecting(int client)
+-{
++static void ClientConnecting(int client) {
+   if (consoleplayer != Net_Arbitrator)
+     return;
+ 
+   // TODO: Eventually...
+ }
+ 
+-static void DisconnectClient(int clientNum)
+-{
++static void DisconnectClient(int clientNum) {
+   NetworkClients -= clientNum;
+   const uint64_t mask = ~((uint64_t)1u << clientNum);
+   MutedClients &= mask;
+@@ -724,13 +692,11 @@ static void DisconnectClient(int clientNum)
+   players[clientNum].playerstate = PST_GONE;
+ }
+ 
+-static void SetArbitrator(int clientNum)
+-{
++static void SetArbitrator(int clientNum) {
+   Net_Arbitrator = clientNum;
+   players[Net_Arbitrator].settings_controller = true;
+   Printf("%s is the new host\n", players[Net_Arbitrator].userinfo.GetName());
+-	if (NetMode == NET_PacketServer)
+-	{
++  if (NetMode == NET_PacketServer) {
+     for (auto client : NetworkClients)
+       ClientStates[client].AverageLatency = 0u;
+ 
+@@ -739,17 +705,18 @@ static void SetArbitrator(int clientNum)
+   }
+ }
+ 
+-static void ClientQuit(int clientNum, int newHost)
+-{
++static void ClientQuit(int clientNum, int newHost) {
+   if (!NetworkClients.InGame(clientNum))
+     return;
+ 
+-	// This will get caught in the main loop and send it out to everyone as one big packet. The only
+-	// exception is the host who will leave instantly and send out any needed data.
+-	if (NetMode == NET_PacketServer && clientNum != Net_Arbitrator)
+-	{
++  // This will get caught in the main loop and send it out to everyone as one
++  // big packet. The only exception is the host who will leave instantly and
++  // send out any needed data.
++  if (NetMode == NET_PacketServer && clientNum != Net_Arbitrator) {
+     if (consoleplayer != Net_Arbitrator)
+-			DPrintf(DMSG_WARNING, "Received disconnect packet from client %d erroneously\n", clientNum);
++      DPrintf(DMSG_WARNING,
++              "Received disconnect packet from client %d erroneously\n",
++              clientNum);
+     else
+       ClientStates[clientNum].Flags |= CF_QUIT;
+ 
+@@ -764,22 +731,15 @@ static void ClientQuit(int clientNum, int newHost)
+     G_CheckDemoStatus();
+ }
+ 
+-static bool IsMapLoaded()
+-{
+-	return gamestate == GS_LEVEL;
+-}
++static bool IsMapLoaded() { return gamestate == GS_LEVEL; }
+ 
+-static void CheckLevelStart(int client, int delayTics)
+-{
+-	if (LevelStartStatus != LST_WAITING)
+-	{
+-		if (consoleplayer == Net_Arbitrator && client != consoleplayer)
+-		{
++static void CheckLevelStart(int client, int delayTics) {
++  if (LevelStartStatus != LST_WAITING) {
++    if (consoleplayer == Net_Arbitrator && client != consoleplayer) {
+       // Someone might've missed the previous packet, so resend it just in case.
+       NetBuffer[0] = NCMD_LEVELREADY;
+       NetBuffer[1] = CurrentLobbyID;
+-			if (NetMode == NET_PacketServer)
+-			{
++      if (NetMode == NET_PacketServer) {
+         NetBuffer[2] = 0;
+         NetBuffer[3] = 0;
+       }
+@@ -790,57 +750,57 @@ static void CheckLevelStart(int client, int delayTics)
+     return;
+   }
+ 
+-	if (client == Net_Arbitrator)
+-	{
++  if (client == Net_Arbitrator) {
+     LevelStartAck = 0u;
+-		LevelStartStatus = NetMode == NET_PacketServer && consoleplayer == Net_Arbitrator ? LST_HOST : LST_READY;
++    LevelStartStatus =
++        NetMode == NET_PacketServer && consoleplayer == Net_Arbitrator
++            ? LST_HOST
++            : LST_READY;
+     LevelStartDelay = LevelStartDebug = delayTics;
+     LastGameUpdate = EnterTic;
+     return;
+   }
+ 
+   uint64_t mask = 0u;
+-	for (auto pNum : NetworkClients)
+-	{
++  for (auto pNum : NetworkClients) {
+     if (pNum != Net_Arbitrator)
+       mask |= (uint64_t)1u << pNum;
+   }
+ 
+   LevelStartAck |= (uint64_t)1u << client;
+-	if ((LevelStartAck & mask) == mask && IsMapLoaded())
+-	{
++  if ((LevelStartAck & mask) == mask && IsMapLoaded()) {
+     // Beyond this point a player is likely lagging out anyway.
+     constexpr uint16_t LatencyCap = 350u;
+ 
+     NetBuffer[0] = NCMD_LEVELREADY;
+     NetBuffer[1] = CurrentLobbyID;
+     uint16_t highestAvg = 0u;
+-		if (NetMode == NET_PacketServer)
+-		{
++    if (NetMode == NET_PacketServer) {
+       // Wait for enough latency info to be accepted so a better average
+       // can be calculated for everyone.
+       if (FullLatencyCycle > 0)
+         return;
+ 
+-			for (auto client : NetworkClients)
+-			{
++      for (auto client : NetworkClients) {
+         if (client == Net_Arbitrator)
+           continue;
+ 
+-				const uint16_t latency = min<uint16_t>(ClientStates[client].AverageLatency, LatencyCap);
++        const uint16_t latency =
++            min<uint16_t>(ClientStates[client].AverageLatency, LatencyCap);
+         if (latency > highestAvg)
+           highestAvg = latency;
+       }
+     }
+ 
+     constexpr double MS2Sec = 1.0 / 1000.0;
+-		for (auto client : NetworkClients)
+-		{
+-			if (NetMode == NET_PacketServer)
+-			{
++    for (auto client : NetworkClients) {
++      if (NetMode == NET_PacketServer) {
+         int delay = 0;
+         if (client != Net_Arbitrator)
+-					delay = int(floor((highestAvg - min<uint16_t>(ClientStates[client].AverageLatency, LatencyCap)) * MS2Sec * TICRATE));
++          delay = int(floor(
++              (highestAvg -
++               min<uint16_t>(ClientStates[client].AverageLatency, LatencyCap)) *
++              MS2Sec * TICRATE));
+ 
+         NetBuffer[2] = (delay << 8);
+         NetBuffer[3] = delay;
+@@ -851,8 +811,7 @@ static void CheckLevelStart(int client, int delayTics)
+   }
+ }
+ 
+-struct FLatencyAck
+-{
++struct FLatencyAck {
+   int Client;
+   uint8_t Seq;
+ 
+@@ -862,31 +821,28 @@ struct FLatencyAck
+ //
+ // GetPackets
+ //
+-static void GetPackets()
+-{
++static void GetPackets() {
+   TArray<FLatencyAck> latencyAcks = {};
+-	while (HGetPacket())
+-	{
++  while (HGetPacket()) {
+     const int clientNum = RemoteClient;
+     auto &clientState = ClientStates[clientNum];
+ 
+-		if (NetBuffer[0] & NCMD_EXIT)
+-		{
+-			ClientQuit(clientNum, NetMode == NET_PacketServer && clientNum == Net_Arbitrator ? NetBuffer[1] : -1);
++    if (NetBuffer[0] & NCMD_EXIT) {
++      ClientQuit(clientNum,
++                 NetMode == NET_PacketServer && clientNum == Net_Arbitrator
++                     ? NetBuffer[1]
++                     : -1);
+       continue;
+     }
+ 
+-		if (NetBuffer[0] & NCMD_SETUP)
+-		{
++    if (NetBuffer[0] & NCMD_SETUP) {
+       HandleIncomingConnection();
+       continue;
+     }
+ 
+-		if (NetBuffer[0] & NCMD_LATENCY)
+-		{
++    if (NetBuffer[0] & NCMD_LATENCY) {
+       size_t i = 0u;
+-			for (; i < latencyAcks.Size(); ++i)
+-			{
++      for (; i < latencyAcks.Size(); ++i) {
+         if (latencyAcks[i].Client == clientNum)
+           break;
+       }
+@@ -897,21 +853,18 @@ static void GetPackets()
+       continue;
+     }
+ 
+-		if (NetBuffer[0] & NCMD_LATENCYACK)
+-		{
+-			if (NetBuffer[1] == clientState.CurrentLatency)
+-			{
+-				clientState.RecvTime[clientState.CurrentLatency++ % MAXSENDTICS] = I_msTime();
++    if (NetBuffer[0] & NCMD_LATENCYACK) {
++      if (NetBuffer[1] == clientState.CurrentLatency) {
++        clientState.RecvTime[clientState.CurrentLatency++ % MAXSENDTICS] =
++            I_msTime();
+         clientState.bNewLatency = true;
+       }
+ 
+       continue;
+     }
+ 
+-		if (NetBuffer[0] & NCMD_LEVELREADY)
+-		{
+-			if (NetBuffer[1] == CurrentLobbyID)
+-			{
++    if (NetBuffer[0] & NCMD_LEVELREADY) {
++      if (NetBuffer[1] == CurrentLobbyID) {
+         int delay = 0;
+         if (NetMode == NET_PacketServer && clientNum == Net_Arbitrator)
+           delay = (NetBuffer[2] << 8) | NetBuffer[3];
+@@ -922,24 +875,23 @@ static void GetPackets()
+       continue;
+     }
+ 
+-		if (NetBuffer[0] & NCMD_RETRANSMIT)
+-		{
++    if (NetBuffer[0] & NCMD_RETRANSMIT) {
+       clientState.ResendID = NetBuffer[1];
+       clientState.Flags |= CF_RETRANSMIT;
+     }
+ 
+     const bool validID = NetBuffer[1] == CurrentLobbyID;
+-		if (validID)
+-		{
++    if (validID) {
+       clientState.Flags |= CF_UPDATED;
+-			clientState.SequenceAck = (NetBuffer[2] << 24) | (NetBuffer[3] << 16) | (NetBuffer[4] << 8) | NetBuffer[5];
++      clientState.SequenceAck = (NetBuffer[2] << 24) | (NetBuffer[3] << 16) |
++                                (NetBuffer[4] << 8) | NetBuffer[5];
+     }
+ 
+-		const int consistencyAck = (NetBuffer[6] << 24) | (NetBuffer[7] << 16) | (NetBuffer[8] << 8) | NetBuffer[9];
++    const int consistencyAck = (NetBuffer[6] << 24) | (NetBuffer[7] << 16) |
++                               (NetBuffer[8] << 8) | NetBuffer[9];
+ 
+     int curByte = 10;
+-		if (NetBuffer[0] & NCMD_QUITTERS)
+-		{
++    if (NetBuffer[0] & NCMD_QUITTERS) {
+       int numPlayers = NetBuffer[curByte++];
+       for (int i = 0; i < numPlayers; ++i)
+         DisconnectClient(NetBuffer[curByte++]);
+@@ -950,17 +902,19 @@ static void GetPackets()
+     int baseSequence = -1;
+     const int totalTics = NetBuffer[curByte++];
+     if (totalTics > 0)
+-			baseSequence = (NetBuffer[curByte++] << 24) | (NetBuffer[curByte++] << 16) | (NetBuffer[curByte++] << 8) | NetBuffer[curByte++];
++      baseSequence = (NetBuffer[curByte++] << 24) |
++                     (NetBuffer[curByte++] << 16) |
++                     (NetBuffer[curByte++] << 8) | NetBuffer[curByte++];
+ 
+     int baseConsistency = -1;
+     const int ranTics = NetBuffer[curByte++];
+     if (ranTics > 0)
+-			baseConsistency = (NetBuffer[curByte++] << 24) | (NetBuffer[curByte++] << 16) | (NetBuffer[curByte++] << 8) | NetBuffer[curByte++];
++      baseConsistency = (NetBuffer[curByte++] << 24) |
++                        (NetBuffer[curByte++] << 16) |
++                        (NetBuffer[curByte++] << 8) | NetBuffer[curByte++];
+ 
+-		if (NetMode == NET_PacketServer)
+-		{
+-			if (validID)
+-			{
++    if (NetMode == NET_PacketServer) {
++      if (validID) {
+         if (clientNum == Net_Arbitrator)
+           CommandsAhead = NetBuffer[curByte];
+         else if (consoleplayer == Net_Arbitrator)
+@@ -969,42 +923,40 @@ static void GetPackets()
+       ++curByte;
+     }
+ 
+-		for (int p = 0; p < playerCount; ++p)
+-		{
++    for (int p = 0; p < playerCount; ++p) {
+       const int pNum = NetBuffer[curByte++];
+       auto &pState = ClientStates[pNum];
+ 
+-			// This gets sent over per-player so latencies are correct in packet server mode.
+-			if (NetMode == NET_PacketServer && clientNum == Net_Arbitrator)
+-			{
++      // This gets sent over per-player so latencies are correct in packet
++      // server mode.
++      if (NetMode == NET_PacketServer && clientNum == Net_Arbitrator) {
+         if (consoleplayer != Net_Arbitrator)
+-					pState.AverageLatency = (NetBuffer[curByte++] << 8) | NetBuffer[curByte++];
++          pState.AverageLatency =
++              (NetBuffer[curByte++] << 8) | NetBuffer[curByte++];
+         else
+           curByte += 2;
+       }
+ 
+-			// Make sure the host doesn't update a player's last consistency ack with their own data.
+-			if (NetMode != NET_PacketServer || consoleplayer != Net_Arbitrator
+-				|| pNum == Net_Arbitrator || clientNum != Net_Arbitrator)
+-			{
++      // Make sure the host doesn't update a player's last consistency ack with
++      // their own data.
++      if (NetMode != NET_PacketServer || consoleplayer != Net_Arbitrator ||
++          pNum == Net_Arbitrator || clientNum != Net_Arbitrator) {
+         pState.ConsistencyAck = consistencyAck;
+       }
+ 
+       TArray<int16_t> consistencies = {};
+-			for (int r = 0; r < ranTics; ++r)
+-			{
++      for (int r = 0; r < ranTics; ++r) {
+         int ofs = NetBuffer[curByte++];
+-				consistencies.Insert(ofs, (NetBuffer[curByte++] << 8) | NetBuffer[curByte++]);
++        consistencies.Insert(ofs, (NetBuffer[curByte++] << 8) |
++                                      NetBuffer[curByte++]);
+       }
+ 
+-			for (size_t i = 0u; i < consistencies.Size(); ++i)
+-			{
++      for (size_t i = 0u; i < consistencies.Size(); ++i) {
+         const int cTic = baseConsistency + int(i);
+         if (cTic <= pState.CurrentNetConsistency)
+           continue;
+ 
+-				if (cTic > pState.CurrentNetConsistency + 1 || !consistencies[i])
+-				{
++        if (cTic > pState.CurrentNetConsistency + 1 || !consistencies[i]) {
+           clientState.Flags |= CF_MISSING_CON;
+           break;
+         }
+@@ -1013,94 +965,95 @@ static void GetPackets()
+         pState.CurrentNetConsistency = cTic;
+       }
+ 
+-			// Each tic within a given packet is given a sequence number to ensure that things were put
+-			// back together correctly. Normally this wouldn't matter as much but since we need to keep
+-			// clients in lock step a misordered packet will instantly cause a desync.
+-			TArray<TArrayView<uint8_t>> data = {}; // each contained TArrayView represents a packet.
+-			for (int t = 0; t < totalTics; ++t)
+-			{
+-				// Try and reorder the tics if they're all there but end up out of order.
++      // Each tic within a given packet is given a sequence number to ensure
++      // that things were put back together correctly. Normally this wouldn't
++      // matter as much but since we need to keep clients in lock step a
++      // misordered packet will instantly cause a desync.
++      TArray<TArrayView<uint8_t>> data =
++          {}; // each contained TArrayView represents a packet.
++      for (int t = 0; t < totalTics; ++t) {
++        // Try and reorder the tics if they're all there but end up out of
++        // order.
+         const int ofs = NetBuffer[curByte++];
+ 
+-				TArrayView<uint8_t> skipper = TArrayView(&NetBuffer[curByte], MAX_MSGLEN - curByte);
++        TArrayView<uint8_t> skipper =
++            TArrayView(&NetBuffer[curByte], MAX_MSGLEN - curByte);
+         SkipUserCmdMessage(skipper);
+ 
+-				TArrayView<uint8_t> packet = TArrayView(&NetBuffer[curByte], skipper.Data() - &NetBuffer[curByte]);
++        TArrayView<uint8_t> packet = TArrayView(
++            &NetBuffer[curByte], skipper.Data() - &NetBuffer[curByte]);
+         data.Insert(ofs, packet);
+ 
+         curByte += skipper.Data() - &NetBuffer[curByte];
+       }
+ 
+-			// If it's from a previous waiting period, the commands are no longer relevant.
++      // If it's from a previous waiting period, the commands are no longer
++      // relevant.
+       if (!validID)
+         continue;
+ 
+-			for (size_t i = 0u; i < data.Size(); ++i)
+-			{
++      for (size_t i = 0u; i < data.Size(); ++i) {
+         const int seq = baseSequence + int(i);
+         // Duplicate command, ignore it.
+         if (seq <= pState.CurrentSequence)
+           continue;
+ 
+-				// Skipped a command. Packet likely got corrupted while being put back together, so have
+-				// the client send over the properly ordered commands. 
+-				if (seq > pState.CurrentSequence + 1 || data[i] == nullptr)
+-				{
++        // Skipped a command. Packet likely got corrupted while being put back
++        // together, so have the client send over the properly ordered commands.
++        if (seq > pState.CurrentSequence + 1 || data[i] == nullptr) {
+           clientState.Flags |= CF_MISSING_SEQ;
+           break;
+         }
+ 
+         ReadUserCmdMessage(data[i], pNum, seq);
+-				// The host and clients are a bit desynched here. We don't want to update the host's latest ack with their own
+-				// info since they get those from the actual clients, but clients have to get them from the host since they
+-				// don't commincate with each other except in P2P mode.
+-				if (NetMode != NET_PacketServer || consoleplayer != Net_Arbitrator
+-					|| pNum == Net_Arbitrator || clientNum != Net_Arbitrator)
+-				{
++        // The host and clients are a bit desynched here. We don't want to
++        // update the host's latest ack with their own info since they get those
++        // from the actual clients, but clients have to get them from the host
++        // since they don't commincate with each other except in P2P mode.
++        if (NetMode != NET_PacketServer || consoleplayer != Net_Arbitrator ||
++            pNum == Net_Arbitrator || clientNum != Net_Arbitrator) {
+           pState.CurrentSequence = seq;
+         }
+-				// Update this so host switching doesn't have any hiccups in packet-server mode.
+-				if (NetMode == NET_PacketServer && consoleplayer != Net_Arbitrator && pNum != Net_Arbitrator)
++        // Update this so host switching doesn't have any hiccups in
++        // packet-server mode.
++        if (NetMode == NET_PacketServer && consoleplayer != Net_Arbitrator &&
++            pNum != Net_Arbitrator)
+           pState.SequenceAck = seq;
+       }
+     }
+   }
+ 
+-	for (const auto& ack : latencyAcks)
+-	{
++  for (const auto &ack : latencyAcks) {
+     NetBuffer[0] = NCMD_LATENCYACK;
+     NetBuffer[1] = ack.Seq;
+     HSendPacket(ack.Client, 2);
+   }
+ }
+ 
+-static void SendHeartbeat()
+-{
++static void SendHeartbeat() {
+   // TODO: This could probably also be used to determine if there's packets
+   // missing and a retransmission is needed.
+   const uint64_t time = I_msTime();
+-	for (auto client : NetworkClients)
+-	{
++  for (auto client : NetworkClients) {
+     if (client == consoleplayer)
+       continue;
+ 
+     auto &state = ClientStates[client];
+-		if (LastLatencyUpdate >= MAXSENDTICS)
+-		{
++    if (LastLatencyUpdate >= MAXSENDTICS) {
+       int delta = 0;
+       const uint8_t startTic = state.CurrentLatency - MAXSENDTICS;
+-			for (int i = 0; i < MAXSENDTICS; ++i)
+-			{
++      for (int i = 0; i < MAXSENDTICS; ++i) {
+         const int tic = (startTic + i) % MAXSENDTICS;
+-				const uint64_t high = state.RecvTime[tic] < state.SentTime[tic] ? time : state.RecvTime[tic];
++        const uint64_t high = state.RecvTime[tic] < state.SentTime[tic]
++                                  ? time
++                                  : state.RecvTime[tic];
+         delta += high - state.SentTime[tic];
+       }
+ 
+       state.AverageLatency = delta / MAXSENDTICS;
+     }
+ 
+-		if (state.bNewLatency)
+-		{
++    if (state.bNewLatency) {
+       // Use the most up-to-date time here for better accuracy.
+       state.SentTime[state.CurrentLatency % MAXSENDTICS] = I_msTime();
+       state.bNewLatency = false;
+@@ -1112,32 +1065,30 @@ static void SendHeartbeat()
+   }
+ }
+ 
+-static void CheckConsistencies()
+-{
+-	// Check consistencies retroactively to see if there was a desync at some point. We still
+-	// check the local client here because in packet server mode these could realistically desync
+-	// if the client's current position doesn't agree with the host.
+-	for (auto client : NetworkClients)
+-	{
++static void CheckConsistencies() {
++  // Check consistencies retroactively to see if there was a desync at some
++  // point. We still check the local client here because in packet server mode
++  // these could realistically desync if the client's current position doesn't
++  // agree with the host.
++  for (auto client : NetworkClients) {
+     auto &clientState = ClientStates[client];
+-		// If previously inconsistent, always mark it as such going forward. We don't want this to
+-		// accidentally go away at some point since the game state is already completely broken.
+-		if (players[client].inconsistant)
+-		{
++    // If previously inconsistent, always mark it as such going forward. We
++    // don't want this to accidentally go away at some point since the game
++    // state is already completely broken.
++    if (players[client].inconsistant) {
+       clientState.LastVerifiedConsistency = clientState.CurrentNetConsistency;
+-		}
+-		else
+-		{
++    } else {
+       // Make sure we don't check past tics we haven't even ran yet.
+-			const int limit = min<int>(CurrentConsistency - 1, clientState.CurrentNetConsistency);
+-			while (clientState.LastVerifiedConsistency < limit)
+-			{
++      const int limit =
++          min<int>(CurrentConsistency - 1, clientState.CurrentNetConsistency);
++      while (clientState.LastVerifiedConsistency < limit) {
+         ++clientState.LastVerifiedConsistency;
+         const int tic = clientState.LastVerifiedConsistency % BACKUPTICS;
+-				if (clientState.LocalConsistency[tic] != clientState.NetConsistency[tic])
+-				{
++        if (clientState.LocalConsistency[tic] !=
++            clientState.NetConsistency[tic]) {
+           players[client].inconsistant = true;
+-					clientState.LastVerifiedConsistency = clientState.CurrentNetConsistency;
++          clientState.LastVerifiedConsistency =
++              clientState.CurrentNetConsistency;
+           break;
+         }
+       }
+@@ -1160,20 +1111,18 @@ extern FRandom pr_acs;
+ extern FRandom pr_chase;
+ extern FRandom pr_damagemobj;
+ 
+-static uint32_t StaticSumSeeds()
+-{
+-	return
+-		pr_spawnmobj.Seed() +
+-		pr_acs.Seed() +
+-		pr_chase.Seed() +
++static uint32_t StaticSumSeeds() {
++  return pr_spawnmobj.Seed() + pr_acs.Seed() + pr_chase.Seed() +
+          pr_damagemobj.Seed();
+ }
+ 
+-static int16_t CalculateConsistency(int client, uint32_t seed)
+-{
+-	if (players[client].mo != nullptr)
+-	{
+-		seed += int((players[client].mo->X() + players[client].mo->Y() + players[client].mo->Z()) * 257) + players[client].mo->Angles.Yaw.BAMs() + players[client].mo->Angles.Pitch.BAMs();
++static int16_t CalculateConsistency(int client, uint32_t seed) {
++  if (players[client].mo != nullptr) {
++    seed += int((players[client].mo->X() + players[client].mo->Y() +
++                 players[client].mo->Z()) *
++                257) +
++            players[client].mo->Angles.Yaw.BAMs() +
++            players[client].mo->Angles.Pitch.BAMs();
+     seed ^= players[client].health;
+   }
+ 
+@@ -1184,23 +1133,21 @@ static int16_t CalculateConsistency(int client, uint32_t seed)
+ // Ran a tick, so prep the next consistencies to send out.
+ // [RH] Include some random seeds and player stuff in the consistancy
+ // check, not just the player's x position like BOOM.
+-static void MakeConsistencies()
+-{
++static void MakeConsistencies() {
+   if (!netgame || demoplayback || (gametic % TicDup) || !IsMapLoaded())
+     return;
+ 
+   const uint32_t rngSum = StaticSumSeeds();
+-	for (auto client : NetworkClients)
+-	{
++  for (auto client : NetworkClients) {
+     auto &clientState = ClientStates[client];
+-		clientState.LocalConsistency[CurrentConsistency % BACKUPTICS] = CalculateConsistency(client, rngSum);
++    clientState.LocalConsistency[CurrentConsistency % BACKUPTICS] =
++        CalculateConsistency(client, rngSum);
+   }
+ 
+   ++CurrentConsistency;
+ }
+ 
+-static bool Net_UpdateStatus()
+-{
++static bool Net_UpdateStatus() {
+   if (!netgame || demoplayback || NetworkClients.Size() <= 1)
+     return true;
+ 
+@@ -1210,36 +1157,31 @@ static bool Net_UpdateStatus()
+   // Check against the previous tick in case we're recovering from a huge
+   // system hiccup. If the game has taken too long to update, it's likely
+   // another client is hanging up the game.
+-	if (LastEnterTic - LastGameUpdate >= MAXSENDTICS * TicDup)
+-	{
++  if (LastEnterTic - LastGameUpdate >= MAXSENDTICS * TicDup) {
+     // Try again in the next MaxDelay tics.
+     LastGameUpdate = EnterTic;
+ 
+-		if (NetMode != NET_PacketServer || consoleplayer == Net_Arbitrator)
+-		{
+-			// Use a missing packet here to tell the other players to retransmit instead of simply retransmitting our
+-			// own data over instantly. This avoids flooding the network at a time where it's not opportune to do so.
++    if (NetMode != NET_PacketServer || consoleplayer == Net_Arbitrator) {
++      // Use a missing packet here to tell the other players to retransmit
++      // instead of simply retransmitting our own data over instantly. This
++      // avoids flooding the network at a time where it's not opportune to do
++      // so.
+       const int curTic = gametic / TicDup;
+-			for (auto client : NetworkClients)
+-			{
++      for (auto client : NetworkClients) {
+         if (client == consoleplayer)
+           continue;
+ 
+-				if (ClientStates[client].CurrentSequence < curTic)
+-				{
++        if (ClientStates[client].CurrentSequence < curTic) {
+           ClientStates[client].Flags |= CF_MISSING;
+           players[client].waiting = true;
+-				}
+-				else
+-				{
++        } else {
+           players[client].waiting = false;
+         }
+       }
+-		}
+-		else
+-		{
+-			// In packet server mode, the client is waiting for data from the host and hasn't recieved it yet. Send
+-			// our data back over in case the host is waiting for us.
++    } else {
++      // In packet server mode, the client is waiting for data from the host and
++      // hasn't recieved it yet. Send our data back over in case the host is
++      // waiting for us.
+       ClientStates[Net_Arbitrator].Flags |= CF_MISSING;
+       players[Net_Arbitrator].waiting = true;
+     }
+@@ -1248,8 +1190,7 @@ static bool Net_UpdateStatus()
+   if (LevelStartStatus == LST_HOST)
+     return false;
+ 
+-	for (auto client : NetworkClients)
+-	{
++  for (auto client : NetworkClients) {
+     if (players[client].waiting)
+       return false;
+   }
+@@ -1257,28 +1198,22 @@ static bool Net_UpdateStatus()
+   // Wait for the game to stabilize a bit after launch before skipping commands.
+   bool updated = false;
+   int lowestDiff = INT_MAX;
+-	if (gametic > TICRATE * 2 && !(gametic % TicDup))
+-	{
+-		if (NetMode != NET_PacketServer)
+-		{
++  if (gametic > TICRATE * 2 && !(gametic % TicDup)) {
++    if (NetMode != NET_PacketServer) {
+       // Check if everyone has a buffer for us. If they do, we're too far ahead.
+       bool allUpdated = true;
+       int highestLatency = 0;
+-			for (auto client : NetworkClients)
+-			{
+-				if (client != consoleplayer)
+-				{
+-					if (ClientStates[client].Flags & CF_UPDATED)
+-					{
++      for (auto client : NetworkClients) {
++        if (client != consoleplayer) {
++          if (ClientStates[client].Flags & CF_UPDATED) {
+             updated = true;
+-						int diff = ClientStates[client].SequenceAck - ClientStates[client].CurrentSequence;
++            int diff = ClientStates[client].SequenceAck -
++                       ClientStates[client].CurrentSequence;
+             if (diff < lowestDiff)
+               lowestDiff = diff;
+             if (ClientStates[client].AverageLatency > highestLatency)
+               highestLatency = ClientStates[client].AverageLatency;
+-					}
+-					else
+-					{
++          } else {
+             allUpdated = false;
+           }
+         }
+@@ -1286,34 +1221,29 @@ static bool Net_UpdateStatus()
+         ClientStates[client].Flags &= ~CF_UPDATED;
+       }
+ 
+-			if (allUpdated)
+-			{
+-				// If we're consistently ahead of the highest latency player we're connected to, slow down
+-				// as well since we should generally be in that ballpark.
++      if (allUpdated) {
++        // If we're consistently ahead of the highest latency player we're
++        // connected to, slow down as well since we should generally be in that
++        // ballpark.
+         const int diff = (ClientTic - gametic) / TicDup;
+-				const int goal = static_cast<int>(ceil((double)highestLatency / TICRATE)) / TicDup + 1;
++        const int goal =
++            static_cast<int>(ceil((double)highestLatency / TICRATE)) / TicDup +
++            1;
+         if (diff > goal)
+           lowestDiff = diff - goal;
+       }
+-		}
+-		else if (consoleplayer == Net_Arbitrator)
+-		{
++    } else if (consoleplayer == Net_Arbitrator) {
+       // If we're consistenty ahead of the highest sequence player, slow down.
+       bool allUpdated = true;
+       const int curTic = ClientTic / TicDup;
+-			for (auto client : NetworkClients)
+-			{
+-				if (client != Net_Arbitrator)
+-				{
+-					if (ClientStates[client].Flags & CF_UPDATED)
+-					{
++      for (auto client : NetworkClients) {
++        if (client != Net_Arbitrator) {
++          if (ClientStates[client].Flags & CF_UPDATED) {
+             updated = true;
+             int diff = curTic - ClientStates[client].CurrentSequence;
+             if (diff < lowestDiff)
+               lowestDiff = diff;
+-					}
+-					else
+-					{
++          } else {
+             allUpdated = false;
+           }
+         }
+@@ -1321,17 +1251,14 @@ static bool Net_UpdateStatus()
+         ClientStates[client].Flags &= ~CF_UPDATED;
+       }
+ 
+-			if (allUpdated)
+-			{
+-				// If we're consistently ahead of the world, force a stop here as well. Likely some client
+-				// has fallen super far behind and needs to be reset.
++      if (allUpdated) {
++        // If we're consistently ahead of the world, force a stop here as well.
++        // Likely some client has fallen super far behind and needs to be reset.
+         const int diff = curTic - gametic / TicDup;
+         if (diff > 1)
+           lowestDiff = diff;
+       }
+-		}
+-		else if (ClientStates[Net_Arbitrator].Flags & CF_UPDATED)
+-		{
++    } else if (ClientStates[Net_Arbitrator].Flags & CF_UPDATED) {
+       // Check if the host is reporting that we're too far ahead of them.
+       updated = true;
+       lowestDiff = CommandsAhead;
+@@ -1339,20 +1266,15 @@ static bool Net_UpdateStatus()
+     }
+   }
+ 
+-	if (updated)
+-	{
++  if (updated) {
+     lowestDiff -= StabilityBuffer;
+-		if (lowestDiff > 0)
+-		{
+-			if (SkipCommandTimer++ > TICRATE / 2)
+-			{
++    if (lowestDiff > 0) {
++      if (SkipCommandTimer++ > TICRATE / 2) {
+         SkipCommandTimer = 0;
+         if (SkipCommandAmount <= 0)
+           SkipCommandAmount = lowestDiff * TicDup;
+       }
+-		}
+-		else
+-		{
++    } else {
+       SkipCommandTimer = 0;
+     }
+   }
+@@ -1360,18 +1282,15 @@ static bool Net_UpdateStatus()
+   return true;
+ }
+ 
+-void NetUpdate(int tics)
+-{
++void NetUpdate(int tics) {
+   GetPackets();
+   if (tics <= 0)
+     return;
+ 
+-	if (netgame && !demoplayback)
+-	{
++  if (netgame && !demoplayback) {
+     // If a tic has passed, always send out a heartbeat packet (also doubles as
+     // a latency measurement tool).
+-		if (NetMode != NET_PacketServer || consoleplayer == Net_Arbitrator)
+-		{
++    if (NetMode != NET_PacketServer || consoleplayer == Net_Arbitrator) {
+       LastLatencyUpdate += tics;
+       if (FullLatencyCycle > 0)
+         FullLatencyCycle = max<int>(FullLatencyCycle - tics, 0);
+@@ -1385,46 +1304,38 @@ void NetUpdate(int tics)
+     CheckConsistencies();
+   }
+ 
+-	// Sit idle after the level has loaded until everyone is ready to go. This keeps players better
+-	// in sync with each other than relying on tic balancing to speed up/slow down the game and mirrors
+-	// how players would wait for a true server to load.
+-	if (LevelStartStatus != LST_READY)
+-	{
+-		if (LevelStartStatus == LST_WAITING)
+-		{
+-			if (NetworkClients.Size() == 1)
+-			{
++  // Sit idle after the level has loaded until everyone is ready to go. This
++  // keeps players better in sync with each other than relying on tic balancing
++  // to speed up/slow down the game and mirrors how players would wait for a
++  // true server to load.
++  if (LevelStartStatus != LST_READY) {
++    if (LevelStartStatus == LST_WAITING) {
++      if (NetworkClients.Size() == 1) {
+         // If we got stuck in limbo waiting, force start the map.
+         CheckLevelStart(Net_Arbitrator, 0);
+-			}
+-			else
+-			{
+-				if (consoleplayer != Net_Arbitrator && IsMapLoaded())
+-				{
++      } else {
++        if (consoleplayer != Net_Arbitrator && IsMapLoaded()) {
+           NetBuffer[0] = NCMD_LEVELREADY;
+           NetBuffer[1] = CurrentLobbyID;
+           HSendPacket(Net_Arbitrator, 2);
+         }
+       }
+-		}
+-		else if (LevelStartStatus == LST_HOST)
+-		{
+-			// If we're the host, idly wait until all packets have arrived. There's no point in predicting since we
+-			// know for a fact the game won't be started until everyone is accounted for. (Packet server only)
++    } else if (LevelStartStatus == LST_HOST) {
++      // If we're the host, idly wait until all packets have arrived. There's no
++      // point in predicting since we know for a fact the game won't be started
++      // until everyone is accounted for. (Packet server only)
+       const int curTic = gametic / TicDup;
+       int lowestSeq = curTic;
+-			for (auto client : NetworkClients)
+-			{
+-				if (client != Net_Arbitrator && ClientStates[client].CurrentSequence < lowestSeq)
++      for (auto client : NetworkClients) {
++        if (client != Net_Arbitrator &&
++            ClientStates[client].CurrentSequence < lowestSeq)
+           lowestSeq = ClientStates[client].CurrentSequence;
+       }
+ 
+       if (lowestSeq >= curTic)
+         LevelStartStatus = LST_READY;
+     }
+-	}
+-	else if (LevelStartDelay > 0)
+-	{
++  } else if (LevelStartDelay > 0) {
+     if (LevelStartDelay < tics)
+       tics -= LevelStartDelay;
+ 
+@@ -1434,55 +1345,47 @@ void NetUpdate(int tics)
+   bool netGood = Net_UpdateStatus();
+   const int startTic = ClientTic;
+   tics = min<int>(tics, MAXSENDTICS * TicDup);
+-	if ((startTic + tics - gametic) / TicDup > BACKUPTICS / 2)
+-	{
++  if ((startTic + tics - gametic) / TicDup > BACKUPTICS / 2) {
+     tics = (gametic + BACKUPTICS / 2 * TicDup) - startTic;
+-		if (tics <= 0)
+-		{
++    if (tics <= 0) {
+       tics = 1;
+       netGood = false;
+     }
+   }
+ 
+-	for (int i = 0; i < tics; ++i)
+-	{
++  for (int i = 0; i < tics; ++i) {
+     I_StartTic();
+     D_ProcessEvents();
+     if (pauseext || !netGood)
+       break;
+ 
+-		if (SkipCommandAmount > 0)
+-		{
++    if (SkipCommandAmount > 0) {
+       --SkipCommandAmount;
+       continue;
+     }
+ 
+     G_BuildTiccmd(&LocalCmds[ClientTic++ % LOCALCMDTICS]);
+-		if (TicDup == 1)
+-		{
++    if (TicDup == 1) {
+       Net_NewClientTic();
+-		}
+-		else
+-		{
++    } else {
+       const int ticDiff = ClientTic % TicDup;
+-			if (ticDiff)
+-			{
++      if (ticDiff) {
+         const int startTic = ClientTic - ticDiff;
+ 
+-				// Even if we're not sending out inputs, update the local commands so that the TicDup
+-				// is correctly played back while predicting as best as possible. This will help prevent
+-				// minor hitches when playing online.
++        // Even if we're not sending out inputs, update the local commands so
++        // that the TicDup is correctly played back while predicting as best as
++        // possible. This will help prevent minor hitches when playing online.
+         for (int j = ClientTic - 1; j > startTic; --j)
+-					LocalCmds[(j - 1) % LOCALCMDTICS].buttons |= LocalCmds[j % LOCALCMDTICS].buttons;
+-			}
+-			else
+-			{
++          LocalCmds[(j - 1) % LOCALCMDTICS].buttons |=
++              LocalCmds[j % LOCALCMDTICS].buttons;
++      } else {
+         // Gather up the Command across the last TicDup number of tics
+         // and average them out. These are propagated back to the local
+         // command so that they'll be predicted correctly.
+         const int lastTic = ClientTic - TicDup;
+         for (int j = ClientTic - 1; j > lastTic; --j)
+-					LocalCmds[(j - 1) % LOCALCMDTICS].buttons |= LocalCmds[j % LOCALCMDTICS].buttons;
++          LocalCmds[(j - 1) % LOCALCMDTICS].buttons |=
++              LocalCmds[j % LOCALCMDTICS].buttons;
+ 
+         int pitch = 0;
+         int yaw = 0;
+@@ -1491,8 +1394,7 @@ void NetUpdate(int tics)
+         int sidemove = 0;
+         int upmove = 0;
+ 
+-				for (int j = 0; j < TicDup; ++j)
+-				{
++        for (int j = 0; j < TicDup; ++j) {
+           const int mod = (lastTic + j) % LOCALCMDTICS;
+           pitch += LocalCmds[mod].pitch;
+           yaw += LocalCmds[mod].yaw;
+@@ -1509,8 +1411,7 @@ void NetUpdate(int tics)
+         sidemove /= TicDup;
+         upmove /= TicDup;
+ 
+-				for (int j = 0; j < TicDup; ++j)
+-				{
++        for (int j = 0; j < TicDup; ++j) {
+           const int mod = (lastTic + j) % LOCALCMDTICS;
+           LocalCmds[mod].pitch = pitch;
+           LocalCmds[mod].yaw = yaw;
+@@ -1526,9 +1427,9 @@ void NetUpdate(int tics)
+   }
+ 
+   const int newestTic = ClientTic / TicDup;
+-	if (demoplayback)
+-	{
+-		// Don't touch net command data while playing a demo, as it'll already exist.
++  if (demoplayback) {
++    // Don't touch net command data while playing a demo, as it'll already
++    // exist.
+     for (auto client : NetworkClients)
+       ClientStates[client].CurrentSequence = newestTic;
+ 
+@@ -1543,25 +1444,21 @@ void NetUpdate(int tics)
+   int quitNums[MAXPLAYERS];
+   int players = 1u;
+   int maxCommands = MAXSENDTICS;
+-	if (NetMode == NET_PacketServer && consoleplayer == Net_Arbitrator)
+-	{
++  if (NetMode == NET_PacketServer && consoleplayer == Net_Arbitrator) {
+     // In packet server mode special handling is used to ensure the host only
+     // sends out available tics when ready instead of constantly shotgunning
+     // them out as they're made locally.
+     startSequence = gametic / TicDup;
+     int lowestSeq = endSequence - 1;
+-		for (auto client : NetworkClients)
+-		{
++    for (auto client : NetworkClients) {
+       if (client == Net_Arbitrator)
+         continue;
+ 
+-			// The host has special handling when disconnecting in a packet server game.
+-			if (ClientStates[client].Flags & CF_QUIT)
+-			{
++      // The host has special handling when disconnecting in a packet server
++      // game.
++      if (ClientStates[client].Flags & CF_QUIT) {
+         quitNums[quitters++] = client;
+-			}
+-			else
+-			{
++      } else {
+         ++players;
+         if (ClientStates[client].CurrentSequence < lowestSeq)
+           lowestSeq = ClientStates[client].CurrentSequence;
+@@ -1570,54 +1467,62 @@ void NetUpdate(int tics)
+ 
+     endSequence = lowestSeq + 1;
+ 
+-		// To avoid fragmenting, split up commands into groups of 16p with only 2 commands per packet.
+-		// If the average packet size with 16p is ~500b, this gives up to ~1000b per packet of data
+-		// with some leeway for network events and UDP header data. Most routers have an MTU of 1500b.
+-		// If player count is < 16, scale the number of commands by 1 per every 4 less players.
+-		// If player count is < 8, scale the number of commands by 1 per every 1 less player.
+-		// If player count is < 4, scale the number of commands by 4 per every 1 less player.
++    // To avoid fragmenting, split up commands into groups of 16p with only 2
++    // commands per packet. If the average packet size with 16p is ~500b, this
++    // gives up to ~1000b per packet of data with some leeway for network events
++    // and UDP header data. Most routers have an MTU of 1500b. If player count
++    // is < 16, scale the number of commands by 1 per every 4 less players. If
++    // player count is < 8, scale the number of commands by 1 per every 1 less
++    // player. If player count is < 4, scale the number of commands by 4 per
++    // every 1 less player.
+     constexpr size_t MaxTicsPerPacket = 2u;
+-		if (players > 1u)
+-		{
++    if (players > 1u) {
+       maxCommands = MaxTicsPerPacket;
+       if (players >= MaxPlayersPerPacket / 2 && players < MaxPlayersPerPacket)
+         maxCommands = MaxTicsPerPacket + (MaxPlayersPerPacket - players) / 4;
+-			else if (players >= MaxPlayersPerPacket / 4 && players < MaxPlayersPerPacket / 2)
+-				maxCommands = MaxPlayersPerPacket / 4 + MaxPlayersPerPacket / 2 - players;
++      else if (players >= MaxPlayersPerPacket / 4 &&
++               players < MaxPlayersPerPacket / 2)
++        maxCommands =
++            MaxPlayersPerPacket / 4 + MaxPlayersPerPacket / 2 - players;
+       else if (players < MaxPlayersPerPacket / 4)
+-				maxCommands = MaxPlayersPerPacket / 2 + (MaxPlayersPerPacket / 4 - players) * 4;
++        maxCommands =
++            MaxPlayersPerPacket / 2 + (MaxPlayersPerPacket / 4 - players) * 4;
+     }
+   }
+ 
+   const bool resendOnly = startSequence == endSequence && (ClientTic % TicDup);
+-	const int playerLoops = static_cast<int>(ceil((double)players / MaxPlayersPerPacket));
+-	for (auto client : NetworkClients)
+-	{
+-		// If in packet server mode, we don't want to send information to anyone but the host. On the other
+-		// hand, if we're the host we send out everyone's info to everyone else.
+-		if (NetMode == NET_PacketServer && consoleplayer != Net_Arbitrator && client != Net_Arbitrator)
++  const int playerLoops =
++      static_cast<int>(ceil((double)players / MaxPlayersPerPacket));
++  for (auto client : NetworkClients) {
++    // If in packet server mode, we don't want to send information to anyone but
++    // the host. On the other hand, if we're the host we send out everyone's
++    // info to everyone else.
++    if (NetMode == NET_PacketServer && consoleplayer != Net_Arbitrator &&
++        client != Net_Arbitrator)
+       continue;
+ 
+     auto &curState = ClientStates[client];
+-		// If we can only resend, don't send clients any information that they already have. If
+-		// we couldn't generate any commands because we're at the cap, instead send out a heartbeat.
+-		if ((curState.Flags & CF_QUIT) || (resendOnly && !(curState.Flags & (CF_RETRANSMIT | CF_MISSING))))
++    // If we can only resend, don't send clients any information that they
++    // already have. If we couldn't generate any commands because we're at the
++    // cap, instead send out a heartbeat.
++    if ((curState.Flags & CF_QUIT) ||
++        (resendOnly && !(curState.Flags & (CF_RETRANSMIT | CF_MISSING))))
+       continue;
+ 
+     const bool isSelf = client == consoleplayer;
+     NetBuffer[0] = (curState.Flags & CF_MISSING) ? NCMD_RETRANSMIT : 0;
+     curState.Flags &= ~CF_MISSING;
+ 
+-		NetBuffer[1] = (curState.Flags & CF_RETRANSMIT_SEQ) ? curState.ResendID : CurrentLobbyID;
++    NetBuffer[1] = (curState.Flags & CF_RETRANSMIT_SEQ) ? curState.ResendID
++                                                        : CurrentLobbyID;
+     int lastSeq = curState.CurrentSequence;
+     int lastCon = curState.CurrentNetConsistency;
+-		if (NetMode == NET_PacketServer && consoleplayer != Net_Arbitrator)
+-		{
+-			// If in packet-server mode, make sure to get the lowest sequence of all players
+-			// since the host themselves might have gotten updated but someone else in the packet
+-			// did not. That way the host knows to send over the correct tic.
+-			for (auto cl : NetworkClients)
+-			{
++    if (NetMode == NET_PacketServer && consoleplayer != Net_Arbitrator) {
++      // If in packet-server mode, make sure to get the lowest sequence of all
++      // players since the host themselves might have gotten updated but someone
++      // else in the packet did not. That way the host knows to send over the
++      // correct tic.
++      for (auto cl : NetworkClients) {
+         if (ClientStates[cl].CurrentSequence < lastSeq)
+           lastSeq = ClientStates[cl].CurrentSequence;
+         if (ClientStates[cl].CurrentNetConsistency < lastCon)
+@@ -1635,62 +1540,63 @@ void NetUpdate(int tics)
+     NetBuffer[8] = (lastCon >> 8);
+     NetBuffer[9] = lastCon;
+ 
+-		if (curState.Flags & CF_RETRANSMIT_SEQ)
+-		{
++    if (curState.Flags & CF_RETRANSMIT_SEQ) {
+       curState.Flags &= ~CF_RETRANSMIT_SEQ;
+       if (curState.ResendSequenceFrom < 0)
+         curState.ResendSequenceFrom = curState.SequenceAck + 1;
+     }
+ 
+-		const int sequenceNum = curState.ResendSequenceFrom >= 0 ? curState.ResendSequenceFrom : startSequence;
++    const int sequenceNum = curState.ResendSequenceFrom >= 0
++                                ? curState.ResendSequenceFrom
++                                : startSequence;
+     const int numTics = clamp<int>(endSequence - sequenceNum, 0, MAXSENDTICS);
+ 
+-		if (curState.Flags & CF_RETRANSMIT_CON)
+-		{
++    if (curState.Flags & CF_RETRANSMIT_CON) {
+       curState.Flags &= ~CF_RETRANSMIT_CON;
+       if (curState.ResendConsistencyFrom < 0)
+         curState.ResendConsistencyFrom = curState.ConsistencyAck + 1;
+     }
+ 
+-		const int baseConsistency = curState.ResendConsistencyFrom >= 0 ? curState.ResendConsistencyFrom : LastSentConsistency;
+-		// Don't bother sending over consistencies in packet server unless you're the host.
++    const int baseConsistency = curState.ResendConsistencyFrom >= 0
++                                    ? curState.ResendConsistencyFrom
++                                    : LastSentConsistency;
++    // Don't bother sending over consistencies in packet server unless you're
++    // the host.
+     int ran = 0;
+     if (NetMode != NET_PacketServer || consoleplayer == Net_Arbitrator)
+       ran = clamp<int>(CurrentConsistency - baseConsistency, 0, MAXSENDTICS);
+ 
+-		int ticLoops = static_cast<int>(ceil(max<double>(numTics, ran) / maxCommands));
++    int ticLoops =
++        static_cast<int>(ceil(max<double>(numTics, ran) / maxCommands));
+     if (isSelf || !ticLoops)
+       ticLoops = 1;
+ 
+     const int maxPlayerLoops = isSelf ? 1 : playerLoops;
+     int totalQuits = quitters;
+-		for (int tLoops = 0, curTicOfs = 0; tLoops < ticLoops; ++tLoops, curTicOfs += maxCommands)
+-		{
+-			for (int pLoops = 0, curPlayerOfs = 0; pLoops < maxPlayerLoops; ++pLoops, curPlayerOfs += MaxPlayersPerPacket)
+-			{
++    for (int tLoops = 0, curTicOfs = 0; tLoops < ticLoops;
++         ++tLoops, curTicOfs += maxCommands) {
++      for (int pLoops = 0, curPlayerOfs = 0; pLoops < maxPlayerLoops;
++           ++pLoops, curPlayerOfs += MaxPlayersPerPacket) {
+         size_t size = 10;
+-				if (totalQuits > 0)
+-				{
++        if (totalQuits > 0) {
+           NetBuffer[0] |= NCMD_QUITTERS;
+           NetBuffer[size++] = totalQuits;
+           for (int i = 0; i < totalQuits; ++i)
+             NetBuffer[size++] = quitNums[i];
+ 
+           totalQuits = 0;
+-				}
+-				else
+-				{
++        } else {
+           NetBuffer[0] &= ~NCMD_QUITTERS;
+         }
+ 
+         int playerNums[MAXPLAYERS];
+-				int playerCount = isSelf ? players : min<int>(players - curPlayerOfs, MaxPlayersPerPacket);
++        int playerCount =
++            isSelf ? players
++                   : min<int>(players - curPlayerOfs, MaxPlayersPerPacket);
+         NetBuffer[size++] = playerCount;
+-				if (players > 1)
+-				{
++        if (players > 1) {
+           int i = 0;
+-					for (auto cl : NetworkClients)
+-					{
++          for (auto cl : NetworkClients) {
+             if (ClientStates[cl].Flags & CF_QUIT)
+               continue;
+ 
+@@ -1701,83 +1607,79 @@ void NetUpdate(int tics)
+             if (!isSelf && i >= curPlayerOfs + MaxPlayersPerPacket)
+               break;
+           }
+-				}
+-				else
+-				{
++        } else {
+           playerNums[0] = consoleplayer;
+         }
+ 
+-				int sendTics = isSelf ? numTics : clamp<int>(numTics - curTicOfs, 0, maxCommands);
+-				if (curState.ResendSequenceFrom >= 0)
+-				{
++        int sendTics =
++            isSelf ? numTics : clamp<int>(numTics - curTicOfs, 0, maxCommands);
++        if (curState.ResendSequenceFrom >= 0) {
+           curState.ResendSequenceFrom += sendTics;
+           if (curState.ResendSequenceFrom >= endSequence)
+             curState.ResendSequenceFrom = -1;
+         }
+ 
+         NetBuffer[size++] = sendTics;
+-				if (sendTics > 0)
+-				{
++        if (sendTics > 0) {
+           NetBuffer[size++] = (sequenceNum + curTicOfs) >> 24;
+           NetBuffer[size++] = (sequenceNum + curTicOfs) >> 16;
+           NetBuffer[size++] = (sequenceNum + curTicOfs) >> 8;
+           NetBuffer[size++] = sequenceNum + curTicOfs;
+         }
+ 
+-				int sendCon = isSelf ? ran : clamp<int>(ran - curTicOfs, 0, maxCommands);
+-				if (curState.ResendConsistencyFrom >= 0)
+-				{
++        int sendCon =
++            isSelf ? ran : clamp<int>(ran - curTicOfs, 0, maxCommands);
++        if (curState.ResendConsistencyFrom >= 0) {
+           curState.ResendConsistencyFrom += sendCon;
+           if (curState.ResendConsistencyFrom >= CurrentConsistency)
+             curState.ResendConsistencyFrom = -1;
+         }
+ 
+         NetBuffer[size++] = sendCon;
+-				if (sendCon > 0)
+-				{
++        if (sendCon > 0) {
+           NetBuffer[size++] = (baseConsistency + curTicOfs) >> 24;
+           NetBuffer[size++] = (baseConsistency + curTicOfs) >> 16;
+           NetBuffer[size++] = (baseConsistency + curTicOfs) >> 8;
+           NetBuffer[size++] = baseConsistency + curTicOfs;
+         }
+ 
+-				if (NetMode == NET_PacketServer)
+-				{
++        if (NetMode == NET_PacketServer) {
+           if (consoleplayer == Net_Arbitrator)
+-						NetBuffer[size++] = client == Net_Arbitrator ? 0 : max<int>(curState.CurrentSequence + curState.StabilityBuffer - newestTic, 0);
++            NetBuffer[size++] =
++                client == Net_Arbitrator
++                    ? 0
++                    : max<int>(curState.CurrentSequence +
++                                   curState.StabilityBuffer - newestTic,
++                               0);
+           else
+             NetBuffer[size++] = max<int>(StabilityBuffer, 0);
+         }
+ 
+         // Client commands.
+ 
+-				TArrayView<uint8_t> cmd = TArrayView(&NetBuffer[size], MAX_MSGLEN - size);
+-				for (int i = 0; i < playerCount; ++i)
+-				{
++        TArrayView<uint8_t> cmd =
++            TArrayView(&NetBuffer[size], MAX_MSGLEN - size);
++        for (int i = 0; i < playerCount; ++i) {
+           WriteInt8(playerNums[i], cmd);
+ 
+           auto &clientState = ClientStates[playerNums[i]];
+           // Time used to track latency since in packet server mode we want each
+           // client's latency to the server itself.
+-					if (NetMode == NET_PacketServer && consoleplayer == Net_Arbitrator)
+-					{
++          if (NetMode == NET_PacketServer && consoleplayer == Net_Arbitrator) {
+             WriteInt16(clientState.AverageLatency, cmd);
+           }
+ 
+-					for (int r = 0; r < sendCon; ++r)
+-					{
++          for (int r = 0; r < sendCon; ++r) {
+             WriteInt8(r, cmd);
+             const int tic = (baseConsistency + curTicOfs + r) % BACKUPTICS;
+             WriteInt16(clientState.LocalConsistency[tic], cmd);
+           }
+ 
+-					for (int t = 0; t < sendTics; ++t)
+-					{
++          for (int t = 0; t < sendTics; ++t) {
+             WriteInt8(t, cmd);
+ 
+             int curTic = sequenceNum + curTicOfs + t, lastTic = curTic - 1;
+-						if (playerNums[i] == consoleplayer)
+-						{
++            if (playerNums[i] == consoleplayer) {
+               int realTic = (curTic * TicDup) % LOCALCMDTICS;
+               int realLastTic = (lastTic * TicDup) % LOCALCMDTICS;
+               // Write out the net events before the user commands so inputs can
+@@ -1785,18 +1687,20 @@ void NetUpdate(int tics)
+               auto &stream = NetEvents.Streams[curTic % BACKUPTICS];
+               WriteBytes(TArrayView(stream.Stream, stream.Used), cmd);
+ 
+-							WriteUserCmdMessage(LocalCmds[realTic],
++              WriteUserCmdMessage(
++                  LocalCmds[realTic],
+                   realLastTic >= 0 ? &LocalCmds[realLastTic] : nullptr, cmd);
+-						}
+-						else
+-						{
++            } else {
+               auto &netTic = clientState.Tics[curTic % BACKUPTICS];
+ 
+               auto data = netTic.Data.GetTArrayView();
+               WriteBytes(data, cmd);
+ 
+-							WriteUserCmdMessage(netTic.Command,
+-								lastTic >= 0 ? &clientState.Tics[lastTic % BACKUPTICS].Command : nullptr, cmd);
++              WriteUserCmdMessage(
++                  netTic.Command,
++                  lastTic >= 0 ? &clientState.Tics[lastTic % BACKUPTICS].Command
++                               : nullptr,
++                  cmd);
+             }
+           }
+         }
+@@ -1812,9 +1716,9 @@ void NetUpdate(int tics)
+   if (!resendOnly)
+     LastSentConsistency = CurrentConsistency;
+ 
+-	// Listen for other packets. This has to also come after sending so the player that sent
+-	// data to themselves gets it immediately (important for singleplayer, otherwise there
+-	// would always be a one-tic delay).
++  // Listen for other packets. This has to also come after sending so the player
++  // that sent data to themselves gets it immediately (important for
++  // singleplayer, otherwise there would always be a one-tic delay).
+   GetPackets();
+ }
+ 
+@@ -1822,83 +1726,69 @@ void NetUpdate(int tics)
+ // from the frontend should be put in these, all backend handling should be
+ // done in the core files.
+ 
+-size_t Net_SetEngineInfo(uint8_t*& stream)
+-{
++size_t Net_SetEngineInfo(uint8_t *&stream) {
+   stream[0] = VER_MAJOR % 256;
+   stream[1] = VER_MINOR % 256;
+   stream[2] = VER_REVISION % 256;
+   return 3u;
+ }
+ 
+-bool Net_VerifyEngine(uint8_t*& stream)
+-{
+-	return stream[0] == (VER_MAJOR % 256) && stream[1] == (VER_MINOR % 256) && stream[2] == (VER_REVISION % 256);
++bool Net_VerifyEngine(uint8_t *&stream) {
++  return stream[0] == (VER_MAJOR % 256) && stream[1] == (VER_MINOR % 256) &&
++         stream[2] == (VER_REVISION % 256);
+ }
+ 
+-void Net_SetupUserInfo()
+-{
+-	D_SetupUserInfo();
+-}
++void Net_SetupUserInfo() { D_SetupUserInfo(); }
+ 
+-const char* Net_GetClientName(int client, unsigned int charLimit = 0u)
+-{
++const char *Net_GetClientName(int client, unsigned int charLimit = 0u) {
+   return players[client].userinfo.GetName(charLimit);
+ }
+ 
+-void Net_SetUserInfo(int client, TArrayView<uint8_t>& stream)
+-{
++void Net_SetUserInfo(int client, TArrayView<uint8_t> &stream) {
+   auto str = D_GetUserInfoStrings(client, true);
+   WriteFString(str, stream);
+ }
+ 
+-void Net_ReadUserInfo(int client, TArrayView<uint8_t>& stream)
+-{
++void Net_ReadUserInfo(int client, TArrayView<uint8_t> &stream) {
+   D_ReadUserInfoStrings(client, stream, false);
+ }
+ 
+-void Net_SetGameInfo(TArrayView<uint8_t>& stream)
+-{
++void Net_SetGameInfo(TArrayView<uint8_t> &stream) {
+   WriteFString(startmap, stream);
+   WriteInt32(rngseed, stream);
+   C_WriteCVars(stream, CVAR_SERVERINFO, true);
+ 
+   auto load = Args->CheckValue("-loadgame");
+-	if (load != nullptr)
+-	{
++  if (load != nullptr) {
+     WriteInt8(1, stream);
+     WriteString(load, stream);
+-	}
+-	else
+-	{
++  } else {
+     WriteInt8(0, stream);
+   }
+ }
+ 
+-void Net_ReadGameInfo(TArrayView<uint8_t>& stream)
+-{
++void Net_ReadGameInfo(TArrayView<uint8_t> &stream) {
+   startmap = ReadStringConst(stream);
+   rngseed = ReadInt32(stream);
+   C_ReadCVars(stream);
+ 
+-	if (ReadInt8(stream))
+-	{
++  if (ReadInt8(stream)) {
+     auto load = ReadString(stream);
+     // Don't override the existing argument in case they need to use
+     // a custom savefile name.
+-		if (!Args->CheckParm("-loadgame"))
+-		{
++    if (!Args->CheckParm("-loadgame")) {
+       Args->AppendArg("-loadgame");
+       Args->AppendArg(load);
+     }
+   }
+ 
+-	// Reset this immediately so any further RNG calls the engine has to make will be synced.
++  // Reset this immediately so any further RNG calls the engine has to make will
++  // be synced.
+   FRandom::StaticClearRandom();
+ }
+ 
+ // Connects players to each other if needed.
+-bool D_CheckNetGame()
+-{
++bool D_CheckNetGame() {
+   if (!I_InitNetwork())
+     return false;
+ 
+@@ -1909,12 +1799,15 @@ bool D_CheckNetGame()
+   for (auto client : NetworkClients)
+     playeringame[client] = true;
+ 
+-	if (MaxClients > 1u)
+-	{
++  if (MaxClients > 1u) {
+     if (consoleplayer == Net_Arbitrator)
+-			Printf("Selected " TEXTCOLOR_BLUE "%s" TEXTCOLOR_NORMAL " networking mode\n", NetMode == NET_PeerToPeer ? "peer to peer" : "packet server");
++      Printf("Selected " TEXTCOLOR_BLUE "%s" TEXTCOLOR_NORMAL
++             " networking mode\n",
++             NetMode == NET_PeerToPeer ? "peer to peer" : "packet server");
+     else
+-			Printf("Host selected " TEXTCOLOR_BLUE "%s" TEXTCOLOR_NORMAL " networking mode\n", NetMode == NET_PeerToPeer ? "peer to peer" : "packet server");
++      Printf("Host selected " TEXTCOLOR_BLUE "%s" TEXTCOLOR_NORMAL
++             " networking mode\n",
++             NetMode == NET_PeerToPeer ? "peer to peer" : "packet server");
+ 
+     Printf("Player %d of %d\n", consoleplayer + 1, MaxClients);
+   }
+@@ -1927,54 +1820,43 @@ bool D_CheckNetGame()
+ // Called before quitting to leave a net game
+ // without hanging the other players
+ //
+-void D_QuitNetGame()
+-{
+-	if (!netgame || !usergame || consoleplayer == -1 || demoplayback || NetworkClients.Size() == 1)
++void D_QuitNetGame() {
++  if (!netgame || !usergame || consoleplayer == -1 || demoplayback ||
++      NetworkClients.Size() == 1)
+     return;
+ 
+   // Send a bunch of packets for stability.
+   NetBuffer[0] = NCMD_EXIT;
+-	if (NetMode == NET_PacketServer && consoleplayer == Net_Arbitrator)
+-	{
+-		// This currently isn't much different from the regular P2P code, but it's being split off into its
+-		// own branch should proper host migration be added in the future (i.e. sending over stored event
+-		// data rather than just dropping it entirely).
++  if (NetMode == NET_PacketServer && consoleplayer == Net_Arbitrator) {
++    // This currently isn't much different from the regular P2P code, but it's
++    // being split off into its own branch should proper host migration be added
++    // in the future (i.e. sending over stored event data rather than just
++    // dropping it entirely).
+     int nextHost = 0;
+-		for (auto client : NetworkClients)
+-		{
+-			if (client != Net_Arbitrator)
+-			{
++    for (auto client : NetworkClients) {
++      if (client != Net_Arbitrator) {
+         nextHost = client;
+         break;
+       }
+     }
+ 
+     NetBuffer[1] = nextHost;
+-		for (int i = 0; i < 4; ++i)
+-		{
+-			for (auto client : NetworkClients)
+-			{
++    for (int i = 0; i < 4; ++i) {
++      for (auto client : NetworkClients) {
+         if (client != Net_Arbitrator)
+           HSendPacket(client, 2);
+       }
+ 
+       I_WaitVBL(1);
+     }
+-	}
+-	else
+-	{
+-		for (int i = 0; i < 4; ++i)
+-		{
++  } else {
++    for (int i = 0; i < 4; ++i) {
+       // If in packet server mode, only the host should know about this
+       // information.
+-			if (NetMode == NET_PacketServer)
+-			{
++      if (NetMode == NET_PacketServer) {
+         HSendPacket(Net_Arbitrator, 1);
+-			}
+-			else
+-			{
+-				for (auto client : NetworkClients)
+-				{
++      } else {
++        for (auto client : NetworkClients) {
+           if (client != consoleplayer)
+             HSendPacket(client, 1);
+         }
+@@ -1985,24 +1867,22 @@ void D_QuitNetGame()
+   }
+ }
+ 
+-ADD_STAT(network)
+-{
++ADD_STAT(network) {
+   FString out = {};
+-	if (!netgame || demoplayback)
+-	{
++  if (!netgame || demoplayback) {
+     out.AppendFormat("No network stats available.");
+     return out;
+   }
+ 
+-	out.AppendFormat("Max players: %d\tNet mode: %s\tTic dup: %d",
+-		MaxClients,
+-		NetMode == NET_PacketServer ? "Packet server" : "Peer to peer",
+-		TicDup);
++  out.AppendFormat(
++      "Max players: %d\tNet mode: %s\tTic dup: %d", MaxClients,
++      NetMode == NET_PacketServer ? "Packet server" : "Peer to peer", TicDup);
+ 
+   if (net_extratic)
+     out.AppendFormat("\tExtra tic enabled");
+ 
+-	out.AppendFormat("\nWorld tic: %06d (sequence %06d)", gametic, gametic / TicDup);
++  out.AppendFormat("\nWorld tic: %06d (sequence %06d)", gametic,
++                   gametic / TicDup);
+   if (NetMode == NET_PacketServer && consoleplayer != Net_Arbitrator)
+     out.AppendFormat("\tStart tics delay: %d", LevelStartDebug);
+ 
+@@ -2010,16 +1890,17 @@ ADD_STAT(network)
+   const int msDelay = min<int>(delay * TicDup * 1000.0 / TICRATE, 999);
+   const int buffer = max<int>(StabilityBuffer, 0);
+   const int msBuffer = min<int>(buffer * 1000.0 / TICRATE, 999);
+-	out.AppendFormat("\nLocal\n\tIs arbitrator: %d\tDelay: %02d (%03dms)\tStability Buffer: %02d (%03dms)",
+-		consoleplayer == Net_Arbitrator,
+-		delay, msDelay,
+-		buffer, msBuffer);
++  out.AppendFormat("\nLocal\n\tIs arbitrator: %d\tDelay: %02d "
++                   "(%03dms)\tStability Buffer: %02d (%03dms)",
++                   consoleplayer == Net_Arbitrator, delay, msDelay, buffer,
++                   msBuffer);
+ 
+   if (NetMode == NET_PacketServer && consoleplayer != Net_Arbitrator)
+-		out.AppendFormat("\tAvg latency: %03ums", min<unsigned int>(ClientStates[consoleplayer].AverageLatency, 999u));
++    out.AppendFormat(
++        "\tAvg latency: %03ums",
++        min<unsigned int>(ClientStates[consoleplayer].AverageLatency, 999u));
+ 
+-	if (LevelStartStatus != LST_READY)
+-	{
++  if (LevelStartStatus != LST_READY) {
+     if (LevelStartStatus == LST_HOST)
+       out.AppendFormat("\tWaiting for packets");
+     else if (consoleplayer == Net_Arbitrator)
+@@ -2029,8 +1910,7 @@ ADD_STAT(network)
+   }
+ 
+   int lowestSeq = ClientTic / TicDup;
+-	for (auto client : NetworkClients)
+-	{
++  for (auto client : NetworkClients) {
+     if (client == consoleplayer)
+       continue;
+ 
+@@ -2058,20 +1938,23 @@ ADD_STAT(network)
+ 
+     out.AppendFormat("\n");
+ 
+-		if (NetMode != NET_PacketServer)
+-		{
+-			const int cDelay = max<int>(state.CurrentSequence - (gametic / TicDup), 0);
++    if (NetMode != NET_PacketServer) {
++      const int cDelay =
++          max<int>(state.CurrentSequence - (gametic / TicDup), 0);
+       const int mscDelay = min<int>(cDelay * TicDup * 1000.0 / TICRATE, 999);
+       out.AppendFormat("\tDelay: %02d (%03dms)", cDelay, mscDelay);
+     }
+ 
+-		out.AppendFormat("\tAck: %06d\tConsistency: %06d", state.SequenceAck, state.ConsistencyAck);
++    out.AppendFormat("\tAck: %06d\tConsistency: %06d", state.SequenceAck,
++                     state.ConsistencyAck);
+     if (NetMode != NET_PacketServer || client != Net_Arbitrator)
+-			out.AppendFormat("\tAvg latency: %03ums", min<unsigned int>(state.AverageLatency, 999u));
++      out.AppendFormat("\tAvg latency: %03ums",
++                       min<unsigned int>(state.AverageLatency, 999u));
+   }
+ 
+   if (NetMode != NET_PacketServer || consoleplayer == Net_Arbitrator)
+-		out.AppendFormat("\nAvailable tics: %03d", max<int>(lowestSeq - (gametic / TicDup), 0));
++    out.AppendFormat("\nAvailable tics: %03d",
++                     max<int>(lowestSeq - (gametic / TicDup), 0));
+   return out;
+ }
+ 
+@@ -2086,51 +1969,57 @@ CVAR(Bool, r_ticstability, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+ static uint64_t stabilityticduration = 0;
+ static uint64_t stabilitystarttime = 0;
+ 
+-static void TicStabilityWait()
+-{
++static void TicStabilityWait() {
+   using namespace std::chrono;
+   using namespace std::this_thread;
+ 
+   if (!r_ticstability)
+     return;
+ 
+-	uint64_t start = duration_cast<microseconds>(steady_clock::now().time_since_epoch()).count();
+-	while (true)
+-	{
+-		uint64_t cur = duration_cast<microseconds>(steady_clock::now().time_since_epoch()).count();
++  uint64_t start =
++      duration_cast<microseconds>(steady_clock::now().time_since_epoch())
++          .count();
++  while (true) {
++    uint64_t cur =
++        duration_cast<microseconds>(steady_clock::now().time_since_epoch())
++            .count();
+     if (cur - start > stabilityticduration)
+       break;
+   }
+ }
+ 
+-static void TicStabilityBegin()
+-{
++static void TicStabilityBegin() {
+   using namespace std::chrono;
+-	stabilitystarttime = duration_cast<microseconds>(steady_clock::now().time_since_epoch()).count();
++  stabilitystarttime =
++      duration_cast<microseconds>(steady_clock::now().time_since_epoch())
++          .count();
+ }
+ 
+-static void TicStabilityEnd()
+-{
++static void TicStabilityEnd() {
+   using namespace std::chrono;
+-	uint64_t stabilityendtime = duration_cast<microseconds>(steady_clock::now().time_since_epoch()).count();
+-	stabilityticduration = min(stabilityendtime - stabilitystarttime, (uint64_t)1'000'000);
++  uint64_t stabilityendtime =
++      duration_cast<microseconds>(steady_clock::now().time_since_epoch())
++          .count();
++  stabilityticduration =
++      min(stabilityendtime - stabilitystarttime, (uint64_t)1'000'000);
+ }
+ 
+ // Don't stabilize tics that are going to have incredibly long pauses in them.
+-static bool ShouldStabilizeTick()
+-{
+-	return gameaction != ga_recordgame && gameaction != ga_newgame && gameaction != ga_newgame2
+-			&& gameaction != ga_loadgame && gameaction != ga_loadgamehidecon && gameaction != ga_autoloadgame && gameaction != ga_loadgameplaydemo
+-			&& gameaction != ga_savegame && gameaction != ga_autosave && gameaction != ga_quicksave
+-			&& gameaction != ga_worlddone && gameaction != ga_completed && gameaction != ga_screenshot && gameaction != ga_fullconsole;
+-}
+-
+-// If the connection has been unstable then let the game lag behind for a little bit
+-// while we wait for it to stabilize, otherwise everything will appear to jitter around.
+-static void CalculateNetStabilityBuffer(int diff)
+-{
+-	if (!netgame || demoplayback)
+-	{
++static bool ShouldStabilizeTick() {
++  return gameaction != ga_recordgame && gameaction != ga_newgame &&
++         gameaction != ga_newgame2 && gameaction != ga_loadgame &&
++         gameaction != ga_loadgamehidecon && gameaction != ga_autoloadgame &&
++         gameaction != ga_loadgameplaydemo && gameaction != ga_savegame &&
++         gameaction != ga_autosave && gameaction != ga_quicksave &&
++         gameaction != ga_worlddone && gameaction != ga_completed &&
++         gameaction != ga_screenshot && gameaction != ga_fullconsole;
++}
++
++// If the connection has been unstable then let the game lag behind for a little
++// bit while we wait for it to stabilize, otherwise everything will appear to
++// jitter around.
++static void CalculateNetStabilityBuffer(int diff) {
++  if (!netgame || demoplayback) {
+     StabilityBuffer = 0;
+     return;
+   }
+@@ -2138,48 +2027,54 @@ static void CalculateNetStabilityBuffer(int diff)
+   if (diff < 0)
+     diff = 0;
+ 
+-	if (!(gametic % TicDup))
+-	{
+-		StabilityTics[CurStabilityTic++ % STABILITYTICS] = diff > PrevAvailableDiff ? diff : 0;
++  if (!(gametic % TicDup)) {
++    StabilityTics[CurStabilityTic++ % STABILITYTICS] =
++        diff > PrevAvailableDiff ? diff : 0;
+     PrevAvailableDiff = diff;
+   }
+ 
+   // If we're not balancing latency, just give an extra tic for padding
+   // and nothing else.
+-	if (!net_ticbalance)
+-	{
++  if (!net_ticbalance) {
+     StabilityBuffer = 1;
+     return;
+   }
+ 
+   double total = 0.0;
+   int unstableCount = 0;
+-	for (int t : StabilityTics)
+-	{
+-		if (t > 0)
+-		{
++  for (int t : StabilityTics) {
++    if (t > 0) {
+       ++unstableCount;
+       total += t;
+     }
+   }
+ 
+-	StabilityBuffer = unstableCount > 0 ? static_cast<int>(ceil(total / unstableCount)) : 0;
++  StabilityBuffer =
++      unstableCount > 0 ? static_cast<int>(ceil(total / unstableCount)) : 0;
+ }
+ 
+ //
+ // TryRunTics
+ //
+-void TryRunTics()
+-{
++void TryRunTics() {
+   GC::CheckGC();
+ 
+-	if (ToggleFullscreen)
+-	{
++  static int diagnosticCounter = 0;
++  if (++diagnosticCounter >= 70) {
++    diagnosticCounter = 0;
++    Printf("TryRunTics Status: AppActive=%d, doWait=%d, LastEnter=%d, "
++           "gametic=%d, NetGame=%d\n",
++           (int)AppActive, (int)(cl_capfps || pauseext), (int)LastEnterTic,
++           (int)gametic, (int)netgame);
++  }
++
++  if (ToggleFullscreen) {
+     ToggleFullscreen = false;
+     AddCommandString("toggle vid_fullscreen");
+   }
+ 
+-	bool doWait = (cl_capfps || pauseext || (!netgame && r_NoInterpolate && !M_IsAnimated()));
++  bool doWait = (cl_capfps || pauseext ||
++                 (!netgame && r_NoInterpolate && !M_IsAnimated()));
+   if (vid_dontdowait && (vid_maxfps > 0 || vid_vsync))
+     doWait = false;
+   if (!netgame && !AppActive && vid_lowerinbackground)
+@@ -2193,6 +2088,7 @@ void TryRunTics()
+ 
+   const int startCommand = ClientTic;
+   int totalTics = EnterTic - LastEnterTic;
++
+   if (totalTics > 1 && singletics)
+     totalTics = 1;
+ 
+@@ -2208,24 +2104,32 @@ void TryRunTics()
+   if (pauseext)
+     return;
+ 
+-	// Get the amount of tics the client can actually run. This accounts for waiting for other
+-	// players over the network.
++  // Get the amount of tics the client can actually run. This accounts for
++  // waiting for other players over the network.
+   int lowestSequence = INT_MAX;
+-	for (auto client : NetworkClients)
+-	{
++  for (auto client : NetworkClients) {
+     if (ClientStates[client].CurrentSequence < lowestSequence)
+       lowestSequence = ClientStates[client].CurrentSequence;
+   }
+ 
+-	// If the lowest confirmed tic matches the server gametic or greater, allow the client
+-	// to run some of them.
++  // If the lowest confirmed tic matches the server gametic or greater, allow
++  // the client to run some of them.
+   const int availableTics = (lowestSequence - gametic / TicDup) + 1;
+ 
+-	// If the amount of tics to run is falling behind the amount of available tics,
+-	// speed the playsim up a bit to help catch up.
++  // If the amount of tics to run is falling behind the amount of available
++  // tics, speed the playsim up a bit to help catch up.
+   int runTics = min<int>(totalTics, availableTics);
+-	if (!singletics && totalTics > 0)
+-	{
++
++  static int totalRunTics = 0;
++  totalRunTics += runTics;
++  if (diagnosticCounter == 0) {
++    Printf("TryRunTics Stats: totalTics=%d, runTics=%d, available=%d "
++           "(aggregated runTics for period: %d)\n",
++           totalTics, runTics, availableTics, totalRunTics);
++    totalRunTics = 0;
++  }
++
++  if (!singletics && totalTics > 0) {
+     CalculateNetStabilityBuffer(availableTics - totalTics);
+     if (totalTics < availableTics - StabilityBuffer)
+       ++runTics;
+@@ -2233,39 +2137,35 @@ void TryRunTics()
+ 
+   // Test player prediction code in singleplayer
+   // by running the gametic behind the ClientTic
+-	if (!netgame && !demoplayback && cl_debugprediction > 0)
+-	{
++  if (!netgame && !demoplayback && cl_debugprediction > 0) {
+     int debugTarget = ClientTic - cl_debugprediction;
+     int debugOffset = gametic - debugTarget;
+-		if (debugOffset > 0)
+-		{
++    if (debugOffset > 0) {
+       runTics = max<int>(runTics - debugOffset, 0);
+     }
+   }
+ 
+   // If there are no tics to run, check for possible stall conditions and new
+   // commands to predict.
+-	if (runTics <= 0)
+-	{
++  if (runTics <= 0) {
+     // If we're in between a tic, try and balance things out.
+-		if (totalTics <= 0)
+-		{
++    if (totalTics <= 0) {
+       TicStabilityWait();
+-		}
+-		else
+-		{
++    } else {
+       P_ClearLevelInterpolation();
+       LagState = LAG_WAITING;
+     }
+ 
+-		// If we actually advanced a command, update the player's position (even if a
+-		// tic passes this isn't guaranteed to happen since it's capped to 35 in advance).
+-		if (ClientTic > startCommand)
+-		{
++    // If we actually advanced a command, update the player's position (even if
++    // a tic passes this isn't guaranteed to happen since it's capped to 35 in
++    // advance).
++    if (ClientTic > startCommand) {
+       LagState = LAG_PREDICTING;
+       P_UnPredictPlayer();
+       P_PredictPlayer(&players[consoleplayer]);
+-			S_UpdateSounds(players[consoleplayer].camera);	// Update sounds only after predicting the client's newest position.
++      S_UpdateSounds(
++          players[consoleplayer].camera); // Update sounds only after predicting
++                                          // the client's newest position.
+     }
+ 
+     // If we actually did have some tics available, make sure the UI
+@@ -2285,8 +2185,7 @@ void TryRunTics()
+ 
+   // Run the available tics.
+   P_UnPredictPlayer();
+-	while (runTics--)
+-	{
++  while (runTics--) {
+     const bool stabilize = ShouldStabilizeTick();
+     if (stabilize)
+       TicStabilityBegin();
+@@ -2301,68 +2200,42 @@ void TryRunTics()
+     if (stabilize)
+       TicStabilityEnd();
+ 
+-		if (bCommandsReset)
+-		{
++    if (bCommandsReset) {
+       bCommandsReset = false;
+       break;
+     }
+   }
+   P_PredictPlayer(&players[consoleplayer]);
+-	S_UpdateSounds(players[consoleplayer].camera);	// Update sounds only after predicting the client's newest position.
++  S_UpdateSounds(
++      players[consoleplayer].camera); // Update sounds only after predicting the
++                                      // client's newest position.
+ 
+-	// These should use the actual tics since they're not actually tied to the gameplay logic.
+-	// Make sure it always comes after so the HUD has the correct game state when updating.
++  // These should use the actual tics since they're not actually tied to the
++  // gameplay logic. Make sure it always comes after so the HUD has the correct
++  // game state when updating.
+   for (int i = 0; i < totalTics; ++i)
+     P_RunClientSideLogic();
+ }
+ 
+-void Net_NewClientTic()
+-{
+-	NetEvents.NewClientTic();
+-}
++void Net_NewClientTic() { NetEvents.NewClientTic(); }
+ 
+-void Net_Initialize()
+-{
+-	NetEvents.InitializeEventData();
+-}
++void Net_Initialize() { NetEvents.InitializeEventData(); }
+ 
+-void Net_WriteInt8(uint8_t it)
+-{
+-	NetEvents << it;
+-}
++void Net_WriteInt8(uint8_t it) { NetEvents << it; }
+ 
+-void Net_WriteInt16(int16_t it)
+-{
+-	NetEvents << it;
+-}
++void Net_WriteInt16(int16_t it) { NetEvents << it; }
+ 
+-void Net_WriteInt32(int32_t it)
+-{
+-	NetEvents << it;
+-}
++void Net_WriteInt32(int32_t it) { NetEvents << it; }
+ 
+-void Net_WriteInt64(int64_t it)
+-{
+-	NetEvents << it;
+-}
++void Net_WriteInt64(int64_t it) { NetEvents << it; }
+ 
+-void Net_WriteFloat(float it)
+-{
+-	NetEvents << it;
+-}
++void Net_WriteFloat(float it) { NetEvents << it; }
+ 
+-void Net_WriteDouble(double it)
+-{
+-	NetEvents << it;
+-}
++void Net_WriteDouble(double it) { NetEvents << it; }
+ 
+-void Net_WriteString(const char *it)
+-{
+-	NetEvents << it;
+-}
++void Net_WriteString(const char *it) { NetEvents << it; }
+ 
+-void Net_WriteBytes(const uint8_t *block, int len)
+-{
++void Net_WriteBytes(const uint8_t *block, int len) {
+   while (len--)
+     NetEvents << *block++;
+ }
+@@ -2373,66 +2246,52 @@ void Net_WriteBytes(const uint8_t *block, int len)
+ //
+ //==========================================================================
+ 
+-FDynamicBuffer::FDynamicBuffer()
+-{
++FDynamicBuffer::FDynamicBuffer() {
+   m_Data = nullptr;
+   m_Len = m_BufferLen = 0;
+ }
+ 
+-FDynamicBuffer::~FDynamicBuffer()
+-{
+-	if (m_Data != nullptr)
+-	{
++FDynamicBuffer::~FDynamicBuffer() {
++  if (m_Data != nullptr) {
+     M_Free(m_Data);
+     m_Data = nullptr;
+   }
+   m_Len = m_BufferLen = 0;
+ }
+ 
+-void FDynamicBuffer::SetData(const uint8_t *data, int len)
+-{
+-	if (len > m_BufferLen)
+-	{
++void FDynamicBuffer::SetData(const uint8_t *data, int len) {
++  if (len > m_BufferLen) {
+     m_BufferLen = (len + 255) & ~255;
+     m_Data = (uint8_t *)M_Realloc(m_Data, m_BufferLen);
+   }
+ 
+-	if (data != nullptr)
+-	{
++  if (data != nullptr) {
+     m_Len = len;
+     memcpy(m_Data, data, len);
+-	}
+-	else 
+-	{
++  } else {
+     m_Len = 0;
+   }
+ }
+ 
+-uint8_t *FDynamicBuffer::GetData(int *len)
+-{
++uint8_t *FDynamicBuffer::GetData(int *len) {
+   if (len != nullptr)
+     *len = m_Len;
+   return m_Len ? m_Data : nullptr;
+ }
+ 
+-TArrayView<uint8_t> FDynamicBuffer::GetTArrayView()
+-{
++TArrayView<uint8_t> FDynamicBuffer::GetTArrayView() {
+   return TArrayView(m_Data, m_Len);
+ }
+ 
+-static int RemoveClass(FLevelLocals *Level, const PClass *cls)
+-{
++static int RemoveClass(FLevelLocals *Level, const PClass *cls) {
+   AActor *actor;
+   int removecount = 0;
+   bool player = false;
+   auto iterator = Level->GetThinkerIterator<AActor>(cls->TypeName);
+-	while ((actor = iterator.Next()))
+-	{
+-		if (actor->IsA(cls))
+-		{
++  while ((actor = iterator.Next())) {
++    if (actor->IsA(cls)) {
+       // [MC]Do not remove LIVE players.
+-			if (actor->player != nullptr)
+-			{
++      if (actor->player != nullptr) {
+         player = true;
+         continue;
+       }
+@@ -2450,33 +2309,30 @@ static int RemoveClass(FLevelLocals *Level, const PClass *cls)
+     Printf("Cannot remove live players!\n");
+ 
+   return removecount;
+-
+ }
+ // [RH] Execute a special "ticcmd". The type byte should
+ //		have already been read, and the stream is positioned
+ //		at the beginning of the command's actual data.
+-void Net_DoCommand(int cmd, TArrayView<uint8_t>& stream, int player)
+-{
++void Net_DoCommand(int cmd, TArrayView<uint8_t> &stream, int player) {
+   uint8_t pos = 0;
+   const char *s = nullptr;
+   int i = 0;
+ 
+-	switch (cmd)
+-	{
+-	case DEM_SAY:
+-		{
++  switch (cmd) {
++  case DEM_SAY: {
+     const char *name = players[player].userinfo.GetName();
+     uint8_t who = ReadInt8(stream);
+ 
+     s = ReadStringConst(stream);
+-			// If chat is disabled, there's nothing else to do here since the stream has been advanced.
+-			if (cl_showchat == CHAT_DISABLED || (MutedClients & ((uint64_t)1u << player)))
++    // If chat is disabled, there's nothing else to do here since the stream has
++    // been advanced.
++    if (cl_showchat == CHAT_DISABLED ||
++        (MutedClients & ((uint64_t)1u << player)))
+       break;
+ 
+     constexpr int MSG_TEAM = 1;
+     constexpr int MSG_BOLD = 2;
+-			if (!(who & MSG_TEAM))
+-			{
++    if (!(who & MSG_TEAM)) {
+       if (cl_showchat < CHAT_GLOBAL)
+         break;
+ 
+@@ -2484,15 +2340,18 @@ void Net_DoCommand(int cmd, TArrayView<uint8_t>& stream, int player)
+       if (deathmatch && teamplay)
+         Printf(PRINT_CHAT, "(All) ");
+       if ((who & MSG_BOLD) && !cl_noboldchat)
+-					Printf(PRINT_CHAT, TEXTCOLOR_BOLD "* %s [%d]" TEXTCOLOR_BOLD "%s" TEXTCOLOR_BOLD "\n", name, player, s);
++        Printf(PRINT_CHAT,
++               TEXTCOLOR_BOLD "* %s [%d]" TEXTCOLOR_BOLD "%s" TEXTCOLOR_BOLD
++                              "\n",
++               name, player, s);
+       else
+-					Printf(PRINT_CHAT, "%s [%d]" TEXTCOLOR_CHAT ": %s" TEXTCOLOR_CHAT "\n", name, player, s);
++        Printf(PRINT_CHAT, "%s [%d]" TEXTCOLOR_CHAT ": %s" TEXTCOLOR_CHAT "\n",
++               name, player, s);
+ 
+       if (!cl_nochatsound)
+         S_Sound(CHAN_VOICE, CHANF_UI, gameinfo.chatSound, 1.0f, ATTN_NONE);
+-			}
+-			else if (!deathmatch || players[player].userinfo.GetTeam() == players[consoleplayer].userinfo.GetTeam())
+-			{
++    } else if (!deathmatch || players[player].userinfo.GetTeam() ==
++                                  players[consoleplayer].userinfo.GetTeam()) {
+       if (cl_showchat < CHAT_TEAM_ONLY)
+         break;
+ 
+@@ -2500,15 +2359,19 @@ void Net_DoCommand(int cmd, TArrayView<uint8_t>& stream, int player)
+       if (deathmatch && teamplay)
+         Printf(PRINT_TEAMCHAT, "(Team) ");
+       if ((who & MSG_BOLD) && !cl_noboldchat)
+-					Printf(PRINT_TEAMCHAT, TEXTCOLOR_BOLD "* %s [%d]" TEXTCOLOR_BOLD "%s" TEXTCOLOR_BOLD "\n", name, player, s);
++        Printf(PRINT_TEAMCHAT,
++               TEXTCOLOR_BOLD "* %s [%d]" TEXTCOLOR_BOLD "%s" TEXTCOLOR_BOLD
++                              "\n",
++               name, player, s);
+       else
+-					Printf(PRINT_TEAMCHAT, "%s [%d]" TEXTCOLOR_TEAMCHAT ": %s" TEXTCOLOR_TEAMCHAT "\n", name, player, s);
++        Printf(PRINT_TEAMCHAT,
++               "%s [%d]" TEXTCOLOR_TEAMCHAT ": %s" TEXTCOLOR_TEAMCHAT "\n",
++               name, player, s);
+ 
+       if (!cl_nochatsound)
+         S_Sound(CHAN_VOICE, CHANF_UI, gameinfo.chatSound, 1.0f, ATTN_NONE);
+     }
+-		}
+-		break;
++  } break;
+ 
+   case DEM_MUSICCHANGE:
+     S_ChangeMusic(ReadStringConst(stream));
+@@ -2537,8 +2400,7 @@ void Net_DoCommand(int cmd, TArrayView<uint8_t>& stream, int player)
+   case DEM_GIVECHEAT:
+     s = ReadStringConst(stream);
+     cht_Give(&players[player], s, ReadInt32(stream));
+-		if (player != consoleplayer)
+-		{
++    if (player != consoleplayer) {
+       FString message = GStrings.GetString("TXT_X_CHEATS");
+       message.Substitute("%s", players[player].userinfo.GetName());
+       Printf("%s: give %s\n", message.GetChars(), s);
+@@ -2556,14 +2418,12 @@ void Net_DoCommand(int cmd, TArrayView<uint8_t>& stream, int player)
+     cht_SetInv(&players[player], s, i, !!ReadInt8(stream));
+     break;
+ 
+-	case DEM_WARPCHEAT:
+-		{
++  case DEM_WARPCHEAT: {
+     int x = ReadInt16(stream);
+     int y = ReadInt16(stream);
+     int z = ReadInt16(stream);
+     P_TeleportMove(players[player].mo, DVector3(x, y, z), true);
+-		}
+-		break;
++  } break;
+ 
+   case DEM_GENERICCHEAT:
+     cht_DoCheat(&players[player], ReadInt8(stream));
+@@ -2599,16 +2459,13 @@ void Net_DoCommand(int cmd, TArrayView<uint8_t>& stream, int player)
+     break;
+ 
+   case DEM_INVUSEALL:
+-		if (gamestate == GS_LEVEL && !paused
+-			&& players[player].playerstate != PST_DEAD)
+-		{
++    if (gamestate == GS_LEVEL && !paused &&
++        players[player].playerstate != PST_DEAD) {
+       AActor *item = players[player].mo->Inventory;
+       auto pitype = PClass::FindActor(NAME_PuzzleItem);
+-			while (item != nullptr)
+-			{
++      while (item != nullptr) {
+         AActor *next = item->Inventory;
+-				IFVIRTUALPTRNAME(item, NAME_Inventory, UseAll)
+-				{
++        IFVIRTUALPTRNAME(item, NAME_Inventory, UseAll) {
+           VMValue param[] = {item, players[player].mo};
+           VMCall(func, param, 2, nullptr, 0);
+         }
+@@ -2618,30 +2475,26 @@ void Net_DoCommand(int cmd, TArrayView<uint8_t>& stream, int player)
+     break;
+ 
+   case DEM_INVUSE:
+-	case DEM_INVDROP:
+-		{
++  case DEM_INVDROP: {
+     uint32_t which = ReadInt32(stream);
+     int amt = -1;
+     if (cmd == DEM_INVDROP)
+       amt = ReadInt32(stream);
+ 
+-			if (gamestate == GS_LEVEL && !paused
+-				&& players[player].playerstate != PST_DEAD)
+-			{
++    if (gamestate == GS_LEVEL && !paused &&
++        players[player].playerstate != PST_DEAD) {
+       auto item = players[player].mo->Inventory;
+       while (item != nullptr && item->InventoryID != which)
+         item = item->Inventory;
+ 
+-				if (item != nullptr)
+-				{
++      if (item != nullptr) {
+         if (cmd == DEM_INVUSE)
+           players[player].mo->UseInventory(item);
+         else
+           players[player].mo->DropInventory(item, amt);
+       }
+     }
+-		}
+-		break;
++  } break;
+ 
+   case DEM_SUMMON:
+   case DEM_SUMMONFRIEND:
+@@ -2649,45 +2502,39 @@ void Net_DoCommand(int cmd, TArrayView<uint8_t>& stream, int player)
+   case DEM_SUMMONMBF:
+   case DEM_SUMMON2:
+   case DEM_SUMMONFRIEND2:
+-	case DEM_SUMMONFOE2:
+-		{
++  case DEM_SUMMONFOE2: {
+     int angle = 0;
+     int16_t tid = 0;
+     uint8_t special = 0;
+     int args[5];
+ 
+     s = ReadStringConst(stream);
+-			if (cmd >= DEM_SUMMON2 && cmd <= DEM_SUMMONFOE2)
+-			{
++    if (cmd >= DEM_SUMMON2 && cmd <= DEM_SUMMONFOE2) {
+       angle = ReadInt16(stream);
+       tid = ReadInt16(stream);
+       special = ReadInt8(stream);
+-				for (i = 0; i < 5; i++) args[i] = ReadInt32(stream);
++      for (i = 0; i < 5; i++)
++        args[i] = ReadInt32(stream);
+     }
+ 
+     AActor *source = players[player].mo;
+-			if (source != NULL)
+-			{
++    if (source != NULL) {
+       PClassActor *typeinfo = PClass::FindActor(s);
+-				if (typeinfo != NULL)
+-				{
+-					if (GetDefaultByType(typeinfo)->flags & MF_MISSILE)
+-					{
++      if (typeinfo != NULL) {
++        if (GetDefaultByType(typeinfo)->flags & MF_MISSILE) {
+           P_SpawnPlayerMissile(source, 0, 0, 0, typeinfo, source->Angles.Yaw);
+-					}
+-					else
+-					{
++        } else {
+           const AActor *def = GetDefaultByType(typeinfo);
+-						DVector3 spawnpos = source->Vec3Angle(def->radius * 2 + source->radius, source->Angles.Yaw, 8.);
++          DVector3 spawnpos = source->Vec3Angle(
++              def->radius * 2 + source->radius, source->Angles.Yaw, 8.);
+ 
+-						AActor* spawned = Spawn(primaryLevel, typeinfo, spawnpos, ALLOW_REPLACE);
+-						if (spawned != NULL)
+-						{
++          AActor *spawned =
++              Spawn(primaryLevel, typeinfo, spawnpos, ALLOW_REPLACE);
++          if (spawned != NULL) {
+             spawned->SpawnFlags |= MTF_CONSOLETHING;
+-							if (cmd == DEM_SUMMONFRIEND || cmd == DEM_SUMMONFRIEND2 || cmd == DEM_SUMMONMBF)
+-							{
+-								if (spawned->CountsAsKill())
+-								{
++            if (cmd == DEM_SUMMONFRIEND || cmd == DEM_SUMMONFRIEND2 ||
++                cmd == DEM_SUMMONMBF) {
++              if (spawned->CountsAsKill()) {
+                 primaryLevel->total_monsters--;
+               }
+               spawned->FriendPlayer = player + 1;
+@@ -2696,43 +2543,38 @@ void Net_DoCommand(int cmd, TArrayView<uint8_t>& stream, int player)
+               spawned->health = spawned->SpawnHealth();
+               if (cmd == DEM_SUMMONMBF)
+                 spawned->flags3 |= MF3_NOBLOCKMONST;
+-							}
+-							else if (cmd == DEM_SUMMONFOE || cmd == DEM_SUMMONFOE2)
+-							{
++            } else if (cmd == DEM_SUMMONFOE || cmd == DEM_SUMMONFOE2) {
+               spawned->FriendPlayer = 0;
+               spawned->flags &= ~MF_FRIENDLY;
+               spawned->health = spawned->SpawnHealth();
+             }
+ 
+-							if (cmd >= DEM_SUMMON2 && cmd <= DEM_SUMMONFOE2)
+-							{
++            if (cmd >= DEM_SUMMON2 && cmd <= DEM_SUMMONFOE2) {
+               spawned->Angles.Yaw = source->Angles.Yaw - DAngle::fromDeg(angle);
+               spawned->special = special;
+               for (i = 0; i < 5; i++) {
+                 spawned->args[i] = args[i];
+               }
+-								if (tid) spawned->SetTID(tid);
+-							}
++              if (tid)
++                spawned->SetTID(tid);
+             }
+           }
+         }
+-				else
+-				{ // not an actor, must be a visualthinker
++      } else { // not an actor, must be a visualthinker
+         PClass *typeinfo = PClass::FindClass(s);
+-					if (typeinfo && typeinfo->IsDescendantOf("VisualThinker"))
+-					{
+-						DVector3 spawnpos = source->Vec3Angle(source->radius * 4, source->Angles.Yaw, 8.);
+-						auto vt = DVisualThinker::NewVisualThinker(source->Level, typeinfo, false);
+-						if (vt)
+-						{
++        if (typeinfo && typeinfo->IsDescendantOf("VisualThinker")) {
++          DVector3 spawnpos =
++              source->Vec3Angle(source->radius * 4, source->Angles.Yaw, 8.);
++          auto vt =
++              DVisualThinker::NewVisualThinker(source->Level, typeinfo, false);
++          if (vt) {
+             vt->PT.Pos = spawnpos;
+             vt->UpdateSector();
+           }
+         }
+       }
+     }
+-		}
+-		break;
++  } break;
+ 
+   case DEM_SPRAY:
+     s = ReadStringConst(stream);
+@@ -2745,15 +2587,11 @@ void Net_DoCommand(int cmd, TArrayView<uint8_t>& stream, int player)
+     break;
+ 
+   case DEM_PAUSE:
+-		if (gamestate == GS_LEVEL)
+-		{
+-			if (paused)
+-			{
++    if (gamestate == GS_LEVEL) {
++      if (paused) {
+         paused = 0;
+         S_ResumeSound(false);
+-			}
+-			else
+-			{
++      } else {
+         paused = player + 1;
+         S_PauseSound(false, false);
+       }
+@@ -2761,12 +2599,10 @@ void Net_DoCommand(int cmd, TArrayView<uint8_t>& stream, int player)
+     break;
+ 
+   case DEM_SAVEGAME:
+-		if (gamestate == GS_LEVEL)
+-		{
++    if (gamestate == GS_LEVEL) {
+       savegamefile = ReadStringConst(stream);
+       savedescription = ReadStringConst(stream);
+-			if (player != consoleplayer)
+-			{
++      if (player != consoleplayer) {
+         // Paths sent over the network will be valid for the system that sent
+         // the save command. For other systems, the path needs to be changed.
+         FString basename = ExtractFileBase(savegamefile.GetChars(), true);
+@@ -2780,9 +2616,8 @@ void Net_DoCommand(int cmd, TArrayView<uint8_t>& stream, int player)
+     // Do not autosave in multiplayer games or when dead.
+     // For demo playback, DEM_DOAUTOSAVE already exists in the demo if the
+     // autosave happened. And if it doesn't, we must not generate it.
+-		if (!netgame && !demoplayback && disableautosave < 2 && autosavecount
+-			&& players[player].playerstate == PST_LIVE)
+-		{
++    if (!netgame && !demoplayback && disableautosave < 2 && autosavecount &&
++        players[player].playerstate == PST_LIVE) {
+       Net_WriteInt8(DEM_DOAUTOSAVE);
+     }
+     break;
+@@ -2791,142 +2626,120 @@ void Net_DoCommand(int cmd, TArrayView<uint8_t>& stream, int player)
+     gameaction = ga_autosave;
+     break;
+ 
+-	case DEM_FOV:
+-		{
++  case DEM_FOV: {
+     float newfov = ReadFloat(stream);
+-			if (newfov != players[player].DesiredFOV)
+-			{
++    if (newfov != players[player].DesiredFOV) {
+       Printf("FOV%s set to %g\n",
+-					player == Net_Arbitrator ? " for everyone" : "",
+-					newfov);
++             player == Net_Arbitrator ? " for everyone" : "", newfov);
+     }
+ 
+     for (auto client : NetworkClients)
+       players[client].DesiredFOV = newfov;
+-		}
+-		break;
++  } break;
+ 
+   case DEM_MYFOV:
+     players[player].DesiredFOV = ReadFloat(stream);
+     break;
+ 
+   case DEM_RUNSCRIPT:
+-	case DEM_RUNSCRIPT2:
+-		{
++  case DEM_RUNSCRIPT2: {
+     int snum = ReadInt16(stream);
+     int argn = ReadInt8(stream);
+-			RunScript(stream, players[player].mo, snum, argn, (cmd == DEM_RUNSCRIPT2) ? ACS_ALWAYS : 0);
+-		}
+-		break;
++    RunScript(stream, players[player].mo, snum, argn,
++              (cmd == DEM_RUNSCRIPT2) ? ACS_ALWAYS : 0);
++  } break;
+ 
+-	case DEM_RUNNAMEDSCRIPT:
+-		{
++  case DEM_RUNNAMEDSCRIPT: {
+     s = ReadStringConst(stream);
+     int argn = ReadInt8(stream);
+-			RunScript(stream, players[player].mo, -FName(s).GetIndex(), argn & 127, (argn & 128) ? ACS_ALWAYS : 0);
+-		}
+-		break;
++    RunScript(stream, players[player].mo, -FName(s).GetIndex(), argn & 127,
++              (argn & 128) ? ACS_ALWAYS : 0);
++  } break;
+ 
+-	case DEM_RUNSPECIAL:
+-		{
++  case DEM_RUNSPECIAL: {
+     int snum = ReadInt16(stream);
+     int argn = ReadInt8(stream);
+     int arg[5] = {};
+ 
+-			for (i = 0; i < argn; ++i)
+-			{
++    for (i = 0; i < argn; ++i) {
+       int argval = ReadInt32(stream);
+       if ((unsigned)i < countof(arg))
+         arg[i] = argval;
+     }
+ 
+     if (!CheckCheatmode(player == consoleplayer))
+-				P_ExecuteSpecial(primaryLevel, snum, nullptr, players[player].mo, false, arg[0], arg[1], arg[2], arg[3], arg[4]);
+-		}
+-		break;
++      P_ExecuteSpecial(primaryLevel, snum, nullptr, players[player].mo, false,
++                       arg[0], arg[1], arg[2], arg[3], arg[4]);
++  } break;
+ 
+   case DEM_CROUCH:
+-		if (gamestate == GS_LEVEL && players[player].mo != nullptr
+-			&& players[player].playerstate == PST_LIVE && !(players[player].oldbuttons & BT_JUMP)
+-			&& !P_IsPlayerTotallyFrozen(&players[player]))
+-		{
++    if (gamestate == GS_LEVEL && players[player].mo != nullptr &&
++        players[player].playerstate == PST_LIVE &&
++        !(players[player].oldbuttons & BT_JUMP) &&
++        !P_IsPlayerTotallyFrozen(&players[player])) {
+       players[player].crouching = players[player].crouchdir < 0 ? 1 : -1;
+     }
+     break;
+ 
+-	case DEM_MORPHEX:
+-		{
++  case DEM_MORPHEX: {
+     s = ReadStringConst(stream);
+     FString msg = cht_Morph(players + player, PClass::FindActor(s), false);
+     if (player == consoleplayer)
+       Printf("%s\n", msg[0] != '\0' ? msg.GetChars() : "Morph failed.");
+-		}
+-		break;
++  } break;
+ 
+-	case DEM_ADDCONTROLLER:
+-		{
++  case DEM_ADDCONTROLLER: {
+     uint8_t playernum = ReadInt8(stream);
+     players[playernum].settings_controller = true;
+     if (consoleplayer == playernum)
+       Printf("You can now control game settings\n");
+     else if (consoleplayer == Net_Arbitrator)
+-				Printf("%s [%d] is now a settings controller\n", players[playernum].userinfo.GetName(), playernum);
+-		}
+-		break;
++      Printf("%s [%d] is now a settings controller\n",
++             players[playernum].userinfo.GetName(), playernum);
++  } break;
+ 
+-	case DEM_DELCONTROLLER:
+-		{
++  case DEM_DELCONTROLLER: {
+     uint8_t playernum = ReadInt8(stream);
+     players[playernum].settings_controller = false;
+     if (consoleplayer == playernum)
+       Printf("You can no longer control game settings\n");
+     else if (consoleplayer == Net_Arbitrator)
+-				Printf("%s [%d] is no longer a settings controller\n", players[playernum].userinfo.GetName(), playernum);
+-		}
+-		break;
++      Printf("%s [%d] is no longer a settings controller\n",
++             players[playernum].userinfo.GetName(), playernum);
++  } break;
+ 
+-	case DEM_KILLCLASSCHEAT:
+-		{
++  case DEM_KILLCLASSCHEAT: {
+     s = ReadStringConst(stream);
+     int killcount = 0;
+     PClassActor *cls = PClass::FindActor(s);
+ 
+-			if (cls != nullptr)
+-			{
++    if (cls != nullptr) {
+       killcount = primaryLevel->Massacre(false, cls->TypeName);
+       PClassActor *cls_rep = cls->GetReplacement(primaryLevel);
+       if (cls != cls_rep)
+         killcount += primaryLevel->Massacre(false, cls_rep->TypeName);
+ 
+       Printf("Killed %d monsters of type %s.\n", killcount, s);
+-			}
+-			else
+-			{
++    } else {
+       Printf("%s is not an actor class.\n", s);
+     }
+-		}
+-		break;
++  } break;
+ 
+-	case DEM_REMOVE:
+-		{
++  case DEM_REMOVE: {
+     s = ReadStringConst(stream);
+     int removecount = 0;
+     PClassActor *cls = PClass::FindActor(s);
+-			if (cls != nullptr && cls->IsDescendantOf(RUNTIME_CLASS(AActor)))
+-			{
++    if (cls != nullptr && cls->IsDescendantOf(RUNTIME_CLASS(AActor))) {
+       removecount = RemoveClass(primaryLevel, cls);
+       const PClass *cls_rep = cls->GetReplacement(primaryLevel);
+       if (cls != cls_rep)
+         removecount += RemoveClass(primaryLevel, cls_rep);
+ 
+       Printf("Removed %d actors of type %s.\n", removecount, s);
+-			}
+-			else
+-			{
++    } else {
+       Printf("%s is not an actor class.\n", s);
+     }
+-		}
+-		break;
++  } break;
+ 
+   case DEM_CONVREPLY:
+   case DEM_CONVCLOSE:
+@@ -2935,8 +2748,7 @@ void Net_DoCommand(int cmd, TArrayView<uint8_t>& stream, int player)
+     break;
+ 
+   case DEM_SETSLOT:
+-	case DEM_SETSLOTPNUM:
+-		{
++  case DEM_SETSLOTPNUM: {
+     int pnum = player;
+     if (cmd == DEM_SETSLOTPNUM)
+       pnum = ReadInt8(stream);
+@@ -2946,29 +2758,23 @@ void Net_DoCommand(int cmd, TArrayView<uint8_t>& stream, int player)
+     if (slot < NUM_WEAPON_SLOTS)
+       players[pnum].weapons.ClearSlot(slot);
+ 
+-			for (i = 0; i < count; ++i)
+-			{
++    for (i = 0; i < count; ++i) {
+       PClassActor *wpn = Net_ReadWeapon(stream);
+       players[pnum].weapons.AddSlot(slot, wpn, pnum == consoleplayer);
+     }
+-		}
+-		break;
++  } break;
+ 
+-	case DEM_ADDSLOT:
+-		{
++  case DEM_ADDSLOT: {
+     int slot = ReadInt8(stream);
+     PClassActor *wpn = Net_ReadWeapon(stream);
+     players[player].weapons.AddSlot(slot, wpn, player == consoleplayer);
+-		}
+-		break;
++  } break;
+ 
+-	case DEM_ADDSLOTDEFAULT:
+-		{
++  case DEM_ADDSLOTDEFAULT: {
+     int slot = ReadInt8(stream);
+     PClassActor *wpn = Net_ReadWeapon(stream);
+     players[player].weapons.AddSlotDefault(slot, wpn, player == consoleplayer);
+-		}
+-		break;
++  } break;
+ 
+   case DEM_SETPITCHLIMIT:
+     players[player].MinPitch = DAngle::fromDeg(-ReadInt8(stream)); // up
+@@ -2984,17 +2790,16 @@ void Net_DoCommand(int cmd, TArrayView<uint8_t>& stream, int player)
+     primaryLevel->ChangeLevel(nullptr, 0, 0);
+     break;
+ 
+-	case DEM_NETEVENT:
+-		{
++  case DEM_NETEVENT: {
+     s = ReadStringConst(stream);
+     int argn = ReadInt8(stream);
+     int arg[3] = {0, 0, 0};
+     for (int i = 0; i < 3; i++)
+       arg[i] = ReadInt32(stream);
+     bool manual = !!ReadInt8(stream);
+-			primaryLevel->localEventManager->Console(player, s, arg[0], arg[1], arg[2], manual, false);
+-		}
+-		break;
++    primaryLevel->localEventManager->Console(player, s, arg[0], arg[1], arg[2],
++                                             manual, false);
++  } break;
+ 
+   case DEM_ENDSCREENJOB:
+     EndScreenJob();
+@@ -3004,14 +2809,12 @@ void Net_DoCommand(int cmd, TArrayView<uint8_t>& stream, int player)
+     Net_PlayerReadiedUp(player);
+     break;
+ 
+-	case DEM_ZSC_CMD:
+-		{
++  case DEM_ZSC_CMD: {
+     FName cmd = ReadStringConst(stream);
+     unsigned int size = ReadInt16(stream);
+ 
+     TArray<uint8_t> buffer;
+-			if (size)
+-			{
++    if (size) {
+       buffer.Grow(size);
+       for (unsigned int i = 0u; i < size; ++i)
+         buffer.Push(ReadInt8(stream));
+@@ -3019,27 +2822,22 @@ void Net_DoCommand(int cmd, TArrayView<uint8_t>& stream, int player)
+ 
+     FNetworkCommand netCmd = {player, cmd, buffer};
+     primaryLevel->localEventManager->NetCommand(netCmd);
+-		}
+-		break;
++  } break;
+ 
+   case DEM_CHANGESKILL:
+     NextSkill = ReadInt32(stream);
+     break;
+ 
+-	case DEM_KICK:
+-		{
++  case DEM_KICK: {
+     const int pNum = ReadInt8(stream);
+-			if (pNum == consoleplayer)
+-			{
++    if (pNum == consoleplayer) {
+       I_Error("You have been kicked from the game");
+-			}
+-			else if (NetworkClients.InGame(pNum))
+-			{
+-				Printf("%s [%d] has been kicked from the game\n", players[pNum].userinfo.GetName(), pNum);
++    } else if (NetworkClients.InGame(pNum)) {
++      Printf("%s [%d] has been kicked from the game\n",
++             players[pNum].userinfo.GetName(), pNum);
+       DisconnectClient(pNum);
+     }
+-		}
+-		break;
++  } break;
+ 
+   default:
+     I_Error("Unknown net command: %d", cmd);
+@@ -3048,32 +2846,34 @@ void Net_DoCommand(int cmd, TArrayView<uint8_t>& stream, int player)
+ }
+ 
+ // Used by DEM_RUNSCRIPT, DEM_RUNSCRIPT2, and DEM_RUNNAMEDSCRIPT
+-static void RunScript(TArrayView<uint8_t>& stream, AActor *pawn, int snum, int argn, int always)
+-{
+-	// Scripts can be invoked without a level loaded, e.g. via puke(name) CCMD in fullscreen console
++static void RunScript(TArrayView<uint8_t> &stream, AActor *pawn, int snum,
++                      int argn, int always) {
++  // Scripts can be invoked without a level loaded, e.g. via puke(name) CCMD in
++  // fullscreen console
+   if (pawn == nullptr)
+     return;
+ 
+   int arg[4] = {};
+-	for (int i = 0; i < argn; ++i)
+-	{
++  for (int i = 0; i < argn; ++i) {
+     int argval = ReadInt32(stream);
+     if ((unsigned)i < countof(arg))
+       arg[i] = argval;
+   }
+ 
+-	P_StartScript(pawn->Level, pawn, nullptr, snum, primaryLevel->MapName.GetChars(), arg, min<int>(countof(arg), argn), ACS_NET | always);
++  P_StartScript(pawn->Level, pawn, nullptr, snum,
++                primaryLevel->MapName.GetChars(), arg,
++                min<int>(countof(arg), argn), ACS_NET | always);
+ }
+ 
+-// TODO: This really needs to be replaced with some kind of packet system that can simply read through packets and opt
+-// not to execute them. Right now this is making setting up net commands a nightmare.
+-// Reads through the network stream but doesn't actually execute any command. Used for getting the size of a stream.
+-// The skip amount is the number of bytes the command possesses. This should mirror the bytes in Net_DoCommand().
+-void Net_SkipCommand(int cmd, TArrayView<uint8_t>& stream)
+-{
++// TODO: This really needs to be replaced with some kind of packet system that
++// can simply read through packets and opt not to execute them. Right now this
++// is making setting up net commands a nightmare. Reads through the network
++// stream but doesn't actually execute any command. Used for getting the size of
++// a stream. The skip amount is the number of bytes the command possesses. This
++// should mirror the bytes in Net_DoCommand().
++void Net_SkipCommand(int cmd, TArrayView<uint8_t> &stream) {
+   size_t skip = 0;
+-	switch (cmd)
+-	{
++  switch (cmd) {
+   case DEM_SAY:
+     skip = strlen((char *)(stream.Data() + 1)) + 2;
+     break;
+@@ -3154,14 +2954,11 @@ void Net_SkipCommand(int cmd, TArrayView<uint8_t>& stream)
+     break;
+ 
+   case DEM_SINFCHANGEDXOR:
+-		case DEM_SINFCHANGED:
+-			{
++  case DEM_SINFCHANGED: {
+     uint8_t t = stream[0];
+     skip = 1 + (t & 63);
+-				if (cmd == DEM_SINFCHANGED)
+-				{
+-					switch (t >> 6)
+-					{
++    if (cmd == DEM_SINFCHANGED) {
++      switch (t >> 6) {
+       case CVAR_Bool:
+         skip += 1;
+         break;
+@@ -3173,13 +2970,10 @@ void Net_SkipCommand(int cmd, TArrayView<uint8_t>& stream)
+         skip += strlen((char *)(stream.Data() + skip)) + 1;
+         break;
+       }
+-				}
+-				else
+-				{
++    } else {
+       skip += 1;
+     }
+-			}
+-			break;
++  } break;
+ 
+   case DEM_RUNSCRIPT:
+   case DEM_RUNSCRIPT2:
+@@ -3200,13 +2994,11 @@ void Net_SkipCommand(int cmd, TArrayView<uint8_t>& stream)
+     break;
+ 
+   case DEM_SETSLOT:
+-		case DEM_SETSLOTPNUM:
+-			{
++  case DEM_SETSLOTPNUM: {
+     skip = 2 + (cmd == DEM_SETSLOTPNUM);
+     for (int numweapons = stream[skip - 1]; numweapons > 0; --numweapons)
+       skip += 1 + (stream[skip] >> 7);
+-			}
+-			break;
++  } break;
+ 
+   case DEM_ADDSLOT:
+   case DEM_ADDSLOTDEFAULT:
+@@ -3221,9 +3013,9 @@ void Net_SkipCommand(int cmd, TArrayView<uint8_t>& stream)
+   AdvanceStream(stream, skip);
+ }
+ 
+-// This was taken out of shared_hud, because UI code shouldn't do low level calculations that may change if the backing implementation changes.
+-int Net_GetLatency(int* localDelay, int* arbitratorDelay)
+-{
++// This was taken out of shared_hud, because UI code shouldn't do low level
++// calculations that may change if the backing implementation changes.
++int Net_GetLatency(int *localDelay, int *arbitratorDelay) {
+   const int gameDelayMs = (ClientTic - gametic) * 1000 / TICRATE;
+   int severity = 0;
+   if (gameDelayMs >= 160)
+@@ -3234,7 +3026,9 @@ int Net_GetLatency(int* localDelay, int* arbitratorDelay)
+     severity = 1;
+ 
+   *localDelay = gameDelayMs;
+-	*arbitratorDelay = NetMode == NET_PacketServer ? ClientStates[consoleplayer].AverageLatency : ClientStates[Net_Arbitrator].AverageLatency;
++  *arbitratorDelay = NetMode == NET_PacketServer
++                         ? ClientStates[consoleplayer].AverageLatency
++                         : ClientStates[Net_Arbitrator].AverageLatency;
+   return severity;
+ }
+ 
+@@ -3245,59 +3039,44 @@ int Net_GetLatency(int* localDelay, int* arbitratorDelay)
+ //==========================================================================
+ 
+ // Intermission lobby info
+-static int IsPlayerReady(int player)
+-{
+-	return Net_IsPlayerReady(player);
+-}
++static int IsPlayerReady(int player) { return Net_IsPlayerReady(player); }
+ 
+-DEFINE_ACTION_FUNCTION_NATIVE(_ScreenJobRunner, IsPlayerReady, IsPlayerReady)
+-{
++DEFINE_ACTION_FUNCTION_NATIVE(_ScreenJobRunner, IsPlayerReady, IsPlayerReady) {
+   PARAM_PROLOGUE;
+   PARAM_INT(player);
+   ACTION_RETURN_BOOL(IsPlayerReady(player));
+ }
+ 
+-static void ReadyPlayer()
+-{
++static void ReadyPlayer() {
+   if (netgame && !demoplayback)
+     Net_WriteInt8(DEM_READIED);
+ }
+ 
+-DEFINE_ACTION_FUNCTION_NATIVE(_ScreenJobRunner, ReadyPlayer, ReadyPlayer)
+-{
++DEFINE_ACTION_FUNCTION_NATIVE(_ScreenJobRunner, ReadyPlayer, ReadyPlayer) {
+   PARAM_PROLOGUE;
+   ReadyPlayer();
+   return 0;
+ }
+ 
+-static void ResetReadyTimer()
+-{
+-	Net_StartCutscene();
+-}
++static void ResetReadyTimer() { Net_StartCutscene(); }
+ 
+-DEFINE_ACTION_FUNCTION_NATIVE(_ScreenJobRunner, ResetReadyTimer, ResetReadyTimer)
+-{
++DEFINE_ACTION_FUNCTION_NATIVE(_ScreenJobRunner, ResetReadyTimer,
++                              ResetReadyTimer) {
+   PARAM_PROLOGUE;
+   ResetReadyTimer();
+   return 0;
+ }
+ 
+-static int GetReadyTimer()
+-{
+-	return CutsceneCountdown;
+-}
++static int GetReadyTimer() { return CutsceneCountdown; }
+ 
+-DEFINE_ACTION_FUNCTION_NATIVE(_ScreenJobRunner, GetReadyTimer, GetReadyTimer)
+-{
++DEFINE_ACTION_FUNCTION_NATIVE(_ScreenJobRunner, GetReadyTimer, GetReadyTimer) {
+   PARAM_PROLOGUE;
+   ACTION_RETURN_INT(GetReadyTimer());
+ }
+ 
+ // [RH] List "ping" times
+-CCMD(pings)
+-{
+-	if (!netgame)
+-	{
++CCMD(pings) {
++  if (!netgame) {
+     Printf("This command can only be used when playing in a net game\n");
+     return;
+   }
+@@ -3305,39 +3084,37 @@ CCMD(pings)
+   if (NetworkClients.Size() <= 1)
+     return;
+ 
+-	// In Packet Server mode, this displays the latency each individual client has to the host
+-	for (auto client : NetworkClients)
+-	{
+-		if ((NetMode == NET_PeerToPeer && client != consoleplayer) || (NetMode == NET_PacketServer && client != Net_Arbitrator))
+-			Printf("%ums %s [%d]\n", ClientStates[client].AverageLatency, players[client].userinfo.GetName(), client);
++  // In Packet Server mode, this displays the latency each individual client has
++  // to the host
++  for (auto client : NetworkClients) {
++    if ((NetMode == NET_PeerToPeer && client != consoleplayer) ||
++        (NetMode == NET_PacketServer && client != Net_Arbitrator))
++      Printf("%ums %s [%d]\n", ClientStates[client].AverageLatency,
++             players[client].userinfo.GetName(), client);
+   }
+ }
+ 
+-CCMD(kick)
+-{
+-	if (argv.argc() < 2)
+-	{
+-		Printf("Usage: kick <client numbers>\nRemove these clients from the game\n");
++CCMD(kick) {
++  if (argv.argc() < 2) {
++    Printf(
++        "Usage: kick <client numbers>\nRemove these clients from the game\n");
+     return;
+   }
+ 
+-	if (!netgame)
+-	{
++  if (!netgame) {
+     Printf("This command can only be used when playing in a net game\n");
+     return;
+   }
+ 
+-	// Dont give settings controllers access to this. That should be reserved as a separate power
+-	// the host can grant.
+-	if (consoleplayer != Net_Arbitrator)
+-	{
++  // Dont give settings controllers access to this. That should be reserved as a
++  // separate power the host can grant.
++  if (consoleplayer != Net_Arbitrator) {
+     Printf("This command is only accessible to the host\n");
+     return;
+   }
+ 
+   TArray<int> cNums = {};
+-	for (size_t i = 1u; i < argv.argc(); ++i)
+-	{
++  for (size_t i = 1u; i < argv.argc(); ++i) {
+     int cNum = -1;
+     if (!C_IsValidInt(argv[i], cNum) || cNum < 0 || cNum >= MAXPLAYERS)
+       Printf("Bad client number %s\n", argv[i]);
+@@ -3345,37 +3122,30 @@ CCMD(kick)
+       cNums.Push(cNum);
+   }
+ 
+-	for (auto cNum : cNums)
+-	{
+-		if (!NetworkClients.InGame(cNum))
+-		{
++  for (auto cNum : cNums) {
++    if (!NetworkClients.InGame(cNum)) {
+       Printf("Client %d is not in game\n", cNum);
+-		}
+-		else
+-		{
++    } else {
+       Net_WriteInt8(DEM_KICK);
+       Net_WriteInt8(cNum);
+     }
+   }
+ }
+ 
+-CCMD(mute)
+-{
+-	if (argv.argc() < 2)
+-	{
+-		Printf("Usage: mute <player numbers>\nDisable messages from these players\n");
++CCMD(mute) {
++  if (argv.argc() < 2) {
++    Printf(
++        "Usage: mute <player numbers>\nDisable messages from these players\n");
+     return;
+   }
+ 
+-	if (!multiplayer)
+-	{
++  if (!multiplayer) {
+     Printf("This command can only be used when playing in multiplayer\n");
+     return;
+   }
+ 
+   TArray<int> pNums = {};
+-	for (size_t i = 1u; i < argv.argc(); ++i)
+-	{
++  for (size_t i = 1u; i < argv.argc(); ++i) {
+     int pNum = -1;
+     if (!C_IsValidInt(argv[i], pNum) || pNum < 0 || pNum >= MAXPLAYERS)
+       Printf("Bad player number %s\n", argv[i]);
+@@ -3383,48 +3153,37 @@ CCMD(mute)
+       pNums.Push(pNum);
+   }
+ 
+-	for (auto pNum : pNums)
+-	{
+-		if (!playeringame[pNum])
+-		{
++  for (auto pNum : pNums) {
++    if (!playeringame[pNum]) {
+       Printf("Player %d is not in game\n", pNum);
+-		}
+-		else
+-		{
++    } else {
+       MutedClients |= (uint64_t)1u << pNum;
+       Printf("Muted player %s [%d]\n", players[pNum].userinfo.GetName(), pNum);
+     }
+   }
+ }
+ 
+-CCMD(muteall)
+-{
+-	if (!multiplayer)
+-	{
++CCMD(muteall) {
++  if (!multiplayer) {
+     Printf("This command can only be used when playing in multiplayer\n");
+     return;
+   }
+ 
+-	for (int i = 0; i < MAXPLAYERS; ++i)
+-	{
++  for (int i = 0; i < MAXPLAYERS; ++i) {
+     if (playeringame[i] && i != consoleplayer)
+       MutedClients |= (uint64_t)1u << i;
+   }
+ }
+ 
+-CCMD(listmuted)
+-{
+-	if (!multiplayer)
+-	{
++CCMD(listmuted) {
++  if (!multiplayer) {
+     Printf("This command can only be used when playing in multiplayer\n");
+     return;
+   }
+ 
+   bool found = false;
+-	for (unsigned int i = 0; i < MAXPLAYERS; ++i)
+-	{
+-		if (MutedClients & ((uint64_t)1u << i))
+-		{
++  for (unsigned int i = 0; i < MAXPLAYERS; ++i) {
++    if (MutedClients & ((uint64_t)1u << i)) {
+       found = true;
+       Printf("%d. %s\n", i, players[i].userinfo.GetName());
+     }
+@@ -3434,23 +3193,20 @@ CCMD(listmuted)
+     Printf("No one currently muted\n");
+ }
+ 
+-CCMD(unmute)
+-{
+-	if (argv.argc() < 2)
+-	{
+-		Printf("Usage: unmute <player numbers>\nAllow messages from these players again\n");
++CCMD(unmute) {
++  if (argv.argc() < 2) {
++    Printf("Usage: unmute <player numbers>\nAllow messages from these players "
++           "again\n");
+     return;
+   }
+ 
+-	if (!multiplayer)
+-	{
++  if (!multiplayer) {
+     Printf("This command can only be used when playing in multiplayer\n");
+     return;
+   }
+ 
+   TArray<int> pNums = {};
+-	for (size_t i = 1u; i < argv.argc(); ++i)
+-	{
++  for (size_t i = 1u; i < argv.argc(); ++i) {
+     int pNum = -1;
+     if (!C_IsValidInt(argv[i], pNum) || pNum < 0 || pNum >= MAXPLAYERS)
+       Printf("Bad player number %s\n", argv[i]);
+@@ -3458,24 +3214,19 @@ CCMD(unmute)
+       pNums.Push(pNum);
+   }
+ 
+-	for (auto pNum : pNums)
+-	{
+-		if (!playeringame[pNum])
+-		{
++  for (auto pNum : pNums) {
++    if (!playeringame[pNum]) {
+       Printf("Player %d is not in game\n", pNum);
+-		}
+-		else
+-		{
++    } else {
+       MutedClients &= ~((uint64_t)1u << pNum);
+-			Printf("Unmuted player %s [%d]\n", players[pNum].userinfo.GetName(), pNum);
++      Printf("Unmuted player %s [%d]\n", players[pNum].userinfo.GetName(),
++             pNum);
+     }
+   }
+ }
+ 
+-CCMD(unmuteall)
+-{
+-	if (!multiplayer)
+-	{
++CCMD(unmuteall) {
++  if (!multiplayer) {
+     Printf("This command can only be used when playing in multiplayer\n");
+     return;
+   }
+@@ -3492,40 +3243,27 @@ CCMD(unmuteall)
+ //
+ //==========================================================================
+ 
+-static void Net_ChangeSettingsControllers(const TArray<int>& cNums, bool add)
+-{
+-	if (!netgame)
+-	{
++static void Net_ChangeSettingsControllers(const TArray<int> &cNums, bool add) {
++  if (!netgame) {
+     Printf("This command can only be used when playing in a net game\n");
+     return;
+   }
+ 
+-	if (consoleplayer != Net_Arbitrator)
+-	{
++  if (consoleplayer != Net_Arbitrator) {
+     Printf("This command is only accessible to the host\n");
+     return;
+   }
+ 
+-	for (auto cNum : cNums)
+-	{
+-		if (cNum == Net_Arbitrator)
+-		{
++  for (auto cNum : cNums) {
++    if (cNum == Net_Arbitrator) {
+       Printf("The host cannot change their own settings controller status\n");
+-		}
+-		else if (!NetworkClients.InGame(cNum))
+-		{
++    } else if (!NetworkClients.InGame(cNum)) {
+       Printf("Client %d is not in game\n", cNum);
+-		}
+-		else if (players[cNum].settings_controller && add)
+-		{
++    } else if (players[cNum].settings_controller && add) {
+       Printf("Client %d is already a settings controller\n", cNum);
+-		}
+-		else if (!players[cNum].settings_controller && !add)
+-		{
++    } else if (!players[cNum].settings_controller && !add) {
+       Printf("Client %d is already not a settings controller\n", cNum);
+-		}
+-		else
+-		{
++    } else {
+       Net_WriteInt8(add ? DEM_ADDCONTROLLER : DEM_DELCONTROLLER);
+       Net_WriteInt8(cNum);
+     }
+@@ -3538,17 +3276,15 @@ static void Net_ChangeSettingsControllers(const TArray<int>& cNums, bool add)
+ //
+ //==========================================================================
+ 
+-CCMD(addsettingscontrollers)
+-{
+-	if (argv.argc() < 2)
+-	{
+-		Printf("Usage: addsettingscontrollers <client numbers>\nAllow these clients to control game settings\n");
++CCMD(addsettingscontrollers) {
++  if (argv.argc() < 2) {
++    Printf("Usage: addsettingscontrollers <client numbers>\nAllow these "
++           "clients to control game settings\n");
+     return;
+   }
+ 
+   TArray<int> cNums = {};
+-	for (size_t i = 1u; i < argv.argc(); ++i)
+-	{
++  for (size_t i = 1u; i < argv.argc(); ++i) {
+     int cNum = -1;
+     if (!C_IsValidInt(argv[i], cNum) || cNum < 0 || cNum >= MAXPLAYERS)
+       Printf("Bad client number %s\n", argv[i]);
+@@ -3565,17 +3301,15 @@ CCMD(addsettingscontrollers)
+ //
+ //==========================================================================
+ 
+-CCMD(removesettingscontrollers)
+-{
+-	if (argv.argc() < 2)
+-	{
+-		Printf("Usage: removesettingscontrollers <client numbers>\nRemove the ability for these clients to control game settings\n");
++CCMD(removesettingscontrollers) {
++  if (argv.argc() < 2) {
++    Printf("Usage: removesettingscontrollers <client numbers>\nRemove the "
++           "ability for these clients to control game settings\n");
+     return;
+   }
+ 
+   TArray<int> cNums = {};
+-	for (size_t i = 1u; i < argv.argc(); ++i)
+-	{
++  for (size_t i = 1u; i < argv.argc(); ++i) {
+     int cNum = -1;
+     if (!C_IsValidInt(argv[i], cNum) || cNum < 0 || cNum >= MAXPLAYERS)
+       Printf("Bad player number %s\n", argv[i]);
+@@ -3592,11 +3326,9 @@ CCMD(removesettingscontrollers)
+ //
+ //==========================================================================
+ 
+-CCMD(removeallsettingscontrollers)
+-{
++CCMD(removeallsettingscontrollers) {
+   TArray<int> cNums = {};
+-	for (auto client : NetworkClients)
+-	{
++  for (auto client : NetworkClients) {
+     if (client != Net_Arbitrator && players[client].settings_controller)
+       cNums.Push(client);
+   }
+@@ -3610,30 +3342,25 @@ CCMD(removeallsettingscontrollers)
+ //
+ //==========================================================================
+ 
+-CCMD(listsettingscontrollers)
+-{
+-	if (!netgame)
+-	{
++CCMD(listsettingscontrollers) {
++  if (!netgame) {
+     Printf("This command can only be used when playing in a net game\n");
+     return;
+   }
+ 
+   TArray<int> cNums = {};
+-	for (auto client : NetworkClients)
+-	{
++  for (auto client : NetworkClients) {
+     if (client != Net_Arbitrator && players[client].settings_controller)
+       cNums.Push(client);
+   }
+ 
+-	if (!cNums.Size())
+-	{
++  if (!cNums.Size()) {
+     Printf("No other settings controllers\n");
+     return;
+   }
+ 
+   Printf("The following players can change the game settings:\n");
+-	for (auto cNum : cNums)
+-	{
++  for (auto cNum : cNums) {
+     Printf("%d. %s", cNum, players[cNum].userinfo.GetName());
+     if (cNum == consoleplayer)
+       Printf(" [*]");

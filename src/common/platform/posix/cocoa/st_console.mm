@@ -39,7 +39,6 @@
 #include "palentry.h"
 #include "v_video.h"
 #include "v_font.h"
-#include "gamestate.h"
 
 static NSColor* RGB(const uint8_t red, const uint8_t green, const uint8_t blue)
 {
@@ -128,20 +127,20 @@ static FConsoleWindow* s_instance;
 
 void FConsoleWindow::CreateInstance()
 {
-	assert(!s_instance);
+	assert(NULL == s_instance);
 	s_instance = new FConsoleWindow;
 }
 
 void FConsoleWindow::DeleteInstance()
 {
-	assert(s_instance);
+	assert(NULL != s_instance);
 	delete s_instance;
-	s_instance = nullptr;
+	s_instance = NULL;
 }
 
 FConsoleWindow& FConsoleWindow::GetInstance()
 {
-	assert(s_instance);
+	assert(NULL != s_instance);
 	return *s_instance;
 }
 
@@ -193,7 +192,7 @@ void FConsoleWindow::ShowFatalError(const char* const message)
 
 
 static const unsigned int THIRTY_FPS = 33; // milliseconds per update
-static const NSUInteger MAX_CONSOLE_LINES = 1000;
+
 
 template <typename Function, unsigned int interval = THIRTY_FPS>
 struct TimedUpdater
@@ -201,12 +200,15 @@ struct TimedUpdater
 	explicit TimedUpdater(const Function& function)
 	{
 		extern uint64_t I_msTime();
-		const unsigned int currentTime = (unsigned int)I_msTime();
+		const unsigned int currentTime = I_msTime();
 
 		if (currentTime - m_previousTime > interval)
 		{
 			m_previousTime = currentTime;
+
 			function();
+
+			[[NSRunLoop currentRunLoop] limitDateForMode:NSDefaultRunLoopMode];
 		}
 	}
 
@@ -214,7 +216,7 @@ struct TimedUpdater
 };
 
 template <typename Function, unsigned int interval>
-unsigned int TimedUpdater<Function, interval>::m_previousTime = 0;
+unsigned int TimedUpdater<Function, interval>::m_previousTime;
 
 template <typename Function, unsigned int interval = THIRTY_FPS>
 static void UpdateTimed(const Function& function)
@@ -223,43 +225,13 @@ static void UpdateTimed(const Function& function)
 }
 
 
-static void PumpRunLoop()
-{
-	NSRunLoop* runLoop = [NSRunLoop currentRunLoop];
-	NSString* mode = [runLoop currentMode];
-	
-	// If we are already in a modal loop or event tracking loop, 
-	// don't pump manually to avoid recursive re-entrancy issues.
-	if (mode != nil && ([mode isEqualToString:NSModalPanelRunLoopMode] || 
-					    [mode isEqualToString:NSEventTrackingRunLoopMode]))
-	{
-		return;
-	}
-
-	if (mode == nil) mode = NSDefaultRunLoopMode;
-	[runLoop runMode:mode beforeDate:[NSDate distantPast]];
-}
-
-
 void FConsoleWindow::AddText(const char* message)
 {
-	if (![NSThread isMainThread])
-	{
-		FString msg = message;
-		dispatch_async(dispatch_get_main_queue(), ^{
-			AddText(msg.GetChars());
-		});
-		return;
-	}
-
 	PalEntry color(223, 223, 223);
 
 	char buffer[1024] = {};
 	size_t pos = 0;
 	bool reset = false;
-
-	NSTextStorage* textStorage = [m_textView textStorage];
-	[textStorage beginEditing];
 
 	while (*message != '\0')
 	{
@@ -310,45 +282,16 @@ void FConsoleWindow::AddText(const char* message)
 	if (0 != pos)
 	{
 		buffer[pos] = '\0';
+
 		AddText(color, buffer);
 	}
 
-	// Limit console lines to maintain performance
-	NSString* string = [textStorage string];
-	NSUInteger length = [string length];
-	if (length > 0)
-	{
-		NSUInteger lineCount = 0;
-		NSRange range = NSMakeRange(0, length);
-		while (range.location < length)
-		{
-			range = [string lineRangeForRange:NSMakeRange(range.location, 0)];
-			lineCount++;
-			range.location = NSMaxRange(range);
-		}
-
-		if (lineCount > MAX_CONSOLE_LINES)
-		{
-			NSUInteger linesToRemove = lineCount - MAX_CONSOLE_LINES;
-			NSRange removeRange = NSMakeRange(0, 0);
-			for (NSUInteger i = 0; i < linesToRemove; ++i)
-			{
-				removeRange = [string lineRangeForRange:NSMakeRange(removeRange.location, 0)];
-				removeRange.location = NSMaxRange(removeRange);
-			}
-			[textStorage deleteCharactersInRange:NSMakeRange(0, removeRange.location)];
-			m_characterCount = [textStorage length];
-		}
-	}
-
-	[textStorage endEditing];
 	if ([m_window isVisible])
 	{
-		[m_textView scrollRangeToVisible:NSMakeRange(m_characterCount, 0)];
-		if (gamestate == GS_STARTUP)
+		UpdateTimed([&]()
 		{
-			UpdateTimed([&](){ PumpRunLoop(); });
-		}
+			[m_textView scrollRangeToVisible:NSMakeRange(m_characterCount, 0)];
+		});
 	}
 }
 
@@ -373,15 +316,9 @@ void FConsoleWindow::AddText(const PalEntry& color, const char* const message)
 
 void FConsoleWindow::ScrollTextToBottom()
 {
-	if (![NSThread isMainThread])
-	{
-		dispatch_async(dispatch_get_main_queue(), ^{
-			ScrollTextToBottom();
-		});
-		return;
-	}
-
 	[m_textView scrollRangeToVisible:NSMakeRange(m_characterCount, 0)];
+
+	[[NSRunLoop currentRunLoop] limitDateForMode:NSDefaultRunLoopMode];
 }
 
 
@@ -424,8 +361,8 @@ void FConsoleWindow::SetTitleText()
 
 void FConsoleWindow::SetProgressBar(const bool visible)
 {
-	if (  (!visible && !m_progressBar)
-		|| (visible && m_progressBar))
+	if (  (!visible && nil == m_progressBar)
+		|| (visible && nil != m_progressBar))
 	{
 		return;
 	}
@@ -450,7 +387,8 @@ void FConsoleWindow::SetProgressBar(const bool visible)
 		ExpandTextView(PROGRESS_BAR_HEIGHT);
 
 		[m_progressBar removeFromSuperview];
-		m_progressBar = nil; // ARC releases automatically
+		[m_progressBar release];
+		m_progressBar = nil;
 	}
 }
 
@@ -466,28 +404,22 @@ void FConsoleWindow::ExpandTextView(const float height)
 
 void FConsoleWindow::Progress(const int current, const int maximum)
 {
-	if (!m_progressBar)
+	if (nil == m_progressBar)
 	{
 		return;
 	}
 
-	if (![NSThread isMainThread])
+	UpdateTimed([&]()
 	{
-		dispatch_async(dispatch_get_main_queue(), ^{
-			Progress(current, maximum);
-		});
-		return;
-	}
-
-    [m_progressBar setMaxValue:maximum];
-    [m_progressBar setDoubleValue:current];
-    [m_progressBar displayIfNeeded];
+		[m_progressBar setMaxValue:maximum];
+		[m_progressBar setDoubleValue:current];
+	});
 }
 
 
 void FConsoleWindow::NetInit(const char* const message, const bool host)
 {
-	if (!m_netView)
+	if (nil == m_netView)
 	{
 		SetProgressBar(false);
 		ExpandTextView(-NET_VIEW_HEIGHT);
@@ -570,7 +502,7 @@ void FConsoleWindow::NetProgress(const int cur, const int limit)
 {
 	m_netCurPos = cur;
 	m_netMaxPos = limit;
-	if (!m_netView)
+	if (nil == m_netView)
 	{
 		return;
 	}
@@ -589,9 +521,10 @@ void FConsoleWindow::NetDone()
 		ExpandTextView(NET_VIEW_HEIGHT);
 
 		[m_netView removeFromSuperview];
-		m_netView = nil; // ARC releases automatically
+		[m_netView release];
+		m_netView = nil;
 
-		// Released by ARC when m_netView is deallocated
+		// Released by m_netView
 		m_netMessageText = nil;
 		m_netCountText = nil;
 		m_netProgressBar = nil;

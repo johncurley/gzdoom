@@ -135,15 +135,7 @@ int V_GetBackend()
 {
 	int v = vid_preferbackend;
 #ifndef HAVE_METAL
-	// If Metal not available, backend 3 falls back to OpenGLES2 or OpenGL
-	if (v == 3)
-	{
-#ifdef HAVE_GLES2
-		vid_preferbackend = v = 2;
-#else
-		vid_preferbackend = v = 0;
-#endif
-	}
+	if (v == 3) vid_preferbackend = v = 2;
 #endif
 	if (v < 0 || v > 3) v = 0;
 	return v;
@@ -482,14 +474,6 @@ CCMD(vid_listadapters)
 }
 
 bool vid_hdr_active = false;
-
-#ifdef __APPLE__
-extern void I_UseHiDPI(bool enable);
-CUSTOM_CVAR(Bool, vid_hidpi, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL)
-{
-	I_UseHiDPI(self);
-}
-#endif
 
 DEFINE_GLOBAL(SmallFont)
 DEFINE_GLOBAL(SmallFont2)

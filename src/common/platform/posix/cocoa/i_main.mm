@@ -43,7 +43,6 @@
 #include "c_cvars.h"
 #include "cmdlib.h"
 #include "engineerrors.h"
-#include "g_input.h"
 #include "i_system.h"
 #include "m_argv.h"
 #include "printf.h"
@@ -204,7 +203,6 @@ TArray<FString> s_argv;
 
 int DoMain(int argc, char** argv)
 {
-	[NSApp activateIgnoringOtherApps:YES];
 	signal(SIGINT, SignalHandler);
 	signal(SIGTERM, SignalHandler);
 	// signal(SIGHUP, SignalHandler);
@@ -251,6 +249,8 @@ int DoMain(int argc, char** argv)
 - (void)applicationDidFinishLaunching:(NSNotification*)aNotification;
 
 - (BOOL)application:(NSApplication*)theApplication openFile:(NSString*)filename;
+
+- (void)processEvents:(NSTimer*)timer;
 
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender;
 
@@ -309,6 +309,16 @@ extern bool AppActive;
 	// The following call resolves this issue
 	[NSApp activateIgnoringOtherApps:YES];
 
+	// Setup timer for custom event loop
+
+	NSTimer* timer = [NSTimer timerWithTimeInterval:0
+											 target:self
+										   selector:@selector(processEvents:)
+										   userInfo:nil
+											repeats:YES];
+	[[NSRunLoop currentRunLoop] addTimer:timer
+								 forMode:NSDefaultRunLoopMode];
+
 	FConsoleWindow::CreateInstance();
 
 	const size_t argc = s_argv.Size();
@@ -321,10 +331,7 @@ extern bool AppActive;
 
 	argv[argc] = nullptr;
 
-	// Defer game startup so that applicationDidFinishLaunching can return
-	dispatch_async(dispatch_get_main_queue(), ^{
-		exit(DoMain(argc, &argv[0]));
-	});
+	exit(DoMain(argc, &argv[0]));
 }
 
 
@@ -361,6 +368,33 @@ extern bool AppActive;
 	return TRUE;
 }
 
+
+- (void)processEvents:(NSTimer*)timer
+{
+	ZD_UNUSED(timer);
+
+	NSAutoreleasePool* pool = [[NSAutoreleasePool alloc] init];
+
+	while (true)
+	{
+		NSEvent* event = [NSApp nextEventMatchingMask:NSEventMaskAny
+											untilDate:[NSDate dateWithTimeIntervalSinceNow:0]
+											   inMode:NSDefaultRunLoopMode
+											  dequeue:YES];
+		if (nil == event)
+		{
+			break;
+		}
+
+		I_ProcessEvent(event);
+
+		[NSApp sendEvent:event];
+	}
+
+	[NSApp updateWindows];
+
+	[pool release];
+}
 
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender
 {
@@ -483,12 +517,13 @@ void CreateMenu()
 
 void ReleaseApplicationController()
 {
-	if (appCtrl)
+	if (NULL != appCtrl)
 	{
 		[NSApp setDelegate:nil];
 		[NSApp deactivate];
 
-		appCtrl = nil; // ARC releases automatically
+		[appCtrl release];
+		appCtrl = NULL;
 	}
 }
 
@@ -497,7 +532,6 @@ void ReleaseApplicationController()
 
 int main(int argc, char** argv)
 {
-	AppActive = true; // Ensure app is considered active from the very start
 	for (int i = 0; i < argc; ++i)
 	{
 		const char* const argument = argv[i];
@@ -516,7 +550,7 @@ int main(int argc, char** argv)
 		s_argv.Push(argument);
 	}
 
-	@autoreleasepool {
+	NSAutoreleasePool* pool = [[NSAutoreleasePool alloc] init];
 
 	[NSApplication sharedApplication];
 
@@ -535,6 +569,7 @@ int main(int argc, char** argv)
 	[NSApp setDelegate:appCtrl];
 	[NSApp run];
 
+	[pool release];
+
 	return EXIT_SUCCESS;
-	}
 }

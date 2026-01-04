@@ -1,0 +1,9 @@
+Compilation succeeded!
+
+Please run the game with `vm_log 1` enabled, start a new game in Ashes 2063, try to move/fire, and then share the log output.
+
+I'm specifically looking for:
+1.  `DACSThinker::Tick` messages (to see if the script thinker is active).
+2.  `DLevelScript::DLevelScript` messages (to see if scripts are created).
+3.  `DLevelScript::RunScript` messages (to see if scripts are executing).
+4.  `VMCall: Invoking PlayerThink` messages (to confirm the player class).

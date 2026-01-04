@@ -111,9 +111,8 @@ extern bool ToggleFullscreen;
 
 EXTERN_CVAR(Bool, vid_hidpi)
 EXTERN_CVAR(Int,  vid_defwidth)
-EXTERN_CVAR(Int, vid_defheight)
+EXTERN_CVAR(Int,  vid_defheight)
 EXTERN_CVAR(Bool, vk_debug)
-EXTERN_CVAR(Int, vid_preferbackend)
 
 CVAR(Bool, mvk_debug, false, 0)
 CVAR(Bool, vid_nativefullscreen, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
@@ -191,56 +190,26 @@ namespace
 // ---------------------------------------------------------------------------
 
 
-// Modern OpenGL view implementation without deprecated NSOpenGLView (removed in macOS 12+)
-// Uses manual NSOpenGLContext management for macOS 10.13+ compatibility
-//
-// Key changes from NSOpenGLView:
-// - Inherits from NSView instead of NSOpenGLView
-// - Manually creates and manages NSOpenGLContext
-// - Uses layer-backed rendering (wantsLayer = YES)
-// - HiDPI scaling via layer.contentsScale instead of setWantsBestResolutionOpenGLSurface
-//
-// This approach is compatible with modern macOS SDKs while maintaining OpenGL support
-@interface OpenGLCocoaView : NSView
+@interface OpenGLCocoaView : NSOpenGLView
 {
 	NSCursor* m_cursor;
-	NSOpenGLContext* m_context;
-	NSOpenGLPixelFormat* m_pixelFormat;
 }
 
-- (instancetype)initWithFrame:(NSRect)frameRect pixelFormat:(NSOpenGLPixelFormat*)format;
 - (void)setCursor:(NSCursor*)cursor;
-- (NSOpenGLContext*)openGLContext;
 
 @end
 
 
 @implementation OpenGLCocoaView
 
-- (instancetype)initWithFrame:(NSRect)frameRect pixelFormat:(NSOpenGLPixelFormat*)format
-{
-	self = [super initWithFrame:frameRect];
-	if (self)
-	{
-		m_pixelFormat = format;
-		m_context = [[NSOpenGLContext alloc] initWithFormat:m_pixelFormat shareContext:nil];
-		m_cursor = nil;
-
-		// Use layer-backed rendering for better performance
-		self.wantsLayer = YES;
-		self.layer.backgroundColor = NSColor.blackColor.CGColor;
-
-		// Attach context to this view
-		[m_context setView:self];
-	}
-	return self;
-}
-
 - (void)drawRect:(NSRect)dirtyRect
 {
-	// OpenGL rendering is handled by the renderer, not here
-	// This just ensures we have a black background
-	if (self.layer != nil)
+	if ([NSGraphicsContext currentContext])
+	{
+		[NSColor.blackColor setFill];
+		NSRectFill(dirtyRect);
+	}
+	else if (self.layer != nil)
 	{
 		self.layer.backgroundColor = CGColorGetConstantColor(kCGColorBlack);
 	}
@@ -263,57 +232,12 @@ namespace
 	m_cursor = cursor;
 }
 
-- (NSOpenGLContext*)openGLContext
-{
-	return m_context;
-}
-
-- (BOOL)isOpaque
-{
-	return YES;
-}
-
-- (BOOL)acceptsFirstResponder
-{
-	return YES;
-}
-
-- (void)update
-{
-	// Update context when view size changes
-	if (m_context != nil)
-	{
-		[m_context update];
-	}
-}
-
-- (void)reshape
-{
-	// Note: NSView doesn't have reshape, only NSOpenGLView does
-	// Since we inherit from NSView, we just call update directly
-	[self update];
-}
-
-- (void)keyDown:(NSEvent*)event
-{
-	// Handle key events to prevent system beep
-	// Actual keyboard input is processed through Cocoa event system
-	// Don't call [super keyDown:event] to avoid beep sound
-}
-
 @end
 
 
 // ---------------------------------------------------------------------------
 
 
-// Vulkan/Metal view implementation using CAMetalLayer
-// Compatible with MoltenVK (Vulkan on Metal) and future native Metal renderer
-//
-// Metal 2 Requirements (macOS 10.13+):
-// - CAMetalLayer automatically uses Metal 2 on compatible hardware
-// - Graceful degradation to Metal 1.2 on older GPUs (10.11-10.12 era hardware)
-// - MoltenVK handles Vulkan to Metal translation
 @interface VulkanCocoaView : NSView
 {
 	NSCursor* m_cursor;
@@ -343,7 +267,6 @@ namespace
 	m_cursor = cursor;
 }
 
-// Use CAMetalLayer for Metal rendering (Metal 2 on macOS 10.13+)
 +(Class) layerClass
 {
 	return NSClassFromString(@"CAMetalLayer");
@@ -357,13 +280,6 @@ namespace
 -(BOOL) isOpaque
 {
 	return YES;
-}
-
-- (void)keyDown:(NSEvent*)event
-{
-	// Handle key events to prevent system beep
-	// Actual keyboard input is processed through Cocoa event system
-	// Don't call [super keyDown:event] to avoid beep sound
 }
 
 @end
@@ -416,13 +332,6 @@ namespace
 -(BOOL) isOpaque
 {
 	return YES;
-}
-
-- (void)keyDown:(NSEvent*)event
-{
-	// Handle key events to prevent system beep
-	// Actual keyboard input is processed through Cocoa event system
-	// Don't call [super keyDown:event] to avoid beep sound
 }
 
 @end
@@ -547,8 +456,6 @@ public:
 
 		const NSRect contentRect = [ms_window contentRectForFrameRect:[ms_window frame]];
 		SystemBaseFrameBuffer *fb = nullptr;
-
-		Printf("vid_preferbackend: %d\n", (int)vid_preferbackend);
 
 #ifdef HAVE_VULKAN
 		if (ms_isVulkanEnabled)
@@ -719,16 +626,6 @@ SystemBaseFrameBuffer::SystemBaseFrameBuffer(void*, const bool fullscreen)
 , m_hiDPI(false)
 , m_window(nullptr)
 {
-	int w = vid_defwidth;
-	int h = vid_defheight;
-	if (vid_hidpi && [NSScreen mainScreen] != nil)
-	{
-		CGFloat scale = [NSScreen mainScreen].backingScaleFactor;
-		w = int(w * scale);
-		h = int(h * scale);
-	}
-	SetSize(w, h);
-
 	assert(frameBuffer == nullptr);
 	frameBuffer = this;
 
@@ -793,15 +690,13 @@ int SystemBaseFrameBuffer::GetTitleBarHeight() const
 
 int SystemBaseFrameBuffer::GetClientWidth()
 {
-	const NSSize contentSize = I_GetContentViewSize(m_window);
-	const int clientWidth = int(contentSize.width);
+	const int clientWidth = I_GetContentViewSize(m_window).width;
 	return clientWidth > 0 ? clientWidth : GetWidth();
 }
 
 int SystemBaseFrameBuffer::GetClientHeight()
 {
-	const NSSize contentSize = I_GetContentViewSize(m_window);
-	const int clientHeight = int(contentSize.height);
+	const int clientHeight = I_GetContentViewSize(m_window).height;
 	return clientHeight > 0 ? clientHeight : GetHeight();
 }
 
@@ -850,31 +745,20 @@ void SystemBaseFrameBuffer::SetWindowedMode()
 	const NSRect frameSize = NSMakeRect(win_x, win_y, win_w, win_h);
 	[m_window setFrame:frameSize display:YES];
 	[m_window enterFullscreenOnZoom];
-
-	SetSize(GetClientWidth(), GetClientHeight());
 }
 
 void SystemBaseFrameBuffer::SetMode(const bool fullscreen, const bool hiDPI)
 {
-	// Set HiDPI scaling for both OpenGL and Vulkan views
-	// Modern approach using layer.contentsScale (works for all NSView subclasses)
 	if ([m_window.contentView isKindOfClass:[OpenGLCocoaView class]])
 	{
-		// OpenGL view: update context surface resolution
-		OpenGLCocoaView* const glView = (OpenGLCocoaView*)[m_window contentView];
-		assert([glView layer] != nil);
-		// The 'contentsScale' is managed automatically by macOS for layer-backed views.
-		// Manually setting it here can cause a crash if the window is not yet on a screen.
-		// We just need to ensure the context is updated to reflect any changes.
-		[[glView openGLContext] update]; // Update context with new scaling
+		NSOpenGLView* const glView = [m_window contentView];
+		[glView setWantsBestResolutionOpenGLSurface:hiDPI];
 	}
 	else
     {
-		// Vulkan or other view types
+		assert(m_window.screen != nil);
 		assert([m_window.contentView layer] != nil);
-		// For Vulkan/Metal, the layer's drawableSize will be automatically
-		// updated by the system, which is what the renderer should be using.
-		// No need to manually set contentsScale.
+		[m_window.contentView layer].contentsScale = hiDPI ? m_window.screen.backingScaleFactor : 1.0;
 	}
 
 	if (vid_nativefullscreen && fullscreen != m_fullscreen)
@@ -949,29 +833,6 @@ void SystemBaseFrameBuffer::SetWindowTitle(const char* title)
 	}
 }
 
-CocoaNativeHandle SystemBaseFrameBuffer::GetNativeHandle() const
-{
-	CocoaNativeHandle handle = {};
-
-	if (m_window != nullptr)
-	{
-		handle.nsWindow = m_window;
-		handle.nsView = [m_window contentView];
-
-		// Get Metal layer if available (for Vulkan or Metal renderer)
-		if ([handle.nsView isKindOfClass:[NSView class]])
-		{
-			CALayer* layer = [handle.nsView layer];
-			if (layer != nil && [layer isKindOfClass:[CAMetalLayer class]])
-			{
-				handle.metalLayer = (__bridge void*)layer;
-			}
-		}
-	}
-
-	return handle;
-}
-
 
 // ---------------------------------------------------------------------------
 
@@ -993,12 +854,8 @@ void SystemGLFrameBuffer::SetVSync(bool vsync)
 
 void SystemGLFrameBuffer::SetMode(const bool fullscreen, const bool hiDPI)
 {
-	// Set HiDPI scaling using modern layer.contentsScale approach
-	OpenGLCocoaView* const glView = (OpenGLCocoaView*)[m_window contentView];
-	assert(m_window.screen != nil);
-	assert([glView layer] != nil);
-	[glView layer].contentsScale = hiDPI ? m_window.screen.backingScaleFactor : 1.0;
-	[[glView openGLContext] update]; // Update context with new scaling
+	NSOpenGLView* const glView = [m_window contentView];
+	[glView setWantsBestResolutionOpenGLSurface:hiDPI];
 
 	if (vid_nativefullscreen && fullscreen != m_fullscreen)
 	{
@@ -1060,9 +917,9 @@ void I_InitGraphics()
 
 // ---------------------------------------------------------------------------
 
-void I_UseHiDPI(bool enable)
+CUSTOM_CVAR(Bool, vid_hidpi, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL)
 {
-	SystemBaseFrameBuffer::UseHiDPI(enable);
+	SystemBaseFrameBuffer::UseHiDPI(self);
 }
 
 
@@ -1071,56 +928,57 @@ void I_UseHiDPI(bool enable)
 
 bool I_SetCursor(FGameTexture *cursorpic)
 {
-	@autoreleasepool {
-		NSCursor* cursor = nil;
+	NSAutoreleasePool* pool = [[NSAutoreleasePool alloc] init];
+	NSCursor* cursor = nil;
 
-		if (NULL != cursorpic && cursorpic->isValid())
+	if (NULL != cursorpic && cursorpic->isValid())
+	{
+		// Create bitmap image representation
+
+		auto sbuffer = cursorpic->GetTexture()->CreateTexBuffer(0);
+
+		const NSInteger imageWidth  = sbuffer.mWidth;
+		const NSInteger imageHeight = sbuffer.mHeight;
+		const NSInteger imagePitch  = sbuffer.mWidth * 4;
+
+		NSBitmapImageRep* bitmapImageRep = [NSBitmapImageRep alloc];
+		[bitmapImageRep initWithBitmapDataPlanes:NULL
+									  pixelsWide:imageWidth
+									  pixelsHigh:imageHeight
+								   bitsPerSample:8
+								 samplesPerPixel:4
+										hasAlpha:YES
+										isPlanar:NO
+								  colorSpaceName:NSDeviceRGBColorSpace
+									 bytesPerRow:imagePitch
+									bitsPerPixel:0];
+
+		// Load bitmap data to representation
+
+		uint8_t* buffer = [bitmapImageRep bitmapData];
+		memcpy(buffer, sbuffer.mBuffer, imagePitch * imageHeight);
+
+		// Swap red and blue components in each pixel
+
+		for (size_t i = 0; i < size_t(imageWidth * imageHeight); ++i)
 		{
-			// Create bitmap image representation
-
-			auto sbuffer = cursorpic->GetTexture()->CreateTexBuffer(0);
-
-			const NSInteger imageWidth  = sbuffer.mWidth;
-			const NSInteger imageHeight = sbuffer.mHeight;
-			const NSInteger imagePitch  = sbuffer.mWidth * 4;
-
-			NSBitmapImageRep* bitmapImageRep = [NSBitmapImageRep alloc];
-			[bitmapImageRep initWithBitmapDataPlanes:NULL
-										  pixelsWide:imageWidth
-										  pixelsHigh:imageHeight
-									   bitsPerSample:8
-									 samplesPerPixel:4
-											hasAlpha:YES
-											isPlanar:NO
-									  colorSpaceName:NSDeviceRGBColorSpace
-										 bytesPerRow:imagePitch
-										bitsPerPixel:0];
-
-			// Load bitmap data to representation
-
-			uint8_t* buffer = [bitmapImageRep bitmapData];
-			memcpy(buffer, sbuffer.mBuffer, imagePitch * imageHeight);
-
-			// Swap red and blue components in each pixel
-
-			for (size_t i = 0; i < size_t(imageWidth * imageHeight); ++i)
-			{
-				const size_t offset = i * 4;
-				std::swap(buffer[offset    ], buffer[offset + 2]);
-			}
-
-			// Create image from representation and set it as cursor
-
-			NSData* imageData = [bitmapImageRep representationUsingType:NSPNGFileType
-															 properties:[NSDictionary dictionary]];
-			NSImage* cursorImage = [[NSImage alloc] initWithData:imageData];
-
-			cursor = [[NSCursor alloc] initWithImage:cursorImage
-											 hotSpot:NSMakePoint(0.0f, 0.0f)];
+			const size_t offset = i * 4;
+			std::swap(buffer[offset    ], buffer[offset + 2]);
 		}
 
-		SystemBaseFrameBuffer::SetCursor(cursor);
+		// Create image from representation and set it as cursor
+
+		NSData* imageData = [bitmapImageRep representationUsingType:NSPNGFileType
+														 properties:[NSDictionary dictionary]];
+		NSImage* cursorImage = [[NSImage alloc] initWithData:imageData];
+
+		cursor = [[NSCursor alloc] initWithImage:cursorImage
+										 hotSpot:NSMakePoint(0.0f, 0.0f)];
 	}
+
+	SystemBaseFrameBuffer::SetCursor(cursor);
+
+	[pool release];
 
 	return true;
 }
@@ -1196,7 +1054,7 @@ bool I_CreateVulkanSurface(VkInstance instance, VkSurfaceKHR *surface)
 	windowCreateInfo.sType = VK_STRUCTURE_TYPE_MACOS_SURFACE_CREATE_INFO_MVK;
 	windowCreateInfo.pNext = nullptr;
 	windowCreateInfo.flags = 0;
-	windowCreateInfo.pView = (__bridge const void*)view;
+	windowCreateInfo.pView = view;
 
 	const VkResult result = vkCreateMacOSSurfaceMVK(instance, &windowCreateInfo, nullptr, surface);
 	return result == VK_SUCCESS;
@@ -1300,4 +1158,3 @@ MetalViewSize GetMetalViewDrawableSize(void* nsWindowPtr)
     NSSize nsSize = I_GetContentViewSize(window); // Call the original I_GetContentViewSize
     return { (float)nsSize.width, (float)nsSize.height };
 }
-

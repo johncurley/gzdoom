@@ -33,36 +33,7 @@
 
 #include "i_common.h"
 
-// macOS Virtual Key Codes - these are standard and never change
-// Replaces deprecated Carbon.framework dependency
-enum {
-	kVK_Return          = 0x24,
-	kVK_Tab             = 0x30,
-	kVK_Delete          = 0x33,
-	kVK_Escape          = 0x35,
-	kVK_ForwardDelete   = 0x75,
-	kVK_LeftArrow       = 0x7B,
-	kVK_RightArrow      = 0x7C,
-	kVK_DownArrow       = 0x7D,
-	kVK_UpArrow         = 0x7E,
-	kVK_Home            = 0x73,
-	kVK_End             = 0x77,
-	kVK_PageUp          = 0x74,
-	kVK_PageDown        = 0x79,
-	kVK_F1              = 0x7A,
-	kVK_F2              = 0x78,
-	kVK_F3              = 0x63,
-	kVK_F4              = 0x76,
-	kVK_F5              = 0x60,
-	kVK_F6              = 0x61,
-	kVK_F7              = 0x62,
-	kVK_F8              = 0x64,
-	kVK_F9              = 0x65,
-	kVK_F10             = 0x6D,
-	kVK_F11             = 0x67,
-	kVK_F12             = 0x6F,
-	kVK_ANSI_F          = 0x03
-};
+#import <Carbon/Carbon.h>
 
 #include "c_console.h"
 #include "c_cvars.h"
@@ -76,11 +47,9 @@ enum {
 #include "menustate.h"
 #include "engineerrors.h"
 #include "keydef.h"
-#include "printf.h"
 
 
 EXTERN_CVAR(Int, m_use_mouse)
-EXTERN_CVAR(Bool, vid_hidpi)
 
 CVAR(Bool, use_mouse,    true,  CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
@@ -164,30 +133,31 @@ void CenterCursor()
 
 void CheckNativeMouse()
 {
-	// Match SDL backend logic for consistency
-	const bool focus = [NSApp isActive];
 	const bool windowed = (NULL == screen) || !screen->IsFullscreen();
-	
-	bool captureModeInGame = sysCallbacks.CaptureModeInGame && sysCallbacks.CaptureModeInGame();
-	
-	// Use same logic as SDL: wantNative = !focus || (!use_mouse || GUICapture || !captureModeInGame)
 	bool wantNative;
-	if (!focus)
+
+	if (windowed)
 	{
-		wantNative = true;
-	}
-	else if (!use_mouse || GUICapture || !captureModeInGame)
-	{
-		wantNative = true;
-	}
-	else if (windowed && m_use_mouse && (MENU_On == menuactive || MENU_OnNoPause == menuactive))
-	{
-		// In windowed mode, ungrab mouse when in menu with mouse control on
-		wantNative = true;
+		if (![NSApp isActive] || !use_mouse)
+		{
+			wantNative = true;
+		}
+		else if (MENU_WaitKey == menuactive)
+		{
+			wantNative = false;
+		}
+		else
+		{
+			bool captureModeInGame = sysCallbacks.CaptureModeInGame && sysCallbacks.CaptureModeInGame();
+			wantNative = (!m_use_mouse || MENU_WaitKey != menuactive)
+				&& (!captureModeInGame || GUICapture);
+		}
 	}
 	else
 	{
-		wantNative = false;
+		// ungrab mouse when in the menu with mouse control on.
+		wantNative = m_use_mouse
+			&& (MENU_On == menuactive || MENU_OnNoPause == menuactive);
 	}
 
 	if (!wantNative && sysCallbacks.WantNativeMouse && sysCallbacks.WantNativeMouse())
@@ -201,26 +171,7 @@ void CheckNativeMouse()
 
 void I_GetEvent()
 {
-	@autoreleasepool {
-		for (;;)
-		{
-			NSEvent* const event = [NSApp nextEventMatchingMask:NSEventMaskAny
-													  untilDate:[NSDate distantPast]
-														 inMode:NSDefaultRunLoopMode
-														dequeue:YES];
-			if (nil == event)
-			{
-				break;
-			}
-
-			I_ProcessEvent(event);
-
-			[NSApp sendEvent:event];
-		}
-
-		// Pump the run loop to handle display updates and other non-event tasks
-		[[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate distantPast]];
-	}
+	[[NSRunLoop currentRunLoop] limitDateForMode:NSDefaultRunLoopMode];
 }
 
 void I_StartTic()
@@ -330,11 +281,14 @@ const uint8_t KEYCODE_TO_ASCII[KEY_COUNT] =
 
 uint8_t ModifierToDIK(const uint32_t modifier)
 {
-	if (modifier & NSEventModifierFlagCapsLock) return DIK_CAPITAL;
-	if (modifier & NSEventModifierFlagShift)    return DIK_LSHIFT;
-	if (modifier & NSEventModifierFlagControl)  return DIK_LCONTROL;
-	if (modifier & NSEventModifierFlagOption)   return DIK_LMENU;
-	if (modifier & NSEventModifierFlagCommand)  return DIK_LWIN;
+	switch (modifier)
+	{
+		case NSEventModifierFlagCapsLock: return DIK_CAPITAL;
+		case NSEventModifierFlagShift:    return DIK_LSHIFT;
+		case NSEventModifierFlagControl:  return DIK_LCONTROL;
+		case NSEventModifierFlagOption:   return DIK_LMENU;
+		case NSEventModifierFlagCommand:  return DIK_LWIN;
+	}
 
 	return 0;
 }
@@ -482,8 +436,6 @@ void ProcessKeyboardEventInMenu(NSEvent* theEvent)
 
 void NSEventToGameMousePosition(NSEvent* inEvent, event_t* outEvent)
 {
-	if (screen == nullptr) return;
-
 	const NSWindow* window = [inEvent window];
 	const NSView*     view = [window contentView];
 
@@ -495,13 +447,7 @@ void NSEventToGameMousePosition(NSEvent* inEvent, event_t* outEvent)
 	NSSize  viewSize;
 	CGFloat scale;
 
-	if (!vid_hidpi)
-	{
-		viewPos  = windowRect.origin;
-		viewSize = view.frame.size;
-		scale    = 1.0;
-	}
-	else if (view.layer == nil)
+	if (view.layer == nil)
 	{
 		viewPos  = [view convertPointToBacking:windowRect.origin];
 		viewSize = [view convertSizeToBacking:view.frame.size];
@@ -555,7 +501,6 @@ void ProcessKeyboardEvent(NSEvent* theEvent)
 	}
 
 	const bool isARepeat = [theEvent isARepeat];
-	const NSEventType cocoaType = [theEvent type];
 
 	if (k_allowfullscreentoggle
 		&& (kVK_ANSI_F == keyCode)
@@ -589,6 +534,12 @@ void ProcessKeyboardEvent(NSEvent* theEvent)
 
 void ProcessKeyboardFlagsEvent(NSEvent* theEvent)
 {
+	if (GUICapture)
+	{
+		// Ignore events from modifier keys in menu/console/chat
+		return;
+	}
+
 	static const uint32_t FLAGS_MASK =
 		NSEventModifierFlagDeviceIndependentFlagsMask & ~NSEventModifierFlagNumericPad;
 
@@ -601,37 +552,20 @@ void ProcessKeyboardFlagsEvent(NSEvent* theEvent)
 		return;
 	}
 
-	static const uint32_t flag_list[] = {
-		NSEventModifierFlagCapsLock,
-		NSEventModifierFlagShift,
-		NSEventModifierFlagControl,
-		NSEventModifierFlagOption,
-		NSEventModifierFlagCommand
-	};
-
-	for (int i = 0; i < 5; ++i)
-	{
-		uint32_t flag = flag_list[i];
-		if (deltaModifiers & flag)
-		{
-			event_t event = {};
-			event.type = (modifiers & flag) ? EV_KeyDown : EV_KeyUp;
-			event.data1 = ModifierToDIK(flag);
-
-			if (event.data1 != 0)
-			{
-				if (DIK_CAPITAL == event.data1)
-				{
-					// Caps Lock is a modifier key which generates one event per state change
-					// but not per actual key press or release. So treat any event as key down
-					event.type = EV_KeyDown;
-				}
-				D_PostEvent(&event);
-			}
-		}
-	}
+	event_t event = {};
+	event.type  = modifiers > oldModifiers ? EV_KeyDown : EV_KeyUp;
+	event.data1 = ModifierToDIK(deltaModifiers);
 
 	oldModifiers = modifiers;
+
+	if (DIK_CAPITAL == event.data1)
+	{
+		// Caps Lock is a modifier key which generates one event per state change
+		// but not per actual key press or release. So treat any event as key down
+		event.type = EV_KeyDown;
+	}
+
+	D_PostEvent(&event);
 }
 
 
@@ -658,8 +592,6 @@ void ProcessMouseMoveEvent(NSEvent* theEvent)
 	}
 }
 
-static uint32_t s_mouseButtonsDownInGame = 0;
-
 void ProcessMouseButtonEvent(NSEvent* theEvent)
 {
 	if (!use_mouse)
@@ -668,28 +600,9 @@ void ProcessMouseButtonEvent(NSEvent* theEvent)
 	}
 
 	event_t event = {};
+
 	const NSEventType cocoaEventType = [theEvent type];
-	const NSInteger buttonNumber = [theEvent buttonNumber];
-	const int16_t gameButtonCode = min(KEY_MOUSE1 + (int)buttonNumber, (int)KEY_MOUSE8);
 
-	bool isDown = false;
-	switch (cocoaEventType)
-	{
-		case NSEventTypeLeftMouseDown:
-		case NSEventTypeRightMouseDown:
-		case NSEventTypeOtherMouseDown:
-			isDown = true;
-			break;
-		case NSEventTypeLeftMouseUp:
-		case NSEventTypeRightMouseUp:
-		case NSEventTypeOtherMouseUp:
-			isDown = false;
-			break;
-		default:
-			return; // Not a button event
-	}
-
-	// 1. Handle UI Event if needed
 	if (GUICapture)
 	{
 		event.type  = EV_GUI_Event;
@@ -708,36 +621,31 @@ void ProcessMouseButtonEvent(NSEvent* theEvent)
 
 		NSEventToGameMousePosition(theEvent, &event);
 
-		if (event.subtype != EV_GUI_None)
-		{
-			D_PostEvent(&event);
-		}
-	}
-
-	// 2. Handle In-Game Event
-	// We MUST track which buttons were pressed in-game to ensure they are released
-	// even if the GUI captures the mouse before the Up event occurs.
-	uint32_t buttonBit = 1 << (gameButtonCode - KEY_MOUSE1);
-
-	if (isDown)
-	{
-		if (!GUICapture)
-		{
-			s_mouseButtonsDownInGame |= buttonBit;
-			event.type = EV_KeyDown;
-			event.data1 = gameButtonCode;
-			D_PostEvent(&event);
-		}
+		D_PostEvent(&event);
 	}
 	else
 	{
-		if (s_mouseButtonsDownInGame & buttonBit)
+		switch (cocoaEventType)
 		{
-			s_mouseButtonsDownInGame &= ~buttonBit;
-			event.type = EV_KeyUp;
-			event.data1 = gameButtonCode;
-			D_PostEvent(&event);
+			case NSEventTypeLeftMouseDown:
+			case NSEventTypeRightMouseDown:
+			case NSEventTypeOtherMouseDown:
+				event.type = EV_KeyDown;
+				break;
+
+			case NSEventTypeLeftMouseUp:
+			case NSEventTypeRightMouseUp:
+			case NSEventTypeOtherMouseUp:
+				event.type = EV_KeyUp;
+				break;
+
+			default:
+				break;
 		}
+
+		event.data1 = min(KEY_MOUSE1 + [theEvent buttonNumber], NSInteger(KEY_MOUSE8));
+
+		D_PostEvent(&event);
 	}
 }
 
@@ -754,7 +662,7 @@ void ProcessMouseWheelEvent(NSEvent* theEvent)
 		: [theEvent deltaY];
 	const bool isZeroDelta = fabs(delta) < 1.0E-5;
 
-	if (isZeroDelta)
+	if (isZeroDelta && GUICapture)
 	{
 		return;
 	}
@@ -766,17 +674,14 @@ void ProcessMouseWheelEvent(NSEvent* theEvent)
 		event.type    = EV_GUI_Event;
 		event.subtype = delta > 0.0f ? EV_GUI_WheelUp : EV_GUI_WheelDown;
 		event.data3   = modifiers;
-		D_PostEvent(&event);
 	}
 	else
 	{
-		event.type  = EV_KeyDown;
+		event.type  = isZeroDelta  ? EV_KeyUp     : EV_KeyDown;
 		event.data1 = delta > 0.0f ? KEY_MWHEELUP : KEY_MWHEELDOWN;
-		D_PostEvent(&event);
-		
-		event.type  = EV_KeyUp;
-		D_PostEvent(&event);
 	}
+
+	D_PostEvent(&event);
 }
 
 } // unnamed namespace
@@ -784,8 +689,6 @@ void ProcessMouseWheelEvent(NSEvent* theEvent)
 
 void I_ProcessEvent(NSEvent* event)
 {
-	CheckGUICapture();
-
 	const NSEventType eventType = [event type];
 
 	switch (eventType)
@@ -806,7 +709,7 @@ void I_ProcessEvent(NSEvent* event)
 		case NSEventTypeLeftMouseDragged:
 		case NSEventTypeRightMouseDragged:
 		case NSEventTypeOtherMouseDragged:
-			// Dragging should only update position, not send button events
+			ProcessMouseButtonEvent(event);
 			ProcessMouseMoveEvent(event);
 			break;
 

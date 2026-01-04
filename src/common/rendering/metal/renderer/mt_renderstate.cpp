@@ -70,6 +70,9 @@ void MtRenderState::ClearScreen() {
 }
 
 void MtRenderState::Draw(int dt, int index, int count, bool apply) {
+    auto mtVBuf = dynamic_cast<MtVertexBuffer *>(mVertexBuffer);
+    int draw_stride = mtVBuf ? (int)mtVBuf->GetStride() : 0;
+    if (mt_debug && draw_stride == 24) Printf("METAL: Draw 2D geometry count=%d\n", count);
   if (mt_debug) {
     auto mtVBuf = dynamic_cast<MtVertexBuffer*>(mVertexBuffer);
     Printf(PRINT_LOG, "Metal: Draw dt=%d index=%d count=%d apply=%d vbuf=%p stride=%zu\n", 
