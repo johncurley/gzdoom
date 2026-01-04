@@ -35,7 +35,7 @@
 #define COCOA_GL_SYSFB_H_INCLUDED
 
 #include "v_video.h"
-#include "zwidget/window/cocoanativehandle.h"
+#include "cocoanativehandle.h"
 
 #ifdef __OBJC__
 @class NSCursor;

@@ -4,7 +4,7 @@
 #include <SDL2/SDL.h>
 
 #include "v_video.h"
-#include "zwidget/window/cocoanativehandle.h"
+#include "../cocoa/cocoanativehandle.h"
 
 class SystemBaseFrameBuffer : public DFrameBuffer {
   typedef DFrameBuffer Super;

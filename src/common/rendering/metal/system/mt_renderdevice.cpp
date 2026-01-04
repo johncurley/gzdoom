@@ -64,7 +64,7 @@
 #include "c_console.h"
 
 #ifdef __APPLE__
-#include <zwidget/window/cocoanativehandle.h>
+#include "../../platform/posix/cocoa/cocoanativehandle.h"
 #endif
 
 // Max number of frames to queue for rendering
