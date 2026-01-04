@@ -833,6 +833,29 @@ void SystemBaseFrameBuffer::SetWindowTitle(const char* title)
 	}
 }
 
+CocoaNativeHandle SystemBaseFrameBuffer::GetNativeHandle() const
+{
+	CocoaNativeHandle handle = {};
+
+	if (m_window != nullptr)
+	{
+		handle.nsWindow = m_window;
+		handle.nsView = [m_window contentView];
+
+		// Get Metal layer if available (for Vulkan or Metal renderer)
+		if ([handle.nsView isKindOfClass:[NSView class]])
+		{
+			CALayer* layer = [handle.nsView layer];
+			if (layer != nil && [layer isKindOfClass:[CAMetalLayer class]])
+			{
+				handle.metalLayer = (__bridge void*)layer;
+			}
+		}
+	}
+
+	return handle;
+}
+
 
 // ---------------------------------------------------------------------------
 
