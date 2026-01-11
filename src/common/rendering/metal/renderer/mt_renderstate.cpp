@@ -723,7 +723,7 @@ void MtRenderState::ApplyMaterial() {
                   blit->endEncoding();
 
                   cmdBuf->commit();
-                  if (gamestate == GS_STARTUP) {
+                  if (gamestate == GS_STARTUP || fb->GetFrameCount() < 100) {
                     cmdBuf->waitUntilCompleted();
                   }
                 }

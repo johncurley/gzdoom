@@ -388,7 +388,8 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
        strstr(name, "CREDIT") || strstr(name, "CONBACK") ||
        strstr(name, "Font") || strstr(name, "FONT"));
 
-  bool disableMips = isStartupState || isSpecialTex || isUITexture;
+  bool disableMips = isStartupState || isSpecialTex || isUITexture ||
+                     (fb->GetFrameCount() < 100);
 
   if (mt_debug) {
     Printf(PRINT_LOG,
