@@ -70,15 +70,7 @@ void MtCommandBufferManager::FlushCommands(bool wait) {
 }
 
 void MtCommandBufferManager::WaitForCommands(bool finish) {
-  if (mCurrentCommandBuffer) {
-    if (finish) {
-      if (mCurrentCommandBuffer->status() < MTL::CommandBufferStatusCommitted)
-        mCurrentCommandBuffer->commit();
-      mCurrentCommandBuffer->waitUntilCompleted();
-    }
-    mCurrentCommandBuffer->release();
-    mCurrentCommandBuffer = nullptr;
-  }
+  if (finish) FlushCommands(false);
 
   if (finish) {
     // Absolute GPU sync: submit a dummy buffer and wait for it.

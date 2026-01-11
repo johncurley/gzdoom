@@ -35,10 +35,14 @@ struct MatricesUBO {
 // Metal implementation: passed via setVertexBytes/setFragmentBytes (< 4KB
 // inline data)
 struct PushConstants {
-  float group1[4]; // 0: uClipSplit.x, 1: uClipSplit.y, 2: uSpecularMaterial.x, 3: uSpecularMaterial.y
-  float group2[4]; // 0: uLightLevel, 1: uFogDensity, 2: uLightFactor, 3: uLightDist
-  float group3[4]; // 0: uTextureMode (int), 1: uAlphaThreshold, 2: uFogEnabled (int), 3: uLightIndex (int)
-  float group4[4]; // 0: uBoneIndexBase (int), 1: uDataIndex (int), 2: padding, 3: padding
+  float group1[4]; // 0: uClipSplit.x, 1: uClipSplit.y, 2: uSpecularMaterial.x,
+                   // 3: uSpecularMaterial.y
+  float group2[4]; // 0: uLightLevel, 1: uFogDensity, 2: uLightFactor, 3:
+                   // uLightDist
+  float group3[4]; // 0: uTextureMode (int), 1: uAlphaThreshold, 2: uFogEnabled
+                   // (int), 3: uLightIndex (int)
+  float group4[4]; // 0: uBoneIndexBase (int), 1: uDataIndex (int), 2: padding,
+                   // 3: padding
 };
 
 #define MAX_STREAM_DATA ((int)(65536 / sizeof(StreamData)))
@@ -55,6 +59,10 @@ struct MtShaderModule {
   MTL::Library *fragmentLibrary = nullptr;
   std::string name;
   std::string entryPoint;
+
+  bool isCompiling = false;
+  bool isReady = false;
+  uint64_t compileStartTime = 0;
 };
 
 class MtShaderProgram {
@@ -101,7 +109,8 @@ private:
 
   // Translate SPIR-V to MSL (using shader-translator)
   std::string TranslateSPIRVToMSL(const std::vector<uint32_t> &spirv,
-                                  bool isVertex, const std::string &name); // Added name
+                                  bool isVertex,
+                                  const std::string &name); // Added name
 
   // Compile MSL to MTLLibrary
   MTL::Library *CompileMSLToLibrary(const std::string &msl,

@@ -360,6 +360,13 @@ static NSArray* GetKnownExtensions()
 
 	[window center];
 	[window makeKeyAndOrderFront:nil];
+	
+	// Ensure the app is active and has a regular activation policy to receive focus and events properly
+	if ([NSApp activationPolicy] != NSApplicationActivationPolicyRegular) {
+		[NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+	}
+	[NSApp activateIgnoringOtherApps:YES];
+	
 	[app runModalForWindow:window];
 
 	[center removeObserver:self name:NSMenuDidSendActionNotification object:nil];

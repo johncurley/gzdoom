@@ -69,8 +69,13 @@ enum class InputKey : uint32_t
 	L, M, N, O,
 	P, Q, R, S,
 	T, U, V, W,
-	X, Y, Z, Unknown5B,
-	Unknown5C, Unknown5D, Unknown5E, Unknown5F,
+	X, Y, Z,
+#ifdef __APPLE__
+	LCommand, RCommand,
+#else
+	Unknown5B, Unknown5C,
+#endif
+	Unknown5D, Unknown5E, Unknown5F,
 	NumPad0, NumPad1, NumPad2, NumPad3,
 	NumPad4, NumPad5, NumPad6, NumPad7,
 	NumPad8, NumPad9, GreyStar, GreyPlus,
@@ -176,6 +181,8 @@ public:
 	virtual void Hide() = 0;
 	virtual void Activate() = 0;
 	virtual void ShowCursor(bool enable) = 0;
+	virtual void LockKeyboard() {}
+	virtual void UnlockKeyboard() {}
 	virtual void LockCursor() = 0;
 	virtual void UnlockCursor() = 0;
 	virtual void CaptureMouse() = 0;
@@ -184,6 +191,7 @@ public:
 	virtual bool GetKeyState(InputKey key) = 0;
 
 	virtual void SetCursor(StandardCursor cursor) = 0;
+	virtual void SetCursor(StandardCursor cursor, const void* custom) {}
 
 	virtual Rect GetWindowFrame() const = 0;
 	virtual Size GetClientSize() const = 0;
@@ -219,6 +227,7 @@ public:
 	static std::unique_ptr<DisplayBackend> TryCreateSDL2();
 	static std::unique_ptr<DisplayBackend> TryCreateX11();
 	static std::unique_ptr<DisplayBackend> TryCreateWayland();
+	static std::unique_ptr<DisplayBackend> TryCreateCocoa();
 
 	static std::unique_ptr<DisplayBackend> TryCreateBackend();
 
@@ -228,6 +237,7 @@ public:
 	virtual bool IsSDL2() { return false; }
 	virtual bool IsX11() { return false; }
 	virtual bool IsWayland() { return false; }
+	virtual bool IsCocoa() { return false; }
 
 	virtual std::unique_ptr<DisplayWindow> Create(DisplayWindowHost* windowHost, bool popupWindow, DisplayWindow* owner, RenderAPI renderAPI) = 0;
 	virtual void ProcessEvents() = 0;

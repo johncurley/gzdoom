@@ -2185,6 +2185,14 @@ void TryRunTics()
 	if (!netgame && !AppActive && vid_lowerinbackground)
 		doWait = true;
 
+#ifdef __APPLE__
+	// macOS timing can be unreliable with uncapped framerates.
+	// Force a wait to ensure 35Hz game tics for physics and input stability,
+	// but only if we don't have another sync mechanism active.
+	if (!vid_vsync && vid_maxfps <= 0)
+		doWait = true;
+#endif
+
 	// Get the full number of tics the client can run.
 	if (doWait)
 		EnterTic = I_WaitForTic(LastEnterTic);

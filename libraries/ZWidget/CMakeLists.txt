@@ -132,6 +132,11 @@ set(ZWIDGET_DBUS_SOURCES
 )
 
 set(ZWIDGET_COCOA_SOURCES
+	src/window/cocoa/cocoa_display_backend.mm
+	src/window/cocoa/cocoa_display_window.mm
+	src/window/cocoa/cocoa_open_folder_dialog.mm
+	src/window/cocoa/cocoa_open_file_dialog.mm
+	src/window/cocoa/cocoa_save_file_dialog.mm
 )
 
 set(ZWIDGET_SDL2_SOURCES
@@ -239,6 +244,7 @@ elseif(APPLE)
 	set(ZWIDGET_LIBS ${CMAKE_DL_LIBS} -ldl)
 	set(ZWIDGET_DEFINES -DUNIX -D_UNIX)
 	set(ZWIDGET_LINK_OPTIONS -pthread)
+	set(ZWIDGET_COMPILE_OPTIONS ${ZWIDGET_COMPILE_OPTIONS} -fobjc-arc)
 else()
 	set(ZWIDGET_SOURCES ${ZWIDGET_SOURCES} ${ZWIDGET_X11_SOURCES})
 	set(ZWIDGET_LIBS ${CMAKE_DL_LIBS} -lX11 -lXi)

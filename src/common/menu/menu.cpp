@@ -435,7 +435,6 @@ bool DMenu::TranslateKeyboardEvents()
 
 void M_StartControlPanel (bool makesound, bool scaleoverride)
 {
-	Printf("Metal: M_StartControlPanel called\n");
 	if (sysCallbacks.OnMenuOpen) sysCallbacks.OnMenuOpen(makesound);
 	// intro might call this repeatedly
 	if (CurrentMenu != nullptr)
@@ -478,7 +477,6 @@ bool M_IsAnimated()
 
 void M_ActivateMenu(DMenu *menu)
 {
-	Printf("Metal: M_ActivateMenu %s\n", menu ? menu->GetClass()->TypeName.GetChars() : "NULL");
 	if (menuactive == MENU_Off) menuactive = MENU_On;
 	if (CurrentMenu != nullptr)
 	{

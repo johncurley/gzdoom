@@ -63,1120 +63,1063 @@
 bool I_CreateVulkanSurface(VkInstance instance, VkSurfaceKHR *surface);
 #endif
 
-#import <QuartzCore/QuartzCore.h>
 #import <Metal/Metal.h>
+#import <QuartzCore/QuartzCore.h>
 
 // Get Metal layer if available (for Vulkan or Metal renderer)
-// This check is performed within GetNativeHandle, which is called by the renderer initialization.
-// Therefore, we need to ensure CAMetalLayer is known even if HAVE_METAL is not defined globally,
-// but its usage must be guarded.
+// This check is performed within GetNativeHandle, which is called by the
+// renderer initialization. Therefore, we need to ensure CAMetalLayer is known
+// even if HAVE_METAL is not defined globally, but its usage must be guarded.
 #ifdef HAVE_METAL
 #include "metal/system/mt_renderdevice.h"
 #endif
 
-
 extern bool ToggleFullscreen;
 
-@implementation NSWindow(ExitAppOnClose)
+@implementation NSWindow (ExitAppOnClose)
 
-- (void)exitAppOnClose
-{
-	NSButton* closeButton = [self standardWindowButton:NSWindowCloseButton];
-	[closeButton setAction:@selector(sendExitEvent:)];
-	[closeButton setTarget:[NSApp delegate]];
+- (void)exitAppOnClose {
+  NSButton *closeButton = [self standardWindowButton:NSWindowCloseButton];
+  [closeButton setAction:@selector(sendExitEvent:)];
+  [closeButton setTarget:[NSApp delegate]];
 }
 
 @end
 
-@interface NSWindow(EnterFullscreenOnZoom)
+@interface NSWindow (EnterFullscreenOnZoom)
 - (void)enterFullscreenOnZoom;
 @end
 
-@implementation NSWindow(EnterFullscreenOnZoom)
+@implementation NSWindow (EnterFullscreenOnZoom)
 
-- (void)enterFullscreen:(id)sender
-{
-	ToggleFullscreen = true;
+- (void)enterFullscreen:(id)sender {
+  ToggleFullscreen = true;
 }
 
-- (void)enterFullscreenOnZoom
-{
-	NSButton* zoomButton = [self standardWindowButton:NSWindowZoomButton];
-	[zoomButton setEnabled:YES];
-	[zoomButton setAction:@selector(enterFullscreen:)];
-	[zoomButton setTarget:self];
+- (void)enterFullscreenOnZoom {
+  NSButton *zoomButton = [self standardWindowButton:NSWindowZoomButton];
+  [zoomButton setEnabled:YES];
+  [zoomButton setAction:@selector(enterFullscreen:)];
+  [zoomButton setTarget:self];
 }
 
 @end
 
 EXTERN_CVAR(Bool, vid_hidpi)
-EXTERN_CVAR(Int,  vid_defwidth)
-EXTERN_CVAR(Int,  vid_defheight)
+EXTERN_CVAR(Int, vid_defwidth)
+EXTERN_CVAR(Int, vid_defheight)
 EXTERN_CVAR(Bool, vk_debug)
 
 CVAR(Bool, mvk_debug, false, 0)
 CVAR(Bool, vid_nativefullscreen, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
-CUSTOM_CVAR(Bool, vid_autoswitch, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL)
-{
-	Printf("You must restart " GAMENAME " to apply graphics switching mode\n");
+CUSTOM_CVAR(Bool, vid_autoswitch, true,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL) {
+  Printf("You must restart " GAMENAME " to apply graphics switching mode\n");
 }
-
 
 // ---------------------------------------------------------------------------
 
+namespace {
+const NSInteger LEVEL_FULLSCREEN = NSMainMenuWindowLevel + 1;
+const NSInteger LEVEL_WINDOWED = NSNormalWindowLevel;
 
-namespace
-{
-	const NSInteger LEVEL_FULLSCREEN = NSMainMenuWindowLevel + 1;
-	const NSInteger LEVEL_WINDOWED   = NSNormalWindowLevel;
-
-	const NSUInteger STYLE_MASK_FULLSCREEN = NSWindowStyleMaskBorderless;
-	const NSUInteger STYLE_MASK_WINDOWED   = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;
+const NSUInteger STYLE_MASK_FULLSCREEN = NSWindowStyleMaskBorderless;
+const NSUInteger STYLE_MASK_WINDOWED =
+    NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
+    NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;
 }
-
 
 // ---------------------------------------------------------------------------
 
-
-@interface CocoaWindow : NSWindow
-{
-	NSString* m_title;
+@interface CocoaWindow : NSWindow {
+  NSString *m_title;
 }
 
 - (BOOL)canBecomeKeyWindow;
-- (void)setTitle:(NSString*)title;
+- (BOOL)isOpaque;
+- (void)setTitle:(NSString *)title;
 - (void)updateTitle;
 
 @end
 
-
 @implementation CocoaWindow
 
-- (BOOL)canBecomeKeyWindow
-{
-	return true;
+- (BOOL)canBecomeKeyWindow {
+  return true;
 }
 
-- (void)setTitle:(NSString*)title
-{
-	m_title = title;
-
-	[self updateTitle];
+- (BOOL)isOpaque {
+  return YES;
 }
 
-- (void)updateTitle
-{
-	if (nil == m_title)
-	{
-		m_title = [NSString stringWithFormat:@"%s %s", GAMENAME, GetVersionString()];
-	}
+- (void)setTitle:(NSString *)title {
+  m_title = title;
 
-	[super setTitle:m_title];
+  [self updateTitle];
 }
 
-- (void)frameDidChange:(NSNotification*)notification
-{
-	const NSRect frame = [self frame];
-	win_x = frame.origin.x;
-	win_y = frame.origin.y;
-	win_w = frame.size.width;
-	win_h = frame.size.height;
+- (void)updateTitle {
+  if (nil == m_title) {
+    m_title =
+        [NSString stringWithFormat:@"%s %s", GAMENAME, GetVersionString()];
+  }
+
+  [super setTitle:m_title];
+}
+
+- (void)frameDidChange:(NSNotification *)notification {
+  const NSRect frame = [self frame];
+  win_x = frame.origin.x;
+  win_y = frame.origin.y;
+  win_w = frame.size.width;
+  win_h = frame.size.height;
 }
 
 @end
-
 
 // ---------------------------------------------------------------------------
 
-
-@interface OpenGLCocoaView : NSOpenGLView
-{
-	NSCursor* m_cursor;
+@interface OpenGLCocoaView : NSOpenGLView {
+  NSCursor *m_cursor;
 }
 
-- (void)setCursor:(NSCursor*)cursor;
+- (void)setCursor:(NSCursor *)cursor;
 
 @end
-
 
 @implementation OpenGLCocoaView
 
-- (void)drawRect:(NSRect)dirtyRect
-{
-	if ([NSGraphicsContext currentContext])
-	{
-		[NSColor.blackColor setFill];
-		NSRectFill(dirtyRect);
-	}
-	else if (self.layer != nil)
-	{
-		self.layer.backgroundColor = CGColorGetConstantColor(kCGColorBlack);
-	}
+- (void)drawRect:(NSRect)dirtyRect {
+  if ([NSGraphicsContext currentContext]) {
+    [NSColor.blackColor setFill];
+    NSRectFill(dirtyRect);
+  } else if (self.layer != nil) {
+    self.layer.backgroundColor = CGColorGetConstantColor(kCGColorBlack);
+  }
 }
 
-- (void)resetCursorRects
-{
-	[super resetCursorRects];
+- (void)resetCursorRects {
+  [super resetCursorRects];
 
-	NSCursor* const cursor = nil == m_cursor
-		? [NSCursor arrowCursor]
-		: m_cursor;
+  NSCursor *const cursor = nil == m_cursor ? [NSCursor arrowCursor] : m_cursor;
 
-	[self addCursorRect:[self bounds]
-				 cursor:cursor];
+  [self addCursorRect:[self bounds] cursor:cursor];
 }
 
-- (void)setCursor:(NSCursor*)cursor
-{
-	m_cursor = cursor;
+- (void)setCursor:(NSCursor *)cursor {
+  m_cursor = cursor;
 }
 
 @end
-
 
 // ---------------------------------------------------------------------------
 
-
-@interface VulkanCocoaView : NSView
-{
-	NSCursor* m_cursor;
+@interface VulkanCocoaView : NSView {
+  NSCursor *m_cursor;
 }
 
-- (void)setCursor:(NSCursor*)cursor;
+- (void)setCursor:(NSCursor *)cursor;
 
 @end
-
 
 @implementation VulkanCocoaView
 
-- (void)resetCursorRects
-{
-	[super resetCursorRects];
+- (void)resetCursorRects {
+  [super resetCursorRects];
 
-	NSCursor* const cursor = nil == m_cursor
-		? [NSCursor arrowCursor]
-		: m_cursor;
+  NSCursor *const cursor = nil == m_cursor ? [NSCursor arrowCursor] : m_cursor;
 
-	[self addCursorRect:[self bounds]
-				 cursor:cursor];
+  [self addCursorRect:[self bounds] cursor:cursor];
 }
 
-- (void)setCursor:(NSCursor*)cursor
-{
-	m_cursor = cursor;
+- (void)setCursor:(NSCursor *)cursor {
+  m_cursor = cursor;
 }
 
-+(Class) layerClass
-{
-	return NSClassFromString(@"CAMetalLayer");
++ (Class)layerClass {
+  return NSClassFromString(@"CAMetalLayer");
 }
 
--(CALayer*) makeBackingLayer
-{
-	return [self.class.layerClass layer];
+- (CALayer *)makeBackingLayer {
+  return [self.class.layerClass layer];
 }
 
--(BOOL) isOpaque
-{
-	return YES;
+- (BOOL)isOpaque {
+  return YES;
 }
 
 @end
-
 
 // ---------------------------------------------------------------------------
 
-
 // Metal view implementation using CAMetalLayer
-@interface MetalCocoaView : NSView
-{
-	NSCursor* m_cursor;
+@interface MetalCocoaView : NSView {
+  NSCursor *m_cursor;
 }
 
-- (void)setCursor:(NSCursor*)cursor;
+- (void)setCursor:(NSCursor *)cursor;
 
 @end
-
 
 @implementation MetalCocoaView
 
-- (void)resetCursorRects
-{
-	[super resetCursorRects];
+- (void)resetCursorRects {
+  [super resetCursorRects];
 
-	NSCursor* const cursor = nil == m_cursor
-		? [NSCursor arrowCursor]
-		: m_cursor;
+  NSCursor *const cursor = nil == m_cursor ? [NSCursor arrowCursor] : m_cursor;
 
-	[self addCursorRect:[self bounds]
-				 cursor:cursor];
+  [self addCursorRect:[self bounds] cursor:cursor];
 }
 
-- (void)setCursor:(NSCursor*)cursor
-{
-	m_cursor = cursor;
+- (void)setCursor:(NSCursor *)cursor {
+  m_cursor = cursor;
 }
 
 // Use CAMetalLayer for Metal rendering
-+(Class) layerClass
-{
-	return NSClassFromString(@"CAMetalLayer");
++ (Class)layerClass {
+  return NSClassFromString(@"CAMetalLayer");
 }
 
--(CALayer*) makeBackingLayer
-{
-	return [self.class.layerClass layer];
+- (CALayer *)makeBackingLayer {
+  return [self.class.layerClass layer];
 }
 
--(BOOL) isOpaque
-{
-	return YES;
+- (void)setFrame:(NSRect)frame {
+  [super setFrame:frame];
+  [self updateLayerSize];
+}
+
+- (void)setBounds:(NSRect)bounds {
+  [super setBounds:bounds];
+  [self updateLayerSize];
+}
+
+- (void)viewDidChangeBackingProperties {
+  [super viewDidChangeBackingProperties];
+  [self updateLayerSize];
+}
+
+- (void)updateLayerSize {
+  CAMetalLayer *layer = (CAMetalLayer *)self.layer;
+  if (layer) {
+    const NSRect frameSize = [self bounds];
+    const NSSize size = (*vid_hidpi)
+                            ? [self convertSizeToBacking:frameSize.size]
+                            : frameSize.size;
+
+    fprintf(stderr,
+            "Cocoa: MetalCocoaView updateLayerSize bounds=%.0fx%.0f "
+            "drawable=%.0fx%.0f\n",
+            frameSize.size.width, frameSize.size.height, size.width,
+            size.height);
+    fflush(stderr);
+
+    layer.drawableSize = CGSizeMake(size.width, size.height);
+    if (self.window.screen) {
+      layer.contentsScale = self.window.screen.backingScaleFactor;
+    }
+  }
+}
+
+- (BOOL)isOpaque {
+  return YES;
 }
 
 @end
 
-
 // ---------------------------------------------------------------------------
-
 
 extern id appCtrl;
 
+namespace {
 
-namespace
-{
+CocoaWindow *CreateWindow(const bool fullscreen) {
+  fprintf(stderr,
+          "Cocoa: CreateWindow fullscreen=%d defwidth=%d defheight=%d\n",
+          (int)fullscreen, (int)(int)vid_defwidth, (int)vid_defheight);
+  fflush(stderr);
+  const NSUInteger styleMask =
+      fullscreen ? STYLE_MASK_FULLSCREEN : STYLE_MASK_WINDOWED;
+  NSRect contentRect;
 
-CocoaWindow* CreateWindow(const NSUInteger styleMask)
-{
-	CocoaWindow* const window = [CocoaWindow alloc];
-	[window initWithContentRect:NSMakeRect(0, 0, vid_defwidth, vid_defheight)
-					  styleMask:styleMask
-						backing:NSBackingStoreBuffered
-						  defer:NO];
-	[window setOpaque:YES];
-	[window makeFirstResponder:appCtrl];
-	[window setAcceptsMouseMovedEvents:YES];
-	[window exitAppOnClose];
+  if (fullscreen) {
+    contentRect = [[NSScreen mainScreen] frame];
+  } else {
+    contentRect = NSMakeRect(0, 0, vid_defwidth, vid_defheight);
+  }
 
-	NSNotificationCenter* nc = [NSNotificationCenter defaultCenter];
-	[nc addObserver:window
-		   selector:@selector(frameDidChange:)
-			   name:NSWindowDidEndLiveResizeNotification
-			 object:nil];
-	[nc addObserver:window
-		   selector:@selector(frameDidChange:)
-			   name:NSWindowDidMoveNotification
-			 object:nil];
+  fprintf(stderr,
+          "Cocoa: CreateWindow styleMask=%lu rect=%.0f,%.0f %.0fx%.0f\n",
+          (unsigned long)styleMask, contentRect.origin.x, contentRect.origin.y,
+          contentRect.size.width, contentRect.size.height);
+  fflush(stderr);
 
-	return window;
+  CocoaWindow *const window =
+      [[CocoaWindow alloc] initWithContentRect:contentRect
+                                     styleMask:styleMask
+                                       backing:NSBackingStoreBuffered
+                                         defer:NO];
+  [window makeFirstResponder:appCtrl];
+  [window setAcceptsMouseMovedEvents:YES];
+  [window exitAppOnClose];
+
+  NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+  [nc addObserver:window
+         selector:@selector(frameDidChange:)
+             name:NSWindowDidEndLiveResizeNotification
+           object:nil];
+  [nc addObserver:window
+         selector:@selector(frameDidChange:)
+             name:NSWindowDidMoveNotification
+           object:nil];
+
+  return window;
 }
 
-enum class OpenGLProfile
-{
-	Core,
-	Legacy
-};
+enum class OpenGLProfile { Core, Legacy };
 
-NSOpenGLPixelFormat* CreatePixelFormat(const OpenGLProfile profile)
-{
-	NSOpenGLPixelFormatAttribute attributes[16];
-	size_t i = 0;
+NSOpenGLPixelFormat *CreatePixelFormat(const OpenGLProfile profile) {
+  NSOpenGLPixelFormatAttribute attributes[16];
+  size_t i = 0;
 
-	attributes[i++] = NSOpenGLPFADoubleBuffer;
-	attributes[i++] = NSOpenGLPFAColorSize;
-	attributes[i++] = NSOpenGLPixelFormatAttribute(32);
-	attributes[i++] = NSOpenGLPFADepthSize;
-	attributes[i++] = NSOpenGLPixelFormatAttribute(24);
-	attributes[i++] = NSOpenGLPFAStencilSize;
-	attributes[i++] = NSOpenGLPixelFormatAttribute(8);
+  attributes[i++] = NSOpenGLPFADoubleBuffer;
+  attributes[i++] = NSOpenGLPFAColorSize;
+  attributes[i++] = NSOpenGLPixelFormatAttribute(32);
+  attributes[i++] = NSOpenGLPFADepthSize;
+  attributes[i++] = NSOpenGLPixelFormatAttribute(24);
+  attributes[i++] = NSOpenGLPFAStencilSize;
+  attributes[i++] = NSOpenGLPixelFormatAttribute(8);
 
-	if (profile == OpenGLProfile::Core)
-	{
-		attributes[i++] = NSOpenGLPFAOpenGLProfile;
-		attributes[i++] = NSOpenGLProfileVersion3_2Core;
-	}
+  if (profile == OpenGLProfile::Core) {
+    attributes[i++] = NSOpenGLPFAOpenGLProfile;
+    attributes[i++] = NSOpenGLProfileVersion3_2Core;
+  }
 
-	if (!vid_autoswitch)
-	{
-		attributes[i++] = NSOpenGLPFAAllowOfflineRenderers;
-	}
+  if (!vid_autoswitch) {
+    attributes[i++] = NSOpenGLPFAAllowOfflineRenderers;
+  }
 
-	attributes[i] = NSOpenGLPixelFormatAttribute(0);
+  attributes[i] = NSOpenGLPixelFormatAttribute(0);
 
-	assert(i < sizeof attributes / sizeof attributes[0]);
+  assert(i < sizeof attributes / sizeof attributes[0]);
 
-	return [[NSOpenGLPixelFormat alloc] initWithAttributes:attributes];
+  return [[NSOpenGLPixelFormat alloc] initWithAttributes:attributes];
 }
 
-void SetupOpenGLView(CocoaWindow* const window, const OpenGLProfile profile)
-{
-	NSOpenGLPixelFormat* pixelFormat = CreatePixelFormat(profile);
+void SetupOpenGLView(CocoaWindow *const window, const OpenGLProfile profile) {
+  NSOpenGLPixelFormat *pixelFormat = CreatePixelFormat(profile);
 
-	if (nil == pixelFormat)
-	{
-		I_FatalError("Cannot create OpenGL pixel format, graphics hardware is not supported");
-	}
+  if (nil == pixelFormat) {
+    I_FatalError("Cannot create OpenGL pixel format, graphics hardware is not "
+                 "supported");
+  }
 
-	// Create OpenGL context and view
+  // Create OpenGL context and view
 
-	const NSRect contentRect = [window contentRectForFrameRect:[window frame]];
-	OpenGLCocoaView* glView = [[OpenGLCocoaView alloc] initWithFrame:contentRect
-														 pixelFormat:pixelFormat];
-	[[glView openGLContext] makeCurrentContext];
+  const NSRect contentRect = [window contentRectForFrameRect:[window frame]];
+  OpenGLCocoaView *glView = [[OpenGLCocoaView alloc] initWithFrame:contentRect
+                                                       pixelFormat:pixelFormat];
+  [[glView openGLContext] makeCurrentContext];
 
-	[window setContentView:glView];
+  [window setContentView:glView];
 }
 
 } // unnamed namespace
 
-
 // ---------------------------------------------------------------------------
 
-
-class CocoaVideo : public IVideo
-{
+class CocoaVideo : public IVideo {
 public:
-	CocoaVideo()
-	{
-		ms_isVulkanEnabled = V_GetBackend() == 1 && NSAppKitVersionNumber >= 1404; // NSAppKitVersionNumber10_11
-	}
+  CocoaVideo() {
+    ms_isVulkanEnabled =
+        V_GetBackend() == 1 &&
+        NSAppKitVersionNumber >= 1404; // NSAppKitVersionNumber10_11
+  }
 
-	~CocoaVideo()
-	{
+  ~CocoaVideo() {
 #ifdef HAVE_VULKAN
-		m_vulkanSurface.reset();
+    m_vulkanSurface.reset();
 #endif
-		ms_window = nil;
-	}
+    ms_window = nil;
+  }
 
-	virtual DFrameBuffer* CreateFrameBuffer() override
-	{
-		assert(ms_window == nil);
-		ms_window = CreateWindow(STYLE_MASK_WINDOWED);
+  virtual DFrameBuffer *CreateFrameBuffer() override {
+    assert(ms_window == nil);
+    ms_window = CreateWindow(vid_fullscreen);
 
-		const NSRect contentRect = [ms_window contentRectForFrameRect:[ms_window frame]];
-		SystemBaseFrameBuffer *fb = nullptr;
+    const NSRect contentRect =
+        [ms_window contentRectForFrameRect:[ms_window frame]];
+    SystemBaseFrameBuffer *fb = nullptr;
 
 #ifdef HAVE_VULKAN
-		if (ms_isVulkanEnabled)
-		{
-			NSView* vulkanView = [[VulkanCocoaView alloc] initWithFrame:contentRect];
-			vulkanView.wantsLayer = YES;
-			vulkanView.layer.backgroundColor = NSColor.blackColor.CGColor;
+    if (ms_isVulkanEnabled) {
+      NSView *vulkanView = [[VulkanCocoaView alloc] initWithFrame:contentRect];
+      vulkanView.wantsLayer = YES;
+      vulkanView.layer.backgroundColor = NSColor.blackColor.CGColor;
 
-			[ms_window setContentView:vulkanView];
+      [ms_window setContentView:vulkanView];
 
-			// See vk_mvk_moltenvk.h for comprehensive explanation of configuration options set below
-			// https://github.com/KhronosGroup/MoltenVK/blob/master/MoltenVK/MoltenVK/API/vk_mvk_moltenvk.h
+      // See vk_mvk_moltenvk.h for comprehensive explanation of configuration
+      // options set below
+      // https://github.com/KhronosGroup/MoltenVK/blob/master/MoltenVK/MoltenVK/API/vk_mvk_moltenvk.h
 
-			if (vk_debug)
-			{
-				// Output errors and informational messages
-				setenv("MVK_CONFIG_LOG_LEVEL", "2", 0);
+      if (vk_debug) {
+        // Output errors and informational messages
+        setenv("MVK_CONFIG_LOG_LEVEL", "2", 0);
 
-				if (mvk_debug)
-				{
-					// Extensive MoltenVK logging, too spammy even for vk_debug CVAR
-					setenv("MVK_DEBUG", "1", 0);
-				}
-			}
-			else
-			{
-				// Limit MoltenVK logging to errors only
-				setenv("MVK_CONFIG_LOG_LEVEL", "1", 0);
-			}
+        if (mvk_debug) {
+          // Extensive MoltenVK logging, too spammy even for vk_debug CVAR
+          setenv("MVK_DEBUG", "1", 0);
+        }
+      } else {
+        // Limit MoltenVK logging to errors only
+        setenv("MVK_CONFIG_LOG_LEVEL", "1", 0);
+      }
 
-			if (!vid_autoswitch)
-			{
-				// CVAR from pre-Vulkan era has a priority over vk_device selection
-				setenv("MVK_CONFIG_FORCE_LOW_POWER_GPU", "1", 0);
-			}
+      if (!vid_autoswitch) {
+        // CVAR from pre-Vulkan era has a priority over vk_device selection
+        setenv("MVK_CONFIG_FORCE_LOW_POWER_GPU", "1", 0);
+      }
 
-			// The following settings improve performance like suggested at
-			// https://github.com/KhronosGroup/MoltenVK/issues/581#issuecomment-487293665
-			setenv("MVK_CONFIG_SYNCHRONOUS_QUEUE_SUBMITS", "0", 0);
-			setenv("MVK_CONFIG_PRESENT_WITH_COMMAND_BUFFER", "0", 0);
+      // The following settings improve performance like suggested at
+      // https://github.com/KhronosGroup/MoltenVK/issues/581#issuecomment-487293665
+      setenv("MVK_CONFIG_SYNCHRONOUS_QUEUE_SUBMITS", "0", 0);
+      setenv("MVK_CONFIG_PRESENT_WITH_COMMAND_BUFFER", "0", 0);
 
-			try
-			{
-				VulkanInstanceBuilder builder;
-				builder.DebugLayer(vk_debug);
-				builder.RequireExtension(VK_KHR_SURFACE_EXTENSION_NAME); // KHR_surface, required
-				builder.OptionalExtension(VK_EXT_METAL_SURFACE_EXTENSION_NAME); // EXT_metal_surface, optional, preferred
-				builder.OptionalExtension(VK_MVK_MACOS_SURFACE_EXTENSION_NAME); // MVK_macos_surface, optional, deprecated
-				auto vulkanInstance = builder.Create();
+      try {
+        VulkanInstanceBuilder builder;
+        builder.DebugLayer(vk_debug);
+        builder.RequireExtension(
+            VK_KHR_SURFACE_EXTENSION_NAME); // KHR_surface, required
+        builder.OptionalExtension(
+            VK_EXT_METAL_SURFACE_EXTENSION_NAME); // EXT_metal_surface,
+                                                  // optional, preferred
+        builder.OptionalExtension(
+            VK_MVK_MACOS_SURFACE_EXTENSION_NAME); // MVK_macos_surface,
+                                                  // optional, deprecated
+        auto vulkanInstance = builder.Create();
 
-				VkSurfaceKHR surfacehandle = nullptr;
-				if (!I_CreateVulkanSurface(vulkanInstance->Instance, &surfacehandle))
-					VulkanError("I_CreateVulkanSurface failed");
+        VkSurfaceKHR surfacehandle = nullptr;
+        if (!I_CreateVulkanSurface(vulkanInstance->Instance, &surfacehandle))
+          VulkanError("I_CreateVulkanSurface failed");
 
-				m_vulkanSurface = std::make_shared<VulkanSurface>(vulkanInstance, surfacehandle);
+        m_vulkanSurface =
+            std::make_shared<VulkanSurface>(vulkanInstance, surfacehandle);
 
-				fb = new VulkanRenderDevice(nullptr, vid_fullscreen, m_vulkanSurface);
-				Printf("Vulkan backend initialized successfully.\n");
-			}
-			catch (std::exception const& e)
-			{
-				ms_isVulkanEnabled = false;
+        fb = new VulkanRenderDevice(nullptr, vid_fullscreen, m_vulkanSurface);
+        Printf("Vulkan backend initialized successfully.\n");
+      } catch (std::exception const &e) {
+        ms_isVulkanEnabled = false;
 
-				Printf(TEXTCOLOR_RED "Vulkan backend initialization failed: %s. Falling back to OpenGL.\n", e.what());
-				SetupOpenGLView(ms_window, OpenGLProfile::Core);
-			}
-		}
-		else
+        Printf(TEXTCOLOR_RED "Vulkan backend initialization failed: %s. "
+                             "Falling back to OpenGL.\n",
+               e.what());
+        SetupOpenGLView(ms_window, OpenGLProfile::Core);
+      }
+    } else
 #endif
-		// Only set up OpenGL view if not using Metal backend
-		if (V_GetBackend() != 3)
-		{
-			if (V_GetBackend() == 2)
-			{
-				Printf("Initializing OpenGLES2 backend.\n");
-			}
-			else
-			{
-				Printf("Initializing OpenGL backend.\n");
-			}
-			SetupOpenGLView(ms_window, OpenGLProfile::Core);
-		}
+      // Only set up OpenGL view if not using Metal backend
+      if (V_GetBackend() != 3) {
+        if (V_GetBackend() == 2) {
+          Printf("Initializing OpenGLES2 backend.\n");
+        } else {
+          Printf("Initializing OpenGL backend.\n");
+        }
+        SetupOpenGLView(ms_window, OpenGLProfile::Core);
+      }
 
-		if (fb == nullptr)
-		{
+    if (fb == nullptr) {
 #ifdef HAVE_METAL
-			// Try Metal renderer on macOS 10.13+
-			if (V_GetBackend() == 3)
-			{
-				Printf("Attempting to initialize Metal backend...\n");
-				NSView* metalView = [[MetalCocoaView alloc] initWithFrame:contentRect];
-				metalView.wantsLayer = YES;
-				metalView.layer.backgroundColor = NSColor.blackColor.CGColor;
+      // Try Metal renderer on macOS 10.13+
+      if (V_GetBackend() == 3) {
+        Printf("Attempting to initialize Metal backend...\n");
+        NSView *metalView = [[MetalCocoaView alloc] initWithFrame:contentRect];
+        metalView.wantsLayer = YES;
+        metalView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
 
-				[ms_window setContentView:metalView];
+        // Disable implicit animations and configure layer for stability
+        CAMetalLayer *layer = (CAMetalLayer *)metalView.layer;
+        layer.actions = @{
+          @"bounds" : [NSNull null],
+          @"position" : [NSNull null],
+          @"contents" : [NSNull null]
+        };
+        layer.contentsGravity = kCAGravityResize; // Use standard resize
+        layer.opaque = YES;
+        layer.presentsWithTransaction = NO; // Revert to fix black screen
+        layer.framebufferOnly = NO;
+        layer.allowsNextDrawableTimeout = YES;
+        layer.contentsScale = ms_window.screen.backingScaleFactor;
+        metalView.layer.backgroundColor = NSColor.blackColor.CGColor;
 
-				try
-				{
-					fb = new MetalRenderDevice(nullptr, vid_fullscreen);
-					Printf("Metal renderer initialized successfully.\n");
-				}
-				catch (std::exception const& error)
-				{
-					Printf(TEXTCOLOR_RED "Metal renderer initialization failed: %s. Falling back to OpenGL.\n", error.what());
-					SetupOpenGLView(ms_window, OpenGLProfile::Core);
-				}
-			}
+        [ms_window setContentView:metalView];
+
+        try {
+          fb = new MetalRenderDevice(nullptr, vid_fullscreen);
+          Printf("Metal renderer initialized successfully.\n");
+        } catch (std::exception const &error) {
+          Printf(TEXTCOLOR_RED "Metal renderer initialization failed: %s. "
+                               "Falling back to OpenGL.\n",
+                 error.what());
+          SetupOpenGLView(ms_window, OpenGLProfile::Core);
+        }
+      }
 #endif
-			if (fb == nullptr)
-			{
+      if (fb == nullptr) {
 #ifdef HAVE_GLES2
-				if(V_GetBackend() != 0)
-					fb = new OpenGLESRenderer::OpenGLFrameBuffer(0, vid_fullscreen);
-				else
+        if (V_GetBackend() != 0)
+          fb = new OpenGLESRenderer::OpenGLFrameBuffer(0, vid_fullscreen);
+        else
 #endif
-					fb = new OpenGLRenderer::OpenGLFrameBuffer(0, vid_fullscreen);
-			}
-		}
+          fb = new OpenGLRenderer::OpenGLFrameBuffer(0, vid_fullscreen);
+      }
+    }
 
-		fb->SetWindow(ms_window);
-		fb->SetMode(vid_fullscreen, vid_hidpi);
-		fb->SetSize(fb->GetClientWidth(), fb->GetClientHeight());
+    fb->SetWindow(ms_window);
+    fb->SetMode(vid_fullscreen, vid_hidpi);
+    fb->SetSize(fb->GetClientWidth(), fb->GetClientHeight());
 
 #ifdef HAVE_VULKAN
-		// This lame hack is a temporary workaround for strange performance issues
-		// with fullscreen window and Core Animation's Metal layer
-		// It is somehow related to initial window level and flags
-		// Toggling fullscreen -> window -> fullscreen mysteriously solves the problem
-		if (ms_isVulkanEnabled && vid_fullscreen)
-		{
-			fb->SetMode(false, vid_hidpi);
-			fb->SetMode(true, vid_hidpi);
-		}
+    // This lame hack is a temporary workaround for strange performance issues
+    // with fullscreen window and Core Animation's Metal layer
+    // It is somehow related to initial window level and flags
+    // Toggling fullscreen -> window -> fullscreen mysteriously solves the
+    // problem
+    if (ms_isVulkanEnabled && vid_fullscreen) {
+      fb->SetMode(false, vid_hidpi);
+      fb->SetMode(true, vid_hidpi);
+    }
 #endif
 
-		return fb;
-	}
+    return fb;
+  }
 
-	static CocoaWindow* GetWindow()
-	{
-		return ms_window;
-	}
+  static CocoaWindow *GetWindow() { return ms_window; }
 
 private:
 #ifdef HAVE_VULKAN
-	std::shared_ptr<VulkanSurface> m_vulkanSurface;
+  std::shared_ptr<VulkanSurface> m_vulkanSurface;
 #endif
-	static CocoaWindow* ms_window;
+  static CocoaWindow *ms_window;
 
-	static bool ms_isVulkanEnabled;
+  static bool ms_isVulkanEnabled;
 };
 
-
-CocoaWindow* CocoaVideo::ms_window;
+CocoaWindow *CocoaVideo::ms_window;
 
 bool CocoaVideo::ms_isVulkanEnabled;
 
-
 // ---------------------------------------------------------------------------
 
+static SystemBaseFrameBuffer *frameBuffer;
 
-static SystemBaseFrameBuffer* frameBuffer;
+SystemBaseFrameBuffer::SystemBaseFrameBuffer(void *, const bool fullscreen)
+    : DFrameBuffer(vid_defwidth, vid_defheight), m_fullscreen(false),
+      m_hiDPI(false), m_window(nullptr) {
+  assert(frameBuffer == nullptr);
+  frameBuffer = this;
 
-
-SystemBaseFrameBuffer::SystemBaseFrameBuffer(void*, const bool fullscreen)
-: DFrameBuffer(vid_defwidth, vid_defheight)
-, m_fullscreen(false)
-, m_hiDPI(false)
-, m_window(nullptr)
-{
-	assert(frameBuffer == nullptr);
-	frameBuffer = this;
-
-	FConsoleWindow::GetInstance().Show(false);
+  FConsoleWindow::GetInstance().Show(false);
 }
 
-SystemBaseFrameBuffer::~SystemBaseFrameBuffer()
-{
-	assert(frameBuffer == this);
-	frameBuffer = nullptr;
+SystemBaseFrameBuffer::~SystemBaseFrameBuffer() {
+  assert(frameBuffer == this);
+  frameBuffer = nullptr;
 
-	NSNotificationCenter* nc = [NSNotificationCenter defaultCenter];
-	[nc removeObserver:m_window
-				  name:NSWindowDidMoveNotification
-				object:nil];
-	[nc removeObserver:m_window
-				  name:NSWindowDidEndLiveResizeNotification
-				object:nil];
+  NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+  [nc removeObserver:m_window name:NSWindowDidMoveNotification object:nil];
+  [nc removeObserver:m_window
+                name:NSWindowDidEndLiveResizeNotification
+              object:nil];
 }
 
-bool SystemBaseFrameBuffer::IsFullscreen()
-{
-	return m_fullscreen;
+bool SystemBaseFrameBuffer::IsFullscreen() { return m_fullscreen; }
+
+void SystemBaseFrameBuffer::ToggleFullscreen(bool yes) {
+  SetMode(yes, m_hiDPI);
 }
 
-void SystemBaseFrameBuffer::ToggleFullscreen(bool yes)
-{
-	SetMode(yes, m_hiDPI);
+void SystemBaseFrameBuffer::SetWindowSize(int width, int height) {
+  if (width < VID_MIN_WIDTH || height < VID_MIN_HEIGHT) {
+    return;
+  }
+
+  if (vid_fullscreen) {
+    // Enter windowed mode in order to calculate title bar height
+    vid_fullscreen = false;
+    SetMode(false, m_hiDPI);
+  }
+
+  win_w = width;
+  win_h = height + GetTitleBarHeight();
+
+  SetMode(false, m_hiDPI);
+
+  [m_window center];
 }
 
-void SystemBaseFrameBuffer::SetWindowSize(int width, int height)
-{
-	if (width < VID_MIN_WIDTH || height < VID_MIN_HEIGHT)
-	{
-		return;
-	}
+int SystemBaseFrameBuffer::GetTitleBarHeight() const {
+  const NSRect windowFrame = [m_window frame];
+  const NSRect contentFrame = [m_window contentRectForFrameRect:windowFrame];
+  const int titleBarHeight = windowFrame.size.height - contentFrame.size.height;
 
-	if (vid_fullscreen)
-	{
-		// Enter windowed mode in order to calculate title bar height
-		vid_fullscreen = false;
-		SetMode(false, m_hiDPI);
-	}
-
-	win_w = width;
-	win_h = height + GetTitleBarHeight();
-
-	SetMode(false, m_hiDPI);
-
-	[m_window center];
+  return titleBarHeight;
 }
 
-int SystemBaseFrameBuffer::GetTitleBarHeight() const
-{
-	const NSRect windowFrame = [m_window frame];
-	const NSRect contentFrame = [m_window contentRectForFrameRect:windowFrame];
-	const int titleBarHeight = windowFrame.size.height - contentFrame.size.height;
-
-	return titleBarHeight;
+int SystemBaseFrameBuffer::GetClientWidth() {
+  NSSize size = I_GetContentViewSize(m_window);
+  if (m_hiDPI) {
+    NSWindow *win = (NSWindow *)m_window;
+    if (win) {
+      NSView *view = [win contentView];
+      if (view) {
+        size = [view convertSizeToBacking:size];
+      }
+    }
+  }
+  return (int)size.width > 0 ? (int)size.width : GetWidth();
 }
 
-
-int SystemBaseFrameBuffer::GetClientWidth()
-{
-	const int clientWidth = I_GetContentViewSize(m_window).width;
-	return clientWidth > 0 ? clientWidth : GetWidth();
+int SystemBaseFrameBuffer::GetClientHeight() {
+  NSSize size = I_GetContentViewSize(m_window);
+  if (m_hiDPI) {
+    NSWindow *win = (NSWindow *)m_window;
+    if (win) {
+      NSView *view = [win contentView];
+      if (view) {
+        size = [view convertSizeToBacking:size];
+      }
+    }
+  }
+  return (int)size.height > 0 ? (int)size.height : GetHeight();
 }
 
-int SystemBaseFrameBuffer::GetClientHeight()
-{
-	const int clientHeight = I_GetContentViewSize(m_window).height;
-	return clientHeight > 0 ? clientHeight : GetHeight();
+void SystemBaseFrameBuffer::SetFullscreenMode() {
+  if (!m_fullscreen) {
+    [m_window setLevel:LEVEL_FULLSCREEN];
+    [m_window setStyleMask:STYLE_MASK_FULLSCREEN];
+
+    [m_window setHidesOnDeactivate:YES];
+  }
+
+  const NSRect screenFrame = [[m_window screen] frame];
+  [CATransaction begin];
+  [m_window setFrame:screenFrame display:YES animate:NO];
+  [m_window setHasShadow:NO];
+  [CATransaction commit];
 }
 
+void SystemBaseFrameBuffer::SetWindowedMode() {
+  if (m_fullscreen) {
+    [m_window setLevel:LEVEL_WINDOWED];
+    [m_window setStyleMask:STYLE_MASK_WINDOWED];
 
-void SystemBaseFrameBuffer::SetFullscreenMode()
-{
-	if (!m_fullscreen)
-	{
-		[m_window setLevel:LEVEL_FULLSCREEN];
-		[m_window setStyleMask:STYLE_MASK_FULLSCREEN];
+    [m_window setHidesOnDeactivate:NO];
+  }
 
-		[m_window setHidesOnDeactivate:YES];
-	}
+  const int minimumFrameWidth = VID_MIN_WIDTH;
+  const int minimumFrameHeight = VID_MIN_HEIGHT + GetTitleBarHeight();
+  const NSSize minimumFrameSize =
+      NSMakeSize(minimumFrameWidth, minimumFrameHeight);
+  [m_window setMinSize:minimumFrameSize];
+  [m_window setHasShadow:YES];
 
-	const NSRect screenFrame = [[m_window screen] frame];
-	[m_window setFrame:screenFrame display:YES];
+  const bool isFrameValid = win_x != -1 && win_y != -1 &&
+                            win_w >= minimumFrameWidth &&
+                            win_h >= minimumFrameHeight;
+
+  if (!isFrameValid) {
+    const NSRect screenSize = [[NSScreen mainScreen] frame];
+    win_x = screenSize.origin.x + screenSize.size.width / 10;
+    win_y = screenSize.origin.y + screenSize.size.height / 10;
+    win_w = screenSize.size.width * 8 / 10;
+    win_h = screenSize.size.height * 8 / 10 + GetTitleBarHeight();
+  }
+
+  const NSRect frameSize = NSMakeRect(win_x, win_y, win_w, win_h);
+  [m_window setFrame:frameSize display:YES];
+  [m_window enterFullscreenOnZoom];
 }
 
-void SystemBaseFrameBuffer::SetWindowedMode()
-{
-	if (m_fullscreen)
-	{
-		[m_window setLevel:LEVEL_WINDOWED];
-		[m_window setStyleMask:STYLE_MASK_WINDOWED];
+void SystemBaseFrameBuffer::SetMode(const bool fullscreen, const bool hiDPI) {
+  if ([m_window.contentView isKindOfClass:[OpenGLCocoaView class]]) {
+    NSOpenGLView *const glView = [m_window contentView];
+    [glView setWantsBestResolutionOpenGLSurface:hiDPI];
+  } else {
+    assert(m_window.screen != nil);
+    assert([m_window.contentView layer] != nil);
+    [m_window.contentView layer].contentsScale =
+        hiDPI ? m_window.screen.backingScaleFactor : 1.0;
+  }
 
-		[m_window setHidesOnDeactivate:NO];
-	}
+  if (vid_nativefullscreen && fullscreen != m_fullscreen) {
+    [m_window toggleFullScreen:(nil)];
+  } else if (fullscreen) {
+    SetFullscreenMode();
+  } else {
+    SetWindowedMode();
+  }
 
-	const int minimumFrameWidth  = VID_MIN_WIDTH;
-	const int minimumFrameHeight = VID_MIN_HEIGHT + GetTitleBarHeight();
-	const NSSize minimumFrameSize = NSMakeSize(minimumFrameWidth, minimumFrameHeight);
-	[m_window setMinSize:minimumFrameSize];
+  [m_window updateTitle];
 
-	const bool isFrameValid = win_x != -1 && win_y != -1
-		&& win_w >= minimumFrameWidth && win_h >= minimumFrameHeight;
+  if (![m_window isKeyWindow]) {
+    [m_window makeKeyAndOrderFront:nil];
+  }
 
-	if (!isFrameValid)
-	{
-		const NSRect screenSize = [[NSScreen mainScreen] frame];
-		win_x = screenSize.origin.x + screenSize.size.width  / 10;
-		win_y = screenSize.origin.y + screenSize.size.height / 10;
-		win_w = screenSize.size.width  * 8 / 10;
-		win_h = screenSize.size.height * 8 / 10 + GetTitleBarHeight();
-	}
-
-	const NSRect frameSize = NSMakeRect(win_x, win_y, win_w, win_h);
-	[m_window setFrame:frameSize display:YES];
-	[m_window enterFullscreenOnZoom];
+  m_fullscreen = fullscreen;
+  m_hiDPI = hiDPI;
 }
 
-void SystemBaseFrameBuffer::SetMode(const bool fullscreen, const bool hiDPI)
-{
-	if ([m_window.contentView isKindOfClass:[OpenGLCocoaView class]])
-	{
-		NSOpenGLView* const glView = [m_window contentView];
-		[glView setWantsBestResolutionOpenGLSurface:hiDPI];
-	}
-	else
-    {
-		assert(m_window.screen != nil);
-		assert([m_window.contentView layer] != nil);
-		[m_window.contentView layer].contentsScale = hiDPI ? m_window.screen.backingScaleFactor : 1.0;
-	}
-
-	if (vid_nativefullscreen && fullscreen != m_fullscreen)
-	{
-		[m_window toggleFullScreen:(nil)];
-	}
-	else if (fullscreen)
-	{
-		SetFullscreenMode();
-	}
-	else
-	{
-		SetWindowedMode();
-	}
-
-	[m_window updateTitle];
-
-	if (![m_window isKeyWindow])
-	{
-		[m_window makeKeyAndOrderFront:nil];
-	}
-
-	m_fullscreen = fullscreen;
-	m_hiDPI      = hiDPI;
+void SystemBaseFrameBuffer::UseHiDPI(const bool hiDPI) {
+  if (frameBuffer != nullptr) {
+    frameBuffer->SetMode(frameBuffer->m_fullscreen, hiDPI);
+  }
 }
 
+void SystemBaseFrameBuffer::SetCursor(NSCursor *cursor) {
+  if (frameBuffer != nullptr) {
+    NSWindow *const window = frameBuffer->m_window;
+    id view = [window contentView];
 
-void SystemBaseFrameBuffer::UseHiDPI(const bool hiDPI)
-{
-	if (frameBuffer != nullptr)
-	{
-		frameBuffer->SetMode(frameBuffer->m_fullscreen, hiDPI);
-	}
+    [view setCursor:cursor];
+    [window invalidateCursorRectsForView:view];
+  }
 }
 
-void SystemBaseFrameBuffer::SetCursor(NSCursor* cursor)
-{
-	if (frameBuffer != nullptr)
-	{
-		NSWindow* const window = frameBuffer->m_window;
-		id view = [window contentView];
+void SystemBaseFrameBuffer::SetWindowVisible(bool visible) {
+  if (frameBuffer != nullptr) {
+    if (visible) {
+      [frameBuffer->m_window orderFront:nil];
+    } else {
+      [frameBuffer->m_window orderOut:nil];
+    }
 
-		[view setCursor:cursor];
-		[window invalidateCursorRectsForView:view];
-	}
+    I_SetNativeMouse(!visible);
+  }
 }
 
-void SystemBaseFrameBuffer::SetWindowVisible(bool visible)
-{
-	if (frameBuffer != nullptr)
-	{
-		if (visible)
-		{
-			[frameBuffer->m_window orderFront:nil];
-		}
-		else
-		{
-			[frameBuffer->m_window orderOut:nil];
-		}
-
-		I_SetNativeMouse(!visible);
-	}
+void SystemBaseFrameBuffer::SetWindowTitle(const char *title) {
+  if (frameBuffer != nullptr) {
+    NSString *const nsTitle =
+        nullptr == title
+            ? nil
+            : [NSString stringWithCString:title
+                                 encoding:NSISOLatin1StringEncoding];
+    [frameBuffer->m_window setTitle:nsTitle];
+  }
 }
 
-void SystemBaseFrameBuffer::SetWindowTitle(const char* title)
-{
-	if (frameBuffer != nullptr)
-	{
-		NSString* const nsTitle = nullptr == title ? nil :
-			[NSString stringWithCString:title encoding:NSISOLatin1StringEncoding];
-		[frameBuffer->m_window setTitle:nsTitle];
-	}
+CocoaNativeHandle SystemBaseFrameBuffer::GetNativeHandle() const {
+  CocoaNativeHandle handle = {};
+
+  if (m_window != nullptr) {
+    handle.nsWindow = m_window;
+    handle.nsView = [m_window contentView];
+
+    // Get Metal layer if available (for Vulkan or Metal renderer)
+    if ([handle.nsView isKindOfClass:[NSView class]]) {
+      CALayer *layer = [handle.nsView layer];
+      if (layer != nil && [layer isKindOfClass:[CAMetalLayer class]]) {
+        handle.metalLayer = (__bridge void *)layer;
+      }
+    }
+  }
+
+  return handle;
 }
-
-CocoaNativeHandle SystemBaseFrameBuffer::GetNativeHandle() const
-{
-	CocoaNativeHandle handle = {};
-
-	if (m_window != nullptr)
-	{
-		handle.nsWindow = m_window;
-		handle.nsView = [m_window contentView];
-
-		// Get Metal layer if available (for Vulkan or Metal renderer)
-		if ([handle.nsView isKindOfClass:[NSView class]])
-		{
-			CALayer* layer = [handle.nsView layer];
-			if (layer != nil && [layer isKindOfClass:[CAMetalLayer class]])
-			{
-				handle.metalLayer = (__bridge void*)layer;
-			}
-		}
-	}
-
-	return handle;
-}
-
 
 // ---------------------------------------------------------------------------
-
 
 SystemGLFrameBuffer::SystemGLFrameBuffer(void *hMonitor, bool fullscreen)
-: SystemBaseFrameBuffer(hMonitor, fullscreen)
-{
+    : SystemBaseFrameBuffer(hMonitor, fullscreen) {}
+
+void SystemGLFrameBuffer::SetVSync(bool vsync) {
+  const GLint value = vsync ? 1 : 0;
+
+  [[NSOpenGLContext currentContext] setValues:&value
+                                 forParameter:NSOpenGLCPSwapInterval];
 }
 
+void SystemGLFrameBuffer::SetMode(const bool fullscreen, const bool hiDPI) {
+  NSOpenGLView *const glView = [m_window contentView];
+  [glView setWantsBestResolutionOpenGLSurface:hiDPI];
 
-void SystemGLFrameBuffer::SetVSync(bool vsync)
-{
-	const GLint value = vsync ? 1 : 0;
+  if (vid_nativefullscreen && fullscreen != m_fullscreen) {
+    [m_window toggleFullScreen:(nil)];
+  } else if (fullscreen) {
+    SetFullscreenMode();
+  } else {
+    SetWindowedMode();
+  }
 
-	[[NSOpenGLContext currentContext] setValues:&value
-								   forParameter:NSOpenGLCPSwapInterval];
+  [m_window updateTitle];
+
+  if (![m_window isKeyWindow]) {
+    [m_window makeKeyAndOrderFront:nil];
+  }
+
+  m_fullscreen = fullscreen;
+  m_hiDPI = hiDPI;
 }
 
-
-void SystemGLFrameBuffer::SetMode(const bool fullscreen, const bool hiDPI)
-{
-	NSOpenGLView* const glView = [m_window contentView];
-	[glView setWantsBestResolutionOpenGLSurface:hiDPI];
-
-	if (vid_nativefullscreen && fullscreen != m_fullscreen)
-	{
-		[m_window toggleFullScreen:(nil)];
-	}
-	else if (fullscreen)
-	{
-		SetFullscreenMode();
-	}
-	else
-	{
-		SetWindowedMode();
-	}
-
-	[m_window updateTitle];
-
-	if (![m_window isKeyWindow])
-	{
-		[m_window makeKeyAndOrderFront:nil];
-	}
-
-	m_fullscreen = fullscreen;
-	m_hiDPI      = hiDPI;
+void SystemGLFrameBuffer::SwapBuffers() {
+  [[NSOpenGLContext currentContext] flushBuffer];
 }
-
-
-void SystemGLFrameBuffer::SwapBuffers()
-{
-	[[NSOpenGLContext currentContext] flushBuffer];
-}
-
 
 // ---------------------------------------------------------------------------
 
-
-IVideo* Video;
-
+IVideo *Video;
 
 // ---------------------------------------------------------------------------
 
+void I_ShutdownGraphics() {
+  if (NULL != screen) {
+    delete screen;
+    screen = NULL;
+  }
 
-void I_ShutdownGraphics()
-{
-	if (NULL != screen)
-	{
-		delete screen;
-		screen = NULL;
-	}
-
-	delete Video;
-	Video = NULL;
+  delete Video;
+  Video = NULL;
 }
 
-void I_InitGraphics()
-{
-	Video = new CocoaVideo;
-}
-
+void I_InitGraphics() { Video = new CocoaVideo; }
 
 // ---------------------------------------------------------------------------
 
-CUSTOM_CVAR(Bool, vid_hidpi, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL)
-{
-	SystemBaseFrameBuffer::UseHiDPI(self);
+CUSTOM_CVAR(Bool, vid_hidpi, true,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL) {
+  SystemBaseFrameBuffer::UseHiDPI(self);
 }
-
 
 // ---------------------------------------------------------------------------
 
+bool I_SetCursor(FGameTexture *cursorpic) {
+  @autoreleasepool {
+    NSCursor *cursor = nil;
 
-bool I_SetCursor(FGameTexture *cursorpic)
-{
-	@autoreleasepool {
-		NSCursor* cursor = nil;
+    if (NULL != cursorpic && cursorpic->isValid()) {
+      // Create bitmap image representation
 
-		if (NULL != cursorpic && cursorpic->isValid())
-		{
-			// Create bitmap image representation
+      auto sbuffer = cursorpic->GetTexture()->CreateTexBuffer(0);
 
-			auto sbuffer = cursorpic->GetTexture()->CreateTexBuffer(0);
+      const NSInteger imageWidth = sbuffer.mWidth;
+      const NSInteger imageHeight = sbuffer.mHeight;
+      const NSInteger imagePitch = sbuffer.mWidth * 4;
 
-			const NSInteger imageWidth  = sbuffer.mWidth;
-			const NSInteger imageHeight = sbuffer.mHeight;
-			const NSInteger imagePitch  = sbuffer.mWidth * 4;
+      NSBitmapImageRep *bitmapImageRep = [NSBitmapImageRep alloc];
+      [bitmapImageRep initWithBitmapDataPlanes:NULL
+                                    pixelsWide:imageWidth
+                                    pixelsHigh:imageHeight
+                                 bitsPerSample:8
+                               samplesPerPixel:4
+                                      hasAlpha:YES
+                                      isPlanar:NO
+                                colorSpaceName:NSDeviceRGBColorSpace
+                                   bytesPerRow:imagePitch
+                                  bitsPerPixel:0];
 
-			NSBitmapImageRep* bitmapImageRep = [NSBitmapImageRep alloc];
-			[bitmapImageRep initWithBitmapDataPlanes:NULL
-										  pixelsWide:imageWidth
-										  pixelsHigh:imageHeight
-									   bitsPerSample:8
-									 samplesPerPixel:4
-											hasAlpha:YES
-											isPlanar:NO
-									  colorSpaceName:NSDeviceRGBColorSpace
-										 bytesPerRow:imagePitch
-										bitsPerPixel:0];
+      // Load bitmap data to representation
 
-			// Load bitmap data to representation
+      uint8_t *buffer = [bitmapImageRep bitmapData];
+      memcpy(buffer, sbuffer.mBuffer, imagePitch * imageHeight);
 
-			uint8_t* buffer = [bitmapImageRep bitmapData];
-			memcpy(buffer, sbuffer.mBuffer, imagePitch * imageHeight);
+      // Swap red and blue components in each pixel
 
-			// Swap red and blue components in each pixel
+      for (size_t i = 0; i < size_t(imageWidth * imageHeight); ++i) {
+        const size_t offset = i * 4;
+        std::swap(buffer[offset], buffer[offset + 2]);
+      }
 
-			for (size_t i = 0; i < size_t(imageWidth * imageHeight); ++i)
-			{
-				const size_t offset = i * 4;
-				std::swap(buffer[offset    ], buffer[offset + 2]);
-			}
+      // Create image from representation and set it as cursor
 
-			// Create image from representation and set it as cursor
+      NSData *imageData =
+          [bitmapImageRep representationUsingType:NSPNGFileType
+                                       properties:[NSDictionary dictionary]];
+      NSImage *cursorImage = [[NSImage alloc] initWithData:imageData];
 
-			NSData* imageData = [bitmapImageRep representationUsingType:NSPNGFileType
-															 properties:[NSDictionary dictionary]];
-			NSImage* cursorImage = [[NSImage alloc] initWithData:imageData];
+      cursor = [[NSCursor alloc] initWithImage:cursorImage
+                                       hotSpot:NSMakePoint(0.0f, 0.0f)];
+    }
 
-			cursor = [[NSCursor alloc] initWithImage:cursorImage
-											 hotSpot:NSMakePoint(0.0f, 0.0f)];
-		}
+    SystemBaseFrameBuffer::SetCursor(cursor);
+  }
 
-		SystemBaseFrameBuffer::SetCursor(cursor);
-	}
-
-	return true;
+  return true;
 }
 
+NSSize I_GetContentViewSize(const NSWindow *const window) {
+  const NSView *const view = [window contentView];
+  const NSSize frameSize = [view frame].size;
 
-NSSize I_GetContentViewSize(const NSWindow* const window)
-{
-	const NSView* const view = [window contentView];
-	const NSSize frameSize   = [view frame].size;
-
-	return (vid_hidpi)
-		? [view convertSizeToBacking:frameSize]
-		: frameSize;
+  return frameSize;
 }
 
-void I_SetMainWindowVisible(bool visible)
-{
-	SystemBaseFrameBuffer::SetWindowVisible(visible);
+void I_SetMainWindowVisible(bool visible) {
+  SystemBaseFrameBuffer::SetWindowVisible(visible);
 }
 
 // each platform has its own specific version of this function.
-void I_SetWindowTitle(const char* title)
-{
-	SystemBaseFrameBuffer::SetWindowTitle(title);
+void I_SetWindowTitle(const char *title) {
+  SystemBaseFrameBuffer::SetWindowTitle(title);
 }
-
 
 #ifdef HAVE_VULKAN
-void I_GetVulkanDrawableSize(int *width, int *height)
-{
-	NSWindow* const window = CocoaVideo::GetWindow();
-	assert(window != nil);
+void I_GetVulkanDrawableSize(int *width, int *height) {
+  NSWindow *const window = CocoaVideo::GetWindow();
+  assert(window != nil);
 
-	const NSSize size = I_GetContentViewSize(window);
+  NSSize size = I_GetContentViewSize(window);
+  if (vid_hidpi) {
+    size = [[window contentView] convertSizeToBacking:size];
+  }
 
-	if (width != nullptr)
-	{
-		*width = int(size.width);
-	}
+  if (width != nullptr) {
+    *width = int(size.width);
+  }
 
-	if (height != nullptr)
-	{
-		*height = int(size.height);
-	}
+  if (height != nullptr) {
+    *height = int(size.height);
+  }
 }
 
-bool I_CreateVulkanSurface(VkInstance instance, VkSurfaceKHR *surface)
-{
-	NSView *const view = CocoaVideo::GetWindow().contentView;
-	CALayer *const layer = view.layer;
+bool I_CreateVulkanSurface(VkInstance instance, VkSurfaceKHR *surface) {
+  NSView *const view = CocoaVideo::GetWindow().contentView;
+  CALayer *const layer = view.layer;
 
-	// Set magnification filter for swapchain image when it's copied to a physical display surface
-	// This is needed for gfx-portability because MoltenVK uses preferred nearest sampling by default
-	const char *const magFilterEnv = getenv("MVK_CONFIG_SWAPCHAIN_MAG_FILTER_USE_NEAREST");
-	const bool useNearestFilter = magFilterEnv == nullptr || strtol(magFilterEnv, nullptr, 0) != 0;
-	layer.magnificationFilter = useNearestFilter ? kCAFilterNearest : kCAFilterLinear;
+  // Set magnification filter for swapchain image when it's copied to a physical
+  // display surface This is needed for gfx-portability because MoltenVK uses
+  // preferred nearest sampling by default
+  const char *const magFilterEnv =
+      getenv("MVK_CONFIG_SWAPCHAIN_MAG_FILTER_USE_NEAREST");
+  const bool useNearestFilter =
+      magFilterEnv == nullptr || strtol(magFilterEnv, nullptr, 0) != 0;
+  layer.magnificationFilter =
+      useNearestFilter ? kCAFilterNearest : kCAFilterLinear;
 
-	if (vkCreateMetalSurfaceEXT)
-	{
-		// Preferred surface creation path
-		VkMetalSurfaceCreateInfoEXT surfaceCreateInfo;
-		surfaceCreateInfo.sType = VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT;
-		surfaceCreateInfo.pNext = nullptr;
-		surfaceCreateInfo.flags = 0;
-		surfaceCreateInfo.pLayer = static_cast<CAMetalLayer*>(layer);
+  if (vkCreateMetalSurfaceEXT) {
+    // Preferred surface creation path
+    VkMetalSurfaceCreateInfoEXT surfaceCreateInfo;
+    surfaceCreateInfo.sType = VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT;
+    surfaceCreateInfo.pNext = nullptr;
+    surfaceCreateInfo.flags = 0;
+    surfaceCreateInfo.pLayer = static_cast<CAMetalLayer *>(layer);
 
-		const VkResult result = vkCreateMetalSurfaceEXT(instance, &surfaceCreateInfo, nullptr, surface);
-		return result == VK_SUCCESS;
-	}
+    const VkResult result =
+        vkCreateMetalSurfaceEXT(instance, &surfaceCreateInfo, nullptr, surface);
+    return result == VK_SUCCESS;
+  }
 
-	// Deprecated surface creation path
-	VkMacOSSurfaceCreateInfoMVK windowCreateInfo;
-	windowCreateInfo.sType = VK_STRUCTURE_TYPE_MACOS_SURFACE_CREATE_INFO_MVK;
-	windowCreateInfo.pNext = nullptr;
-	windowCreateInfo.flags = 0;
-	windowCreateInfo.pView = view;
+  // Deprecated surface creation path
+  VkMacOSSurfaceCreateInfoMVK windowCreateInfo;
+  windowCreateInfo.sType = VK_STRUCTURE_TYPE_MACOS_SURFACE_CREATE_INFO_MVK;
+  windowCreateInfo.pNext = nullptr;
+  windowCreateInfo.flags = 0;
+  windowCreateInfo.pView = view;
 
-	const VkResult result = vkCreateMacOSSurfaceMVK(instance, &windowCreateInfo, nullptr, surface);
-	return result == VK_SUCCESS;
+  const VkResult result =
+      vkCreateMacOSSurfaceMVK(instance, &windowCreateInfo, nullptr, surface);
+  return result == VK_SUCCESS;
 }
 #endif
 
+namespace {
+TArray<uint8_t> polyPixelBuffer;
+GLuint polyTexture;
 
-namespace
-{
-	TArray<uint8_t> polyPixelBuffer;
-	GLuint polyTexture;
-
-	int polyWidth = -1;
-	int polyHeight = -1;
-	int polyVSync = -1;
+int polyWidth = -1;
+int polyHeight = -1;
+int polyVSync = -1;
 }
 
-void I_PolyPresentInit()
-{
-	ogl_LoadFunctions();
+void I_PolyPresentInit() {
+  ogl_LoadFunctions();
 
-	glGenTextures(1, &polyTexture);
-	assert(polyTexture != 0);
+  glGenTextures(1, &polyTexture);
+  assert(polyTexture != 0);
 
-	glEnable(GL_TEXTURE_RECTANGLE_ARB);
-	glBindTexture(GL_TEXTURE_RECTANGLE_ARB, polyTexture);
+  glEnable(GL_TEXTURE_RECTANGLE_ARB);
+  glBindTexture(GL_TEXTURE_RECTANGLE_ARB, polyTexture);
 
-	glTexParameteri(GL_TEXTURE_RECTANGLE_ARB, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-	glTexParameteri(GL_TEXTURE_RECTANGLE_ARB, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_RECTANGLE_ARB, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_RECTANGLE_ARB, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
-	glTexParameteri(GL_TEXTURE_RECTANGLE_ARB, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-	glTexParameteri(GL_TEXTURE_RECTANGLE_ARB, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_RECTANGLE_ARB, GL_TEXTURE_WRAP_S,
+                  GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_RECTANGLE_ARB, GL_TEXTURE_WRAP_T,
+                  GL_CLAMP_TO_EDGE);
 }
 
-uint8_t *I_PolyPresentLock(int w, int h, bool vsync, int &pitch)
-{
-	static const int PIXEL_BYTES = 4;
+uint8_t *I_PolyPresentLock(int w, int h, bool vsync, int &pitch) {
+  static const int PIXEL_BYTES = 4;
 
-	if (polyPixelBuffer.Size() == 0 || w != polyWidth || h != polyHeight)
-	{
-		polyPixelBuffer.Resize(w * h * PIXEL_BYTES);
+  if (polyPixelBuffer.Size() == 0 || w != polyWidth || h != polyHeight) {
+    polyPixelBuffer.Resize(w * h * PIXEL_BYTES);
 
-		polyWidth = w;
-		polyHeight = h;
+    polyWidth = w;
+    polyHeight = h;
 
-		glMatrixMode(GL_MODELVIEW);
-		glLoadIdentity();
-		glMatrixMode(GL_PROJECTION);
-		glLoadIdentity();
-		glOrtho(0.0, w, h, 0.0, -1.0, 1.0);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glOrtho(0.0, w, h, 0.0, -1.0, 1.0);
 
-		glViewport(0, 0, w, h);
-	}
+    glViewport(0, 0, w, h);
+  }
 
-	if (vsync != polyVSync)
-	{
-		const GLint value = vsync ? 1 : 0;
+  if (vsync != polyVSync) {
+    const GLint value = vsync ? 1 : 0;
 
-		[[NSOpenGLContext currentContext] setValues:&value
-									   forParameter:NSOpenGLCPSwapInterval];
-	}
+    [[NSOpenGLContext currentContext] setValues:&value
+                                   forParameter:NSOpenGLCPSwapInterval];
+  }
 
-	pitch = w * PIXEL_BYTES;
+  pitch = w * PIXEL_BYTES;
 
-	return &polyPixelBuffer[0];
+  return &polyPixelBuffer[0];
 }
 
-void I_PolyPresentUnlock(int x, int y, int w, int h)
-{
-	glTexImage2D(GL_TEXTURE_RECTANGLE_ARB, 0, GL_RGBA8, w, h, 0, GL_BGRA, GL_UNSIGNED_BYTE, &polyPixelBuffer[0]);
+void I_PolyPresentUnlock(int x, int y, int w, int h) {
+  glTexImage2D(GL_TEXTURE_RECTANGLE_ARB, 0, GL_RGBA8, w, h, 0, GL_BGRA,
+               GL_UNSIGNED_BYTE, &polyPixelBuffer[0]);
 
-	glBegin(GL_QUADS);
-	glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
-	glTexCoord2f(0.0f, 0.0f);
-	glVertex2f(0.0f, 0.0f);
-	glTexCoord2f(w, 0.0f);
-	glVertex2f(w, 0.0f);
-	glTexCoord2f(w, h);
-	glVertex2f(w, h);
-	glTexCoord2f(0.0f, h);
-	glVertex2f(0.0f, h);
-	glEnd();
+  glBegin(GL_QUADS);
+  glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+  glTexCoord2f(0.0f, 0.0f);
+  glVertex2f(0.0f, 0.0f);
+  glTexCoord2f(w, 0.0f);
+  glVertex2f(w, 0.0f);
+  glTexCoord2f(w, h);
+  glVertex2f(w, h);
+  glTexCoord2f(0.0f, h);
+  glVertex2f(0.0f, h);
+  glEnd();
 
-	glFlush();
+  glFlush();
 
-	[[NSOpenGLContext currentContext] flushBuffer];
+  [[NSOpenGLContext currentContext] flushBuffer];
 }
 
-void I_PolyPresentDeinit()
-{
-	glBindTexture(GL_TEXTURE_2D, 0);
-	glDeleteTextures(1, &polyTexture);
+void I_PolyPresentDeinit() {
+  glBindTexture(GL_TEXTURE_2D, 0);
+  glDeleteTextures(1, &polyTexture);
 }
 
 // Implement the C++-friendly function declared in metal_common.h
 #include "metal/metal_common.h"
 
-MetalViewSize GetMetalViewDrawableSize(void* nsWindowPtr)
-{
-    NSWindow* const window = (__bridge NSWindow*)nsWindowPtr;
-    NSSize nsSize = I_GetContentViewSize(window); // Call the original I_GetContentViewSize
-    return { (float)nsSize.width, (float)nsSize.height };
+MetalViewSize GetMetalViewDrawableSize(void *nsWindowPtr) {
+  NSWindow *const window = (__bridge NSWindow *)nsWindowPtr;
+  if (window == nil)
+    return {0, 0};
+  NSView *const view = [window contentView];
+  if (view == nil)
+    return {0, 0};
+
+  const NSSize frameSize = [view frame].size;
+  const NSSize size =
+      (vid_hidpi) ? [view convertSizeToBacking:frameSize] : frameSize;
+
+  return {(float)size.width, (float)size.height};
 }

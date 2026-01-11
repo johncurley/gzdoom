@@ -44,6 +44,8 @@
 #include "dikeys.h"
 #include "v_video.h"
 #include "i_interface.h"
+#include "m_haptics.h"
+#include "m_argv.h"
 #include "menustate.h"
 #include "engineerrors.h"
 #include "keydef.h"
@@ -171,16 +173,33 @@ void CheckNativeMouse()
 
 void I_GetEvent()
 {
-	[[NSRunLoop currentRunLoop] limitDateForMode:NSDefaultRunLoopMode];
+	@autoreleasepool {
+		while (true)
+		{
+			NSEvent* event = [NSApp nextEventMatchingMask:NSEventMaskAny
+												untilDate:[NSDate distantPast]
+												   inMode:NSDefaultRunLoopMode
+												  dequeue:YES];
+			if (nil == event)
+			{
+				break;
+			}
+
+			I_ProcessEvent(event);
+			[NSApp sendEvent:event];
+		}
+	}
 }
 
 void I_StartTic()
 {
+	buttonMap.ResetButtonTriggers();
 	CheckGUICapture();
 	CheckNativeMouse();
 
 	I_ProcessJoysticks();
 	I_GetEvent();
+	Joy_RumbleTick();
 }
 
 void I_StartFrame()
@@ -436,6 +455,8 @@ void ProcessKeyboardEventInMenu(NSEvent* theEvent)
 
 void NSEventToGameMousePosition(NSEvent* inEvent, event_t* outEvent)
 {
+	if (screen == nullptr) return;
+
 	const NSWindow* window = [inEvent window];
 	const NSView*     view = [window contentView];
 
@@ -493,6 +514,11 @@ void ProcessMouseMoveInGame(NSEvent* theEvent)
 
 void ProcessKeyboardEvent(NSEvent* theEvent)
 {
+	if (Args == nullptr)
+	{
+		return;
+	}
+
 	const unsigned short keyCode = [theEvent keyCode];
 	if (keyCode >= KEY_COUNT)
 	{
@@ -534,6 +560,11 @@ void ProcessKeyboardEvent(NSEvent* theEvent)
 
 void ProcessKeyboardFlagsEvent(NSEvent* theEvent)
 {
+	if (Args == nullptr)
+	{
+		return;
+	}
+
 	if (GUICapture)
 	{
 		// Ignore events from modifier keys in menu/console/chat
@@ -552,26 +583,43 @@ void ProcessKeyboardFlagsEvent(NSEvent* theEvent)
 		return;
 	}
 
-	event_t event = {};
-	event.type  = modifiers > oldModifiers ? EV_KeyDown : EV_KeyUp;
-	event.data1 = ModifierToDIK(deltaModifiers);
+	static const uint32_t flag_list[] = {
+		NSEventModifierFlagCapsLock,
+		NSEventModifierFlagShift,
+		NSEventModifierFlagControl,
+		NSEventModifierFlagOption,
+		NSEventModifierFlagCommand
+	};
 
-	oldModifiers = modifiers;
-
-	if (DIK_CAPITAL == event.data1)
+	for (int i = 0; i < 5; ++i)
 	{
-		// Caps Lock is a modifier key which generates one event per state change
-		// but not per actual key press or release. So treat any event as key down
-		event.type = EV_KeyDown;
+		uint32_t flag = flag_list[i];
+		if (deltaModifiers & flag)
+		{
+			event_t event = {};
+			event.type = (modifiers & flag) ? EV_KeyDown : EV_KeyUp;
+			event.data1 = ModifierToDIK(flag);
+
+			if (event.data1 != 0)
+			{
+				if (DIK_CAPITAL == event.data1)
+				{
+					// Caps Lock is a modifier key which generates one event per state change
+					// but not per actual key press or release. So treat any event as key down
+					event.type = EV_KeyDown;
+				}
+				D_PostEvent(&event);
+			}
+		}
 	}
 
-	D_PostEvent(&event);
+	oldModifiers = modifiers;
 }
 
 
 void ProcessMouseMoveEvent(NSEvent* theEvent)
 {
-	if (!use_mouse)
+	if (Args == nullptr || !use_mouse)
 	{
 		return;
 	}
@@ -592,17 +640,38 @@ void ProcessMouseMoveEvent(NSEvent* theEvent)
 	}
 }
 
+static uint32_t s_mouseButtonsDownInGame = 0;
+
 void ProcessMouseButtonEvent(NSEvent* theEvent)
 {
-	if (!use_mouse)
+	if (Args == nullptr || !use_mouse)
 	{
 		return;
 	}
 
 	event_t event = {};
-
 	const NSEventType cocoaEventType = [theEvent type];
+	const NSInteger buttonNumber = [theEvent buttonNumber];
+	const int16_t gameButtonCode = min(KEY_MOUSE1 + (int)buttonNumber, (int)KEY_MOUSE8);
 
+	bool isDown = false;
+	switch (cocoaEventType)
+	{
+		case NSEventTypeLeftMouseDown:
+		case NSEventTypeRightMouseDown:
+		case NSEventTypeOtherMouseDown:
+			isDown = true;
+			break;
+		case NSEventTypeLeftMouseUp:
+		case NSEventTypeRightMouseUp:
+		case NSEventTypeOtherMouseUp:
+			isDown = false;
+			break;
+		default:
+			return; // Not a button event
+	}
+
+	// 1. Handle UI Event if needed
 	if (GUICapture)
 	{
 		event.type  = EV_GUI_Event;
@@ -621,37 +690,42 @@ void ProcessMouseButtonEvent(NSEvent* theEvent)
 
 		NSEventToGameMousePosition(theEvent, &event);
 
-		D_PostEvent(&event);
+		if (event.subtype != EV_GUI_None)
+		{
+			D_PostEvent(&event);
+		}
+	}
+
+	// 2. Handle In-Game Event
+	// We MUST track which buttons were pressed in-game to ensure they are released
+	// even if the GUI captures the mouse before the Up event occurs.
+	uint32_t buttonBit = 1 << (gameButtonCode - KEY_MOUSE1);
+
+	if (isDown)
+	{
+		if (!GUICapture)
+		{
+			s_mouseButtonsDownInGame |= buttonBit;
+			event.type = EV_KeyDown;
+			event.data1 = gameButtonCode;
+			D_PostEvent(&event);
+		}
 	}
 	else
 	{
-		switch (cocoaEventType)
+		if (s_mouseButtonsDownInGame & buttonBit)
 		{
-			case NSEventTypeLeftMouseDown:
-			case NSEventTypeRightMouseDown:
-			case NSEventTypeOtherMouseDown:
-				event.type = EV_KeyDown;
-				break;
-
-			case NSEventTypeLeftMouseUp:
-			case NSEventTypeRightMouseUp:
-			case NSEventTypeOtherMouseUp:
-				event.type = EV_KeyUp;
-				break;
-
-			default:
-				break;
+			s_mouseButtonsDownInGame &= ~buttonBit;
+			event.type = EV_KeyUp;
+			event.data1 = gameButtonCode;
+			D_PostEvent(&event);
 		}
-
-		event.data1 = min(KEY_MOUSE1 + [theEvent buttonNumber], NSInteger(KEY_MOUSE8));
-
-		D_PostEvent(&event);
 	}
 }
 
 void ProcessMouseWheelEvent(NSEvent* theEvent)
 {
-	if (!use_mouse)
+	if (Args == nullptr || !use_mouse)
 	{
 		return;
 	}

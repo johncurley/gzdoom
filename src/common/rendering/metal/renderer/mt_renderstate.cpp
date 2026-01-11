@@ -24,13 +24,14 @@
 #include "metal/renderer/mt_pipelinestate.h"
 #include "metal/renderer/mt_renderbuffers.h"
 #include "metal/system/mt_buffer.h"
-#include "metal/system/mt_hwbuffer.h" // Needed for MtHardwareDataBuffer definition
 #include "metal/system/mt_commandbuffer.h"
+#include "metal/system/mt_hwbuffer.h" // Needed for MtHardwareDataBuffer definition
 #include "metal/system/mt_renderdevice.h"
 #include "metal/textures/mt_sampler.h"
 #include "metal/textures/mt_texture.h"
 
 #include "flatvertices.h"
+#include "gamestate.h"
 #include "hw_clock.h"
 #include "hw_cvars.h"
 #include "hw_lightbuffer.h"
@@ -39,11 +40,10 @@
 #include "hwrenderer/data/hw_viewpointbuffer.h"
 #include "hwrenderer/data/shaderuniforms.h"
 #include "v_text.h"
-#include "gamestate.h"
 
 #include <Metal/Metal.hpp>
 #include <QuartzCore/QuartzCore.hpp>
- 
+
 CVAR(Int, mt_submit_size, 1000, 0);
 EXTERN_CVAR(Bool, r_skipmats)
 EXTERN_CVAR(Bool, mt_debug)
@@ -70,18 +70,23 @@ void MtRenderState::ClearScreen() {
 }
 
 void MtRenderState::Draw(int dt, int index, int count, bool apply) {
-    auto mtVBuf = dynamic_cast<MtVertexBuffer *>(mVertexBuffer);
-    int draw_stride = mtVBuf ? (int)mtVBuf->GetStride() : 0;
-    if (mt_debug && draw_stride == 24) Printf("METAL: Draw 2D geometry count=%d\n", count);
+  auto mtVBuf = dynamic_cast<MtVertexBuffer *>(mVertexBuffer);
+  int draw_stride = mtVBuf ? (int)mtVBuf->GetStride() : 0;
+  if (mt_debug && draw_stride == 24)
+    Printf("METAL: Draw 2D geometry count=%d\n", count);
   if (mt_debug) {
-    auto mtVBuf = dynamic_cast<MtVertexBuffer*>(mVertexBuffer);
-    Printf(PRINT_LOG, "Metal: Draw dt=%d index=%d count=%d apply=%d vbuf=%p stride=%zu\n", 
-           dt, index, count, (int)apply, mVertexBuffer, 
+    auto mtVBuf = dynamic_cast<MtVertexBuffer *>(mVertexBuffer);
+    Printf(PRINT_LOG,
+           "Metal: Draw dt=%d index=%d count=%d apply=%d vbuf=%p stride=%zu\n",
+           dt, index, count, (int)apply, mVertexBuffer,
            mtVBuf ? mtVBuf->GetStride() : 0);
-    
+
     if (mtVBuf && mtVBuf->GetStride() == 24 && count > 0) {
-        float* v = (float*)((uint8_t*)mtVBuf->GetBuffer()->contents() + index * mtVBuf->GetStride());
-        Printf(PRINT_LOG, "  2D Vert 0: Pos=(%f, %f, %f) UV=(%f, %f) Color=%08x\n", v[0], v[1], v[2], v[3], v[4], ((uint32_t*)v)[5]);
+      float *v = (float *)((uint8_t *)mtVBuf->GetBuffer()->contents() +
+                           index * mtVBuf->GetStride());
+      Printf(PRINT_LOG,
+             "  2D Vert 0: Pos=(%f, %f, %f) UV=(%f, %f) Color=%08x\n", v[0],
+             v[1], v[2], v[3], v[4], ((uint32_t *)v)[5]);
     }
   }
   if (dt == DT_TriangleFan) {
@@ -97,11 +102,10 @@ void MtRenderState::Draw(int dt, int index, int count, bool apply) {
     if (mEncoder && mPipelineBound && mtIB && count >= 3) {
       auto mtlIB = mtIB->GetBuffer();
       if (mtlIB) {
-          mEncoder->drawIndexedPrimitives(
-              MTL::PrimitiveType::PrimitiveTypeTriangle, (NS::UInteger)((count - 2) * 3),
-              MTL::IndexType::IndexTypeUInt32,
-              mtlIB, 0, 1, (NS::Integer)index,
-              0);
+        mEncoder->drawIndexedPrimitives(
+            MTL::PrimitiveType::PrimitiveTypeTriangle,
+            (NS::UInteger)((count - 2) * 3), MTL::IndexType::IndexTypeUInt32,
+            mtlIB, 0, 1, (NS::Integer)index, 0);
       }
     }
 
@@ -139,14 +143,19 @@ void MtRenderState::Draw(int dt, int index, int count, bool apply) {
 
 void MtRenderState::DrawIndexed(int dt, int index, int count, bool apply) {
   if (mt_debug) {
-    auto mtVBuf = dynamic_cast<MtVertexBuffer*>(mVertexBuffer);
-    Printf(PRINT_LOG, "Metal: DrawIndexed dt=%d index=%d count=%d apply=%d vbuf=%p stride=%zu\n", 
-           dt, index, count, (int)apply, mVertexBuffer, 
+    auto mtVBuf = dynamic_cast<MtVertexBuffer *>(mVertexBuffer);
+    Printf(PRINT_LOG,
+           "Metal: DrawIndexed dt=%d index=%d count=%d apply=%d vbuf=%p "
+           "stride=%zu\n",
+           dt, index, count, (int)apply, mVertexBuffer,
            mtVBuf ? mtVBuf->GetStride() : 0);
-    
+
     if (mtVBuf && mtVBuf->GetStride() == 24 && count > 0) {
-        float* v = (float*)((uint8_t*)mtVBuf->GetBuffer()->contents() + mVertexOffsets[0] * mtVBuf->GetStride());
-        Printf(PRINT_LOG, "  2D Vert 0: Pos=(%f, %f, %f) UV=(%f, %f) Color=%08x\n", v[0], v[1], v[2], v[3], v[4], ((uint32_t*)v)[5]);
+      float *v = (float *)((uint8_t *)mtVBuf->GetBuffer()->contents() +
+                           mVertexOffsets[0] * mtVBuf->GetStride());
+      Printf(PRINT_LOG,
+             "  2D Vert 0: Pos=(%f, %f, %f) UV=(%f, %f) Color=%08x\n", v[0],
+             v[1], v[2], v[3], v[4], ((uint32_t *)v)[5]);
     }
   }
   if (apply || mNeedApply)
@@ -156,20 +165,21 @@ void MtRenderState::DrawIndexed(int dt, int index, int count, bool apply) {
     return;
 
   auto mtIB = dynamic_cast<MtIndexBuffer *>(mIndexBuffer);
-  if (!mtIB) return;
+  if (!mtIB)
+    return;
   auto mtlIB = mtIB->GetBuffer();
   if (!mtlIB)
     return;
 
-  mEncoder->drawIndexedPrimitives(
-      MTL::PrimitiveTypeTriangle, count, MTL::IndexTypeUInt32,
-      mtlIB,
-      index * 4); // Each index is 4 bytes (UInt32)
+  mEncoder->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, count,
+                                  MTL::IndexTypeUInt32, mtlIB,
+                                  index * 4); // Each index is 4 bytes (UInt32)
   mApplyCount++;
 }
 
 bool MtRenderState::SetDepthClamp(bool on) {
-  if (mt_debug) Printf(PRINT_LOG, "Metal: SetDepthClamp %d\n", (int)on);
+  if (mt_debug)
+    Printf(PRINT_LOG, "Metal: SetDepthClamp %d\n", (int)on);
   bool lastValue = mDepthClamp;
   mDepthClamp = on;
   mNeedApply = true;
@@ -177,19 +187,22 @@ bool MtRenderState::SetDepthClamp(bool on) {
 }
 
 void MtRenderState::SetDepthMask(bool on) {
-  if (mt_debug) Printf(PRINT_LOG, "Metal: SetDepthMask %d\n", (int)on);
+  if (mt_debug)
+    Printf(PRINT_LOG, "Metal: SetDepthMask %d\n", (int)on);
   mDepthWrite = on;
   mNeedApply = true;
 }
 
 void MtRenderState::SetDepthFunc(int func) {
-  if (mt_debug) Printf(PRINT_LOG, "Metal: SetDepthFunc %d\n", func);
+  if (mt_debug)
+    Printf(PRINT_LOG, "Metal: SetDepthFunc %d\n", func);
   mDepthFunc = func;
   mNeedApply = true;
 }
 
 void MtRenderState::SetDepthRange(float min, float max) {
-  if (mt_debug) Printf(PRINT_LOG, "Metal: SetDepthRange %f..%f\n", min, max);
+  if (mt_debug)
+    Printf(PRINT_LOG, "Metal: SetDepthRange %f..%f\n", min, max);
   mViewportDepthMin = min;
   mViewportDepthMax = max;
   mViewportChanged = true;
@@ -206,12 +219,15 @@ void MtRenderState::SetStencil(int offs, int op, int flags) {
   mStencilRef = screen->stencilValue + offs;
   mStencilRefChanged = true;
   mStencilOp = op;
-  
-  // GZDoom's SetStencil expects an EQUAL test against the reference value.
-  // We use our internal index 3 which maps to MTL::CompareFunctionEqual in stencilFuncs.
-  mStencilFunc = 3; 
 
-  if (mt_debug) Printf(PRINT_LOG, "Metal: SetStencil offset=%d op=%d ref=%d\n", offs, op, mStencilRef);
+  // GZDoom's SetStencil expects an EQUAL test against the reference value.
+  // We use our internal index 3 which maps to MTL::CompareFunctionEqual in
+  // stencilFuncs.
+  mStencilFunc = 3;
+
+  if (mt_debug)
+    Printf(PRINT_LOG, "Metal: SetStencil offset=%d op=%d ref=%d\n", offs, op,
+           mStencilRef);
 
   if (flags != -1) {
     bool cmon = !(flags & SF_ColorMaskOff);
@@ -247,7 +263,8 @@ void MtRenderState::EnableStencil(bool on) {
 
 void MtRenderState::SetScissor(int x, int y, int w, int h) {
   if (mt_debug) {
-      Printf(PRINT_LOG, "Metal: SetScissor %d,%d %dx%d (gamestate=%d)\n", x, y, w, h, (int)gamestate);
+    Printf(PRINT_LOG, "Metal: SetScissor %d,%d %dx%d (gamestate=%d)\n", x, y, w,
+           h, (int)gamestate);
   }
   mScissorX = x;
   mScissorY = y;
@@ -259,7 +276,8 @@ void MtRenderState::SetScissor(int x, int y, int w, int h) {
 
 void MtRenderState::SetViewport(int x, int y, int w, int h) {
   if (mt_debug) {
-      Printf(PRINT_LOG, "Metal: SetViewport %d,%d %dx%d (gamestate=%d)\n", x, y, w, h, (int)gamestate);
+    Printf(PRINT_LOG, "Metal: SetViewport %d,%d %dx%d (gamestate=%d)\n", x, y,
+           w, h, (int)gamestate);
   }
   mViewportX = x;
   mViewportY = y;
@@ -281,24 +299,28 @@ void MtRenderState::EnableLineSmooth(bool on) {}
 void MtRenderState::Apply(int dt) {
   // Handle command buffer flushing like Vulkan
   if (mApplyCount >= mt_submit_size) {
-    if (mt_debug) Printf(PRINT_LOG, "Metal: mt_submit_size (%d) reached, flushing.\n", *mt_submit_size);
+    if (mt_debug)
+      Printf(PRINT_LOG, "Metal: mt_submit_size (%d) reached, flushing.\n",
+             *mt_submit_size);
     EndRenderPass();
     fb->GetCommands()->FlushCommands();
     mApplyCount = 0;
   }
 
   ApplyStreamData();
-    ApplyMatrices();
-    ApplyRenderPass(dt);
-    
-    if (!mPipelineBound) return;
-  
-    ApplyScissor();
+  ApplyMatrices();
+  ApplyRenderPass(dt);
+
+  if (!mPipelineBound)
+    return;
+
+  ApplyScissor();
   ApplyCulling();
-  
+
   // Implement Depth Clamping (Depth Clip Mode)
   if (mEncoder) {
-      mEncoder->setDepthClipMode(mDepthClamp ? MTL::DepthClipModeClamp : MTL::DepthClipModeClip);
+    mEncoder->setDepthClipMode(mDepthClamp ? MTL::DepthClipModeClamp
+                                           : MTL::DepthClipModeClip);
   }
 
   ApplyViewport();
@@ -338,26 +360,26 @@ void MtRenderState::ApplyFixedTextures() {
     }
   }
 
-  MTL::Texture* lmTex = fb->GetTextureManager()->GetLightmap();
+  MTL::Texture *lmTex = fb->GetTextureManager()->GetLightmap();
   if (lmTex) {
-      mEncoder->setFragmentTexture(lmTex, 15);
-      mEncoder->setVertexTexture(lmTex, 15);
-      
-      // Lightmap sampler: Linear, Clamp (Vulkan Parity)
-      MtSamplerKey sk;
-      sk.MinFilter = 1; // Linear
-      sk.MagFilter = 1; 
-      sk.MipFilter = 0; 
-      sk.AddressU = 2; // Clamp
-      sk.AddressV = 2;
-      sk.AddressW = 2;
-      sk.MaxAnisotropy = 1.0f;
-      
-      MTL::SamplerState *sampler = fb->GetSamplerManager()->GetSamplerState(sk);
-      if (sampler) {
-          mEncoder->setFragmentSamplerState(sampler, 15);
-          mEncoder->setVertexSamplerState(sampler, 15);
-      }
+    mEncoder->setFragmentTexture(lmTex, 15);
+    mEncoder->setVertexTexture(lmTex, 15);
+
+    // Lightmap sampler: Linear, Clamp (Vulkan Parity)
+    MtSamplerKey sk;
+    sk.MinFilter = 1; // Linear
+    sk.MagFilter = 1;
+    sk.MipFilter = 0;
+    sk.AddressU = 2; // Clamp
+    sk.AddressV = 2;
+    sk.AddressW = 2;
+    sk.MaxAnisotropy = 1.0f;
+
+    MTL::SamplerState *sampler = fb->GetSamplerManager()->GetSamplerState(sk);
+    if (sampler) {
+      mEncoder->setFragmentSamplerState(sampler, 15);
+      mEncoder->setVertexSamplerState(sampler, 15);
+    }
   }
 }
 
@@ -368,8 +390,8 @@ void MtRenderState::ApplyRenderPass(int dt) {
   // CRITICAL: If the engine requested a clear, we MUST end the current pass
   // to allow the next BeginRenderPass to set the LoadAction to Clear.
   if (inRenderPass && mClearTargets != 0) {
-      EndRenderPass();
-      inRenderPass = false;
+    EndRenderPass();
+    inRenderPass = false;
   }
 
   if (!inRenderPass) {
@@ -386,10 +408,9 @@ void MtRenderState::ApplyRenderPass(int dt) {
   // Get vertex format and stride from current vertex buffer
   auto mtVBuf = dynamic_cast<MtVertexBuffer *>(mVertexBuffer);
   int stride = mtVBuf ? (int)mtVBuf->GetStride() : 0;
-  pipelineKey.VertexFormat =
-      mtVBuf ? mtVBuf->VertexFormat
-                    : -1;
-  // Add stride to the key to differentiate between FFlatVertex (32) and TwoDVertex (24)
+  pipelineKey.VertexFormat = mtVBuf ? mtVBuf->VertexFormat : -1;
+  // Add stride to the key to differentiate between FFlatVertex (32) and
+  // TwoDVertex (24)
   pipelineKey.VertexFormat |= (stride << 8);
 
   // Build shader key from effect state (following Vulkan pattern)
@@ -404,24 +425,28 @@ void MtRenderState::ApplyRenderPass(int dt) {
 
   pipelineKey.DepthFunc = mDepthTest ? mDepthFunc : DF_Always;
   pipelineKey.DepthWrite = mDepthWrite ? 1 : 0;
+  pipelineKey.DepthClampMode = mDepthClamp ? 1 : 0;
   pipelineKey.ColorMask = mColorMask;
   pipelineKey.CullMode = mCullMode;
   pipelineKey.StencilTest = mStencilTest ? 1 : 0;
   pipelineKey.StencilOp = mStencilOp;
-  pipelineKey.StencilFunc = mStencilTest ? mStencilFunc : 2; // Force Always if test is off
-  pipelineKey.BlendMode = mRenderStyle.AsDWORD; // Use full render style for pipeline key
+  pipelineKey.StencilFunc =
+      mStencilTest ? mStencilFunc : 2; // Force Always if test is off
+  pipelineKey.BlendMode =
+      mRenderStyle.AsDWORD; // Use full render style for pipeline key
   pipelineKey.SampleCount = mRenderTarget.Samples;
   pipelineKey.DrawBufferCount = mRenderTarget.DrawBuffers;
   pipelineKey.PixelFormat = mRenderTarget.Format;
   pipelineKey.DepthStencilFormat =
-      mRenderTarget.DepthStencil ? (int)mRenderTarget.DepthStencil->pixelFormat()
-                                 : 0;
+      mRenderTarget.DepthStencil
+          ? (int)mRenderTarget.DepthStencil->pixelFormat()
+          : 0;
   pipelineKey.ClipDistanceMask = mClipDistanceMask;
 
   // Only update pipeline state if key changed or not bound
   if (pipelineKey != mPipelineKey || !mPipelineBound) {
-    auto pipelineState = fb->GetPipelineStateManager()->GetPipelineState(
-        pipelineKey, mtVBuf);
+    auto pipelineState =
+        fb->GetPipelineStateManager()->GetPipelineState(pipelineKey, mtVBuf);
     if (pipelineState && pipelineState->pipelineState) {
       if (mEncoder) {
         mEncoder->setRenderPipelineState(pipelineState->pipelineState);
@@ -435,7 +460,8 @@ void MtRenderState::ApplyRenderPass(int dt) {
 
 void MtRenderState::ApplyStencilRef() {
   if (mStencilRefChanged && mEncoder) {
-    if (mt_debug) Printf(PRINT_LOG, "Metal: ApplyStencilRef %d\n", mStencilRef);
+    if (mt_debug)
+      Printf(PRINT_LOG, "Metal: ApplyStencilRef %d\n", mStencilRef);
     mEncoder->setStencilReferenceValue(mStencilRef);
     mStencilRefChanged = false;
   }
@@ -468,14 +494,15 @@ void MtRenderState::ApplyScissor() {
 
 void MtRenderState::ApplyDepthBias() {
   if (mBias.mChanged && mEncoder) {
-    // REVERSE-Z: Near is 1.0, Far is 0.0. 
+    // REVERSE-Z: Near is 1.0, Far is 0.0.
     // GZDoom sends negative bias values (OpenGL style) to pull closer.
     // We negate these to push towards 1.0 in Metal.
-    // For Depth32Float, the constant bias 'units' must be scaled by r (min resolvable difference).
-    // We use 1/2^24 as a reasonable epsilon for 32-bit float buffers to simulate 24-bit precision.
-    float unitsScale = 1.0f / 16777216.0f; 
+    // For Depth32Float, the constant bias 'units' must be scaled by r (min
+    // resolvable difference). We use 1/2^24 as a reasonable epsilon for 32-bit
+    // float buffers to simulate 24-bit precision.
+    float unitsScale = 1.0f / 16777216.0f;
     mCurrentBiasUnits = -mBias.mUnits * unitsScale;
-    mCurrentBiasFactor = -mBias.mFactor; 
+    mCurrentBiasFactor = -mBias.mFactor;
     mEncoder->setDepthBias(mCurrentBiasUnits, mCurrentBiasFactor, 0.0f);
     mBias.mChanged = false;
   }
@@ -485,16 +512,16 @@ void MtRenderState::ApplyViewport() {
   if (mViewportChanged && mEncoder) {
     MTL::Viewport viewport;
     if (mViewportWidth >= 0) {
-                      viewport.originX = (double)mViewportX;
-                      viewport.originY = (double)mViewportY;
-                      viewport.width = (double)mViewportWidth;
-                      viewport.height = (double)mViewportHeight;
-                      } else {
-                        viewport.originX = 0.0;
-                        viewport.originY = 0.0;
-                        viewport.width = (double)mRenderTarget.Width;
-                        viewport.height = (double)mRenderTarget.Height;
-                      }    
+      viewport.originX = (double)mViewportX;
+      viewport.originY = (double)mViewportY;
+      viewport.width = (double)mViewportWidth;
+      viewport.height = (double)mViewportHeight;
+    } else {
+      viewport.originX = 0.0;
+      viewport.originY = 0.0;
+      viewport.width = (double)mRenderTarget.Width;
+      viewport.height = (double)mRenderTarget.Height;
+    }
     // REVERSE-Z: Map engine range [min, max] to [1-max, 1-min]
     viewport.znear = 1.0 - mViewportDepthMax;
     viewport.zfar = 1.0 - mViewportDepthMin;
@@ -597,17 +624,18 @@ void MtRenderState::ApplyVertexBuffers() {
       mVertexBuffer) {
     auto mtbuf = dynamic_cast<MtVertexBuffer *>(mVertexBuffer);
     if (mtbuf) {
-        size_t stride = mtbuf->GetStride();
-        MTL::Buffer *buffer = mtbuf->GetBuffer();
+      size_t stride = mtbuf->GetStride();
+      MTL::Buffer *buffer = mtbuf->GetBuffer();
 
-        if (buffer) {
-            mEncoder->setVertexBuffer(buffer, mVertexOffsets[0] * stride, 0);
-            mEncoder->setVertexBuffer(buffer, mVertexOffsets[1] * stride, 1);
-            if (mt_debug) {
-                Printf(PRINT_LOG, "Metal: Bound VertexBuffer %p at offsets %d,%d (stride %zu)\n", 
-                       buffer, mVertexOffsets[0], mVertexOffsets[1], stride);
-            }
+      if (buffer) {
+        mEncoder->setVertexBuffer(buffer, mVertexOffsets[0] * stride, 0);
+        mEncoder->setVertexBuffer(buffer, mVertexOffsets[1] * stride, 1);
+        if (mt_debug) {
+          Printf(PRINT_LOG,
+                 "Metal: Bound VertexBuffer %p at offsets %d,%d (stride %zu)\n",
+                 buffer, mVertexOffsets[0], mVertexOffsets[1], stride);
         }
+      }
     }
 
     mLastVertexBuffer = mVertexBuffer;
@@ -634,13 +662,16 @@ void MtRenderState::ApplyMaterial() {
       int numLayers = mMaterial.mMaterial->NumLayers();
       int scaleFlags = mMaterial.mMaterial->GetScaleFlags();
       bool isIndexed = (scaleFlags & CTF_Indexed) != 0;
-      
+
       // For indexed textures, we must bind the palette layers (slots 1 and 2)
-      if (isIndexed) numLayers = 3;
+      if (isIndexed)
+        numLayers = 3;
 
       for (int i = 0; i < numLayers; i++) {
         // Use the correct translation for palette layers
-        int translation = (isIndexed && i > 0) ? mMaterial.mTranslation : ((i == 0) ? mMaterial.mTranslation : 0);
+        int translation = (isIndexed && i > 0)
+                              ? mMaterial.mTranslation
+                              : ((i == 0) ? mMaterial.mTranslation : 0);
         auto hwTexture = mMaterial.mMaterial->GetLayer(i, translation);
         if (hwTexture) {
           auto mtHwTexture = static_cast<MtHardwareTexture *>(hwTexture);
@@ -649,28 +680,63 @@ void MtRenderState::ApplyMaterial() {
           if (!image->GetTexture()) {
             auto tex = mMaterial.mMaterial->Source();
             if (tex) {
-              // Note: GetLayer for palettes handles its own creation usually, 
+              // Note: GetLayer for palettes handles its own creation usually,
               // but we ensure the base layer has an image.
               if (i == 0) {
-                  mtHwTexture->CreateImage(tex->GetTexture(),
-                                           mMaterial.mTranslation,
-                                           scaleFlags);
+                mtHwTexture->CreateImage(tex->GetTexture(),
+                                         mMaterial.mTranslation, scaleFlags);
               }
             }
           }
 
           // Upload staging if needed
-          if (mtHwTexture->NeedsUpload() && mtHwTexture->GetStagingBufferSize() > 0 && image->GetTexture()) {
+          if (mtHwTexture->NeedsUpload() &&
+              mtHwTexture->GetStagingBufferSize() > 0 && image->GetTexture()) {
             MTL::Texture *mtlTexture = image->GetTexture();
             int w = image->GetWidth();
             int h = image->GetHeight();
             int pitch = mtHwTexture->GetBufferPitch();
 
-            MTL::Region region = MTL::Region::Make2D(0, 0, w, h);
-            mtlTexture->replaceRegion(region, 0, mtHwTexture->GetStagingBuffer(), pitch);
-            
-            if (mtlTexture->mipmapLevelCount() > 1) {
+            if (mtlTexture->storageMode() == MTL::StorageModePrivate) {
+              // Private textures MUST be updated via blit
+              size_t alignedPitch = (pitch + 1023) & ~1023;
+              size_t totalSize = alignedPitch * h;
+              MTL::Buffer *staging = fb->device->device->newBuffer(
+                  totalSize, MTL::StorageModeShared);
+              if (staging) {
+                uint8_t *dst = (uint8_t *)staging->contents();
+                uint8_t *src = (uint8_t *)mtHwTexture->GetStagingBuffer();
+                for (int y = 0; y < h; y++) {
+                  memcpy(dst + y * alignedPitch, src + y * pitch, pitch);
+                }
+
+                EndRenderPass();
+                auto cmdBuf = fb->GetCommands()->GetBlitCommandBuffer();
+                if (cmdBuf) {
+                  auto blit = cmdBuf->blitCommandEncoder();
+                  blit->copyFromBuffer(staging, 0, alignedPitch, 0,
+                                       MTL::Size::Make(w, h, 1), mtlTexture, 0,
+                                       0, MTL::Origin::Make(0, 0, 0));
+                  if (mtlTexture->mipmapLevelCount() > 1) {
+                    blit->generateMipmaps(mtlTexture);
+                  }
+                  blit->endEncoding();
+
+                  cmdBuf->commit();
+                  if (gamestate == GS_STARTUP) {
+                    cmdBuf->waitUntilCompleted();
+                  }
+                }
+                fb->RecycleBuffer(staging);
+              }
+            } else {
+              MTL::Region region = MTL::Region::Make2D(0, 0, w, h);
+              mtlTexture->replaceRegion(region, 0,
+                                        mtHwTexture->GetStagingBuffer(), pitch);
+
+              if (mtlTexture->mipmapLevelCount() > 1) {
                 fb->GetTextureManager()->GenerateMipmaps(mtlTexture);
+              }
             }
 
             // Ensure the renderer knows this texture is now filled
@@ -687,36 +753,40 @@ void MtRenderState::ApplyMaterial() {
 
             // Sampler
             MtSamplerKey samplerKey;
-            
+
             // 2. Identify UI textures for special sampler handling
-            const char* texName = mtHwTexture->GetDebugName().c_str();
-            bool isUI = (strstr(texName, "STARTUP") || strstr(texName, "BOOTLOGO") || 
-                         strstr(texName, "M_") || strstr(texName, "ST_") || strstr(texName, "WI_") ||
-                         strstr(texName, "TITLE") || strstr(texName, "INTER") || 
-                         strstr(texName, "HELP") || strstr(texName, "CREDIT") || strstr(texName, "CONBACK") ||
-                         strstr(texName, "Font") || strstr(texName, "FONT") ||
-                         mtlTexture->width() == 640);
+            const char *texName = mtHwTexture->GetDebugName().c_str();
+            bool isUI =
+                (strstr(texName, "STARTUP") || strstr(texName, "BOOTLOGO") ||
+                 strstr(texName, "M_") || strstr(texName, "ST_") ||
+                 strstr(texName, "WI_") || strstr(texName, "TITLE") ||
+                 strstr(texName, "INTER") || strstr(texName, "HELP") ||
+                 strstr(texName, "CREDIT") || strstr(texName, "CONBACK") ||
+                 strstr(texName, "Font") || strstr(texName, "FONT") ||
+                 mtlTexture->width() == 640);
 
             int filter = isUI ? 0 : gl_texture_filter;
-            // Vulkan-parity filter table: 0=Nearest, 1=Linear. Mip: 0=None, 1=Nearest, 2=Linear
-            static const int minFilters[] = {0, 0, 1, 1, 1, 0, 1}; 
-            static const int magFilters[] = {0, 0, 1, 1, 1, 0, 0}; 
-            static const int mipFilters[] = {0, 1, 0, 1, 2, 2, 2}; 
+            // Vulkan-parity filter table: 0=Nearest, 1=Linear. Mip: 0=None,
+            // 1=Nearest, 2=Linear
+            static const int minFilters[] = {0, 0, 1, 1, 1, 0, 1};
+            static const int magFilters[] = {0, 0, 1, 1, 1, 0, 0};
+            static const int mipFilters[] = {0, 1, 0, 1, 2, 2, 2};
 
             int f = (filter >= 0 && filter <= 6) ? filter : 0;
             samplerKey.MinFilter = minFilters[f];
             samplerKey.MagFilter = magFilters[f];
             samplerKey.MipFilter = mipFilters[f];
-            
+
             // CRITICAL: If texture has no mips, force sampler to NotMipmapped
             if (mtlTexture->mipmapLevelCount() == 1) {
-                samplerKey.MipFilter = 0;
+              samplerKey.MipFilter = 0;
             }
 
             samplerKey.AddressU = mMaterial.mClampMode;
             samplerKey.AddressV = mMaterial.mClampMode;
             samplerKey.AddressW = mMaterial.mClampMode;
-            samplerKey.MaxAnisotropy = isUI ? 1.0f : (float)gl_texture_filter_anisotropic;
+            samplerKey.MaxAnisotropy =
+                isUI ? 1.0f : (float)gl_texture_filter_anisotropic;
 
             MTL::SamplerState *sampler =
                 fb->GetSamplerManager()->GetSamplerState(samplerKey);
@@ -746,12 +816,12 @@ void MtRenderState::ApplyCulling() {
     if (mCullMode == Cull_None)
       mEncoder->setCullMode(MTL::CullModeNone);
     else if (mCullMode == Cull_CW)
-      mEncoder->setCullMode(MTL::CullModeBack); 
+      mEncoder->setCullMode(MTL::CullModeBack);
     else // Cull_CCW
       mEncoder->setCullMode(MTL::CullModeFront);
-    
+
     if (mt_debug) {
-        Printf(PRINT_LOG, "Metal: ApplyCulling mode=%d\n", mCullMode);
+      Printf(PRINT_LOG, "Metal: ApplyCulling mode=%d\n", mCullMode);
     }
     mCullModeChanged = false;
   }
@@ -763,60 +833,76 @@ void MtRenderState::ApplyHWBufferSet() {
 
   // Binding Indices (Matching shaderBindings in mt_shader.cpp)
   // Viewpoint = 17, Light = 16, Bone = 18, Matrix = 19, Stream = 20
-  
+
   auto dummyBuf = fb->GetBufferManager()->DummyBuffer;
 
   // 1. Viewpoint (17)
-  MTL::Buffer* vpBuf = mBoundBuffers[VIEWPOINT_BINDINGPOINT];
+  MTL::Buffer *vpBuf = mBoundBuffers[VIEWPOINT_BINDINGPOINT];
   if (!vpBuf && fb->GetBufferManager()->ViewpointUBO) {
-      vpBuf = fb->GetBufferManager()->ViewpointUBO->GetBuffer();
+    vpBuf = fb->GetBufferManager()->ViewpointUBO->GetBuffer();
   }
   uint32_t vpOff = mBoundOffsets[VIEWPOINT_BINDINGPOINT];
-  if (!vpBuf) { vpBuf = dummyBuf; vpOff = 0; }
+  if (!vpBuf) {
+    vpBuf = dummyBuf;
+    vpOff = 0;
+  }
 
-  if (vpBuf && (vpBuf != mLastBoundBuffers[17] || vpOff != mLastBoundOffsets[17])) {
-      mEncoder->setVertexBuffer(vpBuf, vpOff, 17);
-      mEncoder->setFragmentBuffer(vpBuf, vpOff, 17);
-      mLastBoundBuffers[17] = vpBuf;
-      mLastBoundOffsets[17] = vpOff;
+  if (vpBuf &&
+      (vpBuf != mLastBoundBuffers[17] || vpOff != mLastBoundOffsets[17])) {
+    mEncoder->setVertexBuffer(vpBuf, vpOff, 17);
+    mEncoder->setFragmentBuffer(vpBuf, vpOff, 17);
+    mLastBoundBuffers[17] = vpBuf;
+    mLastBoundOffsets[17] = vpOff;
   }
 
   // 2. Light (16)
-  MTL::Buffer* ltBuf = mBoundBuffers[LIGHTBUF_BINDINGPOINT];
+  MTL::Buffer *ltBuf = mBoundBuffers[LIGHTBUF_BINDINGPOINT];
   if (!ltBuf && fb->GetBufferManager()->LightBufferSSO) {
-      ltBuf = fb->GetBufferManager()->LightBufferSSO->GetBuffer();
+    ltBuf = fb->GetBufferManager()->LightBufferSSO->GetBuffer();
   }
   uint32_t ltOff = mBoundOffsets[LIGHTBUF_BINDINGPOINT];
-  if (!ltBuf) { ltBuf = dummyBuf; ltOff = 0; }
+  if (!ltBuf) {
+    ltBuf = dummyBuf;
+    ltOff = 0;
+  }
 
-  if (ltBuf && (ltBuf != mLastBoundBuffers[16] || ltOff != mLastBoundOffsets[16])) {
-      mEncoder->setVertexBuffer(ltBuf, ltOff, 16);
-      mEncoder->setFragmentBuffer(ltBuf, ltOff, 16);
-      mLastBoundBuffers[16] = ltBuf;
-      mLastBoundOffsets[16] = ltOff;
+  if (ltBuf &&
+      (ltBuf != mLastBoundBuffers[16] || ltOff != mLastBoundOffsets[16])) {
+    mEncoder->setVertexBuffer(ltBuf, ltOff, 16);
+    mEncoder->setFragmentBuffer(ltBuf, ltOff, 16);
+    mLastBoundBuffers[16] = ltBuf;
+    mLastBoundOffsets[16] = ltOff;
   }
 
   // 3. Bone (18)
-  MTL::Buffer* bnBuf = mBoundBuffers[BONEBUF_BINDINGPOINT];
+  MTL::Buffer *bnBuf = mBoundBuffers[BONEBUF_BINDINGPOINT];
   if (!bnBuf && fb->GetBufferManager()->BoneBufferSSO) {
-      bnBuf = fb->GetBufferManager()->BoneBufferSSO->GetBuffer();
+    bnBuf = fb->GetBufferManager()->BoneBufferSSO->GetBuffer();
   }
   uint32_t bnOff = mBoundOffsets[BONEBUF_BINDINGPOINT];
-  if (!bnBuf) { bnBuf = dummyBuf; bnOff = 0; }
+  if (!bnBuf) {
+    bnBuf = dummyBuf;
+    bnOff = 0;
+  }
 
-  if (bnBuf && (bnBuf != mLastBoundBuffers[18] || bnOff != mLastBoundOffsets[18])) {
-      mEncoder->setVertexBuffer(bnBuf, bnOff, 18);
-      mEncoder->setFragmentBuffer(bnBuf, bnOff, 18);
-      mLastBoundBuffers[18] = bnBuf;
-      mLastBoundOffsets[18] = bnOff;
+  if (bnBuf &&
+      (bnBuf != mLastBoundBuffers[18] || bnOff != mLastBoundOffsets[18])) {
+    mEncoder->setVertexBuffer(bnBuf, bnOff, 18);
+    mEncoder->setFragmentBuffer(bnBuf, bnOff, 18);
+    mLastBoundBuffers[18] = bnBuf;
+    mLastBoundOffsets[18] = bnOff;
   }
 
   // 4. Matrix (Model/Texture) (19)
   uint32_t matrixOffset = mMatrixBufferWriter.Offset();
   MTL::Buffer *matrixBuffer = mMatrixBufferWriter.GetBuffer();
-  if (matrixOffset == 0xffffffff) { matrixBuffer = dummyBuf; matrixOffset = 0; }
+  if (matrixOffset == 0xffffffff) {
+    matrixBuffer = dummyBuf;
+    matrixOffset = 0;
+  }
 
-  if (matrixBuffer && (matrixBuffer != mLastBoundBuffers[19] || matrixOffset != mLastBoundOffsets[19])) {
+  if (matrixBuffer && (matrixBuffer != mLastBoundBuffers[19] ||
+                       matrixOffset != mLastBoundOffsets[19])) {
     mEncoder->setVertexBuffer(matrixBuffer, matrixOffset, 19);
     mEncoder->setFragmentBuffer(matrixBuffer, matrixOffset, 19);
     mLastBoundBuffers[19] = matrixBuffer;
@@ -826,9 +912,13 @@ void MtRenderState::ApplyHWBufferSet() {
   // 5. Stream (Per-draw uniforms) (20)
   uint32_t streamDataOffset = mStreamBufferWriter.StreamDataOffset();
   MTL::Buffer *streamBuffer = mStreamBufferWriter.GetBuffer();
-  if (streamDataOffset == 0xffffffff) { streamBuffer = dummyBuf; streamDataOffset = 0; }
+  if (streamDataOffset == 0xffffffff) {
+    streamBuffer = dummyBuf;
+    streamDataOffset = 0;
+  }
 
-  if (streamBuffer && (streamBuffer != mLastBoundBuffers[20] || streamDataOffset != mLastBoundOffsets[20])) {
+  if (streamBuffer && (streamBuffer != mLastBoundBuffers[20] ||
+                       streamDataOffset != mLastBoundOffsets[20])) {
     mEncoder->setVertexBuffer(streamBuffer, streamDataOffset, 20);
     mEncoder->setFragmentBuffer(streamBuffer, streamDataOffset, 20);
     mLastBoundBuffers[20] = streamBuffer;
@@ -839,11 +929,11 @@ void MtRenderState::ApplyHWBufferSet() {
 void MtRenderState::WaitForStreamBuffers() {
   EndRenderPass();
   fb->GetCommands()->FlushCommands(true);
-  
+
   mApplyCount = 0;
   mStreamBufferWriter.BeginFrame();
   mMatrixBufferWriter.BeginFrame();
-  
+
   BeginRenderPass();
 }
 
@@ -854,7 +944,8 @@ void MtRenderState::Bind(int bindingpoint, uint32_t offset) {
 void MtRenderState::BindBuffer(int bindingpoint, MTL::Buffer *buffer,
                                uint32_t offset) {
   if (mt_debug) {
-    Printf(PRINT_LOG, "Metal: BindBuffer bp=%d buffer=%p offset=%u\n", bindingpoint, buffer, offset);
+    Printf(PRINT_LOG, "Metal: BindBuffer bp=%d buffer=%p offset=%u\n",
+           bindingpoint, buffer, offset);
   }
   if (bindingpoint >= 0 && bindingpoint < 32) {
     mBoundBuffers[bindingpoint] = buffer;
@@ -870,7 +961,9 @@ void MtRenderState::BindBuffer(int bindingpoint, MTL::Buffer *buffer,
 
 void MtRenderState::MarkAsFilled(MTL::Texture *tex) {
   if (tex) {
-    if (mt_debug) Printf(PRINT_LOG, "Metal: MarkAsFilled tex=%p (W:%lu H:%lu)\n", tex, tex->width(), tex->height());
+    if (mt_debug)
+      Printf(PRINT_LOG, "Metal: MarkAsFilled tex=%p (W:%lu H:%lu)\n", tex,
+             tex->width(), tex->height());
     mClearedTargets.insert(tex);
   }
 }
@@ -886,13 +979,14 @@ void MtRenderState::BeginFrame() {
   mViewportHeight = -1;
   mScissorWidth = -1;
   mScissorHeight = -1;
-  if (mt_debug) Printf(PRINT_LOG, "Metal: BeginFrame - Clearing mClearedTargets\n");
+  if (mt_debug)
+    Printf(PRINT_LOG, "Metal: BeginFrame - Clearing mClearedTargets\n");
   mClearedTargets.clear();
   mPipelineBound = false;
-  
+
   mStreamBufferWriter.BeginFrame();
   mMatrixBufferWriter.BeginFrame();
-  
+
   mBias.mUnits = 0.0f;
   mBias.mFactor = 0.0f;
   mBias.mChanged = true;
@@ -901,15 +995,20 @@ void MtRenderState::BeginFrame() {
   mCurrentWinding = MTL::WindingCounterClockwise;
 
   for (int i = 0; i < 32; i++) {
-      mBoundBuffers[i] = nullptr;
-      mBoundOffsets[i] = 0;
+    mBoundBuffers[i] = nullptr;
+    mBoundOffsets[i] = 0;
+  }
+
+  if (gamestate == GS_STARTUP) {
+    mClearTargets |= CT_Color;
   }
 }
 
 void MtRenderState::EndRenderPass() {
   if (mEncoder) {
     if (mt_debug) {
-      Printf(PRINT_LOG, "Metal: EndRenderPass encoder=%p (applyCount was %d)\n", mEncoder, mApplyCount);
+      Printf(PRINT_LOG, "Metal: EndRenderPass encoder=%p (applyCount was %d)\n",
+             mEncoder, mApplyCount);
     }
     mEncoder->endEncoding();
     mEncoder = nullptr;
@@ -938,16 +1037,17 @@ void MtRenderState::SetRenderTarget(MTL::Texture *image,
                                     MTL::Texture *depthStencilView, int width,
                                     int height, int format, int samples) {
   if (mt_debug) {
-    Printf(PRINT_LOG, "Metal: SetRenderTarget image=%p ds=%p %dx%d fmt=%d samples=%d\n",
+    Printf(PRINT_LOG,
+           "Metal: SetRenderTarget image=%p ds=%p %dx%d fmt=%d samples=%d\n",
            image, depthStencilView, width, height, format, samples);
   }
-  
+
   // End current pass, but DON'T flush. Let Apply() or EndFrame handle it.
   EndRenderPass();
 
   bool isSwapChain = (image == nullptr);
   if (isSwapChain && fb->mCurrentDrawable) {
-      image = (MTL::Texture*)fb->mCurrentDrawable->texture();
+    image = (MTL::Texture *)fb->mCurrentDrawable->texture();
   }
 
   mRenderTarget.Image = image;
@@ -962,105 +1062,119 @@ void MtRenderState::SetRenderTarget(MTL::Texture *image,
 // FORCE RECOMPILE: December 26 V10 Diagnostic Build
 void MtRenderState::BeginRenderPass() {
   EndRenderPass(); // Ensure previous encoder is ended
-  
+
   MTL::Texture *targetTex = mRenderTarget.Image;
   if (mRenderTarget.IsSwapChain && fb->mCurrentDrawable) {
-      targetTex = (MTL::Texture*)fb->mCurrentDrawable->texture();
+    targetTex = (MTL::Texture *)fb->mCurrentDrawable->texture();
   }
 
   if (!targetTex) {
-    if (mt_debug) Printf(PRINT_LOG, "Metal: BeginRenderPass - No render target image! width=%d height=%d\n", mRenderTarget.Width, mRenderTarget.Height);
+    if (mt_debug)
+      Printf(PRINT_LOG,
+             "Metal: BeginRenderPass - No render target image! width=%d "
+             "height=%d\n",
+             mRenderTarget.Width, mRenderTarget.Height);
     return;
   }
-    
+
   if (mRenderTarget.Width <= 0 || mRenderTarget.Height <= 0) {
-      if (mt_debug) Printf(PRINT_LOG, "Metal: BeginRenderPass - Invalid render target size %dx%d\n", mRenderTarget.Width, mRenderTarget.Height);
-      return;
+    if (mt_debug)
+      Printf(PRINT_LOG,
+             "Metal: BeginRenderPass - Invalid render target size %dx%d\n",
+             mRenderTarget.Width, mRenderTarget.Height);
+    return;
   }
 
   // Use manually allocated descriptor for maximum control and stability
   MTL::RenderPassDescriptor *pRPD = MTL::RenderPassDescriptor::alloc()->init();
-  if (!pRPD) return;
+  if (!pRPD)
+    return;
 
   auto buffers = fb->GetBuffers();
   int numAttachments = mRenderTarget.DrawBuffers;
   // GZDoom extra attachments (Fog, Normal) only exist for the scene target.
-  if (numAttachments > 1 && (!buffers || targetTex != buffers->SceneColor->GetTexture())) {
-      numAttachments = 1;
+  if (numAttachments > 1 &&
+      (!buffers || targetTex != buffers->SceneColor->GetTexture())) {
+    numAttachments = 1;
   }
 
   for (int i = 0; i < numAttachments; i++) {
-      auto colorAtt = pRPD->colorAttachments()->object(i);
-      MTL::Texture *tex = (i == 0) ? targetTex : 
-                          (i == 1 && buffers) ? buffers->SceneFog->GetTexture() : 
-                          (i == 2 && buffers) ? buffers->SceneNormal->GetTexture() : nullptr;
-      
-      if (!tex) continue;
-      colorAtt->setTexture(tex);
-      
-      bool filled = mClearedTargets.find(tex) != mClearedTargets.end();
-      bool clear = (mClearTargets & CT_Color) || !filled;
-      
-      colorAtt->setLoadAction(clear ? MTL::LoadActionClear : MTL::LoadActionLoad);
-      colorAtt->setStoreAction(MTL::StoreActionStore);
-      
-      if (clear) {
-          MTL::ClearColor cc;
-          if (i == 0) {
-              if (targetTex == fb->GetBuffers()->ShadowMap->GetTexture()) {
-                  cc = MTL::ClearColor::Make(1e20, 0.0, 0.0, 1.0);
-              } else {
-                  cc = MTL::ClearColor::Make(
-                      screen->mSceneClearColor[0], screen->mSceneClearColor[1],
-                      screen->mSceneClearColor[2], screen->mSceneClearColor[3]);
-              }
-          } else {
-              cc = MTL::ClearColor::Make(0, 0, 0, 0); // Fog and Normal clear to zero
-          }
-          colorAtt->setClearColor(cc);
-          mClearedTargets.insert(tex);
-      }
-  }
+    auto colorAtt = pRPD->colorAttachments()->object(i);
+    MTL::Texture *tex = (i == 0)              ? targetTex
+                        : (i == 1 && buffers) ? buffers->SceneFog->GetTexture()
+                        : (i == 2 && buffers)
+                            ? buffers->SceneNormal->GetTexture()
+                            : nullptr;
 
+    if (!tex)
+      continue;
+    colorAtt->setTexture(tex);
+
+    bool filled = mClearedTargets.find(tex) != mClearedTargets.end();
+    bool clear = (mClearTargets & CT_Color) || !filled;
+
+    colorAtt->setLoadAction(clear ? MTL::LoadActionClear : MTL::LoadActionLoad);
+    colorAtt->setStoreAction(MTL::StoreActionStore);
+
+    if (clear) {
+      MTL::ClearColor cc;
+      if (i == 0) {
+        if (targetTex == fb->GetBuffers()->ShadowMap->GetTexture()) {
+          cc = MTL::ClearColor::Make(1e20, 0.0, 0.0, 1.0);
+        } else {
+          cc = MTL::ClearColor::Make(
+              screen->mSceneClearColor[0], screen->mSceneClearColor[1],
+              screen->mSceneClearColor[2], screen->mSceneClearColor[3]);
+        }
+      } else {
+        cc = MTL::ClearColor::Make(0, 0, 0, 0); // Fog and Normal clear to zero
+      }
+      colorAtt->setClearColor(cc);
+      mClearedTargets.insert(tex);
+    }
+  }
 
   // Depth/Stencil Attachment
   if (mRenderTarget.DepthStencil) {
-    bool dsFilled = mClearedTargets.find(mRenderTarget.DepthStencil) != mClearedTargets.end();
+    bool dsFilled = mClearedTargets.find(mRenderTarget.DepthStencil) !=
+                    mClearedTargets.end();
     bool clearDS = !dsFilled;
-    
+
     bool clearDepth = (mClearTargets & CT_Depth) || clearDS;
     bool clearStencil = (mClearTargets & CT_Stencil) || clearDS;
 
     auto depthAttachment = pRPD->depthAttachment();
     depthAttachment->setTexture(mRenderTarget.DepthStencil);
-    depthAttachment->setLoadAction(clearDepth ? MTL::LoadActionClear : MTL::LoadActionLoad);
-    
-    // TBDR Optimization (Apple Silicon): If we are in the final swapchain pass, 
+    depthAttachment->setLoadAction(clearDepth ? MTL::LoadActionClear
+                                              : MTL::LoadActionLoad);
+
+    // TBDR Optimization (Apple Silicon): If we are in the final swapchain pass,
     // we don't need to store the depth/stencil results back to main memory.
-    if (mRenderTarget.IsSwapChain) {
-        depthAttachment->setStoreAction(MTL::StoreActionDontCare);
+    if (mRenderTarget.IsSwapChain || fb->mVersionManager.isTBDR) {
+      depthAttachment->setStoreAction(MTL::StoreActionDontCare);
     } else {
-        depthAttachment->setStoreAction(MTL::StoreActionStore);
+      depthAttachment->setStoreAction(MTL::StoreActionStore);
     }
 
     if (clearDepth) {
-        depthAttachment->setClearDepth(0.0); // Reverse-Z: Clear to 0.0 (Far)
-        mClearedTargets.insert(mRenderTarget.DepthStencil);
+      depthAttachment->setClearDepth(0.0); // Reverse-Z: Clear to 0.0 (Far)
+      mClearedTargets.insert(mRenderTarget.DepthStencil);
     }
 
     auto stencilAttachment = pRPD->stencilAttachment();
     stencilAttachment->setTexture(mRenderTarget.DepthStencil);
-    stencilAttachment->setLoadAction(clearStencil ? MTL::LoadActionClear : MTL::LoadActionLoad);
-    
-    if (mRenderTarget.IsSwapChain) {
-        stencilAttachment->setStoreAction(MTL::StoreActionDontCare);
+    stencilAttachment->setLoadAction(clearStencil ? MTL::LoadActionClear
+                                                  : MTL::LoadActionLoad);
+
+    if (mRenderTarget.IsSwapChain || fb->mVersionManager.isTBDR) {
+      stencilAttachment->setStoreAction(MTL::StoreActionDontCare);
     } else {
-        stencilAttachment->setStoreAction(MTL::StoreActionStore);
+      stencilAttachment->setStoreAction(MTL::StoreActionStore);
     }
 
     if (clearStencil) {
-        stencilAttachment->setClearStencil(0);
-        mClearedTargets.insert(mRenderTarget.DepthStencil);
+      stencilAttachment->setClearStencil(0);
+      mClearedTargets.insert(mRenderTarget.DepthStencil);
     }
   }
 
@@ -1071,58 +1185,60 @@ void MtRenderState::BeginRenderPass() {
     mEncoder = cmdBuffer->renderCommandEncoder(pRPD);
     mPipelineBound = false;
     if (mEncoder) {
-        mCurrentWinding = MTL::WindingClockwise;
-        mEncoder->setFrontFacingWinding(mCurrentWinding);
-        
-        // Satisfy vertex descriptor aliases
-        if (fb->GetBufferManager()->DummyBuffer) {
-            mEncoder->setVertexBuffer(fb->GetBufferManager()->DummyBuffer, 0, 30);
-        }
+      mCurrentWinding = MTL::WindingClockwise;
+      mEncoder->setFrontFacingWinding(mCurrentWinding);
 
-        // Use current state if set, otherwise default to full target
-        MTL::Viewport viewport;
-        if (mViewportWidth > 0) {
-            viewport.originX = (double)mViewportX;
-            viewport.originY = (double)mViewportY;
-            viewport.width = (double)mViewportWidth;
-            viewport.height = (double)mViewportHeight;
-        } else {
-            viewport.originX = 0;
-            viewport.originY = 0;
-            viewport.width = (double)mRenderTarget.Width;
-            viewport.height = (double)mRenderTarget.Height;
-        }
-        // REVERSE-Z: Map engine range [min, max] to [1-max, 1-min]
-        viewport.znear = 1.0 - mViewportDepthMax;
-        viewport.zfar = 1.0 - mViewportDepthMin;
-        mEncoder->setViewport(viewport);
-        
-        MTL::ScissorRect scissor;
-        if (mScissorWidth > 0) {
-            scissor.x = (NS::UInteger)clamp(mScissorX, 0, mRenderTarget.Width);
-            scissor.y = (NS::UInteger)clamp(mScissorY, 0, mRenderTarget.Height);
-            scissor.width = (NS::UInteger)clamp(mScissorWidth, 0, mRenderTarget.Width - (int)scissor.x);
-            scissor.height = (NS::UInteger)clamp(mScissorHeight, 0, mRenderTarget.Height - (int)scissor.y);
-        } else {
-            scissor.x = 0;
-            scissor.y = 0;
-            scissor.width = (NS::UInteger)mRenderTarget.Width;
-            scissor.height = (NS::UInteger)mRenderTarget.Height;
-        }
-        mEncoder->setScissorRect(scissor);
+      // Satisfy vertex descriptor aliases
+      if (fb->GetBufferManager()->DummyBuffer) {
+        mEncoder->setVertexBuffer(fb->GetBufferManager()->DummyBuffer, 0, 30);
+      }
 
-        // Force re-apply of vertex buffer if we have one
-        if (mVertexBuffer) {
-            auto mtbuf = dynamic_cast<MtVertexBuffer *>(mVertexBuffer);
-            if (mtbuf) {
-                size_t stride = mtbuf->GetStride();
-                MTL::Buffer *buffer = mtbuf->GetBuffer();
-                if (buffer) {
-                    mEncoder->setVertexBuffer(buffer, mVertexOffsets[0] * stride, 0);
-                    mEncoder->setVertexBuffer(buffer, mVertexOffsets[1] * stride, 1);
-                }
-            }
+      // Use current state if set, otherwise default to full target
+      MTL::Viewport viewport;
+      if (mViewportWidth > 0) {
+        viewport.originX = (double)mViewportX;
+        viewport.originY = (double)mViewportY;
+        viewport.width = (double)mViewportWidth;
+        viewport.height = (double)mViewportHeight;
+      } else {
+        viewport.originX = 0;
+        viewport.originY = 0;
+        viewport.width = (double)mRenderTarget.Width;
+        viewport.height = (double)mRenderTarget.Height;
+      }
+      // REVERSE-Z: Map engine range [min, max] to [1-max, 1-min]
+      viewport.znear = 1.0 - mViewportDepthMax;
+      viewport.zfar = 1.0 - mViewportDepthMin;
+      mEncoder->setViewport(viewport);
+
+      MTL::ScissorRect scissor;
+      if (mScissorWidth > 0) {
+        scissor.x = (NS::UInteger)clamp(mScissorX, 0, mRenderTarget.Width);
+        scissor.y = (NS::UInteger)clamp(mScissorY, 0, mRenderTarget.Height);
+        scissor.width = (NS::UInteger)clamp(
+            mScissorWidth, 0, mRenderTarget.Width - (int)scissor.x);
+        scissor.height = (NS::UInteger)clamp(
+            mScissorHeight, 0, mRenderTarget.Height - (int)scissor.y);
+      } else {
+        scissor.x = 0;
+        scissor.y = 0;
+        scissor.width = (NS::UInteger)mRenderTarget.Width;
+        scissor.height = (NS::UInteger)mRenderTarget.Height;
+      }
+      mEncoder->setScissorRect(scissor);
+
+      // Force re-apply of vertex buffer if we have one
+      if (mVertexBuffer) {
+        auto mtbuf = dynamic_cast<MtVertexBuffer *>(mVertexBuffer);
+        if (mtbuf) {
+          size_t stride = mtbuf->GetStride();
+          MTL::Buffer *buffer = mtbuf->GetBuffer();
+          if (buffer) {
+            mEncoder->setVertexBuffer(buffer, mVertexOffsets[0] * stride, 0);
+            mEncoder->setVertexBuffer(buffer, mVertexOffsets[1] * stride, 1);
+          }
         }
+      }
     }
   }
 
@@ -1137,15 +1253,15 @@ void MtRenderState::BeginRenderPass() {
   mBias.mChanged = true; // Ensure depth bias is re-applied to the new encoder
   mPipelineKey = {};
   mPipelineBound = false;
-  
+
   mLastVertexBuffer = nullptr;
   mLastIndexBuffer = nullptr;
   mLastViewpointOffset = 0xffffffff;
   mLastMatricesOffset = 0xffffffff;
   mLastStreamDataOffset = 0xffffffff;
-  
+
   for (int i = 0; i < 32; i++) {
-      mLastBoundBuffers[i] = nullptr;
-      mLastBoundOffsets[i] = 0xffffffff;
+    mLastBoundBuffers[i] = nullptr;
+    mLastBoundOffsets[i] = 0xffffffff;
   }
 }

@@ -1,8 +1,8 @@
 #include "mt_renderbuffers.h"
+#include "c_cvars.h"
 #include "metal/system/mt_renderdevice.h"
 #include "metal/textures/mt_texture.h"
 #include "printf.h" // New include
-#include "c_cvars.h"
 
 EXTERN_CVAR(Int, gl_shadowmap_quality)
 
@@ -38,18 +38,20 @@ void MtRenderBuffers::CreatePipelineDepthStencil(int width, int height) {
   auto desc = MTL::TextureDescriptor::alloc()->init();
   desc->setWidth(width);
   desc->setHeight(height);
-  desc->setPixelFormat(MTL::PixelFormatDepth32Float_Stencil8); 
-  desc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
-  
+  desc->setPixelFormat(MTL::PixelFormatDepth32Float_Stencil8);
+
   if (fb->mVersionManager.supportsMemoryless) {
-      desc->setStorageMode(MTL::StorageModeMemoryless);
+    desc->setUsage(MTL::TextureUsageRenderTarget);
+    desc->setStorageMode(MTL::StorageModeMemoryless);
   } else {
-      desc->setStorageMode(MTL::StorageModePrivate);
+    desc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
+    desc->setStorageMode(MTL::StorageModePrivate);
   }
 
   MTL::Texture *texture = fb->device->device->newTexture(desc);
   if (!texture) {
-      Printf(PRINT_LOG, "Metal: Failed to create PipelineDepthStencil texture!\n");
+    Printf(PRINT_LOG,
+           "Metal: Failed to create PipelineDepthStencil texture!\n");
   }
   PipelineDepthStencil->SetTexture(texture);
   PipelineDepthStencil->SetWidth(width);
@@ -69,7 +71,8 @@ void MtRenderBuffers::CreatePipeline(int width, int height) {
     desc->setStorageMode(MTL::StorageModePrivate);
 
     MTL::Texture *texture = fb->device->device->newTexture(desc);
-    if (i == 0) Printf(PRINT_LOG, "Metal: Created PipelineImage[0] at %p\n", texture);
+    if (i == 0)
+      Printf(PRINT_LOG, "Metal: Created PipelineImage[0] at %p\n", texture);
     PipelineImage[i]->SetTexture(texture);
     PipelineImage[i]->SetWidth(width);
     PipelineImage[i]->SetHeight(height);
@@ -88,23 +91,27 @@ void MtRenderBuffers::CreateScene(int width, int height, int samples) {
 void MtRenderBuffers::CreateShadowMap() {
   ShadowMap = std::make_unique<MtTextureImage>(fb);
 
-  // Default to 1024 for now, engine will resize via BeginFrame if needed (though ShadowMap quality is usually fixed)
-  int quality = gl_shadowmap_quality; 
-  if (quality <= 0) quality = 1024;
+  // Default to 1024 for now, engine will resize via BeginFrame if needed
+  // (though ShadowMap quality is usually fixed)
+  int quality = gl_shadowmap_quality;
+  if (quality <= 0)
+    quality = 1024;
 
   auto desc = MTL::TextureDescriptor::alloc()->init();
   desc->setWidth(quality);
   desc->setHeight(1024);
   // GZDoom 1D shadow maps store squared distance as data, must use R32Float.
-  desc->setPixelFormat(MTL::PixelFormatR32Float); 
+  desc->setPixelFormat(MTL::PixelFormatR32Float);
   desc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
   desc->setStorageMode(MTL::StorageModePrivate);
 
   MTL::Texture *texture = fb->device->device->newTexture(desc);
   if (texture) {
-      Printf(PRINT_LOG, "Metal: Created ShadowMap texture %p (%dx1024) R32Float\n", texture, quality);
+    Printf(PRINT_LOG,
+           "Metal: Created ShadowMap texture %p (%dx1024) R32Float\n", texture,
+           quality);
   } else {
-      Printf(PRINT_LOG, "Metal: FAILED to create ShadowMap texture!\n");
+    Printf(PRINT_LOG, "Metal: FAILED to create ShadowMap texture!\n");
   }
   ShadowMap->SetTexture(texture);
   ShadowMap->SetWidth(quality);
@@ -139,14 +146,12 @@ void MtRenderBuffers::CreateSceneDepthStencil(int width, int height,
   auto desc = MTL::TextureDescriptor::alloc()->init();
   desc->setWidth(width);
   desc->setHeight(height);
-  desc->setPixelFormat(MTL::PixelFormatDepth32Float_Stencil8); 
+  desc->setPixelFormat(MTL::PixelFormatDepth32Float_Stencil8);
   desc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
-  
-  if (fb->mVersionManager.supportsMemoryless) {
-      desc->setStorageMode(MTL::StorageModeMemoryless);
-  } else {
-      desc->setStorageMode(MTL::StorageModePrivate);
-  }
+
+  // Scene depth/stencil needs to be sampled for SSAO/PostProcess, so it cannot
+  // be memoryless.
+  desc->setStorageMode(MTL::StorageModePrivate);
 
   desc->setSampleCount(samples);
   if (samples > 1)
@@ -165,12 +170,12 @@ void MtRenderBuffers::CreateSceneNormal(int width, int height, int samples) {
   auto desc = MTL::TextureDescriptor::alloc()->init();
   desc->setWidth(width);
   desc->setHeight(height);
-  
+
   MTL::PixelFormat format = MTL::PixelFormatBGRA8Unorm;
   if (fb->mVersionManager.supportsRGB10A2) {
-      format = MTL::PixelFormatRGB10A2Unorm;
+    format = MTL::PixelFormatRGB10A2Unorm;
   }
-  
+
   desc->setPixelFormat(format);
   desc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
   desc->setStorageMode(MTL::StorageModePrivate);

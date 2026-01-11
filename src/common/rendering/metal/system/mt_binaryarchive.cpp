@@ -1,6 +1,7 @@
 #include "mt_binaryarchive.h"
 #include "mt_renderdevice.h"
 #include "i_specialpaths.h"
+#include "i_time.h"
 #include "printf.h"
 #include "cmdlib.h"
 
@@ -18,6 +19,7 @@ MtBinaryArchive::~MtBinaryArchive() {
 void MtBinaryArchive::Init() {
     if (!fb->mVersionManager.supportsBinaryArchives) return;
 
+    auto startLoad = I_msTime();
     std::string path = GetArchivePath();
     
     auto desc = MTL::BinaryArchiveDescriptor::alloc()->init();
@@ -35,7 +37,7 @@ void MtBinaryArchive::Init() {
     if (!mArchive && error) {
         Printf(PRINT_LOG, "Metal: Failed to load binary archive: %s\n", error->localizedDescription()->utf8String());
     } else if (mArchive && FileExists(path.c_str())) {
-        Printf(PRINT_LOG, "Metal: Loaded binary pipeline archive from %s\n", path.c_str());
+        Printf(PRINT_LOG, "Metal: Loaded binary pipeline archive from %s in %llu ms\n", path.c_str(), I_msTime() - startLoad);
     }
 
     desc->release();

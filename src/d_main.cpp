@@ -3943,6 +3943,8 @@ int GameMain()
 	// On other platforms, use SDL until the other backends are more mature.
 	auto zwidget = DisplayBackend::TryCreateWin32();
 	if (!zwidget)
+		zwidget = DisplayBackend::TryCreateCocoa();
+	if (!zwidget)
 		zwidget = DisplayBackend::TryCreateSDL2();
 	if (!zwidget)
     {

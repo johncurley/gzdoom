@@ -118,6 +118,8 @@ void I_WaitVBL(int count)
 	I_SetFrameTime();
 }
 
+extern void I_GetEvent();
+
 int I_WaitForTic(int prevtic, double const ticrate)
 {
 	// Waits until the current tic is greater than prevtic. Time must not be frozen.
@@ -142,6 +144,7 @@ int I_WaitForTic(int prevtic, double const ticrate)
 			}
 		}
 
+		I_GetEvent();
 		I_SetFrameTime();
 	}
 

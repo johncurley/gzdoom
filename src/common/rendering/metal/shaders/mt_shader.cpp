@@ -4,18 +4,20 @@
 #undef TimeScale
 
 #include "cmdlib.h"
+#include "common/textures/textures.h" // For usershaders array
+#include "common/thirdparty/superfasthash.h"
 #include "engineerrors.h"
 #include "filesystem.h"
 #include "hwrenderer/data/hw_shaderpatcher.h"
 #include "i_specialpaths.h"
+#include "metal/renderer/mt_pipelinestate.h"
 #include "metal/system/mt_renderdevice.h"
 #include "mt_shader.h"
 #include "printf.h"
 #include <fstream>
+#include <regex>
 #include <shadertranslator/shader_translator.h>
 #include <sstream>
-#include <regex>
-#include "common/thirdparty/superfasthash.h"
 
 EXTERN_CVAR(Bool, mt_debug)
 
@@ -319,7 +321,6 @@ MtShaderManager::~MtShaderManager() {
   glslang::FinalizeProcess();
 }
 
-
 std::shared_ptr<MtShaderModule>
 MtShaderManager::CompileShader(const std::string &name,
                                const std::string &vertexSource,
@@ -338,8 +339,8 @@ MtShaderManager::CompileShader(const std::string &name,
   if (!vertexSource.empty()) {
     uint32_t hash = SuperFastHash(vertexSource.c_str(), vertexSource.length());
     for (auto &d : defines)
-        hash = SuperFastHash(d.c_str(), d.length()) ^ (hash << 1);
-    
+      hash = SuperFastHash(d.c_str(), d.length()) ^ (hash << 1);
+
     char cacheKey[128];
     snprintf(cacheKey, sizeof(cacheKey), "%s_%08x_vert", name.c_str(), hash);
     std::string cachePath = GetCachePath(cacheKey);
@@ -347,12 +348,16 @@ MtShaderManager::CompileShader(const std::string &name,
 
     std::ifstream vfile(cachePath);
     if (vfile.is_open()) {
-      if (mt_debug) Printf(PRINT_LOG, "Metal: Loading vertex shader %s from cache.\n", name.c_str());
+      if (mt_debug)
+        Printf(PRINT_LOG, "Metal: Loading vertex shader %s from cache.\n",
+               name.c_str());
       std::stringstream ss;
       ss << vfile.rdbuf();
       vertexMSL = ss.str();
     } else {
-      if (mt_debug) Printf(PRINT_LOG, "Metal: Recompiling vertex shader %s from scratch.\n", name.c_str());
+      if (mt_debug)
+        Printf(PRINT_LOG, "Metal: Recompiling vertex shader %s from scratch.\n",
+               name.c_str());
       // Step 1: GLSL → SPIR-V
       auto vertexSPIRV =
           CompileGLSLToSPIRV(vertexSource, name + "_vert", true, defines);
@@ -361,7 +366,8 @@ MtShaderManager::CompileShader(const std::string &name,
       }
 
       // Step 2: SPIR-V → MSL
-      vertexMSL = TranslateSPIRVToMSL(vertexSPIRV, true, name + "_vert"); // Pass name
+      vertexMSL =
+          TranslateSPIRVToMSL(vertexSPIRV, true, name + "_vert"); // Pass name
       if (vertexMSL.empty()) {
         if (module->function)
           ((MTL::Function *)module->function)->release();
@@ -380,7 +386,8 @@ MtShaderManager::CompileShader(const std::string &name,
     // Step 3: MSL → MTLLibrary
     module->library = CompileMSLToLibrary(vertexMSL, name + "_vert");
     if (!module->library) {
-      Printf(PRINT_LOG, "Metal: Failed to compile vertex shader MSL to library: %s\n",
+      Printf(PRINT_LOG,
+             "Metal: Failed to compile vertex shader MSL to library: %s\n",
              name.c_str());
       return nullptr;
     }
@@ -391,20 +398,23 @@ MtShaderManager::CompileShader(const std::string &name,
     funcName->release();
 
     if (!module->function) {
-      Printf(PRINT_LOG, "Metal: Failed to find main0 function in vertex shader: %s\n",
+      Printf(PRINT_LOG,
+             "Metal: Failed to find main0 function in vertex shader: %s\n",
              name.c_str());
       module->library->release();
       return nullptr;
     }
 
     module->entryPoint = "main0";
+    module->isReady = true;
   }
 
   // Compile fragment shader: GLSL → SPIR-V → MSL → MTLLibrary
   if (!fragmentSource.empty()) {
-    uint32_t hash = SuperFastHash(fragmentSource.c_str(), fragmentSource.length());
+    uint32_t hash =
+        SuperFastHash(fragmentSource.c_str(), fragmentSource.length());
     for (auto &d : defines)
-        hash = SuperFastHash(d.c_str(), d.length()) ^ (hash << 1);
+      hash = SuperFastHash(d.c_str(), d.length()) ^ (hash << 1);
 
     char cacheKey[128];
     snprintf(cacheKey, sizeof(cacheKey), "%s_%08x_frag", name.c_str(), hash);
@@ -413,15 +423,22 @@ MtShaderManager::CompileShader(const std::string &name,
 
     std::ifstream ffile(cachePath);
     if (ffile.is_open()) {
-      if (mt_debug) Printf(PRINT_LOG, "Metal: Loading fragment shader %s from cache.\n", name.c_str());
+      if (mt_debug)
+        Printf(PRINT_LOG, "Metal: Loading fragment shader %s from cache.\n",
+               name.c_str());
       std::stringstream ss;
       ss << ffile.rdbuf();
       fragmentMSL = ss.str();
     } else {
-      if (mt_debug) Printf(PRINT_LOG, "Metal: Recompiling fragment shader %s from scratch.\n", name.c_str());
+      if (mt_debug)
+        Printf(PRINT_LOG,
+               "Metal: Recompiling fragment shader %s from scratch.\n",
+               name.c_str());
       // Step 1: GLSL → SPIR-V
       if (mt_debug && fragmentSource.find("present") != std::string::npos) {
-          Printf(PRINT_LOG, "Metal: Compiling fragment shader %s. Source preview: %.256s\n", name.c_str(), fragmentSource.c_str());
+        Printf(PRINT_LOG,
+               "Metal: Compiling fragment shader %s. Source preview: %.256s\n",
+               name.c_str(), fragmentSource.c_str());
       }
       auto fragmentSPIRV =
           CompileGLSLToSPIRV(fragmentSource, name + "_frag", false, defines);
@@ -434,7 +451,8 @@ MtShaderManager::CompileShader(const std::string &name,
       }
 
       // Step 2: SPIR-V → MSL
-      fragmentMSL = TranslateSPIRVToMSL(fragmentSPIRV, false, name + "_frag"); // Pass name
+      fragmentMSL = TranslateSPIRVToMSL(fragmentSPIRV, false,
+                                        name + "_frag"); // Pass name
       if (fragmentMSL.empty()) {
         if (module->function)
           ((MTL::Function *)module->function)->release();
@@ -453,7 +471,8 @@ MtShaderManager::CompileShader(const std::string &name,
     // Step 3: MSL → MTLLibrary
     module->fragmentLibrary = CompileMSLToLibrary(fragmentMSL, name + "_frag");
     if (!module->fragmentLibrary) {
-      Printf(PRINT_LOG, "Metal: Failed to compile fragment shader MSL to library: %s\n",
+      Printf(PRINT_LOG,
+             "Metal: Failed to compile fragment shader MSL to library: %s\n",
              name.c_str());
       if (module->function)
         ((MTL::Function *)module->function)->release();
@@ -470,7 +489,8 @@ MtShaderManager::CompileShader(const std::string &name,
     fragFuncName->release();
 
     if (!module->fragmentFunction) {
-      Printf(PRINT_LOG, "Metal: Failed to find main0 function in fragment shader: %s\n",
+      Printf(PRINT_LOG,
+             "Metal: Failed to find main0 function in fragment shader: %s\n",
              name.c_str());
       module->fragmentLibrary->release();
       if (module->function)
@@ -482,13 +502,16 @@ MtShaderManager::CompileShader(const std::string &name,
   }
 
   // Cache the compiled shader
+  module->isReady = true;
   mShaderCache[name] = module;
 
   return module;
 }
 
 MtShaderProgram *MtShaderManager::GetEffect(int effect, EPassType passType) {
-  if (mt_debug) Printf(PRINT_LOG, "Metal: MtShaderManager::GetEffect %d pass=%d\n", effect, (int)passType);
+  if (mt_debug)
+    Printf(PRINT_LOG, "Metal: MtShaderManager::GetEffect %d pass=%d\n", effect,
+           (int)passType);
   if (compileIndex == -1 && effect >= 0 && effect < MAX_EFFECTS &&
       mEffectShaders[passType][effect].frag) {
     return &mEffectShaders[passType][effect];
@@ -498,7 +521,9 @@ MtShaderProgram *MtShaderManager::GetEffect(int effect, EPassType passType) {
 
 MtShaderProgram *MtShaderManager::Get(unsigned int eff, bool alphateston,
                                       EPassType passType) {
-  if (mt_debug) Printf(PRINT_LOG, "Metal: MtShaderManager::Get %u alpha=%d pass=%d\n", eff, (int)alphateston, (int)passType);
+  if (mt_debug)
+    Printf(PRINT_LOG, "Metal: MtShaderManager::Get %u alpha=%d pass=%d\n", eff,
+           (int)alphateston, (int)passType);
   if (compileIndex != -1) {
     if (mMaterialShaders[0].size() > 0)
       return &mMaterialShaders[0][0];
@@ -531,107 +556,221 @@ MtShaderProgram *MtShaderManager::GetPPShader(PPShader *shader) {
 bool MtShaderManager::CompileNextShader() {
   const char *mainvp = "shaders/glsl/main.vp";
   const char *mainfp = "shaders/glsl/main.fp";
-  int i = compileIndex;
 
-  if (compileIndex == -1)
-    return true;
+  // Metal shader compilation is slow (GLSL->SPIRV->MSL->Lib).
+  // Process as many shaders as possible within a 15ms budget to speed up
+  // startup without freezing the UI or blocking the main thread for too long.
+  uint64_t startTime = I_msTime();
 
-  if (compileState == 0) {
-    // regular material shaders
-    MtShaderProgram prog;
-    prog.vert = LoadVertShader(defaultshaders[i].ShaderName, mainvp,
-                               defaultshaders[i].Defines);
-    prog.frag = LoadFragShader(
-        defaultshaders[i].ShaderName, mainfp, defaultshaders[i].gettexelfunc,
-        defaultshaders[i].lightfunc, defaultshaders[i].Defines, true,
-        compilePass == GBUFFER_PASS);
-    mMaterialShaders[compilePass].push_back(std::move(prog));
+  while (true) {
+    int i = compileIndex;
 
-    compileIndex++;
-    if (defaultshaders[compileIndex].ShaderName == nullptr) {
-      compileIndex = 0;
-      compileState++;
-    }
-  } else if (compileState == 1) {
-    // NAT material shaders
-    MtShaderProgram natprog;
-    natprog.vert = LoadVertShader(defaultshaders[i].ShaderName, mainvp,
-                                  defaultshaders[i].Defines);
-    natprog.frag = LoadFragShader(
-        defaultshaders[i].ShaderName, mainfp, defaultshaders[i].gettexelfunc,
-        defaultshaders[i].lightfunc, defaultshaders[i].Defines, false,
-        compilePass == GBUFFER_PASS);
-    mMaterialShadersNAT[compilePass].push_back(std::move(natprog));
+    if (compileIndex == -1)
+      return true;
 
-    compileIndex++;
-    if (defaultshaders[compileIndex].ShaderName == nullptr)
-    {
-      compileIndex = 0;
-      compileState = 3; // Skip user shaders for now
-    }
-  } else if (compileState == 3) {
-    // Effect shaders
-    MtShaderProgram prog;
-    prog.vert = LoadVertShader(effectshaders[i].ShaderName, effectshaders[i].vp,
-                               effectshaders[i].defines);
-    prog.frag = LoadFragShader(effectshaders[i].ShaderName,
-                               effectshaders[i].fp1, effectshaders[i].fp2,
-                               effectshaders[i].fp3, effectshaders[i].defines,
-                               true, compilePass == GBUFFER_PASS);
-    mEffectShaders[compilePass].push_back(std::move(prog));
+    if (compileState == 0) {
+      // regular material shaders
+      MtShaderProgram prog;
+      prog.vert = LoadVertShader(defaultshaders[i].ShaderName, mainvp,
+                                 defaultshaders[i].Defines);
+      prog.frag = LoadFragShader(
+          defaultshaders[i].ShaderName, mainfp, defaultshaders[i].gettexelfunc,
+          defaultshaders[i].lightfunc, defaultshaders[i].Defines, true,
+          compilePass == GBUFFER_PASS);
+      mMaterialShaders[compilePass].push_back(std::move(prog));
 
-    compileIndex++;
-    if (compileIndex >= MAX_EFFECTS) {
-      compileIndex = 0;
-      compilePass++;
-      if (compilePass == MAX_PASS_TYPES) {
-        compileIndex = -1; // we're done.
+      compileIndex++;
+      if (defaultshaders[compileIndex].ShaderName == nullptr) {
+        compileIndex = 0;
+        compileState++;
+      }
+    } else if (compileState == 1) {
+      // NAT material shaders
+      MtShaderProgram natprog;
+      natprog.vert = LoadVertShader(defaultshaders[i].ShaderName, mainvp,
+                                    defaultshaders[i].Defines);
+      natprog.frag = LoadFragShader(
+          defaultshaders[i].ShaderName, mainfp, defaultshaders[i].gettexelfunc,
+          defaultshaders[i].lightfunc, defaultshaders[i].Defines, false,
+          compilePass == GBUFFER_PASS);
+      mMaterialShadersNAT[compilePass].push_back(std::move(natprog));
+
+      compileIndex++;
+      if (defaultshaders[compileIndex].ShaderName == nullptr) {
+        compileIndex = 0;
+        compileState = 2; // Move to user shaders
+      }
+    } else if (compileState == 2) {
+      // User shaders (Mod shaders)
+      if (usershaders.Size() > 0) {
+        FString name = ExtractFileBase(usershaders[i].shader.GetChars());
+        // Combine default defines with user defines
+        FString defines = defaultshaders[usershaders[i].shaderType].Defines +
+                          usershaders[i].defines;
+
+        MtShaderProgram prog;
+        prog.vert = LoadVertShader(name.GetChars(), mainvp, defines.GetChars());
+        prog.frag = LoadFragShader(
+            name.GetChars(), mainfp, usershaders[i].shader.GetChars(),
+            defaultshaders[usershaders[i].shaderType].lightfunc,
+            defines.GetChars(), true, compilePass == GBUFFER_PASS);
+
+        mMaterialShaders[compilePass].push_back(std::move(prog));
+
+        compileIndex++;
+        if (compileIndex >= (int)usershaders.Size()) {
+          compileIndex = 0;
+          compileState = 3; // Move to effect shaders
+        }
+      } else {
+        compileIndex = 0;
+        compileState = 3; // Skip if no user shaders
+      }
+    } else if (compileState == 3) {
+      // Effect shaders
+      MtShaderProgram prog;
+      prog.vert = LoadVertShader(effectshaders[i].ShaderName,
+                                 effectshaders[i].vp, effectshaders[i].defines);
+      prog.frag = LoadFragShader(effectshaders[i].ShaderName,
+                                 effectshaders[i].fp1, effectshaders[i].fp2,
+                                 effectshaders[i].fp3, effectshaders[i].defines,
+                                 true, compilePass == GBUFFER_PASS);
+      mEffectShaders[compilePass].push_back(std::move(prog));
+
+      compileIndex++;
+      if (compileIndex >= MAX_EFFECTS) {
+        compileIndex = 0;
+        compilePass++;
+        if (compilePass == MAX_PASS_TYPES) {
+          compileIndex = 0;
+          compilePass = 0;
+          compileState = 4; // Move to global pipeline pre-warming
+        } else {
+          compileState = 0; // Next pass
+        }
+      }
+    } else if (compileState == 4) {
+      // Pipeline Pre-warming phase
+      // Iterate through all compiled material shaders and create common
+      // pipeline variants
+      if (fb->GetPipelineStateManager()) {
+        auto *psm = fb->GetPipelineStateManager();
+
+        std::vector<MtShaderProgram> *target = nullptr;
+        size_t pass = compilePass;
+
+        if (compileIndex < (int)mMaterialShaders[pass].size()) {
+          target = &mMaterialShaders[pass];
+        } else if (compileIndex < (int)(mMaterialShaders[pass].size() +
+                                        mMaterialShadersNAT[pass].size())) {
+          target = &mMaterialShadersNAT[pass];
+        }
+
+        if (target) {
+          size_t idx = (target == &mMaterialShaders[pass])
+                           ? compileIndex
+                           : (compileIndex - mMaterialShaders[pass].size());
+          MtShaderProgram &prog = (*target)[idx];
+
+          if (prog.vert && prog.vert->isReady && prog.frag &&
+              prog.frag->isReady) {
+            // Pre-warm a few common keys to prime the Binary Archive and driver
+            // cache
+            MtPipelineKey key;
+            memset(&key, 0, sizeof(key));
+            key.VertexFormat = 0;
+            key.PixelFormat = (uint32_t)MTL::PixelFormatRGBA16Float;
+            key.DepthStencilFormat =
+                (uint32_t)MTL::PixelFormatDepth32Float_Stencil8;
+            key.SampleCount = 1;
+            key.DrawBufferCount = 1;
+            key.ColorMask = 0xF;
+            key.DepthWrite = 1;
+            key.DepthFunc = 1; // DF_LEqual
+
+            // 1. Opaque
+            key.BlendMode = STYLE_Normal;
+            psm->GetPipelineState(key, nullptr);
+
+            // 2. Translucent
+            key.BlendMode = STYLE_Translucent;
+            psm->GetPipelineState(key, nullptr);
+          }
+
+          compileIndex++;
+        } else {
+          // Finished this pass
+          compileIndex = 0;
+          compilePass++;
+          if (compilePass >= MAX_PASS_TYPES) {
+            compileIndex = -1;
+            compileState = 5; // All done
+            Printf(PRINT_LOG,
+                   "Metal: Shader and Pipeline pre-warming complete.\n");
+            return true;
+          }
+        }
+      } else {
+        compileIndex = -1;
+        compileState = 5;
         return true;
       }
-      compileState = 0;
+    }
+
+    // Check time budget
+    if (I_msTime() - startTime > 15) {
+      return false; // Yield to update loop
     }
   }
-  return false; // Not done yet
 }
 
-static void PatchVertexShader(std::string &source, const std::string &shadername) {
+static void PatchVertexShader(std::string &source,
+                              const std::string &shadername) {
   // GZDoom shaders expect OpenGL NDC (-1..1 for all axes, Y up)
-  // Metal expects 0..1 for Z, and we want to Y-flip EVERYTHING to match Metal's Y-down coordinate system internally
-  
+  // Metal expects 0..1 for Z, and we want to Y-flip EVERYTHING to match Metal's
+  // Y-down coordinate system internally
+
   std::regex glPosRegex(R"(gl_Position\s*=\s*([^;]+);)");
-  std::string patch = 
+  std::string patch =
       "gl_Position = $1;\n"
       "    gl_Position.y = -gl_Position.y;\n"
       "    gl_Position.z = 0.5 * (gl_Position.w - gl_Position.z);";
 
   if (std::regex_search(source, glPosRegex)) {
-      if (mt_debug) Printf(PRINT_LOG, "Metal: Patching vertex shader %s for coordinate system.\n", shadername.c_str());
-      source = std::regex_replace(source, glPosRegex, patch);
+    if (mt_debug)
+      Printf(PRINT_LOG,
+             "Metal: Patching vertex shader %s for coordinate system.\n",
+             shadername.c_str());
+    source = std::regex_replace(source, glPosRegex, patch);
   }
 
   // Normalize normals if assigned to stabilize lighting
-  // Use a tiny epsilon to avoid NaN on zero-length vectors (potential source of pixel sparks)
+  // Use a tiny epsilon to avoid NaN on zero-length vectors (potential source of
+  // pixel sparks)
   std::regex normalRegex(R"((vNormal|vWorldNormal|vEyeNormal)\s*=\s*([^;]+);)");
   if (std::regex_search(source, normalRegex)) {
-      source = std::regex_replace(source, normalRegex, "$1 = vec4(normalize($2.xyz + 1e-10), $2.w);");
+    source = std::regex_replace(source, normalRegex,
+                                "$1 = vec4(normalize($2.xyz + 1e-10), $2.w);");
   }
 }
 
-static void PatchFragmentShader(std::string &source, const std::string &shadername) {
-    // 1. Patch ShadowMap generation to use massive default distance
-    if (shadername.find("shadowmap") != std::string::npos) {
-        size_t pos = source.find("FragColor = vec4(1.0, 0.0, 0.0, 1.0);");
-        if (pos != std::string::npos) {
-            source.replace(pos, strlen("FragColor = vec4(1.0, 0.0, 0.0, 1.0);"), "FragColor = vec4(1e20, 0.0, 0.0, 1.0);");
-        }
+static void PatchFragmentShader(std::string &source,
+                                const std::string &shadername) {
+  // 1. Patch ShadowMap generation to use massive default distance
+  if (shadername.find("shadowmap") != std::string::npos) {
+    size_t pos = source.find("FragColor = vec4(1.0, 0.0, 0.0, 1.0);");
+    if (pos != std::string::npos) {
+      source.replace(pos, strlen("FragColor = vec4(1.0, 0.0, 0.0, 1.0);"),
+                     "FragColor = vec4(1e20, 0.0, 0.0, 1.0);");
     }
-    
-    // 2. Patch main.fp to increase shadow bias
-    if (shadername.find("main") != std::string::npos) {
-        // Use regex to replace ALL instances of "float bias = X.X;" with 2.0
-        std::regex biasRegex(R"(float\s+bias\s*=\s*[0-9\.]+;)");
-        source = std::regex_replace(source, biasRegex, "float bias = 2.0;");
-    }
+  }
+
+  // 2. Patch main.fp to increase shadow bias
+  if (shadername.find("main") != std::string::npos) {
+    // Use regex to replace ALL instances of "float bias = X.X;" with 2.0
+    std::regex biasRegex(R"(float\s+bias\s*=\s*[0-9\.]+;)");
+    source = std::regex_replace(source, biasRegex, "float bias = 2.0;");
+  }
 }
 
 std::shared_ptr<MtShaderModule>
@@ -639,13 +778,14 @@ MtShaderManager::LoadVertShader(const std::string &shadername,
                                 const char *vert_lump, const char *defines) {
   std::string code = "#version 450\n";
   code += "#extension GL_GOOGLE_include_directive : enable\n";
-  
+
   std::string definesStr = defines;
-  
-  // Strip VULKAN_COORDINATE_SYSTEM if present to avoid conflict with our manual patch
+
+  // Strip VULKAN_COORDINATE_SYSTEM if present to avoid conflict with our manual
+  // patch
   size_t vpos = definesStr.find("#define VULKAN_COORDINATE_SYSTEM");
   if (vpos != std::string::npos) {
-      definesStr.erase(vpos, strlen("#define VULKAN_COORDINATE_SYSTEM"));
+    definesStr.erase(vpos, strlen("#define VULKAN_COORDINATE_SYSTEM"));
   }
 
   code += definesStr;
@@ -670,7 +810,7 @@ std::shared_ptr<MtShaderModule> MtShaderManager::LoadFragShader(
   std::string definesStr = defines;
   size_t vpos = definesStr.find("#define VULKAN_COORDINATE_SYSTEM");
   if (vpos != std::string::npos) {
-      definesStr.erase(vpos, strlen("#define VULKAN_COORDINATE_SYSTEM"));
+    definesStr.erase(vpos, strlen("#define VULKAN_COORDINATE_SYSTEM"));
   }
   code += definesStr;
   code += "\n#define MAX_STREAM_DATA " + std::to_string(MAX_STREAM_DATA) + "\n";
@@ -735,8 +875,10 @@ std::string MtShaderManager::LoadPublicShaderLump(const char *lumpname) {
   if (lump == -1)
     lump = fileSystem.CheckNumForFullName(lumpname);
   if (lump == -1) {
-      if (mt_debug) Printf(PRINT_LOG, "Metal: WARNING - Public shader lump not found: %s\n", lumpname);
-      return "";
+    if (mt_debug)
+      Printf(PRINT_LOG, "Metal: WARNING - Public shader lump not found: %s\n",
+             lumpname);
+    return "";
   }
   auto data = fileSystem.ReadFile(lump);
   return std::string((const char *)data.data(), data.size());
@@ -745,8 +887,10 @@ std::string MtShaderManager::LoadPublicShaderLump(const char *lumpname) {
 std::string MtShaderManager::LoadPrivateShaderLump(const char *lumpname) {
   int lump = fileSystem.CheckNumForFullName(lumpname, 0);
   if (lump == -1) {
-      if (mt_debug) Printf(PRINT_LOG, "Metal: WARNING - Private shader lump not found: %s\n", lumpname);
-      return "";
+    if (mt_debug)
+      Printf(PRINT_LOG, "Metal: WARNING - Private shader lump not found: %s\n",
+             lumpname);
+    return "";
   }
   auto data = fileSystem.ReadFile(lump);
   return std::string((const char *)data.data(), data.size());
@@ -811,8 +955,10 @@ MtShaderManager::CompileGLSLToSPIRV(const std::string &source,
   const char *nameStr = name.c_str();
 
   if (mt_debug) {
-      Printf(PRINT_LOG, "Metal: Compiling GLSL shader %s. Source length: %d\n", name.c_str(), sourceLength);
+    Printf(PRINT_LOG, "Metal: Compiling GLSL shader %s. Source length: %d\n",
+           name.c_str(), sourceLength);
   }
+  auto startComp = I_msTime();
 
   // Create glslang shader
   TBuiltInResource resources = GetDefaultTBuiltInResource();
@@ -849,7 +995,8 @@ MtShaderManager::CompileGLSLToSPIRV(const std::string &source,
   // Get intermediate representation
   glslang::TIntermediate *intermediate = program.getIntermediate(stage);
   if (!intermediate) {
-    Printf(PRINT_LOG, "Metal: Failed to get intermediate representation for %s\n",
+    Printf(PRINT_LOG,
+           "Metal: Failed to get intermediate representation for %s\n",
            name.c_str());
     return std::vector<uint32_t>();
   }
@@ -867,8 +1014,12 @@ MtShaderManager::CompileGLSLToSPIRV(const std::string &source,
   // Log any messages
   std::string messages = logger.getAllMessages();
   if (!messages.empty()) {
-    Printf(PRINT_LOG, "Metal: SPIR-V generation messages for %s:\n%s\n", name.c_str(),
-           messages.c_str());
+    Printf(PRINT_LOG, "Metal: SPIR-V generation messages for %s:\n%s\n",
+           name.c_str(), messages.c_str());
+  }
+
+  if (mt_debug) {
+    Printf(PRINT_LOG, "  Compiled in %llu ms\n", I_msTime() - startComp);
   }
 
   return spirv;
@@ -876,7 +1027,8 @@ MtShaderManager::CompileGLSLToSPIRV(const std::string &source,
 
 std::string
 MtShaderManager::TranslateSPIRVToMSL(const std::vector<uint32_t> &spirv,
-                                     bool isVertex, const std::string &name) { // Added name
+                                     bool isVertex,
+                                     const std::string &name) { // Added name
   if (spirv.empty())
     return "";
 
@@ -887,20 +1039,24 @@ MtShaderManager::TranslateSPIRVToMSL(const std::vector<uint32_t> &spirv,
   auto result = translator.TranslateToMSL(spirv, 20);
 
   if (!result.success) {
-    Printf(PRINT_LOG, "Metal SPIR-V translation error: %s\n", result.errorLog.c_str());
+    Printf(PRINT_LOG, "Metal SPIR-V translation error: %s\n",
+           result.errorLog.c_str());
     return "";
   }
 
-  // FORCE ALPHA 1.0 for Present pass to avoid transparency issues on some hardware
+  // FORCE ALPHA 1.0 for Present pass to avoid transparency issues on some
+  // hardware
   if (name.find("present") != std::string::npos && !isVertex) {
-      size_t fpos = result.source.find("out.FragColor = ");
-      if (fpos != std::string::npos) {
-          size_t epos = result.source.find(";", fpos);
-          if (epos != std::string::npos) {
-              std::string expr = result.source.substr(fpos + 16, epos - (fpos + 16));
-              result.source.replace(fpos, epos - fpos + 1, "out.FragColor = float4((" + expr + ").xyz, 1.0);");
-          }
+    size_t fpos = result.source.find("out.FragColor = ");
+    if (fpos != std::string::npos) {
+      size_t epos = result.source.find(";", fpos);
+      if (epos != std::string::npos) {
+        std::string expr = result.source.substr(fpos + 16, epos - (fpos + 16));
+        result.source.replace(fpos, epos - fpos + 1,
+                              "out.FragColor = float4((" + expr +
+                                  ").xyz, 1.0);");
       }
+    }
   }
 
   return result.source;
@@ -920,15 +1076,22 @@ MTL::Library *MtShaderManager::CompileMSLToLibrary(const std::string &msl,
   if (!library) { // Always log if library creation failed
     if (error) {
       const char *errorMsg = error->localizedDescription()->utf8String();
-      Printf(PRINT_LOG, "Metal: MSL to MTLLibrary compilation FAILED for %s:\n%s\n", name.c_str(), errorMsg);
+      Printf(PRINT_LOG,
+             "Metal: MSL to MTLLibrary compilation FAILED for %s:\n%s\n",
+             name.c_str(), errorMsg);
       error->release(); // Release error object
     } else {
-      Printf(PRINT_LOG, "Metal: MSL to MTLLibrary compilation FAILED for %s: Unknown error (NS::Error was null).\n", name.c_str());
+      Printf(PRINT_LOG,
+             "Metal: MSL to MTLLibrary compilation FAILED for %s: Unknown "
+             "error (NS::Error was null).\n",
+             name.c_str());
     }
   } else if (error) { // Log warnings if library created but error present
-      const char *errorMsg = error->localizedDescription()->utf8String();
-      Printf(PRINT_LOG, "Metal: MSL to MTLLibrary compilation WARNING for %s:\n%s\n", name.c_str(), errorMsg);
-      error->release(); // Release error object
+    const char *errorMsg = error->localizedDescription()->utf8String();
+    Printf(PRINT_LOG,
+           "Metal: MSL to MTLLibrary compilation WARNING for %s:\n%s\n",
+           name.c_str(), errorMsg);
+    error->release(); // Release error object
   }
 
   return library;
@@ -948,7 +1111,7 @@ MtPPShader::MtPPShader(MetalRenderDevice *fb, PPShader *shader) : fb(fb) {
   // but we do need the prolog.
   vertCode += prolog.GetChars();
   vertCode += "\n#line 1\n";
-  
+
   std::string vertSource = fb->GetShaderManager()->LoadPrivateShaderLump(
       shader->VertexShader.GetChars());
   PatchVertexShader(vertSource, shader->VertexShader.GetChars());

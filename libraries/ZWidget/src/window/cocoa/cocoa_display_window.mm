@@ -908,40 +908,16 @@ bool CocoaDisplayWindow::GetKeyState(InputKey key) {
   return false;
 }
 
+void CocoaDisplayWindow::SetCursor(StandardCursor cursor) {
+  SetCursor(cursor, nullptr);
+}
+
 void CocoaDisplayWindow::SetCursor(StandardCursor cursor,
-                                   std::shared_ptr<CustomCursor> custom) {
+                                   const void* custom) {
   NSCursor *nsCursor = nil;
 
-  if (custom && !custom->GetFrames().empty()) {
-    // Create custom cursor from image
-    const auto &frame = custom->GetFrames()[0]; // For now, use first frame
-                                                // (TODO: animated cursors)
-    auto image = frame.FrameImage;
-    Point hotspot = custom->GetHotspot();
-
-    // Convert Image to NSImage
-    int width = image->GetWidth();
-    int height = image->GetHeight();
-    const uint32_t *pixels = (const uint32_t *)image->GetData();
-
-    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
-    CGContextRef context = CGBitmapContextCreate(
-        (void *)pixels, width, height, 8, width * 4, colorSpace,
-        kCGImageAlphaPremultipliedLast | (CGBitmapInfo)kCGBitmapByteOrder32Big);
-
-    if (context) {
-      CGImageRef cgImage = CGBitmapContextCreateImage(context);
-      if (cgImage) {
-        NSImage *nsImage =
-            [[NSImage alloc] initWithCGImage:cgImage
-                                        size:NSMakeSize(width, height)];
-        NSPoint nsHotspot = NSMakePoint(hotspot.x, hotspot.y);
-        nsCursor = [[NSCursor alloc] initWithImage:nsImage hotSpot:nsHotspot];
-        CGImageRelease(cgImage);
-      }
-      CGContextRelease(context);
-    }
-    CGColorSpaceRelease(colorSpace);
+  // Custom cursor support disabled for now due to missing CustomCursor definition
+  if (false) {
   } else {
     // Standard cursors
     switch (cursor) {

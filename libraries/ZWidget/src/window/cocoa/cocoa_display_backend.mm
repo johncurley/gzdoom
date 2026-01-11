@@ -41,11 +41,6 @@ struct CocoaTimerData
 }
 @end
 
-std::unique_ptr<DisplayBackend> DisplayBackend::TryCreateCocoa()
-{
-    return std::make_unique<CocoaDisplayBackend>();
-}
-
 CocoaDisplayBackend::CocoaDisplayBackend()
 {
     // Initialize NSApp if not already done
