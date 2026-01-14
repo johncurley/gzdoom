@@ -115,8 +115,6 @@ void MtTextureManager::SetLightmap(int LMTextureSize, int LMTextureCount,
                                MTL::Origin::Make(0, 0, 0));
         }
         blit->endEncoding();
-        cmdBuf->commit();
-        cmdBuf->waitUntilCompleted();
       }
       fb->RecycleBuffer(mtlStaging);
     }
@@ -285,7 +283,6 @@ unsigned int MtHardwareTexture::CreateTexture(unsigned char *buffer, int w,
           if (mipLevels > 1)
             blit->generateMipmaps(texture);
           blit->endEncoding();
-          cmdBuf->commit();
         }
         fb->RecycleBuffer(staging);
       }
@@ -532,8 +529,6 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
                     blit->generateMipmaps(texture);
                 }
                 blit->endEncoding();
-                cmdBuf->commit();
-                // We don't force wait here for world textures to allow parallelism
             }
             fb->RecycleBuffer(staging);
         }

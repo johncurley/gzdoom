@@ -662,11 +662,6 @@ void MtRenderState::ApplyMaterial() {
                     blit->generateMipmaps(mtlTexture);
                   }
                   blit->endEncoding();
-
-                  cmdBuf->commit();
-                  if (gamestate == GS_STARTUP || fb->GetFrameCount() < 100) {
-                    cmdBuf->waitUntilCompleted();
-                  }
                 }
                 fb->RecycleBuffer(staging);
               }

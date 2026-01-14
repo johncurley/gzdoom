@@ -44,7 +44,7 @@ MTL::CommandBuffer *MtCommandBufferManager::CreateNewCommandBuffer() {
 }
 
 MTL::CommandBuffer *MtCommandBufferManager::GetBlitCommandBuffer() {
-  return CreateNewCommandBuffer();
+  return GetRenderCommandBuffer();
 }
 
 void MtCommandBufferManager::FlushCommands(bool wait) {

@@ -88,12 +88,6 @@ struct MtVersionManager {
       supportsRGB10A2 = true;
     }
 
-    // Binary archives require macOS 11.0 (Big Sur)
-    if (osMajor >= 11) {
-      supportsBinaryArchives = true;
-      maxDrawableCount = 3; // Triple buffering at layer level
-    }
-
     // Metal Version (rough estimation based on GPU family)
     if (device->supportsFamily(MTL::GPUFamilyMac2))
       metalVersion = 21;
