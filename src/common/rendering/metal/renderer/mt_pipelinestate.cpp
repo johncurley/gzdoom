@@ -286,9 +286,6 @@ MtPipelineStateManager::CreateDepthStencilState(const MtPipelineKey &key) {
 
 MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
     const MtPipelineKey &key, MtVertexBuffer *vertexBuffer) {
-  if (mt_debug) {
-      Printf(PRINT_LOG, "Metal: CreateRenderPipelineState. FFlatVertex size = %zu\n", sizeof(FFlatVertex));
-  }
   auto desc = MTL::RenderPipelineDescriptor::alloc()->init();
 
   // Get or create shader based on key
@@ -307,11 +304,6 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
   }
 
   if (!program || !program->vert || !program->frag) {
-    static int warnCount = 0;
-    if (warnCount++ < 5 || mt_debug)
-      Printf(PRINT_LOG, 
-          "Metal: Failed to get shader for effect=%d state=%d alphaTest=%d (program=%p)\n",
-          key.SpecialEffect, key.EffectState, key.AlphaTest, program);
     desc->release();
     return nullptr;
   }
@@ -321,8 +313,6 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
   auto fragmentFunction = program->frag->fragmentFunction;
 
   if (!vertexFunction || !fragmentFunction) {
-    Printf(PRINT_LOG, "Metal: Failed to load shader functions for %s (V:%p F:%p)\n", 
-           module->name.c_str(), vertexFunction, fragmentFunction);
     desc->release();
     return nullptr;
   }
@@ -334,10 +324,6 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
   if (stride == 0) stride = sizeof(FFlatVertex);
 
   auto vertexDesc = MTL::VertexDescriptor::alloc()->init();
-
-  if (mt_debug) {
-      Printf(PRINT_LOG, "Metal: Configuring vertex descriptor for %s (stride=%zu)\n", module->name.c_str(), stride);
-  }
 
   // Configure vertex descriptor
   if (vertexBuffer && vertexBuffer->GetNumAttributes() > 0) {
@@ -528,12 +514,6 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
            error->localizedDescription()->utf8String());
     error->release();
   } else if (state) {
-    if (mt_debug) {
-        Printf(PRINT_LOG, "Metal: Pipeline state created successfully (effect=%d, state=%d, "
-               "alpha=%d, vfmt=%d)\n",
-               key.SpecialEffect, key.EffectState, key.AlphaTest, key.VertexFormat);
-    }
-    
     // Add to archive for persistence
     if (fb->GetBinaryArchive()) {
         fb->GetBinaryArchive()->AddRenderPipeline(desc);

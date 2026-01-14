@@ -43,6 +43,13 @@ struct PushConstants {
                    // (int), 3: uLightIndex (int)
   float group4[4]; // 0: uBoneIndexBase (int), 1: uDataIndex (int), 2: padding,
                    // 3: padding
+
+  bool operator==(const PushConstants &other) const {
+    return memcmp(this, &other, sizeof(PushConstants)) == 0;
+  }
+  bool operator!=(const PushConstants &other) const {
+    return !(*this == other);
+  }
 };
 
 #define MAX_STREAM_DATA ((int)(65536 / sizeof(StreamData)))

@@ -348,16 +348,10 @@ MtShaderManager::CompileShader(const std::string &name,
 
     std::ifstream vfile(cachePath);
     if (vfile.is_open()) {
-      if (mt_debug)
-        Printf(PRINT_LOG, "Metal: Loading vertex shader %s from cache.\n",
-               name.c_str());
       std::stringstream ss;
       ss << vfile.rdbuf();
       vertexMSL = ss.str();
     } else {
-      if (mt_debug)
-        Printf(PRINT_LOG, "Metal: Recompiling vertex shader %s from scratch.\n",
-               name.c_str());
       // Step 1: GLSL → SPIR-V
       auto vertexSPIRV =
           CompileGLSLToSPIRV(vertexSource, name + "_vert", true, defines);
@@ -423,23 +417,11 @@ MtShaderManager::CompileShader(const std::string &name,
 
     std::ifstream ffile(cachePath);
     if (ffile.is_open()) {
-      if (mt_debug)
-        Printf(PRINT_LOG, "Metal: Loading fragment shader %s from cache.\n",
-               name.c_str());
       std::stringstream ss;
       ss << ffile.rdbuf();
       fragmentMSL = ss.str();
     } else {
-      if (mt_debug)
-        Printf(PRINT_LOG,
-               "Metal: Recompiling fragment shader %s from scratch.\n",
-               name.c_str());
       // Step 1: GLSL → SPIR-V
-      if (mt_debug && fragmentSource.find("present") != std::string::npos) {
-        Printf(PRINT_LOG,
-               "Metal: Compiling fragment shader %s. Source preview: %.256s\n",
-               name.c_str(), fragmentSource.c_str());
-      }
       auto fragmentSPIRV =
           CompileGLSLToSPIRV(fragmentSource, name + "_frag", false, defines);
       if (fragmentSPIRV.empty()) {
@@ -509,9 +491,6 @@ MtShaderManager::CompileShader(const std::string &name,
 }
 
 MtShaderProgram *MtShaderManager::GetEffect(int effect, EPassType passType) {
-  if (mt_debug)
-    Printf(PRINT_LOG, "Metal: MtShaderManager::GetEffect %d pass=%d\n", effect,
-           (int)passType);
   if (compileIndex == -1 && effect >= 0 && effect < MAX_EFFECTS &&
       mEffectShaders[passType][effect].frag) {
     return &mEffectShaders[passType][effect];
@@ -521,9 +500,6 @@ MtShaderProgram *MtShaderManager::GetEffect(int effect, EPassType passType) {
 
 MtShaderProgram *MtShaderManager::Get(unsigned int eff, bool alphateston,
                                       EPassType passType) {
-  if (mt_debug)
-    Printf(PRINT_LOG, "Metal: MtShaderManager::Get %u alpha=%d pass=%d\n", eff,
-           (int)alphateston, (int)passType);
   if (compileIndex != -1) {
     if (mMaterialShaders[0].size() > 0)
       return &mMaterialShaders[0][0];
@@ -954,12 +930,6 @@ MtShaderManager::CompileGLSLToSPIRV(const std::string &source,
   int sourceLength = static_cast<int>(finalSource.length());
   const char *nameStr = name.c_str();
 
-  if (mt_debug) {
-    Printf(PRINT_LOG, "Metal: Compiling GLSL shader %s. Source length: %d\n",
-           name.c_str(), sourceLength);
-  }
-  auto startComp = I_msTime();
-
   // Create glslang shader
   TBuiltInResource resources = GetDefaultTBuiltInResource();
   glslang::TShader shader(stage);
@@ -1016,10 +986,6 @@ MtShaderManager::CompileGLSLToSPIRV(const std::string &source,
   if (!messages.empty()) {
     Printf(PRINT_LOG, "Metal: SPIR-V generation messages for %s:\n%s\n",
            name.c_str(), messages.c_str());
-  }
-
-  if (mt_debug) {
-    Printf(PRINT_LOG, "  Compiled in %llu ms\n", I_msTime() - startComp);
   }
 
   return spirv;

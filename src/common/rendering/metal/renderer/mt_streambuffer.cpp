@@ -26,11 +26,6 @@ MtStreamBuffer::MtStreamBuffer(MetalRenderDevice *fb, size_t structSize, size_t 
   else
       mBufferSize = 4 * 1024 * 1024;
 
-  if (mt_debug) {
-      Printf(PRINT_LOG, "Metal: MtStreamBuffer allocated %zu bytes (structSize=%zu, capacity=%zu)\n", 
-             mBufferSize, structSize, capacity);
-  }
-
   for (int i = 0; i < 3; i++) {
     mBuffers[i] = fb->device->device->newBuffer(mBufferSize, fb->mVersionManager.GetDynamicStorageMode());
     if (!mBuffers[i]) {

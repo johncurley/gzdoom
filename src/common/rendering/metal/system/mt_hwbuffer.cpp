@@ -52,8 +52,6 @@ void MtHardwareDataBuffer::PrepareForWrite() {
         mActiveBufferIndex = (mActiveBufferIndex + 1) % 3;
         mLastWriteFrame = frame;
 
-        if (mt_debug) Printf(PRINT_LOG, "Metal: MtHardwareDataBuffer::PrepareForWrite bp=%d rotating to %d (frame %llu)\n", mBindingPoint, mActiveBufferIndex, frame);
-
         if (mBuffers[oldIndex] && mBuffers[mActiveBufferIndex]) {
             // Update mapping pointers to the new buffer slot
             this->map = mBuffers[mActiveBufferIndex]->contents();
@@ -64,11 +62,6 @@ void MtHardwareDataBuffer::PrepareForWrite() {
 
 void MtHardwareDataBuffer::BindRange(FRenderState *state, size_t start,
                                      size_t length) {
-  if (mt_debug) {
-    Printf(PRINT_LOG, "MtHardwareDataBuffer::BindRange: bp=%d, start=%zu, len=%zu\n",
-           mBindingPoint, start, length);
-  }
-
   auto mt_state = static_cast<MtRenderState *>(state ? state : fb->GetRenderState());
   mt_state->BindBuffer(mBindingPoint, GetBuffer(), (uint32_t)start);
 }
@@ -211,8 +204,6 @@ void MtVertexBuffer::PrepareForWrite() {
         mActiveBufferIndex = (mActiveBufferIndex + 1) % 3;
         mLastWriteFrame = frame;
 
-        if (mt_debug) Printf(PRINT_LOG, "Metal: MtVertexBuffer::PrepareForWrite rotating to %d (frame %llu)\n", mActiveBufferIndex, frame);
-
         if (mBuffers[oldIndex] && mBuffers[mActiveBufferIndex]) {
             // Update mapping pointers to the new buffer slot
             this->map = mBuffers[mActiveBufferIndex]->contents();
@@ -253,10 +244,6 @@ void MtVertexBuffer::Upload(size_t offset, size_t size) {
 
 void MtVertexBuffer::SetData(size_t size, const void *data,
                              BufferUsageType usage) {
-  if (mt_debug) {
-    Printf(PRINT_LOG, "Metal: MtVertexBuffer::SetData size=%zu data=%p usage=%d\n", size,
-           data, (int)usage);
-  }
   mUsage = usage;
   if (!mBuffers[0] || mBufferSize < size) {
       CreateBuffer(size);
@@ -307,9 +294,6 @@ void *MtVertexBuffer::Lock(unsigned int size) {
 void MtVertexBuffer::Unlock() { Unmap(); }
 
 void MtVertexBuffer::CreateBuffer(size_t size) {
-  if (mt_debug) {
-    Printf(PRINT_LOG, "Metal: MtVertexBuffer::CreateBuffer size=%zu\n", size);
-  }
   if (size == 0) size = 16;
 
   bool useInternalRing = (mUsage == BufferUsageType::Stream || mUsage == BufferUsageType::Mappable);
@@ -383,8 +367,6 @@ void MtIndexBuffer::PrepareForWrite() {
         int oldIndex = mActiveBufferIndex;
         mActiveBufferIndex = (mActiveBufferIndex + 1) % 3;
         mLastWriteFrame = frame;
-
-        if (mt_debug) Printf(PRINT_LOG, "Metal: MtIndexBuffer::PrepareForWrite rotating to %d (frame %llu)\n", mActiveBufferIndex, frame);
 
         if (mBuffers[oldIndex] && mBuffers[mActiveBufferIndex]) {
             // Update mapping pointers to the new buffer slot

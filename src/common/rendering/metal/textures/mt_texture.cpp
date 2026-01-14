@@ -39,10 +39,6 @@ MtTextureImage::~MtTextureImage() {
 void MtTextureManager::SetLightmap(int LMTextureSize, int LMTextureCount,
                                    const TArray<uint16_t> &LMTextureData) {
   if (LMTextureSize <= 0 || LMTextureCount <= 0) {
-    if (mt_debug)
-      Printf(PRINT_LOG,
-             "Metal: SetLightmap ignored - invalid dimensions %dx%dx%d\n",
-             LMTextureSize, LMTextureSize, LMTextureCount);
     return;
   }
 
@@ -65,9 +61,6 @@ void MtTextureManager::SetLightmap(int LMTextureSize, int LMTextureCount,
       (int)mLightmap->GetTexture()->arrayLength() == count) {
     // Reuse existing
   } else {
-    if (mt_debug)
-      Printf(PRINT_LOG, "Metal: Creating Lightmap array %dx%dx%d RGBA16Float\n",
-             w, h, count);
     mLightmap = std::make_unique<MtTextureImage>(fb);
     auto desc = MTL::TextureDescriptor::alloc()->init();
     desc->setWidth(w);
@@ -76,11 +69,10 @@ void MtTextureManager::SetLightmap(int LMTextureSize, int LMTextureCount,
     desc->setTextureType(MTL::TextureType2DArray);
     desc->setArrayLength(count);
     desc->setMipmapLevelCount(1);
-    desc->setUsage(MTL::TextureUsageShaderRead);
+    desc->setUsage(MTL::TextureUsageShaderRead | MTL::TextureUsageTransferDst);
 
-    // On Intel Macs, Managed mode is often more reliable than Private for array
-    // uploads
-    desc->setStorageMode(fb->mVersionManager.GetDynamicStorageMode());
+    // Use Private storage mode for best sampling performance when using blit updates
+    desc->setStorageMode(MTL::StorageModePrivate);
 
     MTL::Texture *tex = fb->device->device->newTexture(desc);
     if (!tex) {
@@ -96,6 +88,11 @@ void MtTextureManager::SetLightmap(int LMTextureSize, int LMTextureCount,
   }
 
   if (mLightmap->GetTexture()) {
+    int w = mLightmap->GetWidth();
+    int h = mLightmap->GetHeight();
+    int count = (int)mLightmap->GetTexture()->arrayLength();
+    size_t totalBytes = (size_t)w * h * count * 8; // RGBA16Float
+
     std::vector<uint16_t> stagingBuffer(w * h * count * 4);
     uint16_t one = 0x3c00; // half-float 1.0
     const uint16_t *src = LMTextureData.Data();
@@ -108,11 +105,23 @@ void MtTextureManager::SetLightmap(int LMTextureSize, int LMTextureCount,
       *(dst++) = one;      // A
     }
 
-    for (int i = 0; i < count; i++) {
-      MTL::Region region = MTL::Region::Make2D(0, 0, w, h);
-      mLightmap->GetTexture()->replaceRegion(region, 0, i,
-                                             &stagingBuffer[i * w * h * 4],
-                                             w * pixelsize, w * h * pixelsize);
+    MTL::Buffer *mtlStaging = fb->device->device->newBuffer(totalBytes, MTL::ResourceStorageModeShared);
+    if (mtlStaging) {
+      memcpy(mtlStaging->contents(), stagingBuffer.data(), totalBytes);
+
+      auto cmdBuf = fb->GetCommands()->GetBlitCommandBuffer();
+      if (cmdBuf) {
+        auto blit = cmdBuf->blitCommandEncoder();
+        for (int i = 0; i < count; i++) {
+          blit->copyFromBuffer(mtlStaging, (size_t)i * w * h * 8, w * 8, w * h * 8,
+                               MTL::Size::Make(w, h, 1), mLightmap->GetTexture(), i, 0,
+                               MTL::Origin::Make(0, 0, 0));
+        }
+        blit->endEncoding();
+        cmdBuf->commit();
+        cmdBuf->waitUntilCompleted();
+      }
+      fb->RecycleBuffer(mtlStaging);
     }
   }
 }
@@ -170,10 +179,6 @@ void MtHardwareTexture::AllocateBuffer(int w, int h, int texelsize) {
     mImage->SetFormat((int)format);
     mBufferPitch = (int)alignedPitch;
     desc->release();
-
-    if (mt_debug)
-      Printf(PRINT_LOG, "Metal: UI texture allocated (Private): %p (%dx%d)\n",
-             texture, w, h);
   }
 
   mNeedsUpload = false;
@@ -211,47 +216,40 @@ unsigned int MtHardwareTexture::CreateTexture(unsigned char *buffer, int w,
   }
 
   if (!mipmap) {
-    // UI/2D path: Use Private texture with Synchronized Blit
-    size_t alignedPitch = (w * bpp + 1023) & ~1023;
-    size_t totalSize = alignedPitch * h;
+    // UI/2D path: Optimized for fast uploads
+    auto storageMode = fb->mVersionManager.GetDynamicStorageMode();
+    size_t alignedPitch = (w * bpp + 1023) & ~1023; // Keep alignment for safety, though less critical for Managed
 
-    auto desc = MTL::TextureDescriptor::alloc()->init();
-    desc->setWidth(w);
-    desc->setHeight(h);
-    desc->setPixelFormat(format);
-    desc->setMipmapLevelCount(1);
-    desc->setStorageMode(MTL::StorageModePrivate);
-    desc->setUsage(MTL::TextureUsageShaderRead);
+    if (!mImage->GetTexture() || mImage->GetWidth() != w || mImage->GetHeight() != h) {
+      Reset();
+      auto desc = MTL::TextureDescriptor::alloc()->init();
+      desc->setWidth(w);
+      desc->setHeight(h);
+      desc->setPixelFormat(format);
+      desc->setMipmapLevelCount(1);
+      desc->setStorageMode(storageMode);
+      desc->setUsage(MTL::TextureUsageShaderRead);
 
-    MTL::Texture *texture = fb->device->device->newTexture(desc);
-    mImage->SetTexture(texture);
-    mImage->SetWidth(w);
-    mImage->SetHeight(h);
-    mImage->SetFormat((int)format);
-    mBufferPitch = (int)alignedPitch;
-    desc->release();
+      MTL::Texture *texture = fb->device->device->newTexture(desc);
+      mImage->SetTexture(texture);
+      mImage->SetWidth(w);
+      mImage->SetHeight(h);
+      mImage->SetFormat((int)format);
+      
+      // For Managed/Shared, we can often pack tighter, but keeping alignment is safe
+      mBufferPitch = (storageMode == MTL::StorageModePrivate) ? (int)alignedPitch : (w * bpp);
+      
+      desc->release();
+    }
+
+    MTL::Texture *texture = mImage->GetTexture();
 
     if (buffer) {
-      MTL::Buffer *staging = fb->device->device->newBuffer(
-          totalSize, MTL::ResourceStorageModeShared);
-      uint8_t *dst = (uint8_t *)staging->contents();
-      for (int y = 0; y < h; y++) {
-        memcpy(dst + y * alignedPitch, buffer + y * w * mNumChannels,
-               w * mNumChannels);
-      }
-
-      auto cmdBuf = fb->GetCommands()->GetBlitCommandBuffer();
-      auto blit = cmdBuf->blitCommandEncoder();
-      blit->copyFromBuffer(staging, 0, alignedPitch, 0,
-                           MTL::Size::Make(w, h, 1), texture, 0, 0,
-                           MTL::Origin::Make(0, 0, 0));
-      blit->endEncoding();
-
-      cmdBuf->commit();
-      if (gamestate == GS_STARTUP || fb->GetFrameCount() < 100) {
-        cmdBuf->waitUntilCompleted();
-      }
-      fb->RecycleBuffer(staging);
+      // Direct upload via replaceRegion
+      MTL::Region region = MTL::Region::Make2D(0, 0, w, h);
+      // If the input buffer is packed (row = w * bpp), pass that as bytesPerRow
+      // CreateTexture is typically called with tightly packed buffers from the engine
+      texture->replaceRegion(region, 0, buffer, w * bpp);
     }
   } else {
     // Standard path for MIPmapped world textures
@@ -285,9 +283,6 @@ unsigned int MtHardwareTexture::CreateTexture(unsigned char *buffer, int w,
 void MtHardwareTexture::CreateWipeTexture(int w, int h, const char *name) {
   if (name)
     mDebugName = name;
-  if (mt_debug)
-    Printf(PRINT_LOG, "Metal: CreateWipeTexture %s (%dx%d)\n",
-           mDebugName.c_str(), w, h);
   Reset();
 
   auto desc = MTL::TextureDescriptor::alloc()->init();
@@ -391,14 +386,6 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
   bool disableMips = isStartupState || isSpecialTex || isUITexture ||
                      (fb->GetFrameCount() < 100);
 
-  if (mt_debug) {
-    Printf(PRINT_LOG,
-           "Metal: CreateImage %s (Lump %d). State: %d, ns: %d, isUI: %d, "
-           "disableMips: %d\n",
-           name, tex->GetSourceLump(), (int)gamestate, ns, (int)isUITexture,
-           (int)disableMips);
-  }
-
   if (!tex->isHardwareCanvas()) {
     // Get pixel data from game texture using standard engine path
     FTextureBuffer texbuffer =
@@ -440,12 +427,9 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
     MTL::Texture *texture = nullptr;
 
     if (disableMips) {
-      // STARTUP/UI PATH: Use Private texture with Synchronously Waiting Blit.
-      // This is the most robust way to ensure tiling is correct on Intel.
-
-      size_t alignedPitch =
-          (pitch + 1023) & ~1023; // 1KB alignment for maximum safety
-      size_t totalSize = alignedPitch * expectedH;
+      // STARTUP/UI PATH: Optimized for fast uploads
+      // Use dynamic storage mode (Managed/Shared) to avoid blit overhead if possible
+      auto storageMode = fb->mVersionManager.GetDynamicStorageMode();
 
       if (!mImage->GetTexture() || mImage->GetWidth() != expectedW ||
           mImage->GetHeight() != expectedH) {
@@ -459,7 +443,7 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
         desc->setHeight(expectedH);
         desc->setPixelFormat(format);
         desc->setMipmapLevelCount(1);
-        desc->setStorageMode(MTL::StorageModePrivate);
+        desc->setStorageMode(storageMode);
         desc->setUsage(MTL::TextureUsageShaderRead);
 
         MTL::Texture *mtlTex = fb->device->device->newTexture(desc);
@@ -467,34 +451,16 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
         mImage->SetWidth(expectedW);
         mImage->SetHeight(expectedH);
         mImage->SetFormat((int)format);
-        mBufferPitch = (int)alignedPitch;
+        mBufferPitch = pitch; // Use natural pitch for managed textures
         desc->release();
       }
 
       texture = mImage->GetTexture();
 
       if (texbuffer.mBuffer) {
-        MTL::Buffer *staging = fb->device->device->newBuffer(
-            totalSize, MTL::ResourceStorageModeShared);
-        uint8_t *dst = (uint8_t *)staging->contents();
-        uint8_t *src = (uint8_t *)texbuffer.mBuffer;
-        for (int y = 0; y < expectedH; y++) {
-          memcpy(dst + y * alignedPitch, src + y * pitch, pitch);
-        }
-
-        auto cmdBuf = fb->GetCommands()->GetBlitCommandBuffer();
-        auto blit = cmdBuf->blitCommandEncoder();
-        blit->copyFromBuffer(staging, 0, alignedPitch, 0,
-                             MTL::Size::Make(expectedW, expectedH, 1), texture,
-                             0, 0, MTL::Origin::Make(0, 0, 0));
-        blit->endEncoding();
-        cmdBuf->commit();
-
-        // FORCE SYNC during startup to eliminate "squares" race condition.
-        if (gamestate == GS_STARTUP || fb->GetFrameCount() < 100) {
-          cmdBuf->waitUntilCompleted();
-        }
-        fb->RecycleBuffer(staging);
+        // Direct upload via replaceRegion (works for Managed and Shared)
+        MTL::Region region = MTL::Region::Make2D(0, 0, expectedW, expectedH);
+        texture->replaceRegion(region, 0, texbuffer.mBuffer, pitch);
       }
     } else {
       // WORLD TEXTURE PATH: Use SHARED + replaceRegion.
@@ -553,9 +519,6 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
     MTL::PixelFormat format =
         tex->IsHDR() ? MTL::PixelFormatRGBA32Float : MTL::PixelFormatBGRA8Unorm;
 
-    if (mt_debug)
-      Printf(PRINT_LOG, "Metal: Creating hardware canvas: %dx%d\n", w, h);
-
     auto desc = MTL::TextureDescriptor::alloc()->init();
     desc->setWidth(w);
     desc->setHeight(h);
@@ -572,14 +535,6 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
       Printf(PRINT_LOG, "Metal: Failed to create hardware canvas %dx%d\n", w,
              h);
       return;
-    }
-
-    if (mt_debug) {
-      Printf(PRINT_LOG,
-             "Metal: Created HWCanvas texture %p (%dx%d), format=%llu, "
-             "storageMode=%llu\n",
-             texture, w, h, (unsigned long long)texture->pixelFormat(),
-             (unsigned long long)texture->storageMode());
     }
 
     mImage->SetTexture(texture);

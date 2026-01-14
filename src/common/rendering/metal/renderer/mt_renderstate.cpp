@@ -70,25 +70,6 @@ void MtRenderState::ClearScreen() {
 }
 
 void MtRenderState::Draw(int dt, int index, int count, bool apply) {
-  auto mtVBuf = dynamic_cast<MtVertexBuffer *>(mVertexBuffer);
-  int draw_stride = mtVBuf ? (int)mtVBuf->GetStride() : 0;
-  if (mt_debug && draw_stride == 24)
-    Printf("METAL: Draw 2D geometry count=%d\n", count);
-  if (mt_debug) {
-    auto mtVBuf = dynamic_cast<MtVertexBuffer *>(mVertexBuffer);
-    Printf(PRINT_LOG,
-           "Metal: Draw dt=%d index=%d count=%d apply=%d vbuf=%p stride=%zu\n",
-           dt, index, count, (int)apply, mVertexBuffer,
-           mtVBuf ? mtVBuf->GetStride() : 0);
-
-    if (mtVBuf && mtVBuf->GetStride() == 24 && count > 0) {
-      float *v = (float *)((uint8_t *)mtVBuf->GetBuffer()->contents() +
-                           index * mtVBuf->GetStride());
-      Printf(PRINT_LOG,
-             "  2D Vert 0: Pos=(%f, %f, %f) UV=(%f, %f) Color=%08x\n", v[0],
-             v[1], v[2], v[3], v[4], ((uint32_t *)v)[5]);
-    }
-  }
   if (dt == DT_TriangleFan) {
     IIndexBuffer *oldIndexBuffer = mIndexBuffer;
     mIndexBuffer = fb->GetBufferManager()->FanToTrisIndexBuffer.get();
@@ -142,22 +123,6 @@ void MtRenderState::Draw(int dt, int index, int count, bool apply) {
 }
 
 void MtRenderState::DrawIndexed(int dt, int index, int count, bool apply) {
-  if (mt_debug) {
-    auto mtVBuf = dynamic_cast<MtVertexBuffer *>(mVertexBuffer);
-    Printf(PRINT_LOG,
-           "Metal: DrawIndexed dt=%d index=%d count=%d apply=%d vbuf=%p "
-           "stride=%zu\n",
-           dt, index, count, (int)apply, mVertexBuffer,
-           mtVBuf ? mtVBuf->GetStride() : 0);
-
-    if (mtVBuf && mtVBuf->GetStride() == 24 && count > 0) {
-      float *v = (float *)((uint8_t *)mtVBuf->GetBuffer()->contents() +
-                           mVertexOffsets[0] * mtVBuf->GetStride());
-      Printf(PRINT_LOG,
-             "  2D Vert 0: Pos=(%f, %f, %f) UV=(%f, %f) Color=%08x\n", v[0],
-             v[1], v[2], v[3], v[4], ((uint32_t *)v)[5]);
-    }
-  }
   if (apply || mNeedApply)
     Apply(dt);
 
@@ -178,8 +143,6 @@ void MtRenderState::DrawIndexed(int dt, int index, int count, bool apply) {
 }
 
 bool MtRenderState::SetDepthClamp(bool on) {
-  if (mt_debug)
-    Printf(PRINT_LOG, "Metal: SetDepthClamp %d\n", (int)on);
   bool lastValue = mDepthClamp;
   mDepthClamp = on;
   mNeedApply = true;
@@ -187,22 +150,16 @@ bool MtRenderState::SetDepthClamp(bool on) {
 }
 
 void MtRenderState::SetDepthMask(bool on) {
-  if (mt_debug)
-    Printf(PRINT_LOG, "Metal: SetDepthMask %d\n", (int)on);
   mDepthWrite = on;
   mNeedApply = true;
 }
 
 void MtRenderState::SetDepthFunc(int func) {
-  if (mt_debug)
-    Printf(PRINT_LOG, "Metal: SetDepthFunc %d\n", func);
   mDepthFunc = func;
   mNeedApply = true;
 }
 
 void MtRenderState::SetDepthRange(float min, float max) {
-  if (mt_debug)
-    Printf(PRINT_LOG, "Metal: SetDepthRange %f..%f\n", min, max);
   mViewportDepthMin = min;
   mViewportDepthMax = max;
   mViewportChanged = true;
@@ -224,10 +181,6 @@ void MtRenderState::SetStencil(int offs, int op, int flags) {
   // We use our internal index 3 which maps to MTL::CompareFunctionEqual in
   // stencilFuncs.
   mStencilFunc = 3;
-
-  if (mt_debug)
-    Printf(PRINT_LOG, "Metal: SetStencil offset=%d op=%d ref=%d\n", offs, op,
-           mStencilRef);
 
   if (flags != -1) {
     bool cmon = !(flags & SF_ColorMaskOff);
@@ -262,10 +215,6 @@ void MtRenderState::EnableStencil(bool on) {
 }
 
 void MtRenderState::SetScissor(int x, int y, int w, int h) {
-  if (mt_debug) {
-    Printf(PRINT_LOG, "Metal: SetScissor %d,%d %dx%d (gamestate=%d)\n", x, y, w,
-           h, (int)gamestate);
-  }
   mScissorX = x;
   mScissorY = y;
   mScissorWidth = w;
@@ -275,10 +224,6 @@ void MtRenderState::SetScissor(int x, int y, int w, int h) {
 }
 
 void MtRenderState::SetViewport(int x, int y, int w, int h) {
-  if (mt_debug) {
-    Printf(PRINT_LOG, "Metal: SetViewport %d,%d %dx%d (gamestate=%d)\n", x, y,
-           w, h, (int)gamestate);
-  }
   mViewportX = x;
   mViewportY = y;
   mViewportWidth = w;
@@ -299,9 +244,6 @@ void MtRenderState::EnableLineSmooth(bool on) {}
 void MtRenderState::Apply(int dt) {
   // Handle command buffer flushing like Vulkan
   if (mApplyCount >= mt_submit_size) {
-    if (mt_debug)
-      Printf(PRINT_LOG, "Metal: mt_submit_size (%d) reached, flushing.\n",
-             *mt_submit_size);
     EndRenderPass();
     fb->GetCommands()->FlushCommands();
     mApplyCount = 0;
@@ -460,8 +402,6 @@ void MtRenderState::ApplyRenderPass(int dt) {
 
 void MtRenderState::ApplyStencilRef() {
   if (mStencilRefChanged && mEncoder) {
-    if (mt_debug)
-      Printf(PRINT_LOG, "Metal: ApplyStencilRef %d\n", mStencilRef);
     mEncoder->setStencilReferenceValue(mStencilRef);
     mStencilRefChanged = false;
   }
@@ -601,8 +541,11 @@ void MtRenderState::ApplyPushConstants() {
   mPushConstants.group4[2] = 0.0f;
   mPushConstants.group4[3] = 0.0f;
 
-  mEncoder->setVertexBytes(&mPushConstants, sizeof(PushConstants), 21);
-  mEncoder->setFragmentBytes(&mPushConstants, sizeof(PushConstants), 21);
+  if (mPushConstants != mLastPushConstants) {
+    mEncoder->setVertexBytes(&mPushConstants, sizeof(PushConstants), 21);
+    mEncoder->setFragmentBytes(&mPushConstants, sizeof(PushConstants), 21);
+    mLastPushConstants = mPushConstants;
+  }
 }
 
 void MtRenderState::ApplyMatrices() {
@@ -630,11 +573,6 @@ void MtRenderState::ApplyVertexBuffers() {
       if (buffer) {
         mEncoder->setVertexBuffer(buffer, mVertexOffsets[0] * stride, 0);
         mEncoder->setVertexBuffer(buffer, mVertexOffsets[1] * stride, 1);
-        if (mt_debug) {
-          Printf(PRINT_LOG,
-                 "Metal: Bound VertexBuffer %p at offsets %d,%d (stride %zu)\n",
-                 buffer, mVertexOffsets[0], mVertexOffsets[1], stride);
-        }
       }
     }
 
@@ -698,7 +636,11 @@ void MtRenderState::ApplyMaterial() {
             int pitch = mtHwTexture->GetBufferPitch();
 
             if (mtlTexture->storageMode() == MTL::StorageModePrivate) {
-              // Private textures MUST be updated via blit
+              // If we have an active render pass, we MUST end it before doing a blit
+              if (mEncoder) {
+                EndRenderPass();
+              }
+
               size_t alignedPitch = (pitch + 1023) & ~1023;
               size_t totalSize = alignedPitch * h;
               MTL::Buffer *staging = fb->device->device->newBuffer(
@@ -710,7 +652,6 @@ void MtRenderState::ApplyMaterial() {
                   memcpy(dst + y * alignedPitch, src + y * pitch, pitch);
                 }
 
-                EndRenderPass();
                 auto cmdBuf = fb->GetCommands()->GetBlitCommandBuffer();
                 if (cmdBuf) {
                   auto blit = cmdBuf->blitCommandEncoder();
@@ -730,11 +671,17 @@ void MtRenderState::ApplyMaterial() {
                 fb->RecycleBuffer(staging);
               }
             } else {
+              // Managed/Shared: Direct upload via replaceRegion. 
+              // No need to end render pass!
               MTL::Region region = MTL::Region::Make2D(0, 0, w, h);
               mtlTexture->replaceRegion(region, 0,
                                         mtHwTexture->GetStagingBuffer(), pitch);
 
               if (mtlTexture->mipmapLevelCount() > 1) {
+                // Mipmap generation DOES require a blit encoder, so check that
+                if (mEncoder) {
+                   EndRenderPass();
+                }
                 fb->GetTextureManager()->GenerateMipmaps(mtlTexture);
               }
             }
@@ -820,9 +767,6 @@ void MtRenderState::ApplyCulling() {
     else // Cull_CCW
       mEncoder->setCullMode(MTL::CullModeFront);
 
-    if (mt_debug) {
-      Printf(PRINT_LOG, "Metal: ApplyCulling mode=%d\n", mCullMode);
-    }
     mCullModeChanged = false;
   }
 }
@@ -850,9 +794,14 @@ void MtRenderState::ApplyHWBufferSet() {
   if (vpBuf &&
       (vpBuf != mLastBoundBuffers[17] || vpOff != mLastBoundOffsets[17])) {
     mEncoder->setVertexBuffer(vpBuf, vpOff, 17);
-    mEncoder->setFragmentBuffer(vpBuf, vpOff, 17);
     mLastBoundBuffers[17] = vpBuf;
     mLastBoundOffsets[17] = vpOff;
+  }
+  if (vpBuf &&
+      (vpBuf != mLastBoundFragmentBuffers[17] || vpOff != mLastBoundFragmentOffsets[17])) {
+    mEncoder->setFragmentBuffer(vpBuf, vpOff, 17);
+    mLastBoundFragmentBuffers[17] = vpBuf;
+    mLastBoundFragmentOffsets[17] = vpOff;
   }
 
   // 2. Light (16)
@@ -869,9 +818,14 @@ void MtRenderState::ApplyHWBufferSet() {
   if (ltBuf &&
       (ltBuf != mLastBoundBuffers[16] || ltOff != mLastBoundOffsets[16])) {
     mEncoder->setVertexBuffer(ltBuf, ltOff, 16);
-    mEncoder->setFragmentBuffer(ltBuf, ltOff, 16);
     mLastBoundBuffers[16] = ltBuf;
     mLastBoundOffsets[16] = ltOff;
+  }
+  if (ltBuf &&
+      (ltBuf != mLastBoundFragmentBuffers[16] || ltOff != mLastBoundFragmentOffsets[16])) {
+    mEncoder->setFragmentBuffer(ltBuf, ltOff, 16);
+    mLastBoundFragmentBuffers[16] = ltBuf;
+    mLastBoundFragmentOffsets[16] = ltOff;
   }
 
   // 3. Bone (18)
@@ -888,9 +842,14 @@ void MtRenderState::ApplyHWBufferSet() {
   if (bnBuf &&
       (bnBuf != mLastBoundBuffers[18] || bnOff != mLastBoundOffsets[18])) {
     mEncoder->setVertexBuffer(bnBuf, bnOff, 18);
-    mEncoder->setFragmentBuffer(bnBuf, bnOff, 18);
     mLastBoundBuffers[18] = bnBuf;
     mLastBoundOffsets[18] = bnOff;
+  }
+  if (bnBuf &&
+      (bnBuf != mLastBoundFragmentBuffers[18] || bnOff != mLastBoundFragmentOffsets[18])) {
+    mEncoder->setFragmentBuffer(bnBuf, bnOff, 18);
+    mLastBoundFragmentBuffers[18] = bnBuf;
+    mLastBoundFragmentOffsets[18] = bnOff;
   }
 
   // 4. Matrix (Model/Texture) (19)
@@ -904,9 +863,14 @@ void MtRenderState::ApplyHWBufferSet() {
   if (matrixBuffer && (matrixBuffer != mLastBoundBuffers[19] ||
                        matrixOffset != mLastBoundOffsets[19])) {
     mEncoder->setVertexBuffer(matrixBuffer, matrixOffset, 19);
-    mEncoder->setFragmentBuffer(matrixBuffer, matrixOffset, 19);
     mLastBoundBuffers[19] = matrixBuffer;
     mLastBoundOffsets[19] = matrixOffset;
+  }
+  if (matrixBuffer && (matrixBuffer != mLastBoundFragmentBuffers[19] ||
+                       matrixOffset != mLastBoundFragmentOffsets[19])) {
+    mEncoder->setFragmentBuffer(matrixBuffer, matrixOffset, 19);
+    mLastBoundFragmentBuffers[19] = matrixBuffer;
+    mLastBoundFragmentOffsets[19] = matrixOffset;
   }
 
   // 5. Stream (Per-draw uniforms) (20)
@@ -920,9 +884,14 @@ void MtRenderState::ApplyHWBufferSet() {
   if (streamBuffer && (streamBuffer != mLastBoundBuffers[20] ||
                        streamDataOffset != mLastBoundOffsets[20])) {
     mEncoder->setVertexBuffer(streamBuffer, streamDataOffset, 20);
-    mEncoder->setFragmentBuffer(streamBuffer, streamDataOffset, 20);
     mLastBoundBuffers[20] = streamBuffer;
     mLastBoundOffsets[20] = streamDataOffset;
+  }
+  if (streamBuffer && (streamBuffer != mLastBoundFragmentBuffers[20] ||
+                       streamDataOffset != mLastBoundFragmentOffsets[20])) {
+    mEncoder->setFragmentBuffer(streamBuffer, streamDataOffset, 20);
+    mLastBoundFragmentBuffers[20] = streamBuffer;
+    mLastBoundFragmentOffsets[20] = streamDataOffset;
   }
 }
 
@@ -943,10 +912,6 @@ void MtRenderState::Bind(int bindingpoint, uint32_t offset) {
 
 void MtRenderState::BindBuffer(int bindingpoint, MTL::Buffer *buffer,
                                uint32_t offset) {
-  if (mt_debug) {
-    Printf(PRINT_LOG, "Metal: BindBuffer bp=%d buffer=%p offset=%u\n",
-           bindingpoint, buffer, offset);
-  }
   if (bindingpoint >= 0 && bindingpoint < 32) {
     mBoundBuffers[bindingpoint] = buffer;
     mBoundOffsets[bindingpoint] = offset;
@@ -961,9 +926,6 @@ void MtRenderState::BindBuffer(int bindingpoint, MTL::Buffer *buffer,
 
 void MtRenderState::MarkAsFilled(MTL::Texture *tex) {
   if (tex) {
-    if (mt_debug)
-      Printf(PRINT_LOG, "Metal: MarkAsFilled tex=%p (W:%lu H:%lu)\n", tex,
-             tex->width(), tex->height());
     mClearedTargets.insert(tex);
   }
 }
@@ -979,8 +941,6 @@ void MtRenderState::BeginFrame() {
   mViewportHeight = -1;
   mScissorWidth = -1;
   mScissorHeight = -1;
-  if (mt_debug)
-    Printf(PRINT_LOG, "Metal: BeginFrame - Clearing mClearedTargets\n");
   mClearedTargets.clear();
   mPipelineBound = false;
 
@@ -1006,10 +966,6 @@ void MtRenderState::BeginFrame() {
 
 void MtRenderState::EndRenderPass() {
   if (mEncoder) {
-    if (mt_debug) {
-      Printf(PRINT_LOG, "Metal: EndRenderPass encoder=%p (applyCount was %d)\n",
-             mEncoder, mApplyCount);
-    }
     mEncoder->endEncoding();
     mEncoder = nullptr;
     mApplyCount++; // Increment when a pass is completed
@@ -1036,12 +992,6 @@ void MtRenderState::EnableDrawBuffers(int count, bool apply) {
 void MtRenderState::SetRenderTarget(MTL::Texture *image,
                                     MTL::Texture *depthStencilView, int width,
                                     int height, int format, int samples) {
-  if (mt_debug) {
-    Printf(PRINT_LOG,
-           "Metal: SetRenderTarget image=%p ds=%p %dx%d fmt=%d samples=%d\n",
-           image, depthStencilView, width, height, format, samples);
-  }
-
   // End current pass, but DON'T flush. Let Apply() or EndFrame handle it.
   EndRenderPass();
 
@@ -1069,19 +1019,10 @@ void MtRenderState::BeginRenderPass() {
   }
 
   if (!targetTex) {
-    if (mt_debug)
-      Printf(PRINT_LOG,
-             "Metal: BeginRenderPass - No render target image! width=%d "
-             "height=%d\n",
-             mRenderTarget.Width, mRenderTarget.Height);
     return;
   }
 
   if (mRenderTarget.Width <= 0 || mRenderTarget.Height <= 0) {
-    if (mt_debug)
-      Printf(PRINT_LOG,
-             "Metal: BeginRenderPass - Invalid render target size %dx%d\n",
-             mRenderTarget.Width, mRenderTarget.Height);
     return;
   }
 
@@ -1251,6 +1192,7 @@ void MtRenderState::BeginRenderPass() {
   mStencilRefChanged = true;
   mCullModeChanged = true;
   mBias.mChanged = true; // Ensure depth bias is re-applied to the new encoder
+  mLastPushConstants = {};
   mPipelineKey = {};
   mPipelineBound = false;
 
@@ -1263,5 +1205,7 @@ void MtRenderState::BeginRenderPass() {
   for (int i = 0; i < 32; i++) {
     mLastBoundBuffers[i] = nullptr;
     mLastBoundOffsets[i] = 0xffffffff;
+    mLastBoundFragmentBuffers[i] = nullptr;
+    mLastBoundFragmentOffsets[i] = 0xffffffff;
   }
 }

@@ -308,12 +308,10 @@ const NSUInteger STYLE_MASK_WINDOWED =
                             ? [self convertSizeToBacking:frameSize.size]
                             : frameSize.size;
 
-    fprintf(stderr,
-            "Cocoa: MetalCocoaView updateLayerSize bounds=%.0fx%.0f "
-            "drawable=%.0fx%.0f\n",
-            frameSize.size.width, frameSize.size.height, size.width,
-            size.height);
-    fflush(stderr);
+    // Ignore suspicious intermediate sizes (like 1024x661) during early startup
+    if (size.width == 1024 && size.height == 661 && win_w > 1024) {
+        return;
+    }
 
     layer.drawableSize = CGSizeMake(size.width, size.height);
     if (self.window.screen) {
@@ -335,10 +333,6 @@ extern id appCtrl;
 namespace {
 
 CocoaWindow *CreateWindow(const bool fullscreen) {
-  fprintf(stderr,
-          "Cocoa: CreateWindow fullscreen=%d defwidth=%d defheight=%d\n",
-          (int)fullscreen, (int)(int)vid_defwidth, (int)vid_defheight);
-  fflush(stderr);
   const NSUInteger styleMask =
       fullscreen ? STYLE_MASK_FULLSCREEN : STYLE_MASK_WINDOWED;
   NSRect contentRect;
@@ -348,12 +342,6 @@ CocoaWindow *CreateWindow(const bool fullscreen) {
   } else {
     contentRect = NSMakeRect(0, 0, vid_defwidth, vid_defheight);
   }
-
-  fprintf(stderr,
-          "Cocoa: CreateWindow styleMask=%lu rect=%.0f,%.0f %.0fx%.0f\n",
-          (unsigned long)styleMask, contentRect.origin.x, contentRect.origin.y,
-          contentRect.size.width, contentRect.size.height);
-  fflush(stderr);
 
   CocoaWindow *const window =
       [[CocoaWindow alloc] initWithContentRect:contentRect
@@ -545,7 +533,7 @@ public:
           @"position" : [NSNull null],
           @"contents" : [NSNull null]
         };
-        layer.contentsGravity = kCAGravityResize; // Use standard resize
+        layer.contentsGravity = kCAGravityResizeAspect; // Prevent stretching
         layer.opaque = YES;
         layer.presentsWithTransaction = NO; // Revert to fix black screen
         layer.framebufferOnly = NO;

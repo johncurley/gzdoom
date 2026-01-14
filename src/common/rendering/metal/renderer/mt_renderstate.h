@@ -120,6 +120,7 @@ protected:
   bool mPipelineBound = false;
 
   PushConstants mPushConstants = {};
+  PushConstants mLastPushConstants = {};
 
   float mCurrentBiasUnits = 0.0f;
   float mCurrentBiasFactor = 0.0f;
@@ -128,7 +129,10 @@ protected:
   MTL::Buffer *mBoundBuffers[32] = { nullptr };
   uint32_t mBoundOffsets[32] = { 0 };
   MTL::Buffer *mLastBoundBuffers[32] = { nullptr };
-  uint32_t mLastBoundOffsets[32] = { 0 };
+  uint32_t mLastBoundOffsets[32] = { 0xFFFFFFFF };
+
+  MTL::Buffer *mLastBoundFragmentBuffers[32] = { nullptr };
+  uint32_t mLastBoundFragmentOffsets[32] = { 0xFFFFFFFF };
 
   uint32_t mLastViewpointOffset = 0xffffffff;
   uint32_t mLastMatricesOffset = 0xffffffff;
@@ -157,5 +161,7 @@ protected:
     int Samples = 1; // Sample count
     int DrawBuffers = 1;
     bool IsSwapChain = false;
+    int VirtualWidth = 0;
+    int VirtualHeight = 0;
   } mRenderTarget;
 };

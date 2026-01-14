@@ -1,0 +1,6 @@
+DEBUG: main entered
+GZDoom <unknown version> -  - Cocoa version
+Compiled on Jan 11 2026
+
+MacBookAir7,2 running macOS Monterey 12.7.6 (21H1320) 64-bit Intel
+GZDoom version <unknown version>

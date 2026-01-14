@@ -45,13 +45,6 @@ public:
   }
 
   void Draw() override {
-    if (mt_debug) {
-      Printf(PRINT_LOG,
-             "Metal: PPRenderState::Draw shader=%p viewport=%d,%d %dx%d "
-             "OutputType=%d\n",
-             Shader, Viewport.left, Viewport.top, Viewport.width,
-             Viewport.height, (int)Output.Type);
-    }
     auto renderState = fb->GetRenderState();
     auto mtRenderState = static_cast<MtRenderState *>(renderState);
 
@@ -124,12 +117,6 @@ public:
       height = (int)outputTex->height();
     }
 
-    if (mt_debug) {
-      Printf(PRINT_LOG,
-             "Metal: PPRenderState::Draw - targeting %p %dx%d fmt=%llu\n",
-             outputTex, width, height, (unsigned long long)format);
-    }
-
     mtRenderState->SetRenderTarget(outputTex, depthStencil, width, height,
                                    (int)format, 1);
 
@@ -147,29 +134,17 @@ public:
     mtRenderState->BeginRenderPass();
     auto encoder = mtRenderState->GetEncoder();
     if (!encoder) {
-      if (mt_debug)
-        Printf(PRINT_LOG,
-               "Metal: PPRenderState::Draw - FAILED to get encoder\n");
       return;
     }
 
     MtShaderProgram *program = fb->GetShaderManager()->GetPPShader(Shader);
     if (!program || !program->vert || !program->frag) {
-      if (mt_debug)
-        Printf(PRINT_LOG,
-               "Metal: PPRenderState::Draw - FAILED to get shader program\n");
       return;
     }
 
     auto pipeline = fb->GetPipelineStateManager()->GetPPPipelineState(
         program, (MTL::PixelFormat)format, BlendMode);
     if (pipeline) {
-      if (mt_debug) {
-        Printf(PRINT_LOG,
-               "Metal: PPRenderState::Draw - Pipeline created successfully. "
-               "VS: %s, FS: %s\n",
-               program->vert->name.c_str(), program->frag->name.c_str());
-      }
       // Set vertex buffer on the render state so ApplyRenderPass uses it
       mtRenderState->SetVertexBuffer(screen->mVertexData);
 
@@ -193,10 +168,6 @@ public:
         // Bind vertex buffer (screen->mVertexData) at slot 0 manually too for
         // safety
         encoder->setVertexBuffer(vb->GetBuffer(), 0, 0);
-      } else {
-        if (mt_debug)
-          Printf(PRINT_LOG, "Metal: PPRenderState::Draw - WARNING: "
-                            "dynamic_cast to MtVertexBuffer failed!\n");
       }
 
       // Bind input textures and samplers
@@ -254,19 +225,11 @@ public:
           if (sampler) {
             encoder->setFragmentSamplerState(sampler, i);
           }
-          if (mt_debug)
-            Printf(PRINT_LOG,
-                   "Metal: PPRenderState::Draw - bound texture %p to slot %d\n",
-                   tex, i);
         }
       }
 
       // Bind uniforms
       if (Uniforms.Data.Size() > 0) {
-        if (mt_debug)
-          Printf(PRINT_LOG,
-                 "Metal: PPRenderState::Draw - Binding uniforms size=%u\n",
-                 (unsigned int)Uniforms.Data.Size());
         encoder->setFragmentBytes(Uniforms.Data.Data(), Uniforms.Data.Size(),
                                   0);
       }
@@ -275,12 +238,6 @@ public:
       encoder->drawPrimitives(MTL::PrimitiveTypeTriangle,
                               (NS::UInteger)FFlatVertexBuffer::PRESENT_INDEX,
                               (NS::UInteger)3);
-      if (mt_debug)
-        Printf(PRINT_LOG,
-               "Metal: PPRenderState::Draw - called drawPrimitives\n");
-    } else if (mt_debug) {
-      Printf(PRINT_LOG,
-             "Metal: PPRenderState::Draw - FAILED to get pipeline state\n");
     }
 
     mtRenderState->EndRenderPass();
@@ -382,12 +339,6 @@ void MtPostprocess::BlitSceneToPostprocess() {
   auto src = buffers->SceneColor->GetTexture();
   auto dst = buffers->PipelineImage[0]->GetTexture();
 
-  if (mt_debug) {
-    Printf(PRINT_LOG,
-           "Metal: BlitSceneToPostprocess (Asynchronous) src=%p dst=%p\n", src,
-           dst);
-  }
-
   if (src && dst) {
     blitEncoder->copyFromTexture(src, dst);
 
@@ -405,22 +356,11 @@ void MtPostprocess::BlitCurrentToImage(MTL::Texture *dstimage) {
   auto srcimage =
       fb->GetBuffers()->PipelineImage[mCurrentPipelineImage]->GetTexture();
 
-  if (mt_debug) {
-    Printf(PRINT_LOG,
-           "Metal: BlitCurrentToImage src=%p (fmt=%llu) dst=%p (fmt=%llu)\n",
-           srcimage, srcimage ? (unsigned long long)srcimage->pixelFormat() : 0,
-           dstimage,
-           dstimage ? (unsigned long long)dstimage->pixelFormat() : 0);
-  }
-
   if (!srcimage || !dstimage)
     return;
 
   // If formats match, use blit encoder
   if (srcimage->pixelFormat() == dstimage->pixelFormat()) {
-    if (mt_debug)
-      Printf(PRINT_LOG,
-             "Metal: BlitCurrentToImage using copyFromTexture (Fast Path)\n");
     auto blitCmdBuf = fb->GetCommands()->GetBlitCommandBuffer();
     auto blitEncoder = blitCmdBuf->blitCommandEncoder();
     blitEncoder->copyFromTexture(srcimage, dstimage);
@@ -436,9 +376,6 @@ void MtPostprocess::BlitCurrentToImage(MTL::Texture *dstimage) {
     blitCmdBuf->waitUntilCompleted();
     blitCmdBuf->release();
   } else {
-    if (mt_debug)
-      Printf(PRINT_LOG, "Metal: BlitCurrentToImage using Draw call (Format "
-                        "Conversion Path)\n");
     // Use a simple draw call to convert formats
     MtPPRenderState renderstate(fb);
     renderstate.customOutputTex = dstimage;
@@ -519,15 +456,6 @@ void MtPostprocess::DrawPresentTexture(IntRect box, bool applyGamma,
   }
 
   uniforms.HdrMode = 0;
-
-  if (mt_debug) {
-    Printf(PRINT_LOG,
-           "Metal: DrawPresentTexture - box: %d,%d %dx%d, Scale: %.2f %.2f "
-           "Offset: %.2f %.2f Gamma: %.2f, Swap: %d\n",
-           box.left, box.top, box.width, box.height, uniforms.Scale.X,
-           uniforms.Scale.Y, uniforms.Offset.X, uniforms.Offset.Y,
-           uniforms.InvGamma, (int)!screenshot);
-  }
 
   renderstate.Clear();
   renderstate.Shader = &hw_postprocess.present.Present;

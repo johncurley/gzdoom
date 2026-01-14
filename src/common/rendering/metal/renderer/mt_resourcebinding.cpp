@@ -40,7 +40,6 @@ void MtResourceBindingManager::BindMaterialTexture(int slot,
 
 void MtResourceBindingManager::ApplyBindings(MTL::RenderCommandEncoder *encoder,
                                              bool vertex, bool fragment) {
-  if (mt_debug) Printf(PRINT_LOG, "Metal: ApplyBindings vert=%d frag=%d\n", (int)vertex, (int)fragment);
   if (!encoder)
     return;
 

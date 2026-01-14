@@ -71,8 +71,6 @@ void MtRenderBuffers::CreatePipeline(int width, int height) {
     desc->setStorageMode(MTL::StorageModePrivate);
 
     MTL::Texture *texture = fb->device->device->newTexture(desc);
-    if (i == 0)
-      Printf(PRINT_LOG, "Metal: Created PipelineImage[0] at %p\n", texture);
     PipelineImage[i]->SetTexture(texture);
     PipelineImage[i]->SetWidth(width);
     PipelineImage[i]->SetHeight(height);
@@ -106,11 +104,7 @@ void MtRenderBuffers::CreateShadowMap() {
   desc->setStorageMode(MTL::StorageModePrivate);
 
   MTL::Texture *texture = fb->device->device->newTexture(desc);
-  if (texture) {
-    Printf(PRINT_LOG,
-           "Metal: Created ShadowMap texture %p (%dx1024) R32Float\n", texture,
-           quality);
-  } else {
+  if (!texture) {
     Printf(PRINT_LOG, "Metal: FAILED to create ShadowMap texture!\n");
   }
   ShadowMap->SetTexture(texture);

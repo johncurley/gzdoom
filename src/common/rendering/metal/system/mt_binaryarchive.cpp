@@ -47,6 +47,7 @@ void MtBinaryArchive::Save() {
     if (!mArchive || !mModified) return;
 
     std::string path = GetArchivePath();
+    Printf(PRINT_LOG, "Metal: Saving binary archive to %s...\n", path.c_str());
     
     // Ensure directory exists
     FString dirPart = ExtractFilePath(path.c_str());
