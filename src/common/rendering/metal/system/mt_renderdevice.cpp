@@ -394,19 +394,35 @@ void MetalRenderDevice::BeginFrame() {
       int scaledWidth = ViewportScaledWidth(targetWidth, targetHeight);
       int scaledHeight = ViewportScaledHeight(targetWidth, targetHeight);
 
-      if (GetWidth() != scaledWidth || GetHeight() != scaledHeight) {
+      // STARTUP LAG GUARD:
+      // If the view reports a smaller size than our current configured
+      // resolution during startup, it is likely a Cocoa layout lag. We MUST NOT
+      // downscale the engine, or we get a low-res stretched frame. Instead, we
+      // force the Main Layer to match our higher internal resolution.
+      if (mFrameCount < 10 &&
+          (scaledWidth < GetWidth() || scaledHeight < GetHeight())) {
+        metalLayer->setDrawableSize(CGSizeMake(GetWidth(), GetHeight()));
+      }
+      // Normal operation: Sync if different (handles Resizing and startup
+      // Upscaling)
+      else if (GetWidth() != scaledWidth || GetHeight() != scaledHeight) {
         SetVirtualSize(scaledWidth, scaledHeight);
         V_OutputResized(scaledWidth, scaledHeight);
         if (mVertexData) mVertexData->OutputResized(scaledWidth, scaledHeight);
+
+        // Ensure drawable size matches the NEW resolution
+        metalLayer->setDrawableSize(CGSizeMake(scaledWidth, scaledHeight));
       }
-      // Always ensure drawable size matches the window size
-      metalLayer->setDrawableSize(CGSizeMake(viewSize.width, viewSize.height));
     } else {
       metalLayer->setDrawableSize(CGSizeMake(GetWidth(), GetHeight()));
     }
 
     // Ensure we have a valid drawable for this frame
     mCurrentDrawable = (CA::MetalDrawable *)metalLayer->nextDrawable();
+
+    if (mCurrentDrawable && mFrameCount < 10) {
+      mFrameCount++;
+    }
   }
 
   if (!mCurrentDrawable) {
