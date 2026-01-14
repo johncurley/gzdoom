@@ -108,6 +108,11 @@ void MtTextureManager::SetLightmap(int LMTextureSize, int LMTextureCount,
 
       auto cmdBuf = fb->GetCommands()->GetBlitCommandBuffer();
       if (cmdBuf) {
+        auto renderState = static_cast<MtRenderState *>(fb->RenderState());
+        if (renderState) {
+          renderState->EndRenderPass();
+        }
+
         auto blit = cmdBuf->blitCommandEncoder();
         for (int i = 0; i < count; i++) {
           blit->copyFromBuffer(mtlStaging, (size_t)i * w * h * 8, w * 8, w * h * 8,
@@ -276,6 +281,11 @@ unsigned int MtHardwareTexture::CreateTexture(unsigned char *buffer, int w,
 
         auto cmdBuf = fb->GetCommands()->GetBlitCommandBuffer();
         if (cmdBuf) {
+          auto renderState = static_cast<MtRenderState *>(fb->RenderState());
+          if (renderState) {
+            renderState->EndRenderPass();
+          }
+
           auto blit = cmdBuf->blitCommandEncoder();
           blit->copyFromBuffer(staging, 0, alignedPitch, 0,
                                MTL::Size::Make(w, h, 1), texture, 0, 0,
@@ -521,6 +531,13 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
 
             auto cmdBuf = fb->GetCommands()->GetBlitCommandBuffer();
             if (cmdBuf) {
+                // Metal doesn't allow multiple active encoders on one command buffer.
+                // End any active render pass before blitting.
+                auto renderState = static_cast<MtRenderState *>(fb->RenderState());
+                if (renderState) {
+                    renderState->EndRenderPass();
+                }
+
                 auto blit = cmdBuf->blitCommandEncoder();
                 blit->copyFromBuffer(staging, 0, alignedPitch, 0,
                                      MTL::Size::Make(expectedW, expectedH, 1), texture, 0,
