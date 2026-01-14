@@ -69,7 +69,7 @@ void MtTextureManager::SetLightmap(int LMTextureSize, int LMTextureCount,
     desc->setTextureType(MTL::TextureType2DArray);
     desc->setArrayLength(count);
     desc->setMipmapLevelCount(1);
-    desc->setUsage(MTL::TextureUsageShaderRead | MTL::TextureUsageTransferDst);
+    desc->setUsage(MTL::TextureUsageShaderRead);
 
     // Use Private storage mode for best sampling performance when using blit updates
     desc->setStorageMode(MTL::StorageModePrivate);
@@ -93,21 +93,18 @@ void MtTextureManager::SetLightmap(int LMTextureSize, int LMTextureCount,
     int count = (int)mLightmap->GetTexture()->arrayLength();
     size_t totalBytes = (size_t)w * h * count * 8; // RGBA16Float
 
-    std::vector<uint16_t> stagingBuffer(w * h * count * 4);
-    uint16_t one = 0x3c00; // half-float 1.0
-    const uint16_t *src = LMTextureData.Data();
-    uint16_t *dst = stagingBuffer.data();
-
-    for (int i = 0; i < w * h * count; i++) {
-      *(dst++) = *(src++); // R
-      *(dst++) = *(src++); // G
-      *(dst++) = *(src++); // B
-      *(dst++) = one;      // A
-    }
-
     MTL::Buffer *mtlStaging = fb->device->device->newBuffer(totalBytes, MTL::ResourceStorageModeShared);
     if (mtlStaging) {
-      memcpy(mtlStaging->contents(), stagingBuffer.data(), totalBytes);
+      uint16_t *dst = (uint16_t *)mtlStaging->contents();
+      uint16_t one = 0x3c00; // half-float 1.0
+      const uint16_t *src = LMTextureData.Data();
+
+      for (int i = 0; i < w * h * count; i++) {
+        *(dst++) = *(src++); // R
+        *(dst++) = *(src++); // G
+        *(dst++) = *(src++); // B
+        *(dst++) = one;      // A
+      }
 
       auto cmdBuf = fb->GetCommands()->GetBlitCommandBuffer();
       if (cmdBuf) {
@@ -260,7 +257,7 @@ unsigned int MtHardwareTexture::CreateTexture(unsigned char *buffer, int w,
     int mipLevels = (int)floor(log2(max(w, h))) + 1;
     desc->setMipmapLevelCount(mipLevels);
     desc->setUsage(MTL::TextureUsageShaderRead | MTL::TextureUsageRenderTarget);
-    desc->setStorageMode(fb->mVersionManager.GetDynamicStorageMode());
+    desc->setStorageMode(MTL::StorageModePrivate);
 
     MTL::Texture *texture = fb->device->device->newTexture(desc);
     mImage->SetTexture(texture);
@@ -270,10 +267,28 @@ unsigned int MtHardwareTexture::CreateTexture(unsigned char *buffer, int w,
     desc->release();
 
     if (buffer) {
-      MTL::Region region = MTL::Region::Make2D(0, 0, w, h);
-      texture->replaceRegion(region, 0, buffer, w * bpp);
-      if (mipLevels > 1)
-        fb->GetTextureManager()->GenerateMipmaps(texture);
+      size_t alignedPitch = (w * bpp + 1023) & ~1023;
+      size_t totalSize = alignedPitch * h;
+      MTL::Buffer *staging = fb->device->device->newBuffer(totalSize, MTL::StorageModeShared);
+      if (staging) {
+        uint8_t *dst = (uint8_t *)staging->contents();
+        for (int y = 0; y < h; y++) {
+          memcpy(dst + y * alignedPitch, buffer + y * w * bpp, w * bpp);
+        }
+
+        auto cmdBuf = fb->GetCommands()->GetBlitCommandBuffer();
+        if (cmdBuf) {
+          auto blit = cmdBuf->blitCommandEncoder();
+          blit->copyFromBuffer(staging, 0, alignedPitch, 0,
+                               MTL::Size::Make(w, h, 1), texture, 0, 0,
+                               MTL::Origin::Make(0, 0, 0));
+          if (mipLevels > 1)
+            blit->generateMipmaps(texture);
+          blit->endEncoding();
+          cmdBuf->commit();
+        }
+        fb->RecycleBuffer(staging);
+      }
     }
   }
 
@@ -463,11 +478,12 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
         texture->replaceRegion(region, 0, texbuffer.mBuffer, pitch);
       }
     } else {
-      // WORLD TEXTURE PATH: Use SHARED + replaceRegion.
-      // Standard GZDoom path, works well for world geometry where
-      // tiling artifacts are less common or handled by the driver.
+      // WORLD TEXTURE PATH: Use PRIVATE + Blit.
+      // This is the highest performance sampling path for world geometry.
       if (!mImage->GetTexture() ||
-          mImage->GetTexture()->storageMode() != MTL::StorageModeShared) {
+          mImage->GetTexture()->storageMode() != MTL::StorageModePrivate ||
+          mImage->GetTexture()->mipmapLevelCount() != (NS::UInteger)desiredMipLevels) {
+        
         if (mImage->GetTexture()) {
           fb->RecycleTexture(mImage->GetTexture());
           mImage->SetTexture(nullptr);
@@ -478,7 +494,7 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
         desc->setHeight(expectedH);
         desc->setPixelFormat(format);
         desc->setMipmapLevelCount(desiredMipLevels);
-        desc->setStorageMode(MTL::StorageModeShared);
+        desc->setStorageMode(MTL::StorageModePrivate);
         desc->setUsage(MTL::TextureUsageShaderRead);
         if (desiredMipLevels > 1) {
           desc->setUsage(desc->usage() | MTL::TextureUsageRenderTarget);
@@ -494,10 +510,32 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
       }
 
       if (texbuffer.mBuffer) {
-        MTL::Region region = MTL::Region::Make2D(0, 0, expectedW, expectedH);
-        texture->replaceRegion(region, 0, texbuffer.mBuffer, pitch);
-        if (desiredMipLevels > 1) {
-          fb->GetTextureManager()->GenerateMipmaps(texture);
+        // Blit update for Private texture
+        size_t alignedPitch = (pitch + 1023) & ~1023;
+        size_t totalSize = alignedPitch * expectedH;
+        MTL::Buffer *staging = fb->device->device->newBuffer(totalSize, MTL::StorageModeShared);
+        
+        if (staging) {
+            uint8_t *dst = (uint8_t *)staging->contents();
+            uint8_t *src = (uint8_t *)texbuffer.mBuffer;
+            for (int y = 0; y < expectedH; y++) {
+                memcpy(dst + y * alignedPitch, src + y * pitch, pitch);
+            }
+
+            auto cmdBuf = fb->GetCommands()->GetBlitCommandBuffer();
+            if (cmdBuf) {
+                auto blit = cmdBuf->blitCommandEncoder();
+                blit->copyFromBuffer(staging, 0, alignedPitch, 0,
+                                     MTL::Size::Make(expectedW, expectedH, 1), texture, 0,
+                                     0, MTL::Origin::Make(0, 0, 0));
+                if (desiredMipLevels > 1) {
+                    blit->generateMipmaps(texture);
+                }
+                blit->endEncoding();
+                cmdBuf->commit();
+                // We don't force wait here for world textures to allow parallelism
+            }
+            fb->RecycleBuffer(staging);
         }
       }
     }

@@ -83,9 +83,15 @@ struct MtVersionManager {
     supportsMemoryless = (architecture == MtGPUArchitecture::AppleSilicon);
 
     if (device->supportsFamily(MTL::GPUFamilyApple1) ||
-        device->supportsFamily(MTL::GPUFamilyMac1)) {
+        device->supportsFamily(MTL::GPUFamilyMac2)) {
       // Most modern Metal GPUs support RGB10A2
       supportsRGB10A2 = true;
+    }
+
+    // Binary archives require macOS 11.0 (Big Sur)
+    if (osMajor >= 11) {
+      supportsBinaryArchives = true;
+      maxDrawableCount = 3; // Triple buffering at layer level
     }
 
     // Metal Version (rough estimation based on GPU family)
