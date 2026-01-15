@@ -158,6 +158,7 @@ static NSArray *GetKnownExtensions() { return [GetKnownFileTypes() allKeys]; }
   NSButton *browseButton;
   NSTextField *parametersTextField;
   bool cancelled;
+  bool forceClose;
 }
 
 - (void)buttonPressed:(id)sender;
@@ -184,8 +185,7 @@ static NSArray *GetKnownExtensions() { return [GetKnownFileTypes() allKeys]; }
       printf("Metal: IWAD Picker Cancel pressed\n");
   }
 
-  [window orderOut:self];
-  [app stopModal];
+  forceClose = true;
 }
 
 - (void)browseButtonPressed:(id)sender {
@@ -251,8 +251,7 @@ static NSArray *GetKnownExtensions() { return [GetKnownFileTypes() allKeys]; }
 
 - (void)doubleClicked:(id)sender {
   if ([sender clickedRow] >= 0) {
-    [window orderOut:self];
-    [app stopModal];
+    forceClose = true;
   }
 }
 
@@ -271,6 +270,7 @@ static NSArray *GetKnownExtensions() { return [GetKnownFileTypes() allKeys]; }
      showWindow:(bool)showwin
      defaultWad:(int)defaultiwad {
   cancelled = false;
+  forceClose = false;
 
   app = [NSApplication sharedApplication];
   id windowTitle =
@@ -384,18 +384,27 @@ static NSArray *GetKnownExtensions() { return [GetKnownFileTypes() allKeys]; }
     printf("Metal: Activating IWAD Picker app\n");
   [NSApp activateIgnoringOtherApps:YES];
 
-  if (mt_debug)
-    printf("Metal: Running modal for IWAD Picker window %p\n", window);
-  [app runModalForWindow:window];
-  if (mt_debug)
-    printf("Metal: Modal loop finished for IWAD Picker\n");
+  // Use a manual event loop instead of runModalForWindow to avoid lockups
+  // during activation.
+  NSModalSession session = [app beginModalSessionForWindow:window];
+  while (true) {
+    @autoreleasepool {
+      if ([app runModalSession:session] != NSModalResponseContinue || forceClose)
+        break;
+
+      NSEvent *event = [app nextEventMatchingMask:NSEventMaskAny
+                                        untilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]
+                                           inMode:NSDefaultRunLoopMode
+                                          dequeue:YES];
+      if (event) {
+        [app sendEvent:event];
+      }
+    }
+  }
+  [app endModalSession:session];
+  [window orderOut:nil];
 
   [center removeObserver:self name:NSMenuDidSendActionNotification object:nil];
-
-  // ARC handles memory management automatically
-  // ARC handles memory management automatically
-  // ARC handles memory management automatically
-  // ARC handles memory management automatically
 
   return cancelled ? -1 : [iwadTable selectedRow];
 }
@@ -410,8 +419,7 @@ static NSArray *GetKnownExtensions() { return [GetKnownFileTypes() allKeys]; }
 
   if (@selector(terminate:) == [menuItem action]) {
     cancelled = true;
-    [window orderOut:self];
-    [app stopModal];
+    forceClose = true;
   }
 }
 

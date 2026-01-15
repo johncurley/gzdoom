@@ -46,6 +46,11 @@ MtStreamBuffer::~MtStreamBuffer() {
   }
 }
 
+void MtStreamBuffer::Reset() {
+  mStreamDataOffset = 0xffffffff;
+  mBufferIndex = (mBufferIndex + 1) % 3;
+}
+
 uint32_t MtStreamBuffer::NextStreamDataBlock() {
   if (mStreamDataOffset == 0xffffffff) {
     mStreamDataOffset = 0;
@@ -99,8 +104,8 @@ bool MtStreamBufferWriter::Write(const StreamData &data) {
 
 void MtStreamBufferWriter::Reset() {
   mDataIndex = MAX_STREAM_DATA - 1;
-  mStreamDataOffset = 0xffffffff; // Force NextStreamDataBlock() on first write
   mBuffer->Reset();
+  mStreamDataOffset = mBuffer->GetStreamDataOffset();
 }
 
 uint32_t MtStreamBufferWriter::DataIndex() const { return mDataIndex; }
@@ -169,8 +174,8 @@ bool MtMatrixBufferWriter::Write(const VSMatrix &modelMatrix,
 }
 
 void MtMatrixBufferWriter::Reset() {
-  mOffset = 0xffffffff;
   mBuffer->Reset();
+  mOffset = mBuffer->GetStreamDataOffset();
 }
 
 uint32_t MtMatrixBufferWriter::Offset() const { return mOffset; }

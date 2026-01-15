@@ -31,10 +31,8 @@ public:
   uint8_t *GetBufferPointer() const;
 
   // Reset for new frame and cycle to next buffer
-  void Reset() { 
-    mStreamDataOffset = 0xffffffff;
-    mBufferIndex = (mBufferIndex + 1) % 3; // Cycle between 3 buffers (Triple Buffering)
-  }
+  void Reset();
+  uint32_t GetStreamDataOffset() const { return mStreamDataOffset; }
 
 private:
   MTL::Buffer *mBuffers[3] = { nullptr, nullptr, nullptr };
@@ -55,6 +53,7 @@ public:
   void BeginFrame() { 
     mBuffer->Reset(); 
     mDataIndex = MAX_STREAM_DATA - 1;
+    mStreamDataOffset = mBuffer->GetStreamDataOffset();
   }
 
   uint32_t DataIndex() const;
@@ -80,7 +79,7 @@ public:
   void Reset();
   void BeginFrame() { 
     mBuffer->Reset(); 
-    mOffset = 0xffffffff;
+    mOffset = mBuffer->GetStreamDataOffset();
   }
 
   uint32_t Offset() const;
