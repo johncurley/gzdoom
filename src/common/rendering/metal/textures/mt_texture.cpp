@@ -36,95 +36,6 @@ MtTextureImage::~MtTextureImage() {
   }
 }
 
-void MtTextureManager::SetLightmap(int LMTextureSize, int LMTextureCount,
-                                   const TArray<uint16_t> &LMTextureData) {
-  if (LMTextureSize <= 0 || LMTextureCount <= 0) {
-    return;
-  }
-
-  int w = LMTextureSize;
-  int h = LMTextureSize;
-  int count = LMTextureCount;
-  int pixelsize = 8; // RGBA16Float
-
-  // Verify data size to prevent overflow
-  if (LMTextureData.Size() < (unsigned int)(w * h * count * 3)) {
-    Printf(PRINT_LOG,
-           "Metal: SetLightmap error - data size mismatch (%u expected, %u "
-           "provided)\n",
-           (unsigned int)(w * h * count * 3), LMTextureData.Size());
-    return;
-  }
-
-  if (mLightmap && mLightmap->GetWidth() == w && mLightmap->GetHeight() == h &&
-      mLightmap->GetTexture() &&
-      (int)mLightmap->GetTexture()->arrayLength() == count) {
-    // Reuse existing
-  } else {
-    mLightmap = std::make_unique<MtTextureImage>(fb);
-    auto desc = MTL::TextureDescriptor::alloc()->init();
-    desc->setWidth(w);
-    desc->setHeight(h);
-    desc->setPixelFormat(MTL::PixelFormatRGBA16Float);
-    desc->setTextureType(MTL::TextureType2DArray);
-    desc->setArrayLength(count);
-    desc->setMipmapLevelCount(1);
-    desc->setUsage(MTL::TextureUsageShaderRead);
-
-    // Use Private storage mode for best sampling performance when using blit updates
-    desc->setStorageMode(MTL::StorageModePrivate);
-
-    MTL::Texture *tex = fb->device->device->newTexture(desc);
-    if (!tex) {
-      Printf(PRINT_LOG, "Metal: FAILED to create Lightmap texture array!\n");
-      desc->release();
-      return;
-    }
-
-    mLightmap->SetTexture(tex);
-    mLightmap->SetWidth(w);
-    mLightmap->SetHeight(h);
-    desc->release();
-  }
-
-  if (mLightmap->GetTexture()) {
-    int w = mLightmap->GetWidth();
-    int h = mLightmap->GetHeight();
-    int count = (int)mLightmap->GetTexture()->arrayLength();
-    size_t totalBytes = (size_t)w * h * count * 8; // RGBA16Float
-
-    if (!mLightmapStaging || mLightmapStaging->length() < totalBytes) {
-        if (mLightmapStaging) fb->RecycleBuffer(mLightmapStaging);
-        mLightmapStaging = fb->device->device->newBuffer(totalBytes, MTL::ResourceStorageModeShared);
-    }
-
-    if (mLightmapStaging) {
-      uint16_t *dst = (uint16_t *)mLightmapStaging->contents();
-      uint16_t one = 0x3c00; // half-float 1.0
-      const uint16_t *src = LMTextureData.Data();
-
-      for (int i = 0; i < w * h * count; i++) {
-        *(dst++) = *(src++); // R
-        *(dst++) = *(src++); // G
-        *(dst++) = *(src++); // B
-        *(dst++) = one;      // A
-      }
-
-      auto cmdBuf = fb->GetCommands()->GetBlitCommandBuffer();
-      if (cmdBuf) {
-        auto blit = cmdBuf->blitCommandEncoder();
-        for (int i = 0; i < count; i++) {
-          blit->copyFromBuffer(mLightmapStaging, (size_t)i * w * h * 8, w * 8, w * h * 8,
-                               MTL::Size::Make(w, h, 1), mLightmap->GetTexture(), i, 0,
-                               MTL::Origin::Make(0, 0, 0));
-        }
-        blit->endEncoding();
-        cmdBuf->commit();
-      }
-    }
-  }
-}
-
 // MtHardwareTexture
 MtHardwareTexture::MtHardwareTexture(MetalRenderDevice *fb, int numchannels)
     : fb(fb), mNumChannels(numchannels) {
@@ -588,14 +499,92 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
 
 // MtTextureManager
 MtTextureManager::MtTextureManager(MetalRenderDevice *fb) : fb(fb) {}
-MtTextureManager::~MtTextureManager() {
-  if (mLightmapStaging) {
-    mLightmapStaging->release();
-    mLightmapStaging = nullptr;
-  }
-}
+MtTextureManager::~MtTextureManager() {}
 
 void MtTextureManager::SetLightmap(int LMTextureSize, int LMTextureCount,
+                                   const TArray<uint16_t> &LMTextureData) {
+  if (LMTextureSize <= 0 || LMTextureCount <= 0) {
+    return;
+  }
+
+  int w = LMTextureSize;
+  int h = LMTextureSize;
+  int count = LMTextureCount;
+
+  // Verify data size to prevent overflow
+  if (LMTextureData.Size() < (unsigned int)(w * h * count * 3)) {
+    Printf(PRINT_LOG,
+           "Metal: SetLightmap error - data size mismatch (%u expected, %u "
+           "provided)\n",
+           (unsigned int)(w * h * count * 3), LMTextureData.Size());
+    return;
+  }
+
+  if (mLightmap && mLightmap->GetWidth() == w && mLightmap->GetHeight() == h &&
+      mLightmap->GetTexture() &&
+      (int)mLightmap->GetTexture()->arrayLength() == count) {
+    // Reuse existing
+  } else {
+    mLightmap = std::make_unique<MtTextureImage>(fb);
+    auto desc = MTL::TextureDescriptor::alloc()->init();
+    desc->setWidth(w);
+    desc->setHeight(h);
+    desc->setPixelFormat(MTL::PixelFormatRGBA16Float);
+    desc->setTextureType(MTL::TextureType2DArray);
+    desc->setArrayLength(count);
+    desc->setMipmapLevelCount(1);
+    desc->setUsage(MTL::TextureUsageShaderRead);
+
+    // Use Private storage mode for best sampling performance when using blit updates
+    desc->setStorageMode(MTL::StorageModePrivate);
+
+    MTL::Texture *tex = fb->device->device->newTexture(desc);
+    if (!tex) {
+      Printf(PRINT_LOG, "Metal: FAILED to create Lightmap texture array!\n");
+      desc->release();
+      return;
+    }
+
+    mLightmap->SetTexture(tex);
+    mLightmap->SetWidth(w);
+    mLightmap->SetHeight(h);
+    desc->release();
+  }
+
+  if (mLightmap->GetTexture()) {
+    int w = mLightmap->GetWidth();
+    int h = mLightmap->GetHeight();
+    int count = (int)mLightmap->GetTexture()->arrayLength();
+    size_t totalBytes = (size_t)w * h * count * 8; // RGBA16Float
+
+    MTL::Buffer *mtlStaging = fb->device->device->newBuffer(totalBytes, MTL::ResourceStorageModeShared);
+    if (mtlStaging) {
+      uint16_t *dst = (uint16_t *)mtlStaging->contents();
+      uint16_t one = 0x3c00; // half-float 1.0
+      const uint16_t *src = LMTextureData.Data();
+
+      for (int i = 0; i < w * h * count; i++) {
+        *(dst++) = *(src++); // R
+        *(dst++) = *(src++); // G
+        *(dst++) = *(src++); // B
+        *(dst++) = one;      // A
+      }
+
+      auto cmdBuf = fb->GetCommands()->GetBlitCommandBuffer();
+      if (cmdBuf) {
+        auto blit = cmdBuf->blitCommandEncoder();
+        for (int i = 0; i < count; i++) {
+          blit->copyFromBuffer(mtlStaging, (size_t)i * w * h * 8, w * 8, w * h * 8,
+                               MTL::Size::Make(w, h, 1), mLightmap->GetTexture(), i, 0,
+                               MTL::Origin::Make(0, 0, 0));
+        }
+        blit->endEncoding();
+        cmdBuf->commit();
+      }
+      fb->RecycleBuffer(mtlStaging);
+    }
+  }
+}
 
 MTL::Texture *MtTextureManager::CreateTexture(int width, int height, int format,
                                               int mipmaps) {

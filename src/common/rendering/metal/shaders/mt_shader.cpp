@@ -534,9 +534,9 @@ bool MtShaderManager::CompileNextShader() {
   const char *mainfp = "shaders/glsl/main.fp";
 
   // Metal shader compilation is slow (GLSL->SPIRV->MSL->Lib).
-  // Process as many shaders as possible within a 15ms budget to speed up
-  // startup without freezing the UI or blocking the main thread for too long.
+  // Process more shaders per frame during startup to speed up initialization.
   uint64_t startTime = I_msTime();
+  uint64_t budget = (gamestate == GS_STARTUP) ? 100 : 15;
 
   while (true) {
     int i = compileIndex;
@@ -683,6 +683,10 @@ bool MtShaderManager::CompileNextShader() {
             compileState = 5; // All done
             Printf(PRINT_LOG,
                    "Metal: Shader and Pipeline pre-warming complete.\n");
+            
+            if (fb->GetBinaryArchive()) {
+                fb->GetBinaryArchive()->Save();
+            }
             return true;
           }
         }
@@ -694,7 +698,7 @@ bool MtShaderManager::CompileNextShader() {
     }
 
     // Check time budget
-    if (I_msTime() - startTime > 15) {
+    if (I_msTime() - startTime > budget) {
       return false; // Yield to update loop
     }
   }
