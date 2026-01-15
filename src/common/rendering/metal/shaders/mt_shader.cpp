@@ -12,6 +12,8 @@
 #include "i_specialpaths.h"
 #include "metal/renderer/mt_pipelinestate.h"
 #include "metal/system/mt_renderdevice.h"
+#include "metal/system/mt_binaryarchive.h"
+#include "gamestate.h"
 #include "mt_shader.h"
 #include "printf.h"
 #include <fstream>

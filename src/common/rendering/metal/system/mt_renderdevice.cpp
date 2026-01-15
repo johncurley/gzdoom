@@ -478,20 +478,17 @@ void MetalRenderDevice::SetMode(bool fullscreen, bool hiDPI) {
   Super::SetMode(fullscreen, hiDPI);
   if (mVertexData) mVertexData->OutputResized(GetWidth(), GetHeight());
 
+  mFrameCount = 0; // Re-trigger Lag Guard for the new mode
+
   // Force Metal layer drawable size update after mode change
-  // This fixes startup stretching when the layer's initial size doesn't match
 #ifdef __APPLE__
   CocoaNativeHandle nativeHandle = GetNativeHandle();
   if (nativeHandle.metalLayer) {
     CA::MetalLayer *metalLayer = (CA::MetalLayer *)nativeHandle.metalLayer;
 
-    // Get the actual backing size from the view
-    MetalViewSize viewSize = GetMetalViewDrawableSize(nativeHandle.nsWindow);
-
-    if (viewSize.width >= VID_MIN_WIDTH && viewSize.height >= VID_MIN_HEIGHT) {
-      CGSize drawableSize = CGSizeMake(viewSize.width, viewSize.height);
-      metalLayer->setDrawableSize(drawableSize);
-    }
+    // Use internal resolution for the drawable size to ensure 1:1 pixel mapping
+    // contentsGravity handles the aspect ratio preservation on the display
+    metalLayer->setDrawableSize(CGSizeMake(GetWidth(), GetHeight()));
   }
 #endif
 }
