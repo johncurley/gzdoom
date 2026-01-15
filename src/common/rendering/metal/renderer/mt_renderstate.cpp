@@ -794,12 +794,9 @@ void MtRenderState::ApplyHWBufferSet() {
   if (vpBuf &&
       (vpBuf != mLastBoundBuffers[17] || vpOff != mLastBoundOffsets[17])) {
     mEncoder->setVertexBuffer(vpBuf, vpOff, 17);
+    mEncoder->setFragmentBuffer(vpBuf, vpOff, 17);
     mLastBoundBuffers[17] = vpBuf;
     mLastBoundOffsets[17] = vpOff;
-  }
-  if (vpBuf &&
-      (vpBuf != mLastBoundFragmentBuffers[17] || vpOff != mLastBoundFragmentOffsets[17])) {
-    mEncoder->setFragmentBuffer(vpBuf, vpOff, 17);
     mLastBoundFragmentBuffers[17] = vpBuf;
     mLastBoundFragmentOffsets[17] = vpOff;
   }
@@ -818,12 +815,9 @@ void MtRenderState::ApplyHWBufferSet() {
   if (ltBuf &&
       (ltBuf != mLastBoundBuffers[16] || ltOff != mLastBoundOffsets[16])) {
     mEncoder->setVertexBuffer(ltBuf, ltOff, 16);
+    mEncoder->setFragmentBuffer(ltBuf, ltOff, 16);
     mLastBoundBuffers[16] = ltBuf;
     mLastBoundOffsets[16] = ltOff;
-  }
-  if (ltBuf &&
-      (ltBuf != mLastBoundFragmentBuffers[16] || ltOff != mLastBoundFragmentOffsets[16])) {
-    mEncoder->setFragmentBuffer(ltBuf, ltOff, 16);
     mLastBoundFragmentBuffers[16] = ltBuf;
     mLastBoundFragmentOffsets[16] = ltOff;
   }
@@ -842,12 +836,9 @@ void MtRenderState::ApplyHWBufferSet() {
   if (bnBuf &&
       (bnBuf != mLastBoundBuffers[18] || bnOff != mLastBoundOffsets[18])) {
     mEncoder->setVertexBuffer(bnBuf, bnOff, 18);
+    mEncoder->setFragmentBuffer(bnBuf, bnOff, 18);
     mLastBoundBuffers[18] = bnBuf;
     mLastBoundOffsets[18] = bnOff;
-  }
-  if (bnBuf &&
-      (bnBuf != mLastBoundFragmentBuffers[18] || bnOff != mLastBoundFragmentOffsets[18])) {
-    mEncoder->setFragmentBuffer(bnBuf, bnOff, 18);
     mLastBoundFragmentBuffers[18] = bnBuf;
     mLastBoundFragmentOffsets[18] = bnOff;
   }
@@ -863,12 +854,9 @@ void MtRenderState::ApplyHWBufferSet() {
   if (matrixBuffer && (matrixBuffer != mLastBoundBuffers[19] ||
                        matrixOffset != mLastBoundOffsets[19])) {
     mEncoder->setVertexBuffer(matrixBuffer, matrixOffset, 19);
+    mEncoder->setFragmentBuffer(matrixBuffer, matrixOffset, 19);
     mLastBoundBuffers[19] = matrixBuffer;
     mLastBoundOffsets[19] = matrixOffset;
-  }
-  if (matrixBuffer && (matrixBuffer != mLastBoundFragmentBuffers[19] ||
-                       matrixOffset != mLastBoundFragmentOffsets[19])) {
-    mEncoder->setFragmentBuffer(matrixBuffer, matrixOffset, 19);
     mLastBoundFragmentBuffers[19] = matrixBuffer;
     mLastBoundFragmentOffsets[19] = matrixOffset;
   }
@@ -884,12 +872,9 @@ void MtRenderState::ApplyHWBufferSet() {
   if (streamBuffer && (streamBuffer != mLastBoundBuffers[20] ||
                        streamDataOffset != mLastBoundOffsets[20])) {
     mEncoder->setVertexBuffer(streamBuffer, streamDataOffset, 20);
+    mEncoder->setFragmentBuffer(streamBuffer, streamDataOffset, 20);
     mLastBoundBuffers[20] = streamBuffer;
     mLastBoundOffsets[20] = streamDataOffset;
-  }
-  if (streamBuffer && (streamBuffer != mLastBoundFragmentBuffers[20] ||
-                       streamDataOffset != mLastBoundFragmentOffsets[20])) {
-    mEncoder->setFragmentBuffer(streamBuffer, streamDataOffset, 20);
     mLastBoundFragmentBuffers[20] = streamBuffer;
     mLastBoundFragmentOffsets[20] = streamDataOffset;
   }
