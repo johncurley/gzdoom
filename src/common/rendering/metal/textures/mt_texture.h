@@ -113,6 +113,7 @@ private:
   std::unordered_map<PPTexture *, MTL::Texture *> mPPTextures;
   std::unordered_map<uint32_t, std::unique_ptr<MtHardwareTexture>> mPaletteTextures;
   std::unique_ptr<MtTextureImage> mLightmap;
+  MTL::Buffer *mLightmapStaging = nullptr;
 };
 
 class MtPPTexture : public PPTextureBackend {
