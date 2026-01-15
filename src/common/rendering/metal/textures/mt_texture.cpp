@@ -446,9 +446,6 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
                 }
                 blit->endEncoding();
                 cmdBuf->commit();
-                if (gamestate == GS_STARTUP || fb->GetFrameCount() < 100) {
-                    cmdBuf->waitUntilCompleted();
-                }
             }
             fb->RecycleBuffer(staging);
         }
