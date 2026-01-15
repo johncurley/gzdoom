@@ -499,7 +499,12 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
 
 // MtTextureManager
 MtTextureManager::MtTextureManager(MetalRenderDevice *fb) : fb(fb) {}
-MtTextureManager::~MtTextureManager() {}
+MtTextureManager::~MtTextureManager() {
+  if (mLightmapStaging) {
+    mLightmapStaging->release();
+    mLightmapStaging = nullptr;
+  }
+}
 
 void MtTextureManager::SetLightmap(int LMTextureSize, int LMTextureCount,
                                    const TArray<uint16_t> &LMTextureData) {
@@ -557,9 +562,13 @@ void MtTextureManager::SetLightmap(int LMTextureSize, int LMTextureCount,
     int count = (int)mLightmap->GetTexture()->arrayLength();
     size_t totalBytes = (size_t)w * h * count * 8; // RGBA16Float
 
-    MTL::Buffer *mtlStaging = fb->device->device->newBuffer(totalBytes, MTL::ResourceStorageModeShared);
-    if (mtlStaging) {
-      uint16_t *dst = (uint16_t *)mtlStaging->contents();
+    if (!mLightmapStaging || mLightmapStaging->length() < totalBytes) {
+        if (mLightmapStaging) fb->RecycleBuffer(mLightmapStaging);
+        mLightmapStaging = fb->device->device->newBuffer(totalBytes, MTL::ResourceStorageModeShared);
+    }
+
+    if (mLightmapStaging) {
+      uint16_t *dst = (uint16_t *)mLightmapStaging->contents();
       uint16_t one = 0x3c00; // half-float 1.0
       const uint16_t *src = LMTextureData.Data();
 
@@ -574,14 +583,13 @@ void MtTextureManager::SetLightmap(int LMTextureSize, int LMTextureCount,
       if (cmdBuf) {
         auto blit = cmdBuf->blitCommandEncoder();
         for (int i = 0; i < count; i++) {
-          blit->copyFromBuffer(mtlStaging, (size_t)i * w * h * 8, w * 8, w * h * 8,
+          blit->copyFromBuffer(mLightmapStaging, (size_t)i * w * h * 8, w * 8, w * h * 8,
                                MTL::Size::Make(w, h, 1), mLightmap->GetTexture(), i, 0,
                                MTL::Origin::Make(0, 0, 0));
         }
         blit->endEncoding();
         cmdBuf->commit();
       }
-      fb->RecycleBuffer(mtlStaging);
     }
   }
 }

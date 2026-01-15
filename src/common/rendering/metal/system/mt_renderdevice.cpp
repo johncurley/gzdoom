@@ -549,7 +549,28 @@ int MetalRenderDevice::GetFrameCount() {
 
 unsigned int MetalRenderDevice::GetLightBufferBlockSize() const { return 256; }
 
-void MetalRenderDevice::PrecacheMaterial(FMaterial *mat, int translation) {}
+void MetalRenderDevice::PrecacheMaterial(FMaterial *mat, int translation) {
+  if (mat->Source()->GetUseType() == ETextureType::SWCanvas)
+    return;
+
+  // Ensure all layers of the material are created and uploaded
+  int numLayers = mat->NumLayers();
+  int scaleFlags = mat->GetScaleFlags();
+  bool indexed = (scaleFlags & CTF_Indexed) != 0;
+
+  if (indexed)
+    numLayers = 3;
+
+  for (int i = 0; i < numLayers; i++) {
+    int trans = (indexed && i > 0) ? translation : ((i == 0) ? translation : 0);
+    auto hwTexture = mat->GetLayer(i, trans);
+    if (hwTexture) {
+      auto mtHwTexture = static_cast<MtHardwareTexture *>(hwTexture);
+      // Trigger creation and upload if needed
+      mtHwTexture->CreateImage(mat->Source()->GetTexture(), trans, scaleFlags);
+    }
+  }
+}
 void MetalRenderDevice::UpdatePalette() {}
 void MetalRenderDevice::SetTextureFilterMode() {}
 void MetalRenderDevice::StartPrecaching() {}
