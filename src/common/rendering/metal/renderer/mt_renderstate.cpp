@@ -54,6 +54,13 @@ MtRenderState::MtRenderState(MetalRenderDevice *fb)
   Reset();
 }
 
+MtRenderState::~MtRenderState() {
+  if (mPassDescriptor) {
+    mPassDescriptor->release();
+    mPassDescriptor = nullptr;
+  }
+}
+
 void MtRenderState::ClearScreen() {
   if (mt_debug) {
     Printf(PRINT_LOG, "Metal: ClearScreen\n");
@@ -1011,10 +1018,18 @@ void MtRenderState::BeginRenderPass() {
     return;
   }
 
-  // Use manually allocated descriptor for maximum control and stability
-  MTL::RenderPassDescriptor *pRPD = MTL::RenderPassDescriptor::alloc()->init();
-  if (!pRPD)
-    return;
+  // Reuse persistent descriptor to avoid allocation overhead
+  if (!mPassDescriptor) {
+      mPassDescriptor = MTL::RenderPassDescriptor::alloc()->init();
+  }
+  MTL::RenderPassDescriptor *pRPD = mPassDescriptor;
+  
+  // Clear previous attachments to ensure a clean state for reuse
+  for (int i = 0; i < 8; i++) {
+      pRPD->colorAttachments()->object(i)->setTexture(nullptr);
+  }
+  pRPD->depthAttachment()->setTexture(nullptr);
+  pRPD->stencilAttachment()->setTexture(nullptr);
 
   auto buffers = fb->GetBuffers();
   int numAttachments = mRenderTarget.DrawBuffers;
@@ -1167,8 +1182,6 @@ void MtRenderState::BeginRenderPass() {
       }
     }
   }
-
-  pRPD->release();
 
   mMaterial.mChanged = true;
   mClearTargets = 0;
