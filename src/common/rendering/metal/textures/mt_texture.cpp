@@ -182,7 +182,7 @@ unsigned int MtHardwareTexture::CreateTexture(unsigned char *buffer, int w,
     if (buffer) {
       size_t alignedPitch = (w * bpp + 1023) & ~1023;
       size_t totalSize = alignedPitch * h;
-      MTL::Buffer *staging = fb->device->device->newBuffer(totalSize, MTL::StorageModeShared);
+      MTL::Buffer *staging = fb->GetStagingBuffer(totalSize);
       if (staging) {
         uint8_t *dst = (uint8_t *)staging->contents();
         for (int y = 0; y < h; y++) {
@@ -198,7 +198,10 @@ unsigned int MtHardwareTexture::CreateTexture(unsigned char *buffer, int w,
           if (mipLevels > 1)
             blit->generateMipmaps(texture);
           blit->endEncoding();
-          cmdBuf->commit();
+          
+          if (gamestate != GS_STARTUP) {
+              cmdBuf->commit();
+          }
         }
         fb->RecycleBuffer(staging);
       }
@@ -426,7 +429,7 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
         // Blit update for Private texture
         size_t alignedPitch = (pitch + 1023) & ~1023;
         size_t totalSize = alignedPitch * expectedH;
-        MTL::Buffer *staging = fb->device->device->newBuffer(totalSize, MTL::StorageModeShared);
+        MTL::Buffer *staging = fb->GetStagingBuffer(totalSize);
         
         if (staging) {
             uint8_t *dst = (uint8_t *)staging->contents();
@@ -445,7 +448,11 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
                     blit->generateMipmaps(texture);
                 }
                 blit->endEncoding();
-                cmdBuf->commit();
+                
+                // Batch blits during startup to speed up loading
+                if (gamestate != GS_STARTUP) {
+                    cmdBuf->commit();
+                }
             }
             fb->RecycleBuffer(staging);
         }
@@ -559,13 +566,9 @@ void MtTextureManager::SetLightmap(int LMTextureSize, int LMTextureCount,
     int count = (int)mLightmap->GetTexture()->arrayLength();
     size_t totalBytes = (size_t)w * h * count * 8; // RGBA16Float
 
-    if (!mLightmapStaging || mLightmapStaging->length() < totalBytes) {
-        if (mLightmapStaging) fb->RecycleBuffer(mLightmapStaging);
-        mLightmapStaging = fb->device->device->newBuffer(totalBytes, MTL::ResourceStorageModeShared);
-    }
-
-    if (mLightmapStaging) {
-      uint16_t *dst = (uint16_t *)mLightmapStaging->contents();
+    MTL::Buffer *mtlStaging = fb->GetStagingBuffer(totalBytes);
+    if (mtlStaging) {
+      uint16_t *dst = (uint16_t *)mtlStaging->contents();
       uint16_t one = 0x3c00; // half-float 1.0
       const uint16_t *src = LMTextureData.Data();
 
@@ -580,13 +583,17 @@ void MtTextureManager::SetLightmap(int LMTextureSize, int LMTextureCount,
       if (cmdBuf) {
         auto blit = cmdBuf->blitCommandEncoder();
         for (int i = 0; i < count; i++) {
-          blit->copyFromBuffer(mLightmapStaging, (size_t)i * w * h * 8, w * 8, w * h * 8,
+          blit->copyFromBuffer(mtlStaging, (size_t)i * w * h * 8, w * 8, w * h * 8,
                                MTL::Size::Make(w, h, 1), mLightmap->GetTexture(), i, 0,
                                MTL::Origin::Make(0, 0, 0));
         }
         blit->endEncoding();
-        cmdBuf->commit();
+        
+        if (gamestate != GS_STARTUP) {
+            cmdBuf->commit();
+        }
       }
+      fb->RecycleBuffer(mtlStaging);
     }
   }
 }

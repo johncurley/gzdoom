@@ -62,6 +62,7 @@ public:
   // Resource recycling bin to keep buffers alive until GPU is done
   std::vector<MTL::Buffer *> mBufferRecycleBin[4];
   std::vector<MTL::Texture *> mTextureRecycleBin[4];
+  std::vector<MTL::Buffer *> mStagingPool;
   int mCurrentFrameRecycleIndex = 0;
 
   // Manager accessors
@@ -137,6 +138,9 @@ public:
   void WaitForCommands(bool finish) override;
   void RecycleBuffer(MTL::Buffer *buffer);
   void RecycleTexture(MTL::Texture *texture);
+  
+  // Get a staging buffer from the pool or create a new one
+  MTL::Buffer* GetStagingBuffer(size_t size);
 
   dispatch_semaphore_t GetInflightSemaphore() {
     return mInflightFramesSemaphore;

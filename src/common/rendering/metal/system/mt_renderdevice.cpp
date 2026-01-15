@@ -153,6 +153,11 @@ MetalRenderDevice::~MetalRenderDevice() {
     mTextureRecycleBin[i].clear();
   }
 
+  for (auto *buffer : mStagingPool) {
+    buffer->release();
+  }
+  mStagingPool.clear();
+
   if (mInFrame) {
     dispatch_semaphore_signal(mInflightFramesSemaphore);
   }
@@ -527,9 +532,32 @@ void MetalRenderDevice::RecycleBuffer(MTL::Buffer *buffer) {
       buffer->release();
       return;
     }
+    
     std::lock_guard<std::mutex> lock(mRecycleMutex);
-    mBufferRecycleBin[mCurrentFrameRecycleIndex].push_back(buffer);
+    
+    // Return suitable buffers to the staging pool instead of releasing them
+    if (buffer->storageMode() == MTL::StorageModeShared && mStagingPool.size() < 32) {
+        mStagingPool.push_back(buffer);
+    } else {
+        mBufferRecycleBin[mCurrentFrameRecycleIndex].push_back(buffer);
+    }
   }
+}
+
+MTL::Buffer* MetalRenderDevice::GetStagingBuffer(size_t size) {
+    std::lock_guard<std::mutex> lock(mRecycleMutex);
+    
+    // Find a buffer in the pool that fits the requested size
+    for (size_t i = 0; i < mStagingPool.size(); ++i) {
+        if (mStagingPool[i]->length() >= size) {
+            auto buf = mStagingPool[i];
+            mStagingPool.erase(mStagingPool.begin() + i);
+            return buf;
+        }
+    }
+    
+    // Fallback: create a new one
+    return device->device->newBuffer(size, MTL::StorageModeShared);
 }
 
 void MetalRenderDevice::RecycleTexture(MTL::Texture *texture) {
