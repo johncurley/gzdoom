@@ -201,6 +201,9 @@ void MetalRenderDevice::InitializeState() {
     // optimizations that can cause "squares" or tiling artifacts in fullscreen.
     metalLayer->setFramebufferOnly(false);
 
+    // Reinforce aspect ratio constraint at layer level
+    metalLayer->setContentsGravity(CA::kCAGravityResizeAspect);
+
     if (mVersionManager.presentsWithTransaction) {
       // Synchronize with Cocoa transactions for smoother UI integration
       // Note: presentsWithTransaction is not explicitly in metal-cpp
@@ -254,6 +257,8 @@ void MetalRenderDevice::InitializeState() {
   mViewpoints = new HWViewpointBuffer;
   mLights = new FLightBuffer();
   mBones = new BoneBuffer();
+
+  mFrameCount = 0; // Reset for Startup Lag Guard effectiveness
 
   Printf(PRINT_LOG,
          TEXTCOLOR_GREEN "Metal renderer initialized successfully!\n");
