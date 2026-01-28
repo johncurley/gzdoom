@@ -45,6 +45,7 @@ public:
   }
 
   void Draw() override {
+    if (!fb->GetBuffers()) return;
     auto renderState = fb->GetRenderState();
     auto mtRenderState = static_cast<MtRenderState *>(renderState);
 
@@ -64,18 +65,14 @@ public:
       outputTex = nullptr; // use default/swapchain
       // Match the swapchain format (usually BGRA8Unorm) instead of forcing
       // RGBA16Float
-      format =
-          (fb->mCurrentDrawable)
-              ? (MTL::PixelFormat)fb->mCurrentDrawable->texture()->pixelFormat()
-              : MTL::PixelFormatBGRA8Unorm;
-
-      // Use physical drawable dimensions if available
       if (fb->mCurrentDrawable) {
-        width = (int)fb->mCurrentDrawable->texture()->width();
-        height = (int)fb->mCurrentDrawable->texture()->height();
+          format = (MTL::PixelFormat)fb->mCurrentDrawable->texture()->pixelFormat();
+          width = (int)fb->mCurrentDrawable->texture()->width();
+          height = (int)fb->mCurrentDrawable->texture()->height();
       } else {
-        width = fb->GetClientWidth();
-        height = fb->GetClientHeight();
+          format = MTL::PixelFormatBGRA8Unorm;
+          width = fb->GetClientWidth();
+          height = fb->GetClientHeight();
       }
     } else if (Output.Type == PPTextureType::PPTexture) {
       outputTex = fb->GetTextureManager()->GetPPTexture(Output.Texture);
@@ -115,6 +112,7 @@ public:
     if (outputTex) {
       width = (int)outputTex->width();
       height = (int)outputTex->height();
+      format = outputTex->pixelFormat();
     }
 
     mtRenderState->SetRenderTarget(outputTex, depthStencil, width, height,
@@ -142,35 +140,22 @@ public:
       return;
     }
 
-    auto pipeline = fb->GetPipelineStateManager()->GetPPPipelineState(
-        program, (MTL::PixelFormat)format, BlendMode);
+    auto pipeline = fb->GetPipelineStateManager()->GetPPPipelineState(program, (MTL::PixelFormat)format, BlendMode);
     if (pipeline) {
-      // Set vertex buffer on the render state so ApplyRenderPass uses it
       mtRenderState->SetVertexBuffer(screen->mVertexData);
-
-      // Update pipeline key for tracking and potential future use in
-      // ApplyRenderPass
-      auto vb = dynamic_cast<MtVertexBuffer *>(
-          screen->mVertexData->GetBufferObjects().first);
+      auto vb = dynamic_cast<MtVertexBuffer *>(screen->mVertexData->GetBufferObjects().first);
       if (vb) {
-        int stride = (int)vb->GetStride();
         MtPipelineKey ppKey;
-        ppKey.VertexFormat = vb->VertexFormat | (stride << 8);
+        ppKey.VertexFormat = vb->VertexFormat;
         mtRenderState->SetPipelineKey(ppKey);
 
         encoder->setRenderPipelineState(pipeline);
-
-        // CRITICAL: Explicitly set essential state for the new encoder
-        encoder->setDepthStencilState(
-            fb->GetPipelineStateManager()->GetDisabledDepthStencilState());
+        encoder->setDepthStencilState(fb->GetPipelineStateManager()->GetDisabledDepthStencilState());
         encoder->setCullMode(MTL::CullModeNone);
-
-        // Bind vertex buffer (screen->mVertexData) at slot 0 manually too for
-        // safety
         encoder->setVertexBuffer(vb->GetBuffer(), 0, 0);
+        encoder->useResource(vb->GetBuffer(), MTL::ResourceUsageRead, MTL::RenderStageVertex);
       }
 
-      // Bind input textures and samplers
       for (int i = 0; i < (int)Textures.Size(); ++i) {
         auto &input = Textures[i];
         MTL::Texture *tex = nullptr;

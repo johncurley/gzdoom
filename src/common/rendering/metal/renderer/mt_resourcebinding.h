@@ -42,6 +42,9 @@ public:
   // Reset for new frame
   void BeginFrame();
 
+  // Reset tracking for a new encoder
+  void ResetEncoderState();
+
   // Clear material texture bindings (called when switching materials)
   void ClearMaterialTextures();
 

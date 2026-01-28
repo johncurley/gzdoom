@@ -96,6 +96,11 @@ void MtResourceBindingManager::BeginFrame() {
   mMaterialTextures.clear();
 }
 
+void MtResourceBindingManager::ResetEncoderState() {
+  // Current implementation doesn't track redundant state across encoders,
+  // so this is a no-op for now.
+}
+
 void MtResourceBindingManager::ClearMaterialTextures() {
   // Clear all material texture bindings (called when switching materials)
   mMaterialTextures.clear();

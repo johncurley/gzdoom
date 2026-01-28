@@ -145,11 +145,14 @@ protected:
   int mLastVertexOffsets[2] = {0, 0};
   IVertexBuffer *mLastVertexBuffer = nullptr;
   IIndexBuffer *mLastIndexBuffer = nullptr;
+  MTL::Buffer *mLastResidentIndexBuffer = nullptr;
 
   bool mLastModelMatrixEnabled = true;
   bool mLastTextureMatrixEnabled = true;
 
   int mApplyCount = 0;
+  int mPassCount = 0;
+  uint32_t mTotalDraws = 0;
   std::set<MTL::Texture *> mClearedTargets;
 
   struct RenderTarget {

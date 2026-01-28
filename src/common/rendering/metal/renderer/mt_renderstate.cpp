@@ -21,8 +21,10 @@
 */
 
 #include "mt_renderstate.h"
+#include "v_video.h"
 #include "metal/renderer/mt_pipelinestate.h"
 #include "metal/renderer/mt_renderbuffers.h"
+#include "metal/renderer/mt_resourcebinding.h"
 #include "metal/system/mt_buffer.h"
 #include "metal/system/mt_commandbuffer.h"
 #include "metal/system/mt_hwbuffer.h" // Needed for MtHardwareDataBuffer definition
@@ -448,7 +450,7 @@ void MtRenderState::ApplyDepthBias() {
     // resolvable difference). We use 1/2^24 as a reasonable epsilon for 32-bit
     // float buffers to simulate 24-bit precision.
     float unitsScale = 1.0f / 16777216.0f;
-    mCurrentBiasUnits = -mBias.mUnits * unitsScale;
+    mCurrentBiasUnits = -mBias.mUnits * unitsScale * 128.0f; // Scale up for Reverse-Z precision
     mCurrentBiasFactor = -mBias.mFactor;
     mEncoder->setDepthBias(mCurrentBiasUnits, mCurrentBiasFactor, 0.0f);
     mBias.mChanged = false;
@@ -1018,13 +1020,11 @@ void MtRenderState::BeginRenderPass() {
     return;
   }
 
-  // Reuse persistent descriptor to avoid allocation overhead
-  if (!mPassDescriptor) {
-      mPassDescriptor = MTL::RenderPassDescriptor::alloc()->init();
-  }
-  MTL::RenderPassDescriptor *pRPD = mPassDescriptor;
+  // Always allocate a new descriptor to avoid stale state issues
+  MTL::RenderPassDescriptor *pRPD = MTL::RenderPassDescriptor::renderPassDescriptor();
   
-  // Clear previous attachments to ensure a clean state for reuse
+  // Clear previous attachments (not needed for new RPD, but good practice if we reverted)
+  // ...
   for (int i = 0; i < 8; i++) {
       pRPD->colorAttachments()->object(i)->setTexture(nullptr);
   }
@@ -1034,9 +1034,13 @@ void MtRenderState::BeginRenderPass() {
   auto buffers = fb->GetBuffers();
   int numAttachments = mRenderTarget.DrawBuffers;
   // GZDoom extra attachments (Fog, Normal) only exist for the scene target.
-  if (numAttachments > 1 &&
-      (!buffers || targetTex != buffers->SceneColor->GetTexture())) {
-    numAttachments = 1;
+  if (numAttachments > 1) {
+      // Relaxed check: Only ensure the auxiliary buffers actually exist.
+      // We trust mRenderTarget.DrawBuffers if the buffers are valid.
+      if (!buffers || !buffers->SceneFog || !buffers->SceneFog->GetTexture() ||
+          !buffers->SceneNormal || !buffers->SceneNormal->GetTexture()) {
+          numAttachments = 1;
+      }
   }
 
   for (int i = 0; i < numAttachments; i++) {
@@ -1089,17 +1093,18 @@ void MtRenderState::BeginRenderPass() {
     depthAttachment->setLoadAction(clearDepth ? MTL::LoadActionClear
                                               : MTL::LoadActionLoad);
 
-    // TBDR Optimization (Apple Silicon): If we are in the final swapchain pass,
-    // we don't need to store the depth/stencil results back to main memory.
-    if (mRenderTarget.IsSwapChain || fb->mVersionManager.isTBDR) {
-      depthAttachment->setStoreAction(MTL::StoreActionDontCare);
-    } else {
-      depthAttachment->setStoreAction(MTL::StoreActionStore);
-    }
+    // TBDR Optimization (Apple Silicon): Only DontCare if we are strictly writing to the
+    // SwapChain (which is never read back). For intermediate buffers, we MUST Store
+    // because they are often sampled later (Soft Particles, PostProcess).
+    // SSAO Critical Fix: Always STORE depth. We read it later.
+    depthAttachment->setStoreAction(MTL::StoreActionStore);
 
     if (clearDepth) {
+      if (mt_debug) Printf("Metal: CLEARING Depth %p\n", mRenderTarget.DepthStencil);
       depthAttachment->setClearDepth(0.0); // Reverse-Z: Clear to 0.0 (Far)
       mClearedTargets.insert(mRenderTarget.DepthStencil);
+    } else {
+      if (mt_debug) Printf("Metal: LOADING Depth %p\n", mRenderTarget.DepthStencil);
     }
 
     auto stencilAttachment = pRPD->stencilAttachment();
@@ -1107,11 +1112,8 @@ void MtRenderState::BeginRenderPass() {
     stencilAttachment->setLoadAction(clearStencil ? MTL::LoadActionClear
                                                   : MTL::LoadActionLoad);
 
-    if (mRenderTarget.IsSwapChain || fb->mVersionManager.isTBDR) {
-      stencilAttachment->setStoreAction(MTL::StoreActionDontCare);
-    } else {
-      stencilAttachment->setStoreAction(MTL::StoreActionStore);
-    }
+    // SSAO Critical Fix: Always STORE stencil to protect the packed DepthStencil texture.
+    stencilAttachment->setStoreAction(MTL::StoreActionStore);
 
     if (clearStencil) {
       stencilAttachment->setClearStencil(0);
@@ -1119,26 +1121,32 @@ void MtRenderState::BeginRenderPass() {
     }
   }
 
+  // Consume clear flags now that we've set up the pass
+  mClearTargets = 0;
   mIsFirstPass = false;
 
   MTL::CommandBuffer *cmdBuffer = fb->GetCommands()->GetRenderCommandBuffer();
   if (cmdBuffer) {
     mEncoder = cmdBuffer->renderCommandEncoder(pRPD);
+    fb->GetResourceBindingManager()->ResetEncoderState();
+    mLastResidentIndexBuffer = nullptr;
+    mPassCount++;
     mPipelineBound = false;
     if (mEncoder) {
-      mCurrentWinding = MTL::WindingClockwise;
+      mCurrentWinding = MTL::WindingCounterClockwise;
       mEncoder->setFrontFacingWinding(mCurrentWinding);
 
       // Satisfy vertex descriptor aliases
       if (fb->GetBufferManager()->DummyBuffer) {
         mEncoder->setVertexBuffer(fb->GetBufferManager()->DummyBuffer, 0, 30);
+        mEncoder->useResource(fb->GetBufferManager()->DummyBuffer, MTL::ResourceUsageRead, MTL::RenderStageVertex);
       }
 
       // Use current state if set, otherwise default to full target
       MTL::Viewport viewport;
       if (mViewportWidth > 0) {
         viewport.originX = (double)mViewportX;
-        viewport.originY = (double)mViewportY;
+        viewport.originY = (double)(mRenderTarget.Height - (mViewportY + mViewportHeight));
         viewport.width = (double)mViewportWidth;
         viewport.height = (double)mViewportHeight;
       } else {
@@ -1147,9 +1155,10 @@ void MtRenderState::BeginRenderPass() {
         viewport.width = (double)mRenderTarget.Width;
         viewport.height = (double)mRenderTarget.Height;
       }
-      // REVERSE-Z: Map engine range [min, max] to [1-max, 1-min]
-      viewport.znear = 1.0 - mViewportDepthMax;
-      viewport.zfar = 1.0 - mViewportDepthMin;
+      // REVERSE-Z: Map engine range [min, max] directly to [min, max]
+      // Our shader already inverts Z to [1, 0]. Viewport range [0, 1] preserves this.
+      viewport.znear = mViewportDepthMin;
+      viewport.zfar = mViewportDepthMax;
       mEncoder->setViewport(viewport);
 
       MTL::ScissorRect scissor;
