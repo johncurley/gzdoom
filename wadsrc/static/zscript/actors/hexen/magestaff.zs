@@ -256,7 +256,7 @@ class MageStaffFX2 : Actor
 	//
 	//============================================================================
 
-	override int SpecialMissileHit (Actor victim)
+	override EMissileHitResult SpecialMissileHit (Actor victim)
 	{
 		if (victim != target && !victim.player && !victim.bBoss)
 		{

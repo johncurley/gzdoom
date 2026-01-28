@@ -292,8 +292,8 @@ public:
 	// points to the last row in the buffer, which will be the first row output.
 	virtual TArray<uint8_t> GetScreenshotBuffer(int &pitch, ESSType &color_type, float &gamma) { return TArray<uint8_t>(); }
 
-	static float GetZNear() { return 5.f; }
-	static float GetZFar() { return 65536.f; }
+	virtual float GetZNear() const { return 5.f; }
+	virtual float GetZFar() const { return 65536.f; }
 
 	// The original size of the framebuffer as selected in the video menu.
 	uint64_t FrameTime = 0;

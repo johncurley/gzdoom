@@ -32,6 +32,7 @@
 #include "hw_viewpointbuffer.h"
 #include "hw_cvars.h"
 #include "gamestate.h"
+#include "metal/system/mt_renderdevice.h"
 
 EXTERN_CVAR(Bool, mt_debug)
 
@@ -112,6 +113,12 @@ void HWViewpointBuffer::Set2D(FRenderState &di, int width, int height, int pll)
 
 int HWViewpointBuffer::SetViewpoint(FRenderState &di, HWViewpointUniforms *vp)
 {
+	if (screen->IsMetal())
+	{
+		auto fb = static_cast<MetalRenderDevice*>(screen);
+		fb->mLastSceneViewpoint = *vp;
+	}
+
 	CheckSize();
 	mBuffer->Map();
 	memcpy(((char*)mBuffer->Memory()) + mUploadIndex * mBlockAlign, vp, sizeof(*vp));

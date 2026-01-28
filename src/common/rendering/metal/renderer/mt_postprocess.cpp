@@ -256,6 +256,16 @@ void MtPostprocess::AmbientOccludeScene(float m5) {
   int sceneWidth = fb->GetBuffers()->GetSceneWidth();
   int sceneHeight = fb->GetBuffers()->GetSceneHeight();
 
+  // Set Z planes from the last scene viewpoint for correct linearization
+  fb->mZNear = fb->mLastSceneViewpoint.mProjectionMatrix.get()[14] / (fb->mLastSceneViewpoint.mProjectionMatrix.get()[10] - 1.0f);
+  fb->mZFar = fb->mLastSceneViewpoint.mProjectionMatrix.get()[14] / (fb->mLastSceneViewpoint.mProjectionMatrix.get()[10] + 1.0f);
+
+  if (fb->mZNear < 0.1f) fb->mZNear = 5.0f;
+  if (fb->mZFar < fb->mZNear) fb->mZFar = 65536.0f;
+
+  // CRITICAL: Move SceneColor to PipelineImage[0] so the SSAO combine pass can read it!
+  BlitSceneToPostprocess();
+
   MtPPRenderState renderstate(fb);
   hw_postprocess.ssao.Render(&renderstate, m5, sceneWidth, sceneHeight);
 }

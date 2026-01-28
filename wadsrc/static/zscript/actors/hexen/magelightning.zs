@@ -112,7 +112,7 @@ class Lightning : Actor
 		Obituary "$OB_MPMWEAPLIGHTNING";
 	}
 	
-	override int SpecialMissileHit (Actor thing)
+	override EMissileHitResult SpecialMissileHit (Actor thing)
 	{
 		if (thing.bShootable && thing != target)
 		{
@@ -133,7 +133,7 @@ class Lightning : Actor
 			health--;
 			if (health <= 0 || thing.health <= 0)
 			{
-				return 0;
+				return MHIT_DESTROY;
 			}
 			if (bFloorHugger)
 			{
@@ -391,7 +391,7 @@ class LightningZap : Actor
 		Stop;
 	}
 	
-	override int SpecialMissileHit (Actor thing)
+	override EMissileHitResult SpecialMissileHit (Actor thing)
 	{
 		Actor lmo;
 

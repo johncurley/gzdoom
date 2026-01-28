@@ -2,6 +2,7 @@
 
 #include "engineerrors.h"
 #include "gl_sysfb.h"
+#include "hwrenderer/data/hw_viewpointuniforms.h"
 #include <dispatch/dispatch.h>
 #include <mutex>
 
@@ -90,6 +91,8 @@ public:
   bool IsMetal() override { return true; }
   bool RenderTextureIsFlipped() const override { return true; }
   bool IsReverseZ() const override { return true; }
+  float GetZNear() const override { return mZNear; }
+  float GetZFar() const override { return mZFar; }
 
   void Update() override;
 
@@ -148,6 +151,12 @@ public:
   int GetFrameCount();
 
   CA::MetalDrawable *mCurrentDrawable = nullptr;
+
+  MTL::SharedEvent *mGpuEvent = nullptr;
+  uint64_t mNextEventValue = 1;
+  float mZNear = 5.0f;
+  float mZFar = 65536.0f;
+  HWViewpointUniforms mLastSceneViewpoint;
 
 private:
   bool mInFrame = false;

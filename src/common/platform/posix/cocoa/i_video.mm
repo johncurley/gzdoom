@@ -44,6 +44,7 @@
 #include "bitmap.h"
 #include "c_dispatch.h"
 #include "gl_framebuffer.h"
+#include "gl_sysfb.h"
 #include "hardware.h"
 #include "i_system.h"
 #include "m_argv.h"
@@ -544,7 +545,7 @@ public:
         [ms_window setContentView:metalView];
 
         try {
-          fb = new MetalRenderDevice(nullptr, vid_fullscreen);
+          fb = (SystemBaseFrameBuffer *)new MetalRenderDevice(nullptr, vid_fullscreen);
           Printf("Metal renderer initialized successfully.\n");
         } catch (std::exception const &error) {
           Printf(TEXTCOLOR_RED "Metal renderer initialization failed: %s. "
