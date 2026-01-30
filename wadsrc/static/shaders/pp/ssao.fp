@@ -64,15 +64,14 @@ vec2 RotateDirection(vec2 dir, vec2 cossin)
 vec4 GetJitter()
 {
 #if !defined(USE_RANDOM_TEXTURE)
-    return vec4(1,0,1,1);
-	//vec3 rand = noise3(TexCoord.x + TexCoord.y);
-	//float angle = 2.0 * PI * rand.x / NUM_DIRECTIONS;
-	//return vec4(cos(angle), sin(angle), rand.y, rand.z);
+    // High quality golden ratio pseudo-random noise
+    float noise = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+    float angle = noise * 2.0 * PI;
+    return vec4(cos(angle), sin(angle), fract(noise * 1.618), fract(noise * 2.236));
 #else
     return texture(RandomTexture, gl_FragCoord.xy / RANDOM_TEXTURE_WIDTH);
 #endif
 }
-
 // Calculates the ambient occlusion of a sample
 float ComputeSampleAO(vec3 kernelPos, vec3 normal, vec3 samplePos)
 {

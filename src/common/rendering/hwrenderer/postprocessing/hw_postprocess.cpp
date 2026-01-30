@@ -673,14 +673,13 @@ void PPAmbientOcclusion::CreateShaders()
 
 	// Must match quality values in PPAmbientOcclusion::UpdateTextures
 	int numDirections, numSteps;
-	switch (gl_ssao)
-	{
-	default:
-	case LowQuality:    numDirections = 2; numSteps = 4; break;
-	case MediumQuality: numDirections = 4; numSteps = 4; break;
-	case HighQuality:   numDirections = 8; numSteps = 4; break;
-	}
-
+	       switch (gl_ssao)
+	       {
+	       default:
+	       case LowQuality:    numDirections = 4; numSteps = 4; break;
+	       case MediumQuality: numDirections = 8; numSteps = 4; break;
+	       case HighQuality:   numDirections = 12; numSteps = 8; break;
+	       }
 	FString defines;
 	defines.Format(R"(
 		#define USE_RANDOM_TEXTURE
