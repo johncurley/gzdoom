@@ -533,27 +533,36 @@ void MetalRenderDevice::RecycleBuffer(MTL::Buffer *buffer) {
       return;
     }
     
-    std::lock_guard<std::mutex> lock(mRecycleMutex);
-    
-    // Return suitable buffers to the staging pool instead of releasing them
-    if (buffer->storageMode() == MTL::StorageModeShared && mStagingPool.size() < 32) {
-        mStagingPool.push_back(buffer);
-    } else {
-        mBufferRecycleBin[mCurrentFrameRecycleIndex].push_back(buffer);
+    try {
+        std::lock_guard<std::mutex> lock(mRecycleMutex);
+        
+        // Return suitable buffers to the staging pool instead of releasing them
+        if (buffer->storageMode() == MTL::StorageModeShared && mStagingPool.size() < 32) {
+            mStagingPool.push_back(buffer);
+        } else {
+            mBufferRecycleBin[mCurrentFrameRecycleIndex].push_back(buffer);
+        }
+    } catch (const std::system_error& e) {
+        // Mutex is invalid or destroyed - just release the buffer
+        buffer->release();
     }
   }
 }
 
 MTL::Buffer* MetalRenderDevice::GetStagingBuffer(size_t size) {
-    std::lock_guard<std::mutex> lock(mRecycleMutex);
-    
-    // Find a buffer in the pool that fits the requested size
-    for (size_t i = 0; i < mStagingPool.size(); ++i) {
-        if (mStagingPool[i]->length() >= size) {
-            auto buf = mStagingPool[i];
-            mStagingPool.erase(mStagingPool.begin() + i);
-            return buf;
+    try {
+        std::lock_guard<std::mutex> lock(mRecycleMutex);
+        
+        // Find a buffer in the pool that fits the requested size
+        for (size_t i = 0; i < mStagingPool.size(); ++i) {
+            if (mStagingPool[i]->length() >= size) {
+                auto buf = mStagingPool[i];
+                mStagingPool.erase(mStagingPool.begin() + i);
+                return buf;
+            }
         }
+    } catch (const std::system_error& e) {
+        // Fall through to creation if lock fails
     }
     
     // Fallback: create a new one
@@ -566,8 +575,12 @@ void MetalRenderDevice::RecycleTexture(MTL::Texture *texture) {
       texture->release();
       return;
     }
-    std::lock_guard<std::mutex> lock(mRecycleMutex);
-    mTextureRecycleBin[mCurrentFrameRecycleIndex].push_back(texture);
+    try {
+        std::lock_guard<std::mutex> lock(mRecycleMutex);
+        mTextureRecycleBin[mCurrentFrameRecycleIndex].push_back(texture);
+    } catch (const std::system_error& e) {
+        texture->release();
+    }
   }
 }
 
@@ -643,7 +656,7 @@ void MetalRenderDevice::SetActiveRenderTarget() {
   mActiveRenderBuffers = mScreenBuffers.get();
   auto tex = mActiveRenderBuffers->SceneColor->GetTexture();
   mMtRenderState->SetRenderTarget(
-      tex, mActiveRenderBuffers->SceneDepthStencil->GetTexture(),
+      tex, nullptr, // Disable depth for 2D pass
       mActiveRenderBuffers->GetWidth(), mActiveRenderBuffers->GetHeight(),
       (int)MTL::PixelFormatRGBA16Float, 1);
 
