@@ -637,34 +637,66 @@ void PPTonemap::Render(PPRenderState *renderstate)
 /////////////////////////////////////////////////////////////////////////////
 
 PPAmbientOcclusion::PPAmbientOcclusion()
+
 {
+
 	// Must match quality enum in PPAmbientOcclusion::DeclareShaders
-	double numDirections[NumAmbientRandomTextures] = { 2.0, 4.0, 8.0 };
+
+	double numDirections[NumAmbientRandomTextures] = { 4.0, 6.0, 8.0 };
+
+
 
 	std::mt19937 generator(1337);
+
 	std::uniform_real_distribution<double> distribution(0.0, 1.0);
+
 	for (int quality = 0; quality < NumAmbientRandomTextures; quality++)
+
 	{
-		std::shared_ptr<void> data(new int16_t[16 * 4], [](void *p) { delete[](int16_t*)p; });
+
+		// Increased noise texture size to 64x64 to eliminate banding
+
+		std::shared_ptr<void> data(new int16_t[64 * 64 * 4], [](void *p) { delete[](int16_t*)p; });
+
 		int16_t *randomValues = (int16_t *)data.get();
 
-		for (int i = 0; i < 16; i++)
+
+
+		for (int i = 0; i < 64 * 64; i++)
+
 		{
-			double angle = 2.0 * M_PI * distribution(generator) / numDirections[quality];
+
+			double angle = 2.0 * M_PI * distribution(generator);
+
 			double x = cos(angle);
+
 			double y = sin(angle);
+
 			double z = distribution(generator);
+
 			double w = distribution(generator);
 
+
+
 			randomValues[i * 4 + 0] = (int16_t)clamp(x * 32767.0, -32768.0, 32767.0);
+
 			randomValues[i * 4 + 1] = (int16_t)clamp(y * 32767.0, -32768.0, 32767.0);
+
 			randomValues[i * 4 + 2] = (int16_t)clamp(z * 32767.0, -32768.0, 32767.0);
+
 			randomValues[i * 4 + 3] = (int16_t)clamp(w * 32767.0, -32768.0, 32767.0);
+
 		}
 
-		AmbientRandomTexture[quality] = { 4, 4, PixelFormat::Rgba16_snorm, data };
+
+
+		AmbientRandomTexture[quality] = { 64, 64, PixelFormat::Rgba16_snorm, data };
+
 	}
+
 }
+
+
 
 void PPAmbientOcclusion::CreateShaders()
 
@@ -676,7 +708,7 @@ void PPAmbientOcclusion::CreateShaders()
 
 
 
-	// Must match quality values in PPAmbientOcclusion::UpdateTextures
+	// Optimized sample counts for better performance with 64x64 noise
 
 	int numDirections, numSteps;
 
@@ -686,22 +718,28 @@ void PPAmbientOcclusion::CreateShaders()
 
 	default:
 
-	case LowQuality:    numDirections = 8; numSteps = 4; break;
+	case LowQuality:    numDirections = 4; numSteps = 4; break;
 
-	case MediumQuality: numDirections = 12; numSteps = 8; break;
+	case MediumQuality: numDirections = 6; numSteps = 4; break;
 
-	case HighQuality:   numDirections = 16; numSteps = 12; break;
+	case HighQuality:   numDirections = 8; numSteps = 6; break;
 
 	}
 
 
 
 	FString defines;
+
 	defines.Format(R"(
+
 		#define USE_RANDOM_TEXTURE
-		#define RANDOM_TEXTURE_WIDTH 4.0
+
+		#define RANDOM_TEXTURE_WIDTH 64.0
+
 		#define NUM_DIRECTIONS %d.0
+
 		#define NUM_STEPS %d.0
+
 	)", numDirections, numSteps);
 
 	LinearDepth = { "shaders/pp/lineardepth.fp", "", LinearDepthUniforms::Desc() };
@@ -787,8 +825,8 @@ void PPAmbientOcclusion::Render(PPRenderState *renderstate, float m5, int sceneW
 
 	SSAOUniforms ssaoUniforms;
 	ssaoUniforms.SampleIndex = 0;
-	ssaoUniforms.UVToViewA = { 2.0f * invFocalLenX, -2.0f * invFocalLenY }; // Metal: Flip math Y-scale
-	ssaoUniforms.UVToViewB = { -invFocalLenX, invFocalLenY };              // Metal: Flip math Y-offset
+	ssaoUniforms.UVToViewA = { 2.0f * invFocalLenX, 2.0f * invFocalLenY };
+	ssaoUniforms.UVToViewB = { -invFocalLenX, -invFocalLenY };
 	ssaoUniforms.InvFullResolution = { 1.0f / AmbientWidth, 1.0f / AmbientHeight };
 	ssaoUniforms.NDotVBias = nDotVBias;
 	ssaoUniforms.NegInvR2 = -1.0f / r2;
