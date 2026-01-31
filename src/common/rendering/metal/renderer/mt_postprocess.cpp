@@ -55,6 +55,7 @@ public:
     int height = fb->GetBuffers()->GetHeight();
     MTL::PixelFormat format = MTL::PixelFormatRGBA16Float;
     MTL::Texture *depthStencil = nullptr;
+    bool stencilTest = false;
 
     if (customOutputTex) {
       outputTex = customOutputTex;
@@ -95,6 +96,9 @@ public:
     } else if (Output.Type == PPTextureType::SceneColor) {
       outputTex = fb->GetBuffers()->SceneColor->GetTexture();
       format = MTL::PixelFormatRGBA16Float;
+      // SSAO Fix: Enable Stencil Test when targeting SceneColor to avoid bleeding through portals
+      depthStencil = fb->GetBuffers()->SceneDepthStencil->GetTexture();
+      stencilTest = true;
     } else if (Output.Type == PPTextureType::SceneFog) {
       outputTex = fb->GetBuffers()->SceneFog->GetTexture();
       format = MTL::PixelFormatBGRA8Unorm;
@@ -140,7 +144,10 @@ public:
       return;
     }
 
-    auto pipeline = fb->GetPipelineStateManager()->GetPPPipelineState(program, (MTL::PixelFormat)format, BlendMode);
+    auto pipeline = fb->GetPipelineStateManager()->GetPPPipelineState(
+        program, (MTL::PixelFormat)format, BlendMode,
+        depthStencil ? depthStencil->pixelFormat() : MTL::PixelFormatInvalid,
+        stencilTest);
     if (pipeline) {
       mtRenderState->SetVertexBuffer(screen->mVertexData);
       auto vb = dynamic_cast<MtVertexBuffer *>(screen->mVertexData->GetBufferObjects().first);
@@ -150,7 +157,12 @@ public:
         mtRenderState->SetPipelineKey(ppKey);
 
         encoder->setRenderPipelineState(pipeline);
-        encoder->setDepthStencilState(fb->GetPipelineStateManager()->GetDisabledDepthStencilState());
+        if (stencilTest) {
+            encoder->setDepthStencilState(fb->GetPipelineStateManager()->GetPPStencilState());
+            encoder->setStencilReferenceValue(screen->stencilValue);
+        } else {
+            encoder->setDepthStencilState(fb->GetPipelineStateManager()->GetDisabledDepthStencilState());
+        }
         encoder->setCullMode(MTL::CullModeNone);
         encoder->setVertexBuffer(vb->GetBuffer(), 0, 0);
         encoder->useResource(vb->GetBuffer(), MTL::ResourceUsageRead, MTL::RenderStageVertex);
@@ -440,15 +452,10 @@ void MtPostprocess::DrawPresentTexture(IntRect box, bool applyGamma,
   uniforms.ColorScale =
       (gl_dither_bpc == -1) ? 255.0f : (float)((1 << gl_dither_bpc) - 1);
 
-  if (screenshot) {
-    uniforms.Scale = {1.0f, 1.0f};
-    uniforms.Offset = {0.0f, 0.0f};
-  } else {
-    // Flip vertically when blitting to swapchain to correct orientation.
-    // Our internal textures are upside-down relative to Metal NDC.
-    uniforms.Scale = {1.0f, -1.0f};
-    uniforms.Offset = {0.0f, 1.0f};
-  }
+  // Final orientation correction for presentation.
+  // Flips the synchronized internal frame to be right-side up for the screen.
+  uniforms.Scale = {1.0f, -1.0f};
+  uniforms.Offset = {0.0f, 1.0f};
 
   uniforms.HdrMode = 0;
 

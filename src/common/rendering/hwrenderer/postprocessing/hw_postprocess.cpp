@@ -667,19 +667,35 @@ PPAmbientOcclusion::PPAmbientOcclusion()
 }
 
 void PPAmbientOcclusion::CreateShaders()
+
 {
+
 	if (gl_ssao == LastQuality)
+
 		return;
 
+
+
 	// Must match quality values in PPAmbientOcclusion::UpdateTextures
+
 	int numDirections, numSteps;
-	       switch (gl_ssao)
-	       {
-	       default:
-	       case LowQuality:    numDirections = 4; numSteps = 4; break;
-	       case MediumQuality: numDirections = 8; numSteps = 4; break;
-	       case HighQuality:   numDirections = 12; numSteps = 8; break;
-	       }
+
+	switch (gl_ssao)
+
+	{
+
+	default:
+
+	case LowQuality:    numDirections = 8; numSteps = 4; break;
+
+	case MediumQuality: numDirections = 12; numSteps = 8; break;
+
+	case HighQuality:   numDirections = 16; numSteps = 12; break;
+
+	}
+
+
+
 	FString defines;
 	defines.Format(R"(
 		#define USE_RANDOM_TEXTURE
@@ -771,8 +787,8 @@ void PPAmbientOcclusion::Render(PPRenderState *renderstate, float m5, int sceneW
 
 	SSAOUniforms ssaoUniforms;
 	ssaoUniforms.SampleIndex = 0;
-	ssaoUniforms.UVToViewA = { 2.0f * invFocalLenX, 2.0f * invFocalLenY };
-	ssaoUniforms.UVToViewB = { -invFocalLenX, -invFocalLenY };
+	ssaoUniforms.UVToViewA = { 2.0f * invFocalLenX, -2.0f * invFocalLenY }; // Metal: Flip math Y-scale
+	ssaoUniforms.UVToViewB = { -invFocalLenX, invFocalLenY };              // Metal: Flip math Y-offset
 	ssaoUniforms.InvFullResolution = { 1.0f / AmbientWidth, 1.0f / AmbientHeight };
 	ssaoUniforms.NDotVBias = nDotVBias;
 	ssaoUniforms.NegInvR2 = -1.0f / r2;

@@ -25,7 +25,8 @@ bool MtPipelineKey::operator==(const MtPipelineKey &other) const {
          DrawBufferCount == other.DrawBufferCount &&
          PixelFormat == other.PixelFormat &&
          DepthStencilFormat == other.DepthStencilFormat &&
-         ClipDistanceMask == other.ClipDistanceMask;
+         ClipDistanceMask == other.ClipDistanceMask &&
+         IsShadowPass == other.IsShadowPass;
 }
 
 size_t std::hash<MtPipelineKey>::operator()(const MtPipelineKey &key) const {
@@ -48,6 +49,7 @@ size_t std::hash<MtPipelineKey>::operator()(const MtPipelineKey &key) const {
   hash ^= std::hash<int>()(key.PixelFormat) << 15;
   hash ^= std::hash<int>()(key.DepthStencilFormat) << 16;
   hash ^= std::hash<int>()(key.ClipDistanceMask) << 17;
+  hash ^= std::hash<bool>()(key.IsShadowPass) << 18;
   return hash;
 }
 
@@ -97,6 +99,31 @@ MTL::DepthStencilState *MtPipelineStateManager::GetDisabledDepthStencilState() {
   return mDisabledDepthStencilState;
 }
 
+MTL::DepthStencilState *MtPipelineStateManager::GetPPStencilState() {
+  if (mPPStencilState)
+    return mPPStencilState;
+
+  auto desc = MTL::DepthStencilDescriptor::alloc()->init();
+  desc->setDepthCompareFunction(MTL::CompareFunctionAlways);
+  desc->setDepthWriteEnabled(false);
+
+  auto stencilDesc = MTL::StencilDescriptor::alloc()->init();
+  stencilDesc->setStencilCompareFunction(MTL::CompareFunctionEqual);
+  stencilDesc->setStencilFailureOperation(MTL::StencilOperationKeep);
+  stencilDesc->setDepthFailureOperation(MTL::StencilOperationKeep);
+  stencilDesc->setDepthStencilPassOperation(MTL::StencilOperationKeep);
+  stencilDesc->setReadMask(0xFFFFFFFF);
+  stencilDesc->setWriteMask(0xFFFFFFFF);
+
+  desc->setFrontFaceStencil(stencilDesc);
+  desc->setBackFaceStencil(stencilDesc);
+  stencilDesc->release();
+
+  mPPStencilState = fb->device->device->newDepthStencilState(desc);
+  desc->release();
+  return mPPStencilState;
+}
+
 void MtPipelineStateManager::ClearCache() {
   for (auto &pair : mPipelineCache) {
     auto &state = pair.second;
@@ -119,13 +146,20 @@ void MtPipelineStateManager::ClearCache() {
     mDisabledDepthStencilState->release();
     mDisabledDepthStencilState = nullptr;
   }
+
+  if (mPPStencilState) {
+    mPPStencilState->release();
+    mPPStencilState = nullptr;
+  }
 }
 
 MTL::RenderPipelineState *
 MtPipelineStateManager::GetPPPipelineState(MtShaderProgram *program,
                                            MTL::PixelFormat colorFormat,
-                                           FRenderStyle blendMode) {
-  PPKey key = {program, colorFormat, blendMode};
+                                           FRenderStyle blendMode,
+                                           MTL::PixelFormat depthStencilFormat,
+                                           bool stencilTest) {
+  PPKey key = {program, colorFormat, blendMode, depthStencilFormat, stencilTest};
   auto it = mPPPipelineCache.find(key);
   if (it != mPPPipelineCache.end())
     return it->second;
@@ -161,6 +195,12 @@ MtPipelineStateManager::GetPPPipelineState(MtShaderProgram *program,
   auto colorAttachment = desc->colorAttachments()->object(0);
   colorAttachment->setPixelFormat(colorFormat);
   colorAttachment->setWriteMask(MTL::ColorWriteMaskAll);
+
+  // Configure depth/stencil format for PP
+  if (depthStencilFormat != MTL::PixelFormatInvalid) {
+      desc->setDepthAttachmentPixelFormat(depthStencilFormat);
+      desc->setStencilAttachmentPixelFormat(depthStencilFormat);
+  }
 
   // Configure blend mode
   // Opaque (STYLEOP_Add, STYLEALPHA_One, STYLEALPHA_Zero)
@@ -208,6 +248,7 @@ MtPipelineStateManager::GetPPPipelineState(MtShaderProgram *program,
   return pipeline;
 }
 
+
 // ============================================================================ 
 // Pipeline State Creation
 // ============================================================================ 
@@ -217,15 +258,24 @@ MtPipelineStateManager::CreateDepthStencilState(const MtPipelineKey &key) {
   auto desc = MTL::DepthStencilDescriptor::alloc()->init();
 
   // Map depth functions to Metal (GZDoom EDepthFunc has only 3 values)
-  // REVERSE-Z: Near is 1.0, Far is 0.0. Mapping must be inverted.
-  static const MTL::CompareFunction depthFuncs[] = {
+  // REVERSE-Z: Near is 1.0, Far is 0.0. Mapping must be inverted for scene pass.
+  // SHADOW PASS: Use standard mapping (Near is 0.0, Far is 1.0).
+  static const MTL::CompareFunction depthFuncsReverse[] = {
       MTL::CompareFunctionGreater,       // 0: DF_Less (becomes Greater)
       MTL::CompareFunctionGreaterEqual,  // 1: DF_LEqual (becomes GreaterEqual)
       MTL::CompareFunctionAlways         // 2: DF_Always
   };
+  static const MTL::CompareFunction depthFuncsStandard[] = {
+      MTL::CompareFunctionLess,          // 0: DF_Less
+      MTL::CompareFunctionLessEqual,     // 1: DF_LEqual
+      MTL::CompareFunctionAlways         // 2: DF_Always
+  };
+
+  const MTL::CompareFunction *funcs =
+      key.IsShadowPass ? depthFuncsStandard : depthFuncsReverse;
 
   if (key.DepthFunc >= 0 && key.DepthFunc < 3) {
-    desc->setDepthCompareFunction(depthFuncs[key.DepthFunc]);
+    desc->setDepthCompareFunction(funcs[key.DepthFunc]);
   } else {
     desc->setDepthCompareFunction(MTL::CompareFunctionAlways);
   }

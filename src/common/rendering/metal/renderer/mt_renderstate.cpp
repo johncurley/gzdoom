@@ -420,15 +420,22 @@ void MtRenderState::ApplyScissor() {
   if (mScissorChanged && mEncoder) {
     MTL::ScissorRect scissor;
     if (mScissorWidth >= 0) {
-      int x0 = clamp(mScissorX, 0, mRenderTarget.Width);
-      int y0 = clamp(mScissorY, 0, mRenderTarget.Height);
-      int x1 = clamp(mScissorX + mScissorWidth, 0, mRenderTarget.Width);
-      int y1 = clamp(mScissorY + mScissorHeight, 0, mRenderTarget.Height);
+      // Calculate scale between logical and physical pixels for Retina support
+      double scaleX = (double)mRenderTarget.Width / (double)fb->GetWidth();
+      double scaleY = (double)mRenderTarget.Height / (double)fb->GetHeight();
+
+      int x0 = (int)clamp((double)mScissorX * scaleX, 0.0, (double)mRenderTarget.Width);
+      int w0 = (int)((double)mScissorWidth * scaleX);
+      int h0 = (int)((double)mScissorHeight * scaleY);
+      
+      // Universal Y-Flip: originY = PhysicalHeight - (LogicalY + LogicalHeight) * scale
+      int y0 = (int)((double)mRenderTarget.Height - ((double)mScissorY + (double)mScissorHeight) * scaleY);
+      y0 = clamp(y0, 0, (int)mRenderTarget.Height);
 
       scissor.x = (NS::UInteger)x0;
       scissor.y = (NS::UInteger)y0;
-      scissor.width = (NS::UInteger)max(0, x1 - x0);
-      scissor.height = (NS::UInteger)max(0, y1 - y0);
+      scissor.width = (NS::UInteger)clamp(w0, 0, (int)mRenderTarget.Width - x0);
+      scissor.height = (NS::UInteger)clamp(h0, 0, (int)mRenderTarget.Height - y0);
     } else {
       // Negative width/height means disable scissor (full screen)
       scissor.x = 0;
@@ -461,10 +468,15 @@ void MtRenderState::ApplyViewport() {
   if (mViewportChanged && mEncoder) {
     MTL::Viewport viewport;
     if (mViewportWidth >= 0) {
-      viewport.originX = (double)mViewportX;
-      viewport.originY = (double)mViewportY;
-      viewport.width = (double)mViewportWidth;
-      viewport.height = (double)mViewportHeight;
+      // Calculate scale between logical and physical pixels for Retina support
+      double scaleX = (double)mRenderTarget.Width / (double)fb->GetWidth();
+      double scaleY = (double)mRenderTarget.Height / (double)fb->GetHeight();
+
+      viewport.originX = (double)mViewportX * scaleX;
+      // Universal Y-Flip: originY = PhysicalHeight - (LogicalY + LogicalHeight) * scale
+      viewport.originY = (double)mRenderTarget.Height - ((double)mViewportY + (double)mViewportHeight) * scaleY;
+      viewport.width = (double)mViewportWidth * scaleX;
+      viewport.height = (double)mViewportHeight * scaleY;
     } else {
       viewport.originX = 0.0;
       viewport.originY = 0.0;
@@ -1099,9 +1111,17 @@ void MtRenderState::BeginRenderPass() {
     // SSAO Critical Fix: Always STORE depth. We read it later.
     depthAttachment->setStoreAction(MTL::StoreActionStore);
 
+    bool isShadowPass = false;
+    auto shadowMap = fb->GetBuffers()->ShadowMap.get();
+    if (shadowMap && mRenderTarget.Image == shadowMap->GetTexture()) {
+        isShadowPass = true;
+    }
+
     if (clearDepth) {
       if (mt_debug) Printf("Metal: CLEARING Depth %p\n", mRenderTarget.DepthStencil);
-      depthAttachment->setClearDepth(0.0); // Reverse-Z: Clear to 0.0 (Far)
+      // REVERSE-Z: Scene clears to 0.0 (Far). 
+      // SHADOW PASS: Clears to 1.0 (Far).
+      depthAttachment->setClearDepth(isShadowPass ? 1.0 : 0.0);
       mClearedTargets.insert(mRenderTarget.DepthStencil);
     } else {
       if (mt_debug) Printf("Metal: LOADING Depth %p\n", mRenderTarget.DepthStencil);
@@ -1133,7 +1153,9 @@ void MtRenderState::BeginRenderPass() {
     mPassCount++;
     mPipelineBound = false;
     if (mEncoder) {
-      mCurrentWinding = MTL::WindingCounterClockwise;
+      // Vertex-Flip Fix: Because we negated gl_Position.y in the shader,
+      // the front-facing winding is now Clockwise.
+      mCurrentWinding = MTL::WindingClockwise;
       mEncoder->setFrontFacingWinding(mCurrentWinding);
 
       // Satisfy vertex descriptor aliases

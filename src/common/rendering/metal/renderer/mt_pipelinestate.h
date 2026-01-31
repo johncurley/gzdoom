@@ -30,6 +30,7 @@ struct MtPipelineKey {
   int PixelFormat = 0;
   int DepthStencilFormat = 0;
   int ClipDistanceMask = 0;
+  bool IsShadowPass = false;
 
   bool operator==(const MtPipelineKey &other) const;
   bool operator!=(const MtPipelineKey &other) const {
@@ -67,9 +68,12 @@ public:
   // Get or create pipeline for post-processing
   MTL::RenderPipelineState *GetPPPipelineState(class MtShaderProgram *program,
                                                MTL::PixelFormat colorFormat,
-                                               FRenderStyle blendMode);
+                                               FRenderStyle blendMode,
+                                               MTL::PixelFormat depthStencilFormat = MTL::PixelFormatInvalid,
+                                               bool stencilTest = false);
 
   MTL::DepthStencilState *GetDisabledDepthStencilState();
+  MTL::DepthStencilState *GetPPStencilState();
 
   // Clear cache
   void ClearCache();
@@ -92,12 +96,16 @@ private:
     class MtShaderProgram *program;
     MTL::PixelFormat colorFormat;
     FRenderStyle blendMode;
+    MTL::PixelFormat depthStencilFormat;
+    bool stencilTest;
 
     bool operator==(const PPKey &other) const {
       return program == other.program && colorFormat == other.colorFormat &&
              blendMode.BlendOp == other.blendMode.BlendOp &&
              blendMode.SrcAlpha == other.blendMode.SrcAlpha &&
-             blendMode.DestAlpha == other.blendMode.DestAlpha;
+             blendMode.DestAlpha == other.blendMode.DestAlpha &&
+             depthStencilFormat == other.depthStencilFormat &&
+             stencilTest == other.stencilTest;
     }
   };
 
@@ -106,6 +114,8 @@ private:
       size_t h = std::hash<void *>{}(key.program);
       h ^= std::hash<int>{}((int)key.colorFormat) + 0x9e3779b9 + (h << 6) + (h >> 2);
       h ^= std::hash<uint32_t>{}(key.blendMode.AsDWORD) + 0x9e3779b9 + (h << 6) + (h >> 2);
+      h ^= std::hash<int>{}((int)key.depthStencilFormat) + 0x9e3779b9 + (h << 6) + (h >> 2);
+      h ^= std::hash<bool>{}(key.stencilTest) + 0x9e3779b9 + (h << 6) + (h >> 2);
       return h;
     }
   };
@@ -113,4 +123,5 @@ private:
   std::unordered_map<PPKey, MTL::RenderPipelineState *, PPKeyHash>
       mPPPipelineCache;
   MTL::DepthStencilState *mDisabledDepthStencilState = nullptr;
+  MTL::DepthStencilState *mPPStencilState = nullptr;
 };

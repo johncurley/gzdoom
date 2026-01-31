@@ -709,25 +709,28 @@ bool MtShaderManager::CompileNextShader() {
 static void PatchVertexShader(std::string &source,
                               const std::string &shadername) {
   // GZDoom shaders expect OpenGL NDC (-1..1 for all axes, Y up)
-  // Metal expects 0..1 for Z, and we want to Y-flip EVERYTHING to match Metal's
-  // Y-down coordinate system internally
-
+  // Metal expects 0..1 for Z. 
+  // We negate Y here to align Metal with OpenGL's Y-up convention natively.
+  
   std::regex glPosRegex(R"(gl_Position\s*=\s*([^;]+);)");
-  std::string patch =
-      "gl_Position = $1;\n"
-      "    gl_Position.z = 0.5 * (gl_Position.w - gl_Position.z);";
-
-  if (std::regex_search(source, glPosRegex)) {
-    if (mt_debug)
-      Printf(PRINT_LOG,
-             "Metal: Patching vertex shader %s for coordinate system.\n",
-             shadername.c_str());
-    source = std::regex_replace(source, glPosRegex, patch);
+  
+  if (shadername.find("shadowmap") == std::string::npos) {
+      // Scene: Flip Y and apply Reverse-Z [1..0]
+      std::string patch =
+          "gl_Position = $1;\n"
+          "    gl_Position.y = -gl_Position.y;\n"
+          "    gl_Position.z = 0.5 * (gl_Position.w - gl_Position.z);";
+      source = std::regex_replace(source, glPosRegex, patch);
+  } else {
+      // Shadows: Flip Y and apply Standard-Z [0..1]
+      std::string patch =
+          "gl_Position = $1;\n"
+          "    gl_Position.y = -gl_Position.y;\n"
+          "    gl_Position.z = 0.5 * (gl_Position.w + gl_Position.z);";
+      source = std::regex_replace(source, glPosRegex, patch);
   }
 
   // Normalize normals if assigned to stabilize lighting
-  // Use a tiny epsilon to avoid NaN on zero-length vectors (potential source of
-  // pixel sparks)
   std::regex normalRegex(R"((vNormal|vWorldNormal|vEyeNormal)\s*=\s*([^;]+);)");
   if (std::regex_search(source, normalRegex)) {
     source = std::regex_replace(source, normalRegex,
@@ -748,9 +751,16 @@ static void PatchFragmentShader(std::string &source,
 
   // 2. Patch main.fp to increase shadow bias
   if (shadername.find("main") != std::string::npos) {
-    // Use regex to replace ALL instances of "float bias = X.X;" with 2.0
+    // Increase shadow bias
     std::regex biasRegex(R"(float\s+bias\s*=\s*[0-9\.]+;)");
-    source = std::regex_replace(source, biasRegex, "float bias = 2.0;");
+    source = std::regex_replace(source, biasRegex, "float bias = 0.5;");
+  }
+
+  // 3. Patch ssao.fp to add sky guard
+  if (shadername.find("ssao") != std::string::npos) {
+      std::regex fetchVPRegex(R"(float\s+z\s*=\s*texture\(DepthTexture,\s*uv\)\.x;)");
+      source = std::regex_replace(source, fetchVPRegex, 
+          "float z = texture(DepthTexture, uv).x;\n    if (z <= 0.0) return vec3(0.0, 0.0, 1e20);");
   }
 }
 
