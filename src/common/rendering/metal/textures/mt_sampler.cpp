@@ -55,8 +55,9 @@ static MTL::SamplerAddressMode MapAddressMode(int clampMode, bool isV) {
   case 4: // CLAMP_XY_NOMIP
   case 5: // CLAMP_NOFILTER
   case 8: // CLAMP_NOFILTER_XY
-  case 0: // CLAMP_NONE
   case 9: // CLAMP_CAMTEX
+    return MTL::SamplerAddressModeClampToEdge;
+  case 0: // CLAMP_NONE
   default:
     return MTL::SamplerAddressModeRepeat;
   }
