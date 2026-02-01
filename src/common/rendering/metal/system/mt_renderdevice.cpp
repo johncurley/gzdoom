@@ -294,12 +294,14 @@ void MetalRenderDevice::Update() {
 
     // 3. Blit the final result (3D + 2D) from PipelineImage[0] to the swapchain
     if (mPostprocess) {
-      IntRect physicalBox = {0, 0, width, height};
-      mPostprocess->DrawPresentTexture(physicalBox, true, false);
+      // Use LOGICAL dimensions. MtRenderState::ApplyViewport will correctly 
+      // scale these to the physical swapchain pixels using the Retina ratio.
+      IntRect logicalBox = {0, 0, GetWidth(), GetHeight()};
+      mPostprocess->DrawPresentTexture(logicalBox, true, false);
 
       // Reset viewport/scissor after present blit
-      mMtRenderState->SetViewport(0, 0, width, height);
-      mMtRenderState->SetScissor(0, 0, width, height);
+      mMtRenderState->SetViewport(0, 0, GetWidth(), GetHeight());
+      mMtRenderState->SetScissor(0, 0, GetWidth(), GetHeight());
     }
 
     if (mMtRenderState)
@@ -439,7 +441,13 @@ void MetalRenderDevice::BeginFrame() {
 
   mCurrentDrawable->retain();
 
-  mScreenBuffers->BeginFrame(GetWidth(), GetHeight(), GetWidth(), GetHeight());
+  // Retina Fix: Initialize screen buffers with the PHYSICAL drawable size.
+  // This ensures the G-buffer matches the physical resolution of the window.
+  auto drawableTexture = mCurrentDrawable->texture();
+  int physicalWidth = (int)drawableTexture->width();
+  int physicalHeight = (int)drawableTexture->height();
+
+  mScreenBuffers->BeginFrame(physicalWidth, physicalHeight, physicalWidth, physicalHeight);
   mSaveBuffers->BeginFrame(SAVEPICWIDTH, SAVEPICHEIGHT, SAVEPICWIDTH,
                            SAVEPICHEIGHT);
 
@@ -491,9 +499,13 @@ void MetalRenderDevice::SetMode(bool fullscreen, bool hiDPI) {
   if (nativeHandle.metalLayer) {
     CA::MetalLayer *metalLayer = (CA::MetalLayer *)nativeHandle.metalLayer;
 
-    // Use internal resolution for the drawable size to ensure 1:1 pixel mapping
-    // contentsGravity handles the aspect ratio preservation on the display
-    metalLayer->setDrawableSize(CGSizeMake(GetWidth(), GetHeight()));
+    // Use physical resolution for the drawable size to ensure 1:1 pixel mapping
+    MetalViewSize viewSize = GetMetalViewDrawableSize(nativeHandle.nsWindow);
+    if (viewSize.width >= VID_MIN_WIDTH && viewSize.height >= VID_MIN_HEIGHT) {
+        metalLayer->setDrawableSize(CGSizeMake(viewSize.width, viewSize.height));
+    } else {
+        metalLayer->setDrawableSize(CGSizeMake(GetWidth(), GetHeight()));
+    }
   }
 #endif
 }
