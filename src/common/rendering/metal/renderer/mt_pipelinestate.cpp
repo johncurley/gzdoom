@@ -639,10 +639,15 @@ void MtPipelineStateManager::ConfigureBlendMode(
   case STYLEOP_Add:
   case STYLEOP_Sub:
   case STYLEOP_RevSub:
-    if (style.SrcAlpha == STYLEALPHA_One && style.DestAlpha == STYLEALPHA_Zero && style.BlendOp == STYLEOP_Add) {
+    // Opaque check: STYLEOP_Add with Src=1, Dest=0 is opaque overwrite (NO BLENDING).
+    // HOWEVER, for GZDoom, we must only disable blending if BOTH alpha and RGB are opaque.
+    // Translucent style (SrcAlpha, InvSrcAlpha) MUST have blending enabled.
+    if (style.SrcAlpha == STYLEALPHA_One && style.DestAlpha == STYLEALPHA_Zero && 
+        style.BlendOp == STYLEOP_Add) {
         attachment->setBlendingEnabled(false);
         return;
     }
+    
     attachment->setBlendingEnabled(true);
     attachment->setSourceRGBBlendFactor(srcRGBFactor);
     attachment->setDestinationRGBBlendFactor(dstRGBFactor);

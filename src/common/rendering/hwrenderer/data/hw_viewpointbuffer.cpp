@@ -33,6 +33,7 @@
 #include "hw_cvars.h"
 #include "gamestate.h"
 #include "metal/system/mt_renderdevice.h"
+#include "metal/renderer/mt_renderstate.h"
 
 EXTERN_CVAR(Bool, mt_debug)
 
@@ -117,6 +118,14 @@ int HWViewpointBuffer::SetViewpoint(FRenderState &di, HWViewpointUniforms *vp)
 	{
 		auto fb = static_cast<MetalRenderDevice*>(screen);
 		fb->mLastSceneViewpoint = *vp;
+
+		// Winding Fix: Standard GZDoom view matrix has a -1 scale on X (det < 0).
+		// Mirrors apply an additional flip (det > 0).
+		auto m = vp->mViewMatrix.get();
+		float det = m[0] * (m[5] * m[10] - m[6] * m[9]) -
+					m[4] * (m[1] * m[10] - m[2] * m[9]) +
+					m[8] * (m[1] * m[6] - m[2] * m[5]);
+		static_cast<MtRenderState*>(fb->GetRenderState())->SetMirrored(det > 0.0f);
 	}
 
 	CheckSize();

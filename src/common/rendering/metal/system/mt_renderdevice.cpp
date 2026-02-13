@@ -616,11 +616,20 @@ void MetalRenderDevice::PrecacheMaterial(FMaterial *mat, int translation) {
 
   for (int i = 0; i < numLayers; i++) {
     int trans = (indexed && i > 0) ? translation : ((i == 0) ? translation : 0);
-    auto hwTexture = mat->GetLayer(i, trans);
+    MaterialLayerInfo *layerInfo = nullptr;
+    auto hwTexture = mat->GetLayer(i, trans, &layerInfo);
     if (hwTexture) {
       auto mtHwTexture = static_cast<MtHardwareTexture *>(hwTexture);
-      // Trigger creation and upload if needed
-      mtHwTexture->CreateImage(mat->Source()->GetTexture(), trans, scaleFlags);
+      FTexture *tex = (layerInfo && layerInfo->layerTexture)
+                          ? layerInfo->layerTexture
+                          : nullptr;
+      if (!tex && i == 0)
+        tex = mat->Source()->GetTexture();
+
+      if (tex) {
+        mtHwTexture->CreateImage(
+            tex, trans, layerInfo ? layerInfo->scaleFlags : scaleFlags);
+      }
     }
   }
 }

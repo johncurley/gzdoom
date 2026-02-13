@@ -740,7 +740,7 @@ static void PatchVertexShader(std::string &source,
 
 static void PatchFragmentShader(std::string &source,
                                 const std::string &shadername) {
-  // 1. Patch ShadowMap generation to use massive default distance
+  // 1. Patch ShadowMap generation and usage
   if (shadername.find("shadowmap") != std::string::npos) {
     size_t pos = source.find("FragColor = vec4(1.0, 0.0, 0.0, 1.0);");
     if (pos != std::string::npos) {
@@ -753,14 +753,36 @@ static void PatchFragmentShader(std::string &source,
   if (shadername.find("main") != std::string::npos) {
     // Increase shadow bias
     std::regex biasRegex(R"(float\s+bias\s*=\s*[0-9\.]+;)");
-    source = std::regex_replace(source, biasRegex, "float bias = 0.5;");
+    source = std::regex_replace(source, biasRegex, "float bias = 16.0;");
   }
 
-  // 3. Patch ssao.fp to add sky guard
+  // 3. Patch lineardepth.fp to handle Reverse-Z
+  if (shadername.find("lineardepth") != std::string::npos) {
+      std::regex fetchRegex(R"(float\s+depth\s*=\s*normalizeDepth\((.*)\);)");
+      source = std::regex_replace(source, fetchRegex, 
+          "float rawDepth = $1;\n"
+          "        float depth = normalizeDepth(1.0 - rawDepth);");
+  }
+
+  // 4. Patch ssao.fp to fix orientation and depth consistency
   if (shadername.find("ssao") != std::string::npos) {
-      std::regex fetchVPRegex(R"(float\s+z\s*=\s*texture\(DepthTexture,\s*uv\)\.x;)");
+      // Reconstruct view position with GZDoom's standard UVs.
+      // Use linearized Reverse-Z depth.
+      std::regex fetchVPRegex(R"(vec3\s+FetchViewPos\(vec2\s+uv\)\s*\{\s*float\s+z\s*=\s*texture\(DepthTexture,\s*uv\)\.x;\s*return\s+vec3\(\(UVToViewA\s*\*\s*uv\s*\+\s*UVToViewB\)\s*\*\s*z,\s*z\);\s*\})");
       source = std::regex_replace(source, fetchVPRegex, 
-          "float z = texture(DepthTexture, uv).x;\n    if (z <= 0.0) return vec3(0.0, 0.0, 1e20);");
+          "vec3 FetchViewPos(vec2 uv) {\n"
+          "    float rawZ = texture(DepthTexture, uv).x;\n"
+          "    if (rawZ <= 0.0) return vec3(0.0, 0.0, 1e20);\n"
+          "    float z = 1.0 - rawZ;\n"
+          "    return vec3((UVToViewA * uv + UVToViewB) * z, z);\n"
+          "}");
+
+      // Flip normal.z: Scene is internally inverted, so we must align normals
+      // with the reconstructed positive-Z forward view space.
+      size_t pos = source.find("normal.z = -normal.z;");
+      if (pos != std::string::npos) {
+          source.replace(pos, strlen("normal.z = -normal.z;"), "/* normal.z = -normal.z; */");
+      }
   }
 }
 

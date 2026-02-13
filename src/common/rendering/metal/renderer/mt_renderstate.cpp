@@ -22,6 +22,7 @@
 
 #include "mt_renderstate.h"
 #include "v_video.h"
+#include "doomdef.h"
 #include "metal/renderer/mt_pipelinestate.h"
 #include "metal/renderer/mt_renderbuffers.h"
 #include "metal/renderer/mt_resourcebinding.h"
@@ -53,6 +54,8 @@ MtRenderState::MtRenderState(MetalRenderDevice *fb)
     : fb(fb), mStreamBufferWriter(fb), mMatrixBufferWriter(fb) {
   mStencilFunc = 2; // DF_Always (Index 2 in GZDoom)
   mStencilRef = 0;
+  mVirtualWidth = max(fb->GetWidth(), 1);
+  mVirtualHeight = max(fb->GetHeight(), 1);
   Reset();
 }
 
@@ -420,17 +423,14 @@ void MtRenderState::ApplyScissor() {
   if (mScissorChanged && mEncoder) {
     MTL::ScissorRect scissor;
     if (mScissorWidth >= 0) {
-      // Calculate scale between logical and physical pixels for Retina support
-      double scaleX = (double)mRenderTarget.Width / (double)fb->GetWidth();
-      double scaleY = (double)mRenderTarget.Height / (double)fb->GetHeight();
+      // CONTEXT-AWARE SCALING: Use logical dimensions as divider
+      double scaleX = (double)mRenderTarget.Width / (double)mVirtualWidth;
+      double scaleY = (double)mRenderTarget.Height / (double)mVirtualHeight;
 
       int x0 = (int)clamp((double)mScissorX * scaleX, 0.0, (double)mRenderTarget.Width);
+      int y0 = (int)clamp((double)mScissorY * scaleY, 0.0, (double)mRenderTarget.Height);
       int w0 = (int)((double)mScissorWidth * scaleX);
       int h0 = (int)((double)mScissorHeight * scaleY);
-      
-      // Universal Y-Flip: originY = PhysicalHeight - (LogicalY + LogicalHeight) * scale
-      int y0 = (int)((double)mRenderTarget.Height - ((double)mScissorY + (double)mScissorHeight) * scaleY);
-      y0 = clamp(y0, 0, (int)mRenderTarget.Height);
 
       scissor.x = (NS::UInteger)x0;
       scissor.y = (NS::UInteger)y0;
@@ -468,13 +468,12 @@ void MtRenderState::ApplyViewport() {
   if (mViewportChanged && mEncoder) {
     MTL::Viewport viewport;
     if (mViewportWidth >= 0) {
-      // Calculate scale between logical and physical pixels for Retina support
-      double scaleX = (double)mRenderTarget.Width / (double)fb->GetWidth();
-      double scaleY = (double)mRenderTarget.Height / (double)fb->GetHeight();
+      // CONTEXT-AWARE SCALING: Use logical dimensions as divider
+      double scaleX = (double)mRenderTarget.Width / (double)mVirtualWidth;
+      double scaleY = (double)mRenderTarget.Height / (double)mVirtualHeight;
 
       viewport.originX = (double)mViewportX * scaleX;
-      // Universal Y-Flip: originY = PhysicalHeight - (LogicalY + LogicalHeight) * scale
-      viewport.originY = (double)mRenderTarget.Height - ((double)mViewportY + (double)mViewportHeight) * scaleY;
+      viewport.originY = (double)mViewportY * scaleY;
       viewport.width = (double)mViewportWidth * scaleX;
       viewport.height = (double)mViewportHeight * scaleY;
     } else {
@@ -502,9 +501,11 @@ void MtRenderState::ApplyStreamData() {
           : 0;
 
   if (mMaterial.mMaterial && mMaterial.mMaterial->Source())
+  {
+    double time = I_msTimeFS();
     mStreamData.timer = static_cast<float>(
-        (double)(screen->FrameTime - firstFrame) *
-        (double)mMaterial.mMaterial->Source()->GetShaderSpeed() / 1000.);
+        time * (double)mMaterial.mMaterial->Source()->GetShaderSpeed() / 1000.);
+  }
   else
     mStreamData.timer = 0.0f;
 
@@ -536,9 +537,9 @@ void MtRenderState::ApplyPushConstants() {
   // Group 1
   mPushConstants.group1[0] = mClipSplit[0];
   mPushConstants.group1[1] = mClipSplit[1];
-  mPushConstants.group1[2] = 0.0f;
-  mPushConstants.group1[3] = 0.0f;
-  if (mMaterial.mMaterial) {
+  mPushConstants.group1[2] = mGlossiness;
+  mPushConstants.group1[3] = mSpecularLevel;
+  if (mPushConstants.group1[2] == 0.0f && mPushConstants.group1[3] == 0.0f && mMaterial.mMaterial) {
     auto source = mMaterial.mMaterial->Source();
     mPushConstants.group1[2] = source->GetGlossiness();
     mPushConstants.group1[3] = source->GetSpecularLevel();
@@ -559,7 +560,7 @@ void MtRenderState::ApplyPushConstants() {
   // Group 4
   mPushConstants.group4[0] = (float)mBoneIndexBase;
   mPushConstants.group4[1] = (float)mStreamBufferWriter.DataIndex();
-  mPushConstants.group4[2] = 0.0f;
+  mPushConstants.group4[2] = (float)mClipDistanceMask;
   mPushConstants.group4[3] = 0.0f;
 
   if (mPushConstants != mLastPushConstants) {
@@ -631,20 +632,23 @@ void MtRenderState::ApplyMaterial() {
         int translation = (isIndexed && i > 0)
                               ? mMaterial.mTranslation
                               : ((i == 0) ? mMaterial.mTranslation : 0);
-        auto hwTexture = mMaterial.mMaterial->GetLayer(i, translation);
+        MaterialLayerInfo *layerInfo = nullptr;
+        auto hwTexture = mMaterial.mMaterial->GetLayer(i, translation, &layerInfo);
         if (hwTexture) {
           auto mtHwTexture = static_cast<MtHardwareTexture *>(hwTexture);
           auto image = mtHwTexture->GetImage();
 
           if (!image->GetTexture()) {
-            auto tex = mMaterial.mMaterial->Source();
+            FTexture *tex = (layerInfo && layerInfo->layerTexture)
+                                ? layerInfo->layerTexture
+                                : nullptr;
+            if (!tex && i == 0)
+              tex = mMaterial.mMaterial->Source()->GetTexture();
+
             if (tex) {
-              // Note: GetLayer for palettes handles its own creation usually,
-              // but we ensure the base layer has an image.
-              if (i == 0) {
-                mtHwTexture->CreateImage(tex->GetTexture(),
-                                         mMaterial.mTranslation, scaleFlags);
-              }
+              mtHwTexture->CreateImage(
+                  tex, translation,
+                  layerInfo ? layerInfo->scaleFlags : scaleFlags);
             }
           }
 
@@ -950,6 +954,9 @@ void MtRenderState::BeginFrame() {
   mClearedTargets.clear();
   mPipelineBound = false;
 
+  mVirtualWidth = fb->GetWidth();
+  mVirtualHeight = fb->GetHeight();
+
   mStreamBufferWriter.BeginFrame();
   mMatrixBufferWriter.BeginFrame();
 
@@ -1011,6 +1018,15 @@ void MtRenderState::SetRenderTarget(MTL::Texture *image,
   mRenderTarget.DepthStencil = depthStencilView;
   mRenderTarget.Width = width;
   mRenderTarget.Height = height;
+
+  if (isSwapChain) {
+    mVirtualWidth = max(fb->GetWidth(), 1);
+    mVirtualHeight = max(fb->GetHeight(), 1);
+  } else {
+    mVirtualWidth = max(width, 1);
+    mVirtualHeight = max(height, 1);
+  }
+
   mRenderTarget.Format = image ? (int)image->pixelFormat() : format;
   mRenderTarget.Samples = samples;
 }
@@ -1077,7 +1093,7 @@ void MtRenderState::BeginRenderPass() {
       MTL::ClearColor cc;
       if (i == 0) {
         if (targetTex == fb->GetBuffers()->ShadowMap->GetTexture()) {
-          cc = MTL::ClearColor::Make(1e20, 0.0, 0.0, 1.0);
+          cc = MTL::ClearColor::Make(1e6, 0.0, 0.0, 1.0);
         } else {
           cc = MTL::ClearColor::Make(
               screen->mSceneClearColor[0], screen->mSceneClearColor[1],
@@ -1155,7 +1171,7 @@ void MtRenderState::BeginRenderPass() {
     if (mEncoder) {
       // Vertex-Flip Fix: Because we negated gl_Position.y in the shader,
       // the front-facing winding is now Clockwise.
-      mCurrentWinding = MTL::WindingClockwise;
+      mCurrentWinding = mMirror ? MTL::WindingCounterClockwise : MTL::WindingClockwise;
       mEncoder->setFrontFacingWinding(mCurrentWinding);
 
       // Satisfy vertex descriptor aliases
@@ -1167,10 +1183,13 @@ void MtRenderState::BeginRenderPass() {
       // Use current state if set, otherwise default to full target
       MTL::Viewport viewport;
       if (mViewportWidth > 0) {
-        viewport.originX = (double)mViewportX;
-        viewport.originY = (double)(mRenderTarget.Height - (mViewportY + mViewportHeight));
-        viewport.width = (double)mViewportWidth;
-        viewport.height = (double)mViewportHeight;
+        double scaleX = (double)mRenderTarget.Width / (double)mVirtualWidth;
+        double scaleY = (double)mRenderTarget.Height / (double)mVirtualHeight;
+
+        viewport.originX = (double)mViewportX * scaleX;
+        viewport.originY = (double)mViewportY * scaleY;
+        viewport.width = (double)mViewportWidth * scaleX;
+        viewport.height = (double)mViewportHeight * scaleY;
       } else {
         viewport.originX = 0;
         viewport.originY = 0;
@@ -1185,12 +1204,13 @@ void MtRenderState::BeginRenderPass() {
 
       MTL::ScissorRect scissor;
       if (mScissorWidth > 0) {
-        scissor.x = (NS::UInteger)clamp(mScissorX, 0, mRenderTarget.Width);
-        scissor.y = (NS::UInteger)clamp(mScissorY, 0, mRenderTarget.Height);
-        scissor.width = (NS::UInteger)clamp(
-            mScissorWidth, 0, mRenderTarget.Width - (int)scissor.x);
-        scissor.height = (NS::UInteger)clamp(
-            mScissorHeight, 0, mRenderTarget.Height - (int)scissor.y);
+        double scaleX = (double)mRenderTarget.Width / (double)mVirtualWidth;
+        double scaleY = (double)mRenderTarget.Height / (double)mVirtualHeight;
+
+        scissor.x = (NS::UInteger)clamp((double)mScissorX * scaleX, 0.0, (double)mRenderTarget.Width);
+        scissor.y = (NS::UInteger)clamp((double)mScissorY * scaleY, 0.0, (double)mRenderTarget.Height);
+        scissor.width = (NS::UInteger)clamp((double)mScissorWidth * scaleX, 0.0, (double)mRenderTarget.Width - (double)scissor.x);
+        scissor.height = (NS::UInteger)clamp((double)mScissorHeight * scaleY, 0.0, (double)mRenderTarget.Height - (double)scissor.y);
       } else {
         scissor.x = 0;
         scissor.y = 0;

@@ -62,6 +62,13 @@ public:
   void EndFrame();
   void ResetApplyCount() { mApplyCount = 0; }
   void SetInRenderTextureView(bool on);
+  void SetMirrored(bool mirrored) { mMirror = mirrored; mCullModeChanged = true; }
+  void SetSpecular(float glossiness, float specularLevel) override
+  {
+       mGlossiness = glossiness;
+       mSpecularLevel = specularLevel;
+       mNeedApply = true;
+  }
 
   MTL::RenderCommandEncoder *GetEncoder() { return mEncoder; }
   const auto &GetRenderTarget() const { return mRenderTarget; }
@@ -88,6 +95,8 @@ protected:
 
   MetalRenderDevice *fb = nullptr;
 
+  float mGlossiness = 0.0f;
+  float mSpecularLevel = 0.0f;
   bool mDepthClamp = true;
   MTL::RenderCommandEncoder *mEncoder = nullptr;
   MtPipelineKey mPipelineKey = {};
@@ -98,6 +107,7 @@ protected:
   // State tracking (same as Vulkan)
   int mScissorX = 0, mScissorY = 0, mScissorWidth = -1, mScissorHeight = -1;
   int mViewportX = 0, mViewportY = 0, mViewportWidth = -1, mViewportHeight = -1;
+  int mVirtualWidth = 0, mVirtualHeight = 0;
   float mViewportDepthMin = 0.0f, mViewportDepthMax = 1.0f;
   bool mScissorChanged = true;
   bool mViewportChanged = true;
@@ -106,6 +116,7 @@ protected:
   bool mDepthWrite = false;
   bool mStencilTest = false;
   bool mInRenderTextureView = false;
+  bool mMirror = false;
   int mClipDistanceMask = 0;
   bool mIsFirstPass = true;
 
@@ -164,7 +175,5 @@ protected:
     int Samples = 1; // Sample count
     int DrawBuffers = 1;
     bool IsSwapChain = false;
-    int VirtualWidth = 0;
-    int VirtualHeight = 0;
   } mRenderTarget;
 };
