@@ -302,9 +302,9 @@ void MtRenderState::ApplyFixedTextures() {
     sk.MinFilter = 0;
     sk.MagFilter = 0;
     sk.MipFilter = 0;
-    sk.AddressU = 2; // Clamp
-    sk.AddressV = 2;
-    sk.AddressW = 2;
+    sk.AddressU = 3; // CLAMP_XY
+    sk.AddressV = 3;
+    sk.AddressW = 3;
     sk.MaxAnisotropy = 1.0f;
 
     auto sampler = fb->GetSamplerManager()->GetSamplerState(sk);
@@ -324,9 +324,9 @@ void MtRenderState::ApplyFixedTextures() {
     sk.MinFilter = 1; // Linear
     sk.MagFilter = 1;
     sk.MipFilter = 0;
-    sk.AddressU = 2; // Clamp
-    sk.AddressV = 2;
-    sk.AddressW = 2;
+    sk.AddressU = 3; // CLAMP_XY
+    sk.AddressV = 3;
+    sk.AddressW = 3;
     sk.MaxAnisotropy = 1.0f;
 
     MTL::SamplerState *sampler = fb->GetSamplerManager()->GetSamplerState(sk);
