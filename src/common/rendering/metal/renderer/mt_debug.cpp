@@ -32,6 +32,7 @@ EXTERN_CVAR(Bool, mt_debug)
 MtDebugManager::MtDebugManager(MetalRenderDevice *renderDevice)
     : fb(renderDevice) {
   mFrameTimeHistory.reserve(120);
+  Printf(PRINT_HIGH, "Metal Debug Manager initialized (enable with: mt_debug 1)\n");
 }
 
 MtDebugManager::~MtDebugManager() {
@@ -128,7 +129,7 @@ void MtDebugManager::PrintDebugStats() {
   float avgFrameTime = GetAverageFrameTime();
   float fps = (avgFrameTime > 0) ? 1000.0f / avgFrameTime : 0.0f;
 
-  Printf(PRINT_LOG,
+  Printf(PRINT_HIGH,
          "Metal: FPS: %.1f | Frame: %.2fms | Draws: %d | Verts: %d | State: %d\n",
          fps, avgFrameTime, mCurrentFrameStats.drawCallCount,
          mCurrentFrameStats.indexCount, mCurrentFrameStats.stateChanges);
