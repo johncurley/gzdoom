@@ -474,9 +474,15 @@ FxExpression *ParseActions(FScanner &sc, FState state, FString statestring, Bagg
 	// Otherwise, it's a sequence of actions.
 	if (!sc.Compare("{"))
 	{
+		const FScriptPosition pos(sc);
+		auto seq = new FxCompoundStatement(pos);
 		FxExpression *call = ParseAction(sc, state, statestring, bag);
-		endswithret = true;
-		return new FxReturnStatement(call, sc);
+		if (call != nullptr)
+		{
+			seq->Add(call);
+		}
+		endswithret = false;
+		return seq;
 	}
 
 	const FScriptPosition pos(sc);
@@ -573,7 +579,7 @@ FxExpression* ParseAction(FScanner &sc, FState state, FString statestring, Bagga
 	{
 		FArgumentList args;
 		ParseFunctionParameters(sc, bag.Info, args, afd, statestring, &bag.statedef);
-		call = new FxVMFunctionCall(new FxSelf(sc), afd, args, FScriptPosition(sc), true);
+		call = new FxVMFunctionCall(new FxSelf(sc), afd, args, FScriptPosition(sc), false);
 		return call;
 	}
 	sc.ScriptError("Invalid parameter '%s'\n", sc.String);
