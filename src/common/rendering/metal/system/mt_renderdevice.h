@@ -43,6 +43,7 @@ class MtHardwareTexture;
 class MtRenderBuffers;
 class MtPostprocess;
 class MtBinaryArchive;
+class MtDebugManager;
 class SWSceneDrawer;
 
 // Metal device wrapper
@@ -81,6 +82,7 @@ public:
   MtRenderState *GetRenderState() { return mMtRenderState.get(); }
   MtPostprocess *GetPostprocess() { return mPostprocess.get(); }
   MtBinaryArchive *GetBinaryArchive() { return mBinaryArchive.get(); }
+  MtDebugManager *GetDebugManager() { return mDebugManager.get(); }
   MtRenderBuffers *GetBuffers() { return mActiveRenderBuffers; }
   FRenderState *RenderState() override;
 
@@ -176,6 +178,7 @@ private:
   std::unique_ptr<MtRenderBuffers> mSaveBuffers;
   std::unique_ptr<MtPostprocess> mPostprocess;
   std::unique_ptr<MtBinaryArchive> mBinaryArchive;
+  std::unique_ptr<MtDebugManager> mDebugManager;
   std::unique_ptr<MtResourceBindingManager> mResourceBindingManager;
   std::unique_ptr<MtPipelineStateManager> mPipelineStateManager;
   std::unique_ptr<MtRenderState> mMtRenderState;

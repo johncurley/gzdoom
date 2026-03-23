@@ -790,6 +790,7 @@ set (METAL_SOURCES
 	common/rendering/metal/renderer/mt_renderbuffers.cpp
 	common/rendering/metal/renderer/mt_postprocess.cpp
 	common/rendering/metal/renderer/mt_resourcebinding.cpp
+	common/rendering/metal/renderer/mt_debug.cpp
 	common/rendering/metal/shaders/mt_shader.cpp
 	common/rendering/metal/textures/mt_texture.cpp
 	common/rendering/metal/textures/mt_sampler.cpp

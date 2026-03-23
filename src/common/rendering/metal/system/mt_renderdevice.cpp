@@ -30,6 +30,7 @@
 #include "metal/renderer/mt_renderbuffers.h"
 #include "metal/renderer/mt_renderstate.h"
 #include "metal/renderer/mt_resourcebinding.h"
+#include "metal/renderer/mt_debug.h"
 #include "metal/shaders/mt_shader.h"
 #include "metal/textures/mt_sampler.h"
 #include "metal/textures/mt_texture.h"
@@ -243,6 +244,7 @@ void MetalRenderDevice::InitializeState() {
   mPostprocess.reset(new MtPostprocess(this));
   mBinaryArchive.reset(new MtBinaryArchive(this));
   mBinaryArchive->Init();
+  mDebugManager.reset(new MtDebugManager(this));
   mResourceBindingManager.reset(new MtResourceBindingManager(this));
   mPipelineStateManager.reset(new MtPipelineStateManager(this));
   mShaderManager.reset(new MtShaderManager(this));
@@ -334,6 +336,9 @@ void MetalRenderDevice::Update() {
     mCurrentDrawable->release();
     mCurrentDrawable = nullptr;
   }
+
+  if (mDebugManager)
+    mDebugManager->EndFrame();
 
   mInFrame = false;
 
@@ -460,6 +465,9 @@ void MetalRenderDevice::BeginFrame() {
 
   if (mResourceBindingManager)
     mResourceBindingManager->BeginFrame();
+
+  if (mDebugManager)
+    mDebugManager->BeginFrame();
 
   // Set default render target to PipelineImage[0] for 2D/UI drawn before
   // Update()
