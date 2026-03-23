@@ -818,9 +818,9 @@ void MtRenderState::ApplyCulling() {
     if (mCullMode == Cull_None)
       mEncoder->setCullMode(MTL::CullModeNone);
     else if (mCullMode == Cull_CW)
-      mEncoder->setCullMode(MTL::CullModeBack);
-    else // Cull_CCW
       mEncoder->setCullMode(MTL::CullModeFront);
+    else // Cull_CCW
+      mEncoder->setCullMode(MTL::CullModeBack);
 
     mCullModeChanged = false;
   }

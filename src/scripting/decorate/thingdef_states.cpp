@@ -474,15 +474,9 @@ FxExpression *ParseActions(FScanner &sc, FState state, FString statestring, Bagg
 	// Otherwise, it's a sequence of actions.
 	if (!sc.Compare("{"))
 	{
-		const FScriptPosition pos(sc);
-		auto seq = new FxCompoundStatement(pos);
 		FxExpression *call = ParseAction(sc, state, statestring, bag);
-		if (call != nullptr)
-		{
-			seq->Add(call);
-		}
-		endswithret = false;
-		return seq;
+		endswithret = true;
+		return new FxReturnStatement(call, sc);
 	}
 
 	const FScriptPosition pos(sc);

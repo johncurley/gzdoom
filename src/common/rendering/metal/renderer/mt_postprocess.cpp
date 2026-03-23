@@ -213,9 +213,9 @@ public:
           samplerKey.MipFilter = 0;
           samplerKey.AddressU = (input.Wrap == PPWrapMode::Repeat)
                                     ? 0
-                                    : 2; // 0=Repeat, 2=ClampToEdge
-          samplerKey.AddressV = (input.Wrap == PPWrapMode::Repeat) ? 0 : 2;
-          samplerKey.AddressW = (input.Wrap == PPWrapMode::Repeat) ? 0 : 2;
+                                    : 3; // 0=Repeat, 3=ClampToEdge (CLAMP_XY)
+          samplerKey.AddressV = (input.Wrap == PPWrapMode::Repeat) ? 0 : 3;
+          samplerKey.AddressW = (input.Wrap == PPWrapMode::Repeat) ? 0 : 3;
           samplerKey.MaxAnisotropy = 1;
 
           auto sampler = fb->GetSamplerManager()->GetSamplerState(samplerKey);
