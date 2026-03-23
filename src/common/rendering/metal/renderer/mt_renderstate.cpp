@@ -48,7 +48,7 @@
 #include <Metal/Metal.hpp>
 #include <QuartzCore/QuartzCore.hpp>
 
-CVAR(Int, mt_submit_size, 1000, 0);
+CVAR(Int, mt_submit_size, 3000, 0);
 EXTERN_CVAR(Bool, r_skipmats)
 EXTERN_CVAR(Bool, mt_debug)
 MtRenderState::MtRenderState(MetalRenderDevice *fb)
