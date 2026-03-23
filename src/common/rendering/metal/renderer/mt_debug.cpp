@@ -71,8 +71,8 @@ void MtDebugManager::EndFrame() {
     WriteLogEntry();
   }
 
-  // Print every 60 frames if debug enabled
-  if (mt_debug && (mFrameIndex % 60) == 0) {
+  // Print every frame if debug enabled
+  if (mt_debug) {
     PrintDebugStats();
   }
 }
@@ -128,19 +128,10 @@ void MtDebugManager::PrintDebugStats() {
   float avgFrameTime = GetAverageFrameTime();
   float fps = (avgFrameTime > 0) ? 1000.0f / avgFrameTime : 0.0f;
 
-  Printf(PRINT_HIGH,
-         "\n=== Metal Debug Stats (Frame %d) ===\n"
-         "FPS: %.1f | Frame Time: %.2f ms\n"
-         "Draw Calls: %d | Vertices: %d\n"
-         "State Changes: %d\n"
-         "Texture Allocs: %d | Buffer Allocs: %d\n"
-         "GPU Memory: %.1f MB\n"
-         "===============================\n",
-         mFrameIndex, fps, avgFrameTime, mCurrentFrameStats.drawCallCount,
-         mCurrentFrameStats.indexCount, mCurrentFrameStats.stateChanges,
-         mCurrentFrameStats.textureAllocations,
-         mCurrentFrameStats.bufferAllocations,
-         mCurrentFrameStats.gpuMemoryCurrent / (1024.0f * 1024.0f));
+  Printf(PRINT_LOG,
+         "Metal: FPS: %.1f | Frame: %.2fms | Draws: %d | Verts: %d | State: %d\n",
+         fps, avgFrameTime, mCurrentFrameStats.drawCallCount,
+         mCurrentFrameStats.indexCount, mCurrentFrameStats.stateChanges);
 }
 
 void MtDebugManager::PrintArchitectureInfo() {

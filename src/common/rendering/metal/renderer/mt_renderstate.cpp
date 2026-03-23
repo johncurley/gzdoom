@@ -1164,13 +1164,10 @@ void MtRenderState::BeginRenderPass() {
     }
 
     if (clearDepth) {
-      if (mt_debug) Printf("Metal: CLEARING Depth %p\n", mRenderTarget.DepthStencil);
       // REVERSE-Z: Scene clears to 0.0 (Far). 
       // SHADOW PASS: Clears to 1.0 (Far).
       depthAttachment->setClearDepth(isShadowPass ? 1.0 : 0.0);
       mClearedTargets.insert(mRenderTarget.DepthStencil);
-    } else {
-      if (mt_debug) Printf("Metal: LOADING Depth %p\n", mRenderTarget.DepthStencil);
     }
 
     auto stencilAttachment = pRPD->stencilAttachment();
