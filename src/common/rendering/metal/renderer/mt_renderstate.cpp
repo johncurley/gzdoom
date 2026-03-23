@@ -26,6 +26,7 @@
 #include "metal/renderer/mt_pipelinestate.h"
 #include "metal/renderer/mt_renderbuffers.h"
 #include "metal/renderer/mt_resourcebinding.h"
+#include "metal/renderer/mt_debug.h"
 #include "metal/system/mt_buffer.h"
 #include "metal/system/mt_commandbuffer.h"
 #include "metal/system/mt_hwbuffer.h" // Needed for MtHardwareDataBuffer definition
@@ -95,9 +96,12 @@ void MtRenderState::Draw(int dt, int index, int count, bool apply) {
     if (mEncoder && mPipelineBound && mtIB && count >= 3) {
       auto mtlIB = mtIB->GetBuffer();
       if (mtlIB) {
+        int triangleCount = count - 2;
+        int indexCount = triangleCount * 3;
+        fb->GetDebugManager()->RecordDrawCall(count, indexCount);
         mEncoder->drawIndexedPrimitives(
             MTL::PrimitiveType::PrimitiveTypeTriangle,
-            (NS::UInteger)((count - 2) * 3), MTL::IndexType::IndexTypeUInt32,
+            (NS::UInteger)indexCount, MTL::IndexType::IndexTypeUInt32,
             mtlIB, 0, 1, (NS::Integer)index, 0);
       }
     }
@@ -127,6 +131,7 @@ void MtRenderState::Draw(int dt, int index, int count, bool apply) {
         break;
       }
       if (count > 0) {
+        fb->GetDebugManager()->RecordDrawCall(count, count);
         mEncoder->drawPrimitives(type, index, count, 1);
         mApplyCount++;
       }
@@ -148,6 +153,7 @@ void MtRenderState::DrawIndexed(int dt, int index, int count, bool apply) {
   if (!mtlIB)
     return;
 
+  fb->GetDebugManager()->RecordDrawCall(count, count);
   mEncoder->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, count,
                                   MTL::IndexTypeUInt32, mtlIB,
                                   index * 4); // Each index is 4 bytes (UInt32)
