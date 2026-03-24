@@ -61,13 +61,28 @@ vec2 RotateDirection(vec2 dir, vec2 cossin)
     return vec2(dir.x * cossin.x - dir.y * cossin.y, dir.x * cossin.y + dir.y * cossin.x);
 }
 
+// Halton sequence for quasi-random dithering
+float Halton(int index, int base) {
+    float f = 1.0;
+    float r = 0.0;
+    int i = index;
+    while (i > 0) {
+        f = f / float(base);
+        r = r + f * float(i % base);
+        i = int(floor(float(i) / float(base)));
+    }
+    return r;
+}
+
 vec4 GetJitter()
 {
 #if !defined(USE_RANDOM_TEXTURE)
-    // High quality golden ratio pseudo-random noise
-    float noise = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
-    float angle = noise * 2.0 * PI;
-    return vec4(cos(angle), sin(angle), fract(noise * 1.618), fract(noise * 2.236));
+    // Use Halton sequence based on pixel position for better spread
+    int idx = int(mod(gl_FragCoord.x + gl_FragCoord.y * 512.0, 1024.0));
+    float h1 = Halton(idx, 2);
+    float h2 = Halton(idx, 3);
+    float angle = h1 * 2.0 * PI;
+    return vec4(cos(angle), sin(angle), h2, fract(h1 * 1.618));
 #else
     return texture(RandomTexture, gl_FragCoord.xy / RANDOM_TEXTURE_WIDTH);
 #endif
