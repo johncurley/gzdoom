@@ -56,7 +56,7 @@ void HWSkyPortal::DrawContents(HWDrawInfo *di, FRenderState &state)
 	state.SetRenderStyle(STYLE_Translucent);
 	bool oldClamp = state.SetDepthClamp(true);
 
-	di->SetupView(state, 0, 0, 0, !!(mState->MirrorFlag & 1), !!(mState->PlaneMirrorFlag & 1));
+	di->SetupView(state, 0, 0, 0, false, false);
 
 	state.SetVertexBuffer(vertexBuffer);
 	auto skybox = origin->texture[0] ? dynamic_cast<FSkyBox*>(origin->texture[0]->GetTexture()) : nullptr;
