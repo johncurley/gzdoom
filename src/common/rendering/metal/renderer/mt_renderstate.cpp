@@ -1170,7 +1170,6 @@ void MtRenderState::EndRenderPass() {
     FlushBatch();
     mEncoder->endEncoding();
     mEncoder = nullptr;
-    mApplyCount++; // Increment when a pass is completed
   }
 }
 
