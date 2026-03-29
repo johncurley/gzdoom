@@ -26,6 +26,7 @@
 #include "printf.h"
 #include <algorithm>
 #include <ctime>
+#include <cstring>
 
 EXTERN_CVAR(Bool, mt_debug)
 
@@ -81,6 +82,30 @@ void MtDebugManager::EndFrame() {
 void MtDebugManager::RecordDrawCall(int vertexCount, int indexCount) {
   mCurrentFrameStats.drawCallCount++;
   mCurrentFrameStats.indexCount += indexCount;
+  mCurrentFrameStats.other_draws++;
+}
+
+void MtDebugManager::RecordDrawCallCategory(int vertexCount, int indexCount, const char *category) {
+  mCurrentFrameStats.drawCallCount++;
+  mCurrentFrameStats.indexCount += indexCount;
+  
+  if (!category) {
+    mCurrentFrameStats.other_draws++;
+    return;
+  }
+  
+  // Categorize by name patterns
+  if (strstr(category, "geometry") || strstr(category, "wall") || strstr(category, "floor")) {
+    mCurrentFrameStats.geometry_draws++;
+  } else if (strstr(category, "ui") || strstr(category, "hud") || strstr(category, "text")) {
+    mCurrentFrameStats.ui_draws++;
+  } else if (strstr(category, "sky") || strstr(category, "portal")) {
+    mCurrentFrameStats.sky_draws++;
+  } else if (strstr(category, "light") || strstr(category, "shadow")) {
+    mCurrentFrameStats.light_draws++;
+  } else {
+    mCurrentFrameStats.other_draws++;
+  }
 }
 
 void MtDebugManager::RecordStateChange(const char *stateName) {
@@ -133,6 +158,18 @@ void MtDebugManager::PrintDebugStats() {
          "Metal: FPS: %.1f | Frame: %.2fms | Draws: %d | Verts: %d | State: %d\n",
          fps, avgFrameTime, mCurrentFrameStats.drawCallCount,
          mCurrentFrameStats.indexCount, mCurrentFrameStats.stateChanges);
+  
+  // Show categorized draw calls if significant
+  int total = mCurrentFrameStats.drawCallCount;
+  if (total > 0) {
+    Printf(PRINT_HIGH, 
+           "  Categories: Geo=%d UI=%d Sky=%d Light=%d Other=%d\n",
+           mCurrentFrameStats.geometry_draws,
+           mCurrentFrameStats.ui_draws,
+           mCurrentFrameStats.sky_draws,
+           mCurrentFrameStats.light_draws,
+           mCurrentFrameStats.other_draws);
+  }
 }
 
 void MtDebugManager::PrintArchitectureInfo() {

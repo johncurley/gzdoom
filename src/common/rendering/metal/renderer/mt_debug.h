@@ -18,6 +18,7 @@ public:
 
   // Metric collection
   void RecordDrawCall(int vertexCount, int indexCount);
+  void RecordDrawCallCategory(int vertexCount, int indexCount, const char *category);
   void RecordStateChange(const char *stateName);
   void RecordTextureAllocation(size_t bytes, const char *name);
   void RecordBufferAllocation(size_t bytes, const char *name);
@@ -42,6 +43,13 @@ public:
     int textureAllocations;
     int bufferAllocations;
     int textureMipmaps;
+    
+    // Draw call categories
+    int geometry_draws = 0;
+    int ui_draws = 0;
+    int sky_draws = 0;
+    int light_draws = 0;
+    int other_draws = 0;
   };
 
   FrameStats GetLastFrameStats() const { return mLastFrameStats; }
