@@ -66,6 +66,7 @@ public:
 
 private:
   std::unique_ptr<MtStreamBuffer> mBuffer;
+  StreamData mLastData = {};
   uint32_t mDataIndex = MAX_STREAM_DATA - 1;
   uint32_t mStreamDataOffset = 0;
 };

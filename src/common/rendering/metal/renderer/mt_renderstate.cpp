@@ -83,65 +83,107 @@ void MtRenderState::ClearScreen() {
 }
 
 void MtRenderState::Draw(int dt, int index, int count, bool apply) {
-  if (dt == DT_TriangleFan) {
-    IIndexBuffer *oldIndexBuffer = mIndexBuffer;
-    mIndexBuffer = fb->GetBufferManager()->FanToTrisIndexBuffer.get();
-
-    if (apply || mNeedApply)
-      Apply(DT_Triangles);
-    else
-      ApplyVertexBuffers();
-
-    auto mtIB = dynamic_cast<MtIndexBuffer *>(mIndexBuffer);
-    if (mEncoder && mPipelineBound && mtIB && count >= 3) {
-      auto mtlIB = mtIB->GetBuffer();
-      if (mtlIB) {
-        int triangleCount = count - 2;
-        int indexCount = triangleCount * 3;
-        fb->GetDebugManager()->RecordDrawCall(count, indexCount);
-        mEncoder->drawIndexedPrimitives(
-            MTL::PrimitiveType::PrimitiveTypeTriangle,
-            (NS::UInteger)indexCount, MTL::IndexType::IndexTypeUInt32,
-            mtlIB, 0, 1, (NS::Integer)index, 0);
+  if (apply || mNeedApply) {
+    if (mPendingBatch.active) {
+      // If state changed or primitive type changed, flush the batch
+      if (mPendingBatch.dt != dt || mNeedApply) {
+        FlushBatch();
       }
     }
+    Apply(dt);
+  }
 
-    mIndexBuffer = oldIndexBuffer;
+  if (!mEncoder || !mPipelineBound || count <= 0)
+    return;
+
+  // Check if we can start or continue a batch
+  // For simplicity, we only batch DT_TriangleFan, DT_Triangles, and DT_TriangleStrip
+  // and only if the current PushConstants and PipelineKey match the batch.
+  // uDataIndex is part of PushConstants, so it's naturally handled.
+  bool canBatch = (dt == DT_TriangleFan || dt == DT_Triangles || dt == DT_TriangleStrip);
+
+  if (canBatch) {
+    if (!mPendingBatch.active) {
+      mPendingBatch.dt = dt;
+      mPendingBatch.pipelineKey = mPipelineKey;
+      mPendingBatch.pushConstants = mPushConstants;
+      mPendingBatch.matrixOffset = mMatrixBufferWriter.Offset();
+      mPendingBatch.vertexBuffer = mVertexBuffer;
+      mPendingBatch.vertexOffsets[0] = mVertexOffsets[0];
+      mPendingBatch.vertexOffsets[1] = mVertexOffsets[1];
+      mPendingBatch.indexCount = 0;
+      mPendingBatch.indexStart = mBatchIndexOffset;
+      mPendingBatch.active = true;
+    }
+
+    // Accumulate indices into BatchIndexBuffer
+    uint32_t *ibo = (uint32_t *)fb->GetBufferManager()->BatchIndexBuffer->Lock(4096 * 1024 * sizeof(uint32_t)); // Ensure it's mapped
+    if (ibo) {
+      uint32_t *dest = ibo + mBatchIndexOffset;
+      int addedIndices = 0;
+
+      if (dt == DT_TriangleFan) {
+        // Convert Fan to Triangles
+        for (int i = 2; i < count; i++) {
+          dest[addedIndices++] = index + 0;
+          dest[addedIndices++] = index + i - 1;
+          dest[addedIndices++] = index + i;
+        }
+      } else if (dt == DT_TriangleStrip) {
+        // Convert Strip to Triangles
+        for (int i = 2; i < count; i++) {
+          if (i & 1) {
+            dest[addedIndices++] = index + i - 1;
+            dest[addedIndices++] = index + i - 2;
+            dest[addedIndices++] = index + i;
+          } else {
+            dest[addedIndices++] = index + i - 2;
+            dest[addedIndices++] = index + i - 1;
+            dest[addedIndices++] = index + i;
+          }
+        }
+      } else if (dt == DT_Triangles) {
+        for (int i = 0; i < count; i++) {
+          dest[addedIndices++] = index + i;
+        }
+      }
+
+      mBatchIndexOffset += addedIndices;
+      mPendingBatch.indexCount += addedIndices;
+
+      // If buffer is getting full, flush it
+      if (mBatchIndexOffset > 1000000) {
+        FlushBatch();
+      }
+    }
   } else {
-    if (apply || mNeedApply)
-      Apply(dt);
-
-    if (mEncoder && mPipelineBound) {
-      MTL::PrimitiveType type;
-      switch (dt) {
-      case DT_Points:
-        type = MTL::PrimitiveType::PrimitiveTypePoint;
-        break;
-      case DT_Lines:
-        type = MTL::PrimitiveType::PrimitiveTypeLine;
-        break;
-      case DT_Triangles:
-        type = MTL::PrimitiveType::PrimitiveTypeTriangle;
-        break;
-      case DT_TriangleStrip:
-        type = MTL::PrimitiveType::PrimitiveTypeTriangleStrip;
-        break;
-      default:
-        type = MTL::PrimitiveType::PrimitiveTypeTriangle;
-        break;
-      }
-      if (count > 0) {
-        fb->GetDebugManager()->RecordDrawCall(count, count);
-        mEncoder->drawPrimitives(type, index, count, 1);
-        mApplyCount++;
-      }
+    // Non-batchable primitive, just draw immediately
+    FlushBatch();
+    MTL::PrimitiveType type;
+    switch (dt) {
+    case DT_Points:
+      type = MTL::PrimitiveType::PrimitiveTypePoint;
+      break;
+    case DT_Lines:
+      type = MTL::PrimitiveType::PrimitiveTypeLine;
+      break;
+    default:
+      type = MTL::PrimitiveType::PrimitiveTypeTriangle;
+      break;
     }
+    fb->GetDebugManager()->RecordDrawCall(count, count);
+    mEncoder->drawPrimitives(type, index, count, 1);
+    mApplyCount++;
   }
 }
 
 void MtRenderState::DrawIndexed(int dt, int index, int count, bool apply) {
-  if (apply || mNeedApply)
+  if (apply || mNeedApply) {
+    if (mPendingBatch.active) {
+      FlushBatch();
+    }
     Apply(dt);
+  }
 
   if (!mEncoder || !mPipelineBound || !mIndexBuffer || count <= 0)
     return;
@@ -153,11 +195,43 @@ void MtRenderState::DrawIndexed(int dt, int index, int count, bool apply) {
   if (!mtlIB)
     return;
 
+  // We don't batch DrawIndexed yet, as it's complex to merge index buffers.
+  // But we MUST flush any pending batch before drawing indexed geometry.
+  FlushBatch();
+
   fb->GetDebugManager()->RecordDrawCall(count, count);
   mEncoder->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, count,
                                   MTL::IndexTypeUInt32, mtlIB,
                                   index * 4); // Each index is 4 bytes (UInt32)
   mApplyCount++;
+}
+
+void MtRenderState::FlushBatch() {
+  if (!mPendingBatch.active || mPendingBatch.indexCount == 0) {
+    mPendingBatch.active = false;
+    return;
+  }
+
+  if (mEncoder && mPipelineBound) {
+    auto batchIB = dynamic_cast<MtIndexBuffer *>(fb->GetBufferManager()->BatchIndexBuffer.get());
+    if (batchIB) {
+      batchIB->Upload(mPendingBatch.indexStart * 4, mPendingBatch.indexCount * 4);
+      auto mtlIB = batchIB->GetBuffer();
+      if (mtlIB) {
+        fb->GetDebugManager()->RecordDrawCall(mPendingBatch.indexCount, mPendingBatch.indexCount);
+        mEncoder->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, 
+                                        mPendingBatch.indexCount, 
+                                        MTL::IndexTypeUInt32, 
+                                        mtlIB, 
+                                        mPendingBatch.indexStart * 4);
+        mApplyCount++;
+      }
+    }
+  }
+
+  mPendingBatch.active = false;
+  mPendingBatch.indexCount = 0;
+  // Note: we don't reset mBatchIndexOffset here, only at BeginFrame or when full
 }
 
 bool MtRenderState::SetDepthClamp(bool on) {
@@ -269,10 +343,52 @@ void MtRenderState::Apply(int dt) {
 
   ApplyStreamData();
   ApplyMatrices();
+
+  // If we have an active batch, check if the current state still matches it.
+  // We check this BEFORE updating mLastPushConstants etc.
+  if (mPendingBatch.active) {
+    if (mPendingBatch.dt != dt || mNeedApply) {
+      FlushBatch();
+    } else {
+      // Temporarily update PushConstants to see if they will change
+      PushConstants nextPush = mPushConstants;
+      int fogset = 0;
+      if (mFogEnabled) {
+        if (mFogEnabled == 2) fogset = -3;
+        else if ((GetFogColor() & 0xffffff) == 0) fogset = gl_fogmode;
+        else fogset = -gl_fogmode;
+      }
+      int tempTM = TM_NORMAL;
+      if (mMaterial.mMaterial && mMaterial.mMaterial->Source()->isHardwareCanvas())
+        tempTM = TM_OPAQUE;
+
+      nextPush.group3[0] = (float)GetTextureModeAndFlags(tempTM);
+      nextPush.group3[1] = mAlphaThreshold;
+      nextPush.group3[2] = (float)fogset;
+      nextPush.group3[3] = (float)mLightIndex;
+      nextPush.group4[0] = (float)mBoneIndexBase;
+      nextPush.group4[1] = (float)mStreamBufferWriter.DataIndex();
+      nextPush.group4[2] = (float)mClipDistanceMask;
+
+      if (nextPush != mPendingBatch.pushConstants || 
+          mMatrixBufferWriter.Offset() != mPendingBatch.matrixOffset ||
+          mVertexBuffer != mPendingBatch.vertexBuffer ||
+          mVertexOffsets[0] != mPendingBatch.vertexOffsets[0] ||
+          mVertexOffsets[1] != mPendingBatch.vertexOffsets[1]) {
+        FlushBatch();
+      }
+    }
+  }
+
   ApplyRenderPass(dt);
 
   if (!mPipelineBound)
     return;
+
+  // If pipeline key changed, it might also break the batch
+  if (mPendingBatch.active && mPipelineKey != mPendingBatch.pipelineKey) {
+    FlushBatch();
+  }
 
   ApplyScissor();
   ApplyCulling();
@@ -996,6 +1112,9 @@ void MtRenderState::BeginFrame() {
   mStreamBufferWriter.BeginFrame();
   mMatrixBufferWriter.BeginFrame();
 
+  mBatchIndexOffset = 0;
+  mPendingBatch.active = false;
+
   mBias.mUnits = 0.0f;
   mBias.mFactor = 0.0f;
   mBias.mChanged = true;
@@ -1015,6 +1134,7 @@ void MtRenderState::BeginFrame() {
 
 void MtRenderState::EndRenderPass() {
   if (mEncoder) {
+    FlushBatch();
     mEncoder->endEncoding();
     mEncoder = nullptr;
     mApplyCount++; // Increment when a pass is completed
@@ -1022,6 +1142,7 @@ void MtRenderState::EndRenderPass() {
 }
 
 void MtRenderState::EndFrame() {
+  FlushBatch();
   mMatrixBufferWriter.Reset();
   mStreamBufferWriter.Reset();
   mRenderTarget = {};

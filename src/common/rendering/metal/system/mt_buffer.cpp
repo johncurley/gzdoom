@@ -93,6 +93,10 @@ void MtBufferManager::Init() {
   // Create fan to triangle index buffer
   CreateFanToTrisIndexBuffer();
 
+  // Create batch index buffer for dynamic geometry
+  BatchIndexBuffer.reset(CreateIndexBuffer());
+  BatchIndexBuffer->SetData(4096 * 1024, nullptr, BufferUsageType::Stream);
+
   // Create constant dummy buffer for unused attributes
   DummyBuffer = fb->device->device->newBuffer(256, MTL::StorageModeShared);
   if (DummyBuffer) {
@@ -109,6 +113,7 @@ void MtBufferManager::Deinit() {
   MatrixBuffer.reset();
   StreamBuffer.reset();
   FanToTrisIndexBuffer.reset();
+  BatchIndexBuffer.reset();
 }
 
 IVertexBuffer *MtBufferManager::CreateVertexBuffer() {

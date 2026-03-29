@@ -83,6 +83,12 @@ MtStreamBufferWriter::MtStreamBufferWriter(MetalRenderDevice *fb)
                                                        MAX_STREAM_DATA, 0)) {}
 
 bool MtStreamBufferWriter::Write(const StreamData &data) {
+  if (mDataIndex != MAX_STREAM_DATA - 1 && mStreamDataOffset != 0xffffffff) {
+    if (memcmp(&mLastData, &data, sizeof(StreamData)) == 0) {
+      return true;
+    }
+  }
+
   mDataIndex++;
   if (mDataIndex == MAX_STREAM_DATA || mStreamDataOffset == 0xffffffff) {
     mDataIndex = 0;
@@ -97,6 +103,7 @@ bool MtStreamBufferWriter::Write(const StreamData &data) {
     size_t offset = mStreamDataOffset + sizeof(StreamData) * mDataIndex;
     memcpy(ptr + offset, &data, sizeof(StreamData));
     mBuffer->GetBuffer()->didModifyRange(NS::Range(offset, sizeof(StreamData)));
+    mLastData = data;
   }
 
   return true;

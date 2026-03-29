@@ -54,6 +54,7 @@ public:
 	std::unique_ptr<MtStreamBuffer> StreamBuffer;
 
 	std::unique_ptr<IIndexBuffer> FanToTrisIndexBuffer;
+	std::unique_ptr<IIndexBuffer> BatchIndexBuffer;
 
 	MtHardwareDataBuffer* ViewpointUBO = nullptr;
 	MtHardwareDataBuffer* LightBufferSSO = nullptr;

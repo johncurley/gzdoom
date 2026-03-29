@@ -40,6 +40,7 @@
 #include "mt_renderdevice.h"
 
 #include "mt_binaryarchive.h"
+#include "textures.h"
 
 #include "c_console.h"
 #include "c_dispatch.h"
@@ -343,8 +344,10 @@ void MetalRenderDevice::Update() {
   mInFrame = false;
 
   // CRITICAL: If we are in a wipe, the engine calls Update() in a loop without
-  // calling BeginFrame(). We must ensure the next frame is initialized here.
-  this->BeginFrame();
+  // calling BeginFrame(). We must ensure the next frame is initialized here,
+  // but ONLY if we haven't already acquired a drawable for the next frame.
+  if (!mCurrentDrawable)
+    this->BeginFrame();
 }
 
 void MetalRenderDevice::PresentFrame(void *drawablePtr) {
@@ -365,84 +368,85 @@ void MetalRenderDevice::BeginFrame() {
     return;
   mInFrame = true;
 
-  if (mCurrentDrawable)
-    return;
-
   SetViewportRects(nullptr);
   mViewpoints->Clear();
   mLights->Clear();
   mBones->Clear();
 
-  // Wait for GPU backpressure (MaxFramesInFlight frames allowed)
-  if (dispatch_semaphore_wait(
-          mInflightFramesSemaphore,
-          dispatch_time(DISPATCH_TIME_NOW, 1000 * NSEC_PER_MSEC)) != 0) {
-  }
-
-  {
-    std::lock_guard<std::mutex> lock(mRecycleMutex);
-    mCurrentFrameRecycleIndex = (mCurrentFrameRecycleIndex + 1) % 4;
-    for (auto *buffer : mBufferRecycleBin[mCurrentFrameRecycleIndex]) {
-      buffer->release();
+  // If we already have a drawable, don't acquire another one.
+  // This happens during wipes where Update() calls BeginFrame() for us.
+  if (!mCurrentDrawable) {
+    // Wait for GPU backpressure (MaxFramesInFlight frames allowed)
+    if (dispatch_semaphore_wait(
+            mInflightFramesSemaphore,
+            dispatch_time(DISPATCH_TIME_NOW, 1000 * NSEC_PER_MSEC)) != 0) {
     }
-    mBufferRecycleBin[mCurrentFrameRecycleIndex].clear();
 
-    for (auto *texture : mTextureRecycleBin[mCurrentFrameRecycleIndex]) {
-      texture->release();
+    {
+      std::lock_guard<std::mutex> lock(mRecycleMutex);
+      mCurrentFrameRecycleIndex = (mCurrentFrameRecycleIndex + 1) % 4;
+      for (auto *buffer : mBufferRecycleBin[mCurrentFrameRecycleIndex]) {
+        buffer->release();
+      }
+      mBufferRecycleBin[mCurrentFrameRecycleIndex].clear();
+
+      for (auto *texture : mTextureRecycleBin[mCurrentFrameRecycleIndex]) {
+        texture->release();
+      }
+      mTextureRecycleBin[mCurrentFrameRecycleIndex].clear();
     }
-    mTextureRecycleBin[mCurrentFrameRecycleIndex].clear();
-  }
 
-  CocoaNativeHandle nativeHandle = GetNativeHandle();
-  if (nativeHandle.metalLayer) {
-    CA::MetalLayer *metalLayer = (CA::MetalLayer *)nativeHandle.metalLayer;
+    CocoaNativeHandle nativeHandle = GetNativeHandle();
+    if (nativeHandle.metalLayer) {
+      CA::MetalLayer *metalLayer = (CA::MetalLayer *)nativeHandle.metalLayer;
 
-    MetalViewSize viewSize = GetMetalViewDrawableSize(nativeHandle.nsWindow);
+      MetalViewSize viewSize = GetMetalViewDrawableSize(nativeHandle.nsWindow);
 
-    if (viewSize.width >= VID_MIN_WIDTH && viewSize.height >= VID_MIN_HEIGHT) {
-      // Sync GZDoom's internal resolution with the window size
-      int targetWidth = (int)viewSize.width;
-      int targetHeight = (int)viewSize.height;
-      int scaledWidth = ViewportScaledWidth(targetWidth, targetHeight);
-      int scaledHeight = ViewportScaledHeight(targetWidth, targetHeight);
+      if (viewSize.width >= VID_MIN_WIDTH && viewSize.height >= VID_MIN_HEIGHT) {
+        // Sync GZDoom's internal resolution with the window size
+        int targetWidth = (int)viewSize.width;
+        int targetHeight = (int)viewSize.height;
+        int scaledWidth = ViewportScaledWidth(targetWidth, targetHeight);
+        int scaledHeight = ViewportScaledHeight(targetWidth, targetHeight);
 
-      // STARTUP LAG GUARD:
-      // If the view reports a smaller size than our current configured
-      // resolution during startup, it is likely a Cocoa layout lag. We MUST NOT
-      // downscale the engine, or we get a low-res stretched frame. Instead, we
-      // force the Main Layer to match our higher internal resolution.
-      if (mFrameCount < 10 &&
-          (scaledWidth < GetWidth() || scaledHeight < GetHeight())) {
+        // STARTUP LAG GUARD:
+        // If the view reports a smaller size than our current configured
+        // resolution during startup, it is likely a Cocoa layout lag. We MUST NOT
+        // downscale the engine, or we get a low-res stretched frame. Instead, we
+        // force the Main Layer to match our higher internal resolution.
+        if (mFrameCount < 10 &&
+            (scaledWidth < GetWidth() || scaledHeight < GetHeight())) {
+          metalLayer->setDrawableSize(CGSizeMake(GetWidth(), GetHeight()));
+        }
+        // Normal operation: Sync if different (handles Resizing and startup
+        // Upscaling)
+        else if (GetWidth() != scaledWidth || GetHeight() != scaledHeight) {
+          SetVirtualSize(scaledWidth, scaledHeight);
+          V_OutputResized(scaledWidth, scaledHeight);
+          if (mVertexData) mVertexData->OutputResized(scaledWidth, scaledHeight);
+
+          // Ensure drawable size matches the NEW resolution
+          metalLayer->setDrawableSize(CGSizeMake(scaledWidth, scaledHeight));
+        }
+      } else {
         metalLayer->setDrawableSize(CGSizeMake(GetWidth(), GetHeight()));
       }
-      // Normal operation: Sync if different (handles Resizing and startup
-      // Upscaling)
-      else if (GetWidth() != scaledWidth || GetHeight() != scaledHeight) {
-        SetVirtualSize(scaledWidth, scaledHeight);
-        V_OutputResized(scaledWidth, scaledHeight);
-        if (mVertexData) mVertexData->OutputResized(scaledWidth, scaledHeight);
 
-        // Ensure drawable size matches the NEW resolution
-        metalLayer->setDrawableSize(CGSizeMake(scaledWidth, scaledHeight));
+      // Ensure we have a valid drawable for this frame
+      mCurrentDrawable = (CA::MetalDrawable *)metalLayer->nextDrawable();
+
+      if (mCurrentDrawable && mFrameCount < 10) {
+        mFrameCount++;
       }
-    } else {
-      metalLayer->setDrawableSize(CGSizeMake(GetWidth(), GetHeight()));
     }
 
-    // Ensure we have a valid drawable for this frame
-    mCurrentDrawable = (CA::MetalDrawable *)metalLayer->nextDrawable();
-
-    if (mCurrentDrawable && mFrameCount < 10) {
-      mFrameCount++;
+    if (!mCurrentDrawable) {
+      mInFrame = false;
+      return;
     }
-  }
 
-  if (!mCurrentDrawable) {
-    mInFrame = false;
-    return;
+    mCurrentDrawable->retain();
   }
-
-  mCurrentDrawable->retain();
 
   // Retina Fix: Initialize screen buffers with the PHYSICAL drawable size.
   // This ensures the G-buffer matches the physical resolution of the window.
@@ -782,23 +786,25 @@ void MetalRenderDevice::CopyScreenToBuffer(int w, int h, uint8_t *data) {
   stagingBuffer->release();
 }
 FTexture *MetalRenderDevice::WipeStartScreen() {
-  SetViewportRects(nullptr);
-  auto tex =
-      new FWrapperTexture(mScreenViewport.width, mScreenViewport.height, 1);
+  auto tex = new FWrapperTexture(mScreenViewport.width, mScreenViewport.height, 1);
   auto systex = static_cast<MtHardwareTexture *>(tex->GetSystemTexture());
-  systex->CreateWipeTexture(mScreenViewport.width, mScreenViewport.height,
-                            "WipeStartScreen");
+  systex->CreateWipeTexture(mScreenViewport.width, mScreenViewport.height, "WipeStartScreen");
+  mPostprocess->BlitCurrentToImage(systex->GetImage()->GetTexture());
+  mCommands->FlushCommands(true); // Synchronous flush to prevent stale frame
   return tex;
 }
+
 FTexture *MetalRenderDevice::WipeEndScreen() {
-  GetPostprocess()->SetActiveRenderTarget();
+  // Ensure the current frame (including 2D) is fully rendered to PipelineImage[0]
+  mPostprocess->SetActiveRenderTarget();
   Draw2D();
   twod->Clear();
-  auto tex =
-      new FWrapperTexture(mScreenViewport.width, mScreenViewport.height, 1);
+
+  auto tex = new FWrapperTexture(mScreenViewport.width, mScreenViewport.height, 1);
   auto systex = static_cast<MtHardwareTexture *>(tex->GetSystemTexture());
-  systex->CreateWipeTexture(mScreenViewport.width, mScreenViewport.height,
-                            "WipeEndScreen");
+  systex->CreateWipeTexture(mScreenViewport.width, mScreenViewport.height, "WipeEndScreen");
+  mPostprocess->BlitCurrentToImage(systex->GetImage()->GetTexture());
+  mCommands->FlushCommands(true); // Synchronous flush to prevent stale frame
   return tex;
 }
 TArray<uint8_t> MetalRenderDevice::GetScreenshotBuffer(int &pitch,

@@ -166,6 +166,25 @@ protected:
   uint32_t mTotalDraws = 0;
   std::set<MTL::Texture *> mClearedTargets;
 
+  // Batching
+  struct PendingBatch {
+    int dt = -1;
+    unsigned int indexCount = 0;
+    unsigned int indexStart = 0;
+    
+    // Key states that must match to continue a batch
+    MtPipelineKey pipelineKey = {};
+    PushConstants pushConstants = {};
+    unsigned int matrixOffset = 0xffffffff;
+    IVertexBuffer* vertexBuffer = nullptr;
+    int vertexOffsets[2] = {0, 0};
+    bool active = false;
+  } mPendingBatch;
+
+  unsigned int mBatchIndexOffset = 0;
+
+  void FlushBatch();
+
   struct RenderTarget {
     MTL::Texture *Image = nullptr;
     MTL::Texture *DepthStencil = nullptr;

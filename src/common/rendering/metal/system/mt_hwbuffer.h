@@ -107,6 +107,9 @@ public:
   MTL::Buffer *GetBuffer() const;
   void Upload(size_t offset, size_t size) override;
 
+  void *Lock(unsigned int size) override;
+  void Unlock() override;
+
 protected:
   void PrepareForWrite();
   void SetData(size_t size, const void *data, BufferUsageType usage) override;
@@ -114,8 +117,6 @@ protected:
   void Resize(size_t newsize) override;
   void Map() override;
   void Unmap() override;
-  void *Lock(unsigned int size) override;
-  void Unlock() override;
 
 private:
   void CreateBuffer(size_t size);
