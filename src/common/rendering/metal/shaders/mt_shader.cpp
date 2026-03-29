@@ -783,6 +783,27 @@ static void PatchFragmentShader(std::string &source,
       if (pos != std::string::npos) {
           source.replace(pos, strlen("normal.z = -normal.z;"), "/* normal.z = -normal.z; */");
       }
+
+      // NOISE/BANDING FIX:
+      // Inject IGN function
+      source.insert(0, "float IGN(vec2 v) { return fract(52.9829189 * fract(dot(v, vec2(0.06711056, 0.00583715)))); }\n");
+      
+      // Patch GetJitter to mix in high-frequency noise
+      std::regex jitterRegex(R"(return\s+texture\(RandomTexture,\s*gl_FragCoord\.xy\s*/\s*RANDOM_TEXTURE_WIDTH\);)");
+      source = std::regex_replace(source, jitterRegex, 
+          "vec4 r = texture(RandomTexture, gl_FragCoord.xy / RANDOM_TEXTURE_WIDTH);\n"
+          "    float ign = IGN(gl_FragCoord.xy);\n"
+          "    return vec4(r.xy, fract(r.z + ign), fract(r.w + ign));");
+
+      // Jitter directions in ComputeAO
+      std::regex angleRegex(R"(float\s+angle\s*=\s*directionAngleStep\s*\*\s*directionIndex;)");
+      source = std::regex_replace(source, angleRegex, 
+          "float angle = directionAngleStep * (directionIndex + rand.z);");
+
+      // Smoother blending: reduce harshness and use power-based falloff
+      std::regex returnAORegex(R"(return\s+clamp\(1\.0\s*-\s*ao\s*\*\s*2\.0,\s*0\.0,\s*1\.0\);)");
+      source = std::regex_replace(source, returnAORegex, 
+          "return pow(clamp(1.0 - ao * 1.5, 0.0, 1.0), 1.5);");
   }
 }
 
