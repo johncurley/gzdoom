@@ -181,6 +181,10 @@ protected:
     IVertexBuffer* vertexBuffer = nullptr;
     int vertexOffsets[2] = {0, 0};
     int cullMode = -1;
+    FMaterial* material = nullptr;
+    int translation = 0;
+    int clampMode = 0;
+    int overrideShader = -1;
     bool active = false;
   } mPendingBatch;
 
