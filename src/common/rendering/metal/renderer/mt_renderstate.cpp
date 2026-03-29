@@ -1062,8 +1062,14 @@ void MtRenderState::ApplyHWBufferSet() {
 
   if (matrixBuffer && (matrixBuffer != mLastBoundBuffers[19] ||
                        matrixOffset != mLastBoundOffsets[19])) {
-    mEncoder->setVertexBuffer(matrixBuffer, matrixOffset, 19);
-    mEncoder->setFragmentBuffer(matrixBuffer, matrixOffset, 19);
+    if (matrixBuffer != dummyBuf && sizeof(MatricesUBO) <= 4096) {
+        uint8_t* ptr = (uint8_t*)matrixBuffer->contents() + matrixOffset;
+        mEncoder->setVertexBytes(ptr, sizeof(MatricesUBO), 19);
+        mEncoder->setFragmentBytes(ptr, sizeof(MatricesUBO), 19);
+    } else {
+        mEncoder->setVertexBuffer(matrixBuffer, matrixOffset, 19);
+        mEncoder->setFragmentBuffer(matrixBuffer, matrixOffset, 19);
+    }
     mLastBoundBuffers[19] = matrixBuffer;
     mLastBoundOffsets[19] = matrixOffset;
     mLastBoundFragmentBuffers[19] = matrixBuffer;
@@ -1080,8 +1086,14 @@ void MtRenderState::ApplyHWBufferSet() {
 
   if (streamBuffer && (streamBuffer != mLastBoundBuffers[20] ||
                        streamDataOffset != mLastBoundOffsets[20])) {
-    mEncoder->setVertexBuffer(streamBuffer, streamDataOffset, 20);
-    mEncoder->setFragmentBuffer(streamBuffer, streamDataOffset, 20);
+    if (streamBuffer != dummyBuf && sizeof(StreamData) <= 4096) {
+        uint8_t* ptr = (uint8_t*)streamBuffer->contents() + streamDataOffset;
+        mEncoder->setVertexBytes(ptr, sizeof(StreamData), 20);
+        mEncoder->setFragmentBytes(ptr, sizeof(StreamData), 20);
+    } else {
+        mEncoder->setVertexBuffer(streamBuffer, streamDataOffset, 20);
+        mEncoder->setFragmentBuffer(streamBuffer, streamDataOffset, 20);
+    }
     mLastBoundBuffers[20] = streamBuffer;
     mLastBoundOffsets[20] = streamDataOffset;
     mLastBoundFragmentBuffers[20] = streamBuffer;
