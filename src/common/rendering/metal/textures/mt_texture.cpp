@@ -323,29 +323,23 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
     if (mImage->GetTexture()) {
         if (mImage->GetWidth() == tex->GetWidth() && mImage->GetHeight() == tex->GetHeight()) {
             // Texture size matches, but we need to upload the new data.
-            // For UI textures, use synchronous upload (fast path, small data).
-            // For world textures, queue async via GCD to avoid blocking render thread.
-            if (isUITexture) {
-                fb->GetCommands()->WaitForCommands(true);
-                FTextureBuffer texbuffer = tex->CreateTexBuffer(translation, flags | CTF_ProcessData);
-                if (texbuffer.mBuffer) {
-                    int uploadW = texbuffer.mWidth;
-                    int uploadH = texbuffer.mHeight;
-                    MTL::Region region = MTL::Region::Make2D(0, 0, uploadW, uploadH);
-                    mBufferPitch = uploadW * ((flags & CTF_Indexed) ? 1 : 4);
-                    mImage->GetTexture()->replaceRegion(region, 0, texbuffer.mBuffer, mBufferPitch);
-                    
-                    // Mark as filled so the renderer doesn't try to clear it if used as a target
-                    static_cast<MtRenderState*>(fb->RenderState())->MarkAsFilled(mImage->GetTexture());
+            // Wait for GPU to finish with this texture before we overwrite it.
+            fb->GetCommands()->WaitForCommands(true);
 
-                    if (mImage->GetTexture()->mipmapLevelCount() > 1) {
-                        fb->GetTextureManager()->GenerateMipmaps(mImage->GetTexture());
-                    }
+            FTextureBuffer texbuffer = tex->CreateTexBuffer(translation, flags | CTF_ProcessData);
+            if (texbuffer.mBuffer) {
+                int uploadW = texbuffer.mWidth;
+                int uploadH = texbuffer.mHeight;
+                MTL::Region region = MTL::Region::Make2D(0, 0, uploadW, uploadH);
+                mBufferPitch = uploadW * ((flags & CTF_Indexed) ? 1 : 4);
+                mImage->GetTexture()->replaceRegion(region, 0, texbuffer.mBuffer, mBufferPitch);
+                
+                // Mark as filled so the renderer doesn't try to clear it if used as a target
+                static_cast<MtRenderState*>(fb->RenderState())->MarkAsFilled(mImage->GetTexture());
+
+                if (mImage->GetTexture()->mipmapLevelCount() > 1) {
+                    fb->GetTextureManager()->GenerateMipmaps(mImage->GetTexture());
                 }
-            } else {
-                // Queue async load for world textures during stable rendering
-                mPendingLoadId = fb->GetTextureManager()->GetTextureLoader()->QueueTextureLoad(tex, translation, flags | CTF_ProcessData);
-                mNeedsAsyncUpload = true;
             }
             mNeedsUpload = false;
             return;
@@ -354,17 +348,6 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
     }
 
     // Regular texture - get pixel data from game texture and upload to GPU
-    // Use async loading for large world textures to avoid startup freezing
-    bool useAsync = !isUITexture && fb->GetFrameCount() >= 100;
-    
-    if (useAsync) {
-        // Queue async load on GCD background threads
-        mPendingLoadId = fb->GetTextureManager()->GetTextureLoader()->QueueTextureLoad(tex, translation, flags | CTF_ProcessData);
-        mNeedsAsyncUpload = true;
-        return;  // Will be uploaded when async task completes
-    }
-
-    // Synchronous path for UI/startup textures
     FTextureBuffer texbuffer =
         tex->CreateTexBuffer(translation, flags | CTF_ProcessData);
     if (!texbuffer.mBuffer)
@@ -815,8 +798,18 @@ void MtTextureManager::ProcessAsyncTextureLoads() {
   
   auto completedTasks = mTextureLoader->GetCompletedTasks();
   
+  if (completedTasks.empty()) return;
+  
   // TODO: Apply completed texture data to GPU
-  // For now, this is a placeholder for future integration
-  // Each task contains pixel data that needs to be uploaded to GPU
+  // Each task contains:
+  // - pixelData: processed texture data
+  // - width, height: texture dimensions
+  // - indexed: whether it's a paletted texture
+  // - bytesPerPixel: 1 for indexed, 4 for BGRA
+  // 
+  // For now, we log that async loads completed. Future work:
+  // 1. Map taskId back to MtHardwareTexture
+  // 2. Upload pixelData via replaceRegion (staging buffer if needed)
+  // 3. Generate mipmaps if required
 }
 
