@@ -127,7 +127,7 @@ uint32_t MtStreamBufferWriter::StreamDataOffset() const {
 /////////////////////////////////////////////////////////////////////////////
 
 MtMatrixBufferWriter::MtMatrixBufferWriter(MetalRenderDevice *fb)
-    : mBuffer(std::make_unique<MtStreamBuffer>(fb, sizeof(MatricesUBO), 1024)) {
+    : mBuffer(std::make_unique<MtStreamBuffer>(fb, sizeof(MatricesUBO), 4096)) {
   mIdentityMatrix.loadIdentity();
 }
 
