@@ -78,6 +78,8 @@ private:
   bool mNeedsUpload = false;
   std::string mDebugName;
   int mBufferPitch = 0;
+  uint32_t mPendingLoadId = 0;       // GCD async load task ID
+  bool mNeedsAsyncUpload = false;    // Flag: async load completed, needs GPU upload
 };
 
 // Texture manager
@@ -98,6 +100,9 @@ public:
 
   // Async texture loading
   MtTextureLoader *GetTextureLoader() { return mTextureLoader.get(); }
+
+  // Process completed async texture loads (call from render thread)
+  void ProcessAsyncTextureLoads();
 
   // PP Texture support
   MTL::Texture *GetPPTexture(PPTexture *texture);

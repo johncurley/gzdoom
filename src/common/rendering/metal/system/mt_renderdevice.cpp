@@ -368,6 +368,11 @@ void MetalRenderDevice::BeginFrame() {
   if (mCurrentDrawable)
     return;
 
+  // Process any completed async texture loads
+  if (mTextureManager) {
+    mTextureManager->ProcessAsyncTextureLoads();
+  }
+
   SetViewportRects(nullptr);
   mViewpoints->Clear();
   mLights->Clear();
