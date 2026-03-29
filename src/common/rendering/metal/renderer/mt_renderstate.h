@@ -103,6 +103,8 @@ protected:
   MTL::RenderPassDescriptor *mPassDescriptor = nullptr;
   int mClearTargets = 0;
   bool mNeedApply = true;
+  bool mStreamDirty = true;
+  bool mMatricesDirty = true;
 
   // State tracking (same as Vulkan)
   int mScissorX = 0, mScissorY = 0, mScissorWidth = -1, mScissorHeight = -1;
@@ -178,10 +180,12 @@ protected:
     unsigned int matrixOffset = 0xffffffff;
     IVertexBuffer* vertexBuffer = nullptr;
     int vertexOffsets[2] = {0, 0};
+    int cullMode = -1;
     bool active = false;
   } mPendingBatch;
 
   unsigned int mBatchIndexOffset = 0;
+  uint32_t* mBatchIBPointer = nullptr;
 
   void FlushBatch();
 

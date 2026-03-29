@@ -83,18 +83,21 @@ MtStreamBufferWriter::MtStreamBufferWriter(MetalRenderDevice *fb)
                                                        MAX_STREAM_DATA, 0)) {}
 
 bool MtStreamBufferWriter::Write(const StreamData &data) {
-  if (mDataIndex != MAX_STREAM_DATA - 1 && mStreamDataOffset != 0xffffffff) {
+  // Check if current data matches the last written data in the SAME block
+  if (mDataIndex < MAX_STREAM_DATA && mStreamDataOffset != 0xffffffff) {
     if (memcmp(&mLastData, &data, sizeof(StreamData)) == 0) {
       return true;
     }
   }
 
-  mDataIndex++;
-  if (mDataIndex == MAX_STREAM_DATA || mStreamDataOffset == 0xffffffff) {
+  // If we are at the end of a block or first write, advance to next block
+  if (mDataIndex >= MAX_STREAM_DATA - 1 || mStreamDataOffset == 0xffffffff) {
     mDataIndex = 0;
     mStreamDataOffset = mBuffer->NextStreamDataBlock();
     if (mStreamDataOffset == 0xffffffff)
       return false;
+  } else {
+    mDataIndex++;
   }
 
   // Write to Metal buffer's CPU-accessible memory

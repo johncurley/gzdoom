@@ -111,17 +111,16 @@ void MtRenderState::Draw(int dt, int index, int count, bool apply) {
       mPendingBatch.vertexBuffer = mVertexBuffer;
       mPendingBatch.vertexOffsets[0] = mVertexOffsets[0];
       mPendingBatch.vertexOffsets[1] = mVertexOffsets[1];
+      mPendingBatch.cullMode = mCullMode;
       mPendingBatch.indexCount = 0;
       mPendingBatch.indexStart = mBatchIndexOffset;
       mPendingBatch.active = true;
     }
 
     // Accumulate indices into BatchIndexBuffer
-    uint32_t *ibo = (uint32_t *)fb->GetBufferManager()->BatchIndexBuffer->Lock(4096 * 1024 * sizeof(uint32_t)); // Ensure it's mapped
-    if (ibo) {
-      uint32_t *dest = ibo + mBatchIndexOffset;
+    if (mBatchIBPointer) {
+      uint32_t *dest = mBatchIBPointer + mBatchIndexOffset;
       int addedIndices = 0;
-
       if (dt == DT_TriangleFan) {
         // Convert Fan to Triangles
         for (int i = 2; i < count; i++) {
@@ -211,6 +210,8 @@ void MtRenderState::FlushBatch() {
     mPendingBatch.active = false;
     return;
   }
+
+  // if (mt_debug) Printf("Metal: Flushing batch: %d indices, type %d\n", mPendingBatch.indexCount, mPendingBatch.dt);
 
   if (mEncoder && mPipelineBound) {
     auto batchIB = dynamic_cast<MtIndexBuffer *>(fb->GetBufferManager()->BatchIndexBuffer.get());
@@ -374,7 +375,8 @@ void MtRenderState::Apply(int dt) {
           mMatrixBufferWriter.Offset() != mPendingBatch.matrixOffset ||
           mVertexBuffer != mPendingBatch.vertexBuffer ||
           mVertexOffsets[0] != mPendingBatch.vertexOffsets[0] ||
-          mVertexOffsets[1] != mPendingBatch.vertexOffsets[1]) {
+          mVertexOffsets[1] != mPendingBatch.vertexOffsets[1] ||
+          mCullMode != mPendingBatch.cullMode) {
         FlushBatch();
       }
     }
@@ -631,7 +633,9 @@ void MtRenderState::ApplyStreamData() {
   else
     mStreamData.timer = 0.0f;
 
-  if (!mStreamBufferWriter.Write(mStreamData)) {
+  if (mStreamBufferWriter.Write(mStreamData)) {
+    // Write was successful (either skipped due to same data or updated)
+  } else {
     WaitForStreamBuffers();
     mStreamBufferWriter.Write(mStreamData);
   }
@@ -693,8 +697,10 @@ void MtRenderState::ApplyPushConstants() {
 }
 
 void MtRenderState::ApplyMatrices() {
-  if (!mMatrixBufferWriter.Write(mModelMatrix, mModelMatrixEnabled,
+  if (mMatrixBufferWriter.Write(mModelMatrix, mModelMatrixEnabled,
                                  mTextureMatrix, mTextureMatrixEnabled)) {
+    // Write was successful
+  } else {
     WaitForStreamBuffers();
     mMatrixBufferWriter.Write(mModelMatrix, mModelMatrixEnabled, mTextureMatrix,
                               mTextureMatrixEnabled);
@@ -1113,6 +1119,7 @@ void MtRenderState::BeginFrame() {
   mMatrixBufferWriter.BeginFrame();
 
   mBatchIndexOffset = 0;
+  mBatchIBPointer = (uint32_t *)fb->GetBufferManager()->BatchIndexBuffer->Lock(4096 * 1024 * sizeof(uint32_t));
   mPendingBatch.active = false;
 
   mBias.mUnits = 0.0f;
