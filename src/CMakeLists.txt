@@ -793,6 +793,7 @@ set (METAL_SOURCES
 	common/rendering/metal/renderer/mt_debug.cpp
 	common/rendering/metal/shaders/mt_shader.cpp
 	common/rendering/metal/textures/mt_texture.cpp
+	common/rendering/metal/textures/mt_textureloader.cpp
 	common/rendering/metal/textures/mt_sampler.cpp
 )
 

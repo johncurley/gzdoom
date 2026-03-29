@@ -14,6 +14,7 @@
 #include "metal/system/mt_commandbuffer.h"
 #include "metal/system/mt_renderdevice.h"
 #include "mt_texture.h"
+#include "mt_textureloader.h"
 #include "printf.h"
 
 #include "textures.h"
@@ -521,8 +522,11 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
 }
 
 // MtTextureManager
-MtTextureManager::MtTextureManager(MetalRenderDevice *fb) : fb(fb) {}
+MtTextureManager::MtTextureManager(MetalRenderDevice *fb) : fb(fb) {
+  mTextureLoader = std::make_unique<MtTextureLoader>(fb);
+}
 MtTextureManager::~MtTextureManager() {
+  mTextureLoader.reset();
   if (mLightmapStaging) {
     mLightmapStaging->release();
     mLightmapStaging = nullptr;

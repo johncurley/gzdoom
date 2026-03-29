@@ -14,6 +14,7 @@ class Texture;
 
 class MetalRenderDevice;
 class FGameTexture;
+class MtTextureLoader;
 
 // Metal texture image
 class MtTextureImage {
@@ -95,6 +96,9 @@ public:
                      size_t size);
   void GenerateMipmaps(MTL::Texture *texture);
 
+  // Async texture loading
+  MtTextureLoader *GetTextureLoader() { return mTextureLoader.get(); }
+
   // PP Texture support
   MTL::Texture *GetPPTexture(PPTexture *texture);
 
@@ -114,6 +118,7 @@ private:
   std::unordered_map<uint32_t, std::unique_ptr<MtHardwareTexture>> mPaletteTextures;
   std::unique_ptr<MtTextureImage> mLightmap;
   MTL::Buffer *mLightmapStaging = nullptr;
+  std::unique_ptr<MtTextureLoader> mTextureLoader;
 };
 
 class MtPPTexture : public PPTextureBackend {
