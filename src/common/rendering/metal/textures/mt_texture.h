@@ -2,6 +2,7 @@
 
 #include "hw_texcontainer.h"
 #include "hwrenderer/postprocessing/hw_postprocess.h"
+#include "mt_textureloader.h"
 #include <memory>
 #include <unordered_map>
 #include <vector>
@@ -68,6 +69,8 @@ public:
   const std::string& GetDebugName() const { return mDebugName; }
   int GetBufferPitch() const { return mBufferPitch; }
   int GetNumChannels() const { return mNumChannels; }
+  uint32_t GetPendingLoadId() const { return mPendingLoadId; }
+  void SetPendingLoadId(uint32_t id) { mPendingLoadId = id; }
 
 private:
   std::unique_ptr<MtTextureImage> mImage;
@@ -101,6 +104,11 @@ public:
   // Async texture loading
   MtTextureLoader *GetTextureLoader() { return mTextureLoader.get(); }
 
+  // Queue a hardware texture for async CPU decompression + GPU upload.
+  // Safe to call from the render thread. Upload is deferred to next BeginFrame().
+  void QueueHardwareTextureLoad(MtHardwareTexture *hwTex, FTexture *tex,
+                                int translation, int flags, bool wantMipmap);
+
   // Process completed async texture loads (call from render thread)
   void ProcessAsyncTextureLoads();
 
@@ -118,12 +126,21 @@ public:
       mCanvasDepthStencils;
 
 private:
+  struct PendingUpload {
+    MtHardwareTexture *hwTex = nullptr;
+    bool wantMipmap = false;
+  };
+
+  void PerformAsyncGPUUpload(MtHardwareTexture *hwTex,
+                             const TextureLoadTask &task, bool wantMipmap);
+
   MetalRenderDevice *fb = nullptr;
   std::unordered_map<PPTexture *, MTL::Texture *> mPPTextures;
   std::unordered_map<uint32_t, std::unique_ptr<MtHardwareTexture>> mPaletteTextures;
   std::unique_ptr<MtTextureImage> mLightmap;
   MTL::Buffer *mLightmapStaging = nullptr;
   std::unique_ptr<MtTextureLoader> mTextureLoader;
+  std::unordered_map<uint32_t, PendingUpload> mPendingUploads;
 };
 
 class MtPPTexture : public PPTextureBackend {

@@ -473,6 +473,11 @@ void MetalRenderDevice::BeginFrame() {
   if (mDebugManager)
     mDebugManager->BeginFrame();
 
+  // Drain any async texture decompression tasks that completed on background
+  // GCD threads and upload their pixel data to the GPU now.
+  if (mTextureManager)
+    mTextureManager->ProcessAsyncTextureLoads();
+
   // Set default render target to PipelineImage[0] for 2D/UI drawn before
   // Update()
   if (mPostprocess) {

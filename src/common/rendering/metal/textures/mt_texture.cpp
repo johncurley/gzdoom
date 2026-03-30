@@ -792,24 +792,117 @@ MtPPTexture::~MtPPTexture() {
   }
 }
 
+void MtTextureManager::QueueHardwareTextureLoad(MtHardwareTexture *hwTex,
+                                                FTexture *tex, int translation,
+                                                int flags, bool wantMipmap) {
+  if (!hwTex || !tex || !mTextureLoader) return;
+  if (hwTex->GetPendingLoadId() != 0) return; // already queued
+
+  uint32_t taskId = mTextureLoader->QueueTextureLoad(tex, translation, flags);
+  if (taskId == 0) return;
+
+  hwTex->SetPendingLoadId(taskId);
+  mPendingUploads[taskId] = {hwTex, wantMipmap};
+}
+
 void MtTextureManager::ProcessAsyncTextureLoads() {
   // Process completed texture loads from GCD queue
   if (!mTextureLoader) return;
-  
+
   auto completedTasks = mTextureLoader->GetCompletedTasks();
-  
   if (completedTasks.empty()) return;
-  
-  // TODO: Apply completed texture data to GPU
-  // Each task contains:
-  // - pixelData: processed texture data
-  // - width, height: texture dimensions
-  // - indexed: whether it's a paletted texture
-  // - bytesPerPixel: 1 for indexed, 4 for BGRA
-  // 
-  // For now, we log that async loads completed. Future work:
-  // 1. Map taskId back to MtHardwareTexture
-  // 2. Upload pixelData via replaceRegion (staging buffer if needed)
-  // 3. Generate mipmaps if required
+
+  for (const auto &task : completedTasks) {
+    auto it = mPendingUploads.find(task.taskId);
+    if (it == mPendingUploads.end()) continue;
+
+    MtHardwareTexture *hwTex = it->second.hwTex;
+    bool wantMipmap = it->second.wantMipmap;
+    mPendingUploads.erase(it);
+
+    if (hwTex && task.completed && !task.pixelData.empty()) {
+      PerformAsyncGPUUpload(hwTex, task, wantMipmap);
+    }
+    if (hwTex) {
+      hwTex->SetPendingLoadId(0);
+    }
+  }
 }
+
+void MtTextureManager::PerformAsyncGPUUpload(MtHardwareTexture *hwTex,
+                                             const TextureLoadTask &task,
+                                             bool wantMipmap) {
+  if (!hwTex || task.pixelData.empty() || task.width <= 0 || task.height <= 0)
+    return;
+
+  MtTextureImage *image = hwTex->GetImage();
+  if (!image) return;
+
+  MTL::PixelFormat format =
+      task.indexed ? MTL::PixelFormatR8Unorm : MTL::PixelFormatBGRA8Unorm;
+  int pitch = task.width * task.bytesPerPixel;
+
+  int desiredMipLevels = 1;
+  if (wantMipmap && !task.indexed && task.width > 1 && task.height > 1) {
+    desiredMipLevels =
+        (int)floor(log2(std::max(task.width, task.height))) + 1;
+  }
+
+  // Reuse existing texture if dimensions and format match; otherwise recreate.
+  MTL::Texture *texture = image->GetTexture();
+  if (!texture ||
+      texture->storageMode() != MTL::StorageModePrivate ||
+      (int)texture->width() != task.width ||
+      (int)texture->height() != task.height ||
+      texture->mipmapLevelCount() != (NS::UInteger)desiredMipLevels) {
+    if (texture) {
+      fb->RecycleTexture(texture);
+    }
+    auto desc = MTL::TextureDescriptor::alloc()->init();
+    desc->setWidth(task.width);
+    desc->setHeight(task.height);
+    desc->setPixelFormat(format);
+    desc->setMipmapLevelCount(desiredMipLevels);
+    desc->setStorageMode(MTL::StorageModePrivate);
+    desc->setUsage(MTL::TextureUsageShaderRead);
+    if (desiredMipLevels > 1) {
+      desc->setUsage(desc->usage() | MTL::TextureUsageRenderTarget);
+    }
+    texture = fb->device->device->newTexture(desc);
+    image->SetTexture(texture);
+    image->SetWidth(task.width);
+    image->SetHeight(task.height);
+    image->SetFormat((int)format);
+    desc->release();
+  }
+
+  size_t alignedPitch = (pitch + 1023) & ~1023;
+  size_t totalSize = alignedPitch * task.height;
+  MTL::Buffer *staging = fb->GetStagingBuffer(totalSize);
+  if (!staging) return;
+
+  uint8_t *dst = (uint8_t *)staging->contents();
+  const uint8_t *src = task.pixelData.data();
+  for (int y = 0; y < task.height; y++) {
+    memcpy(dst + y * alignedPitch, src + y * pitch, pitch);
+  }
+
+  auto cmdBuf = fb->GetCommands()->GetBlitCommandBuffer();
+  if (cmdBuf) {
+    auto blit = cmdBuf->blitCommandEncoder();
+    blit->copyFromBuffer(staging, 0, alignedPitch, 0,
+                         MTL::Size::Make(task.width, task.height, 1),
+                         texture, 0, 0, MTL::Origin::Make(0, 0, 0));
+    if (desiredMipLevels > 1) {
+      blit->generateMipmaps(texture);
+    }
+    blit->endEncoding();
+    cmdBuf->commit();
+  }
+  fb->RecycleBuffer(staging);
+
+  static_cast<MtRenderState *>(fb->RenderState())->MarkAsFilled(texture);
+  hwTex->ResetStagingBuffer(); // clears mNeedsUpload
+}
+
 
