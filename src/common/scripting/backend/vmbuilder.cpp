@@ -1153,9 +1153,13 @@ ExpEmit FunctionCallEmitter::EmitCall(VMFunctionBuilder *build, TArray<ExpEmit> 
 		
 		// OP_LP , Load from memory. rA = *(rB + rkC)
 		// reg = &PFunction->Variants[0] -- PFunction::Variant*
+		// PFunction is non-standard-layout (virtual methods) but offsetof is well-defined on all target compilers.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Winvalid-offsetof"
 		build->Emit(OP_LP, reg.RegNum, virtualselfreg, build->GetConstantInt(offsetof(PFunction, Variants) + offsetof(FArray, Array)));
 		// reg = (&PFunction->Variants[0])->Implementation -- VMFunction*
 		build->Emit(OP_LP, reg.RegNum, reg.RegNum, build->GetConstantInt(offsetof(PFunction::Variant, Implementation)));
+#pragma clang diagnostic pop
 
 		build->Emit(OP_CALL, reg.RegNum, paramcount, vm_jit? static_cast<PPrototype*>(fnptr->PointedType)->ReturnTypes.Size() : returns.Size());
 

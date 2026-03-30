@@ -19,7 +19,7 @@ namespace beneficii {
             
             typedef range_map<_kty, _ty, _compare, _alloc_type> _myt;
             typedef _range_node<_kty, _ty> _node;
-            typedef typename _alloc_type::template rebind<_node>::other _node_allocator;
+            typedef typename std::allocator_traits<_alloc_type>::template rebind_alloc<_node> _node_allocator;
             typedef typename _node_allocator::pointer _nodeptr;
         
         public:
@@ -653,8 +653,8 @@ namespace beneficii {
                     //in the next couple functions.
                     _reset_node(_ret);
                     _ret->_subtree = nullptr;
-                    _ret->_end = (void*) _alloc.address(*_ret);
-                    _ret->_start = (void*) _alloc.address(*_ret);
+                    _ret->_end = (void*) std::addressof(*_ret);
+                    _ret->_start = (void*) std::addressof(*_ret);
                 }
                 return _ret;
             }
@@ -665,7 +665,7 @@ namespace beneficii {
             // uses pointer to range_type object, not node object, to construct
             // the range in the right place in memory.
             void _construct_range(_nodeptr _n, const range_type& _arg) {
-                _range_alloc().construct(&_n->_range, _arg);
+                std::allocator_traits<allocator_type>::construct(_range_alloc(), std::addressof(_n->_range), _arg);
             }
             
             // constructs range in node by any other set of arguments (incl. move construct)
@@ -675,7 +675,7 @@ namespace beneficii {
             // the range in the right place in memory.
             template<class ..._args> 
             void _construct_range(_nodeptr _n, _args&&... _arg) {
-                _range_alloc().construct(&_n->_range, std::forward<_args>(_arg)...);
+                std::allocator_traits<allocator_type>::construct(_range_alloc(), std::addressof(_n->_range), std::forward<_args>(_arg)...);
             }
             
             // copies container range by range
@@ -709,7 +709,7 @@ namespace beneficii {
             // destroys the range_type object in the node object and deallocates
             // the node object's memory
             void _delete_node(_nodeptr _n) {
-                _range_alloc().destroy(&_n->_range);
+                std::destroy_at(&_n->_range);
                 _alloc.deallocate(_n, 1);
             }
             

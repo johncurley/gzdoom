@@ -21,7 +21,7 @@ namespace beneficii {
         typedef _range_node<typename _range_map::key_type,
             typename _range_map::mapped_type> _node_type;
         typedef typename _range_map::allocator_type _alloc_type;
-        typedef typename _alloc_type::template rebind<_node_type>::other _node_allocator;
+        typedef typename std::allocator_traits<_alloc_type>::template rebind_alloc<_node_type> _node_allocator;
         typedef typename _node_allocator::pointer _nodeptr;
         typedef typename _range_map::value_type value_type;
         typedef typename _range_map::difference_type difference_type;
