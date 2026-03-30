@@ -950,12 +950,20 @@ static void GetPackets()
 		int baseSequence = -1;
 		const int totalTics = NetBuffer[curByte++];
 		if (totalTics > 0)
-			baseSequence = (NetBuffer[curByte++] << 24) | (NetBuffer[curByte++] << 16) | (NetBuffer[curByte++] << 8) | NetBuffer[curByte++];
+		{
+			const int b0 = NetBuffer[curByte++], b1 = NetBuffer[curByte++],
+			          b2 = NetBuffer[curByte++], b3 = NetBuffer[curByte++];
+			baseSequence = (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
+		}
 
 		int baseConsistency = -1;
 		const int ranTics = NetBuffer[curByte++];
 		if (ranTics > 0)
-			baseConsistency = (NetBuffer[curByte++] << 24) | (NetBuffer[curByte++] << 16) | (NetBuffer[curByte++] << 8) | NetBuffer[curByte++];
+		{
+			const int b0 = NetBuffer[curByte++], b1 = NetBuffer[curByte++],
+			          b2 = NetBuffer[curByte++], b3 = NetBuffer[curByte++];
+			baseConsistency = (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
+		}
 
 		if (NetMode == NET_PacketServer)
 		{
@@ -978,7 +986,10 @@ static void GetPackets()
 			if (NetMode == NET_PacketServer && clientNum == Net_Arbitrator)
 			{
 				if (consoleplayer != Net_Arbitrator)
-					pState.AverageLatency = (NetBuffer[curByte++] << 8) | NetBuffer[curByte++];
+				{
+					const int latHi = NetBuffer[curByte++];
+					pState.AverageLatency = (latHi << 8) | NetBuffer[curByte++];
+				}
 				else
 					curByte += 2;
 			}
@@ -994,7 +1005,8 @@ static void GetPackets()
 			for (int r = 0; r < ranTics; ++r)
 			{
 				int ofs = NetBuffer[curByte++];
-				consistencies.Insert(ofs, (NetBuffer[curByte++] << 8) | NetBuffer[curByte++]);
+				const int cHi = NetBuffer[curByte++];
+			consistencies.Insert(ofs, (cHi << 8) | NetBuffer[curByte++]);
 			}
 
 			for (size_t i = 0u; i < consistencies.Size(); ++i)
@@ -1577,7 +1589,7 @@ void NetUpdate(int tics)
 		// If player count is < 8, scale the number of commands by 1 per every 1 less player.
 		// If player count is < 4, scale the number of commands by 4 per every 1 less player.
 		constexpr size_t MaxTicsPerPacket = 2u;
-		if (players > 1u)
+		if (players > 1)
 		{
 			maxCommands = MaxTicsPerPacket;
 			if (players >= MaxPlayersPerPacket / 2 && players < MaxPlayersPerPacket)
@@ -1909,7 +1921,7 @@ bool D_CheckNetGame()
 	for (auto client : NetworkClients)
 		playeringame[client] = true;
 
-	if (MaxClients > 1u)
+	if (MaxClients > 1)
 	{
 		if (consoleplayer == Net_Arbitrator)
 			Printf("Selected " TEXTCOLOR_BLUE "%s" TEXTCOLOR_NORMAL " networking mode\n", NetMode == NET_PeerToPeer ? "peer to peer" : "packet server");
@@ -3336,10 +3348,10 @@ CCMD(kick)
 	}
 
 	TArray<int> cNums = {};
-	for (size_t i = 1u; i < argv.argc(); ++i)
+	for (int i = 1; i < argv.argc(); ++i)
 	{
 		int cNum = -1;
-		if (!C_IsValidInt(argv[i], cNum) || cNum < 0 || cNum >= MAXPLAYERS)
+		if (!C_IsValidInt(argv[i], cNum) || cNum < 0 || cNum >= (int)MAXPLAYERS)
 			Printf("Bad client number %s\n", argv[i]);
 		else if (cNum != consoleplayer && cNums.Find(cNum) >= cNums.Size())
 			cNums.Push(cNum);
@@ -3374,10 +3386,10 @@ CCMD(mute)
 	}
 
 	TArray<int> pNums = {};
-	for (size_t i = 1u; i < argv.argc(); ++i)
+	for (int i = 1; i < argv.argc(); ++i)
 	{
 		int pNum = -1;
-		if (!C_IsValidInt(argv[i], pNum) || pNum < 0 || pNum >= MAXPLAYERS)
+		if (!C_IsValidInt(argv[i], pNum) || pNum < 0 || pNum >= (int)MAXPLAYERS)
 			Printf("Bad player number %s\n", argv[i]);
 		else if (pNum != consoleplayer && pNums.Find(pNum) >= pNums.Size())
 			pNums.Push(pNum);
@@ -3405,7 +3417,7 @@ CCMD(muteall)
 		return;
 	}
 
-	for (int i = 0; i < MAXPLAYERS; ++i)
+	for (int i = 0; i < (int)MAXPLAYERS; ++i)
 	{
 		if (playeringame[i] && i != consoleplayer)
 			MutedClients |= (uint64_t)1u << i;
@@ -3449,10 +3461,10 @@ CCMD(unmute)
 	}
 
 	TArray<int> pNums = {};
-	for (size_t i = 1u; i < argv.argc(); ++i)
+	for (int i = 1; i < argv.argc(); ++i)
 	{
 		int pNum = -1;
-		if (!C_IsValidInt(argv[i], pNum) || pNum < 0 || pNum >= MAXPLAYERS)
+		if (!C_IsValidInt(argv[i], pNum) || pNum < 0 || pNum >= (int)MAXPLAYERS)
 			Printf("Bad player number %s\n", argv[i]);
 		else if (pNum != consoleplayer && pNums.Find(pNum) >= pNums.Size())
 			pNums.Push(pNum);
@@ -3547,10 +3559,10 @@ CCMD(addsettingscontrollers)
 	}
 
 	TArray<int> cNums = {};
-	for (size_t i = 1u; i < argv.argc(); ++i)
+	for (int i = 1; i < argv.argc(); ++i)
 	{
 		int cNum = -1;
-		if (!C_IsValidInt(argv[i], cNum) || cNum < 0 || cNum >= MAXPLAYERS)
+		if (!C_IsValidInt(argv[i], cNum) || cNum < 0 || cNum >= (int)MAXPLAYERS)
 			Printf("Bad client number %s\n", argv[i]);
 		else if (cNum != Net_Arbitrator && cNums.Find(cNum) >= cNums.Size())
 			cNums.Push(cNum);
@@ -3574,10 +3586,10 @@ CCMD(removesettingscontrollers)
 	}
 
 	TArray<int> cNums = {};
-	for (size_t i = 1u; i < argv.argc(); ++i)
+	for (int i = 1; i < argv.argc(); ++i)
 	{
 		int cNum = -1;
-		if (!C_IsValidInt(argv[i], cNum) || cNum < 0 || cNum >= MAXPLAYERS)
+		if (!C_IsValidInt(argv[i], cNum) || cNum < 0 || cNum >= (int)MAXPLAYERS)
 			Printf("Bad player number %s\n", argv[i]);
 		else if (cNum != Net_Arbitrator && cNums.Find(cNum) >= cNums.Size())
 			cNums.Push(cNum);
