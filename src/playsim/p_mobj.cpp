@@ -1372,7 +1372,7 @@ DEFINE_ACTION_FUNCTION(AActor, CheckLocalView)
 
 void AActor::DisableLocalRendering(const unsigned int pNum, const bool disable)
 {
-	if (pNum == consoleplayer)
+	if (pNum == (unsigned int)consoleplayer)
 		NoLocalRender = disable;
 }
 

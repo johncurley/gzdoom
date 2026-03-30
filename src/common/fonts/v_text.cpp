@@ -315,13 +315,13 @@ void UpdateGenericUI(bool cvar)
 	special_i = switchstr && strstr(switchstr, "\xc4\xb0") != nullptr; // capital dotted i (İ).
 	if (special_i) 
 	{
-		upperforlower['i'] = 0x130;
-		lowerforupper['I'] = 0x131;
+		upperforlower[(unsigned char)'i'] = 0x130;
+		lowerforupper[(unsigned char)'I'] = 0x131;
 	}
 	else
 	{
-		upperforlower['i'] = 'I';
-		lowerforupper['I'] = 'i';
+		upperforlower[(unsigned char)'i'] = 'I';
+		lowerforupper[(unsigned char)'I'] = 'i';
 	}
 }
 

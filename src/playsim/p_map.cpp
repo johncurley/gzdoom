@@ -2654,7 +2654,7 @@ bool P_TryMove(AActor *thing, const DVector2 &pos,
 				if (!P_CheckPosition(thing, pos.XY(), true))	// check if some actor blocks us on the other side. (No line checks, because of the mess that'd create.)
 				{
 					auto blocking = thing->BlockingMobj.ForceGet();
-					if (blocking != nullptr && (thing->player == nullptr || !(thing->player->cheats && CF_PREDICTING)))
+					if (blocking != nullptr && (thing->player == nullptr || !(thing->player->cheats & CF_PREDICTING)))
 						P_CollidedWith(thing, blocking);
 
 					thing->SetXYZ(oldthingpos);
