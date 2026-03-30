@@ -199,10 +199,8 @@ unsigned int MtHardwareTexture::CreateTexture(unsigned char *buffer, int w,
           if (mipLevels > 1)
             blit->generateMipmaps(texture);
           blit->endEncoding();
-          
-          if (gamestate != GS_STARTUP) {
-              cmdBuf->commit();
-          }
+          cmdBuf->commit();
+          cmdBuf->release();
         }
         fb->RecycleBuffer(staging);
       }
@@ -468,11 +466,8 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
                     blit->generateMipmaps(texture);
                 }
                 blit->endEncoding();
-                
-                // Batch blits during startup to speed up loading
-                if (gamestate != GS_STARTUP) {
-                    cmdBuf->commit();
-                }
+                cmdBuf->commit();
+                cmdBuf->release();
             }
             fb->RecycleBuffer(staging);
         }
@@ -611,10 +606,8 @@ void MtTextureManager::SetLightmap(int LMTextureSize, int LMTextureCount,
                                MTL::Origin::Make(0, 0, 0));
         }
         blit->endEncoding();
-        
-        if (gamestate != GS_STARTUP) {
-            cmdBuf->commit();
-        }
+        cmdBuf->commit();
+        cmdBuf->release();
       }
       fb->RecycleBuffer(mtlStaging);
     }
@@ -898,6 +891,7 @@ void MtTextureManager::PerformAsyncGPUUpload(MtHardwareTexture *hwTex,
     }
     blit->endEncoding();
     cmdBuf->commit();
+    cmdBuf->release();
   }
   fb->RecycleBuffer(staging);
 

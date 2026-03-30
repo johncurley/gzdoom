@@ -45,6 +45,8 @@
 #include "hwrenderer/data/shaderuniforms.h"
 #include "v_text.h"
 
+#include <chrono>
+
 #include <Metal/Metal.hpp>
 #include <QuartzCore/QuartzCore.hpp>
 
@@ -77,12 +79,22 @@ void MtRenderState::ClearScreen() {
   Apply(DT_TriangleStrip);
 
   if (mEncoder) {
+    fb->GetDebugManager()->RecordDrawCallCategory(4, 4, "ui");
     mEncoder->drawPrimitives(MTL::PrimitiveType::PrimitiveTypeTriangleStrip,
                              FFlatVertexBuffer::FULLSCREEN_INDEX, 4, 1);
   }
 }
 
 void MtRenderState::Draw(int dt, int index, int count, bool apply) {
+  // If an indexed batch is pending, flush it NOW — while the indexed pipeline is
+  // still the current encoder state.  apply() below will switch to the triangle
+  // pipeline; flushing after that would use the wrong pipeline for those draws.
+  if (mPendingIndexedBatch.active) {
+    FlushIndexedBatch();
+    // Force a full Apply() so the triangle pipeline is correctly (re-)bound.
+    mNeedApply = true;
+  }
+
   if (apply || mNeedApply) {
     if (mPendingBatch.active) {
       // If state changed or primitive type changed, flush the batch
@@ -105,10 +117,8 @@ void MtRenderState::Draw(int dt, int index, int count, bool apply) {
   if (canBatch) {
     if (!mPendingBatch.active) {
       // For batching, we always convert to a triangle list
-      mPendingBatch.dt = DT_Triangles; 
+      mPendingBatch.dt = DT_Triangles;
       mPendingBatch.pipelineKey = mPipelineKey;
-      mPendingBatch.pushConstants = mPushConstants;
-      mPendingBatch.matrixOffset = mMatrixBufferWriter.Offset();
       mPendingBatch.vertexBuffer = mVertexBuffer;
       mPendingBatch.vertexOffsets[0] = mVertexOffsets[0];
       mPendingBatch.vertexOffsets[1] = mVertexOffsets[1];
@@ -120,6 +130,15 @@ void MtRenderState::Draw(int dt, int index, int count, bool apply) {
       mPendingBatch.indexCount = 0;
       mPendingBatch.indexStart = mBatchIndexOffset;
       mPendingBatch.active = true;
+
+      // Initialise first sub-draw with the current per-draw state
+      mPendingBatch.subDrawCount = 0;
+      mPendingBatch.currentPushConstants = mPushConstants;
+      mPendingBatch.currentMatrixBuffer = mMatrixBufferWriter.GetBuffer();
+      mPendingBatch.currentMatrixOffset = mMatrixBufferWriter.Offset();
+      mPendingBatch.currentStreamBuffer = mStreamBufferWriter.GetBuffer();
+      mPendingBatch.currentStreamOffset = mStreamBufferWriter.StreamDataOffset();
+      mPendingBatch.currentSubDrawIndexStart = mBatchIndexOffset;
     }
 
     // Accumulate indices into BatchIndexBuffer
@@ -175,86 +194,362 @@ void MtRenderState::Draw(int dt, int index, int count, bool apply) {
       type = MTL::PrimitiveType::PrimitiveTypeTriangle;
       break;
     }
-    fb->GetDebugManager()->RecordDrawCall(count, count);
+    fb->GetDebugManager()->RecordDrawCallCategory(count, count, "geometry");
     mEncoder->drawPrimitives(type, index, count, 1);
     mApplyCount++;
   }
 }
 
 void MtRenderState::DrawIndexed(int dt, int index, int count, bool apply) {
-  if (apply || mNeedApply) {
-    if (mPendingBatch.active) {
-      FlushBatch();
-    }
-    Apply(dt);
-  }
-
-  if (!mEncoder || !mPipelineBound || !mIndexBuffer || count <= 0)
+  if (count <= 0)
     return;
+
+  // Triangle and indexed batches are mutually exclusive.
+  if (mPendingBatch.active)
+    FlushBatch();
 
   auto mtIB = dynamic_cast<MtIndexBuffer *>(mIndexBuffer);
-  if (!mtIB)
+  if (!mtIB || !mtIB->GetBuffer())
     return;
-  auto mtlIB = mtIB->GetBuffer();
-  if (!mtlIB)
-    return;
-
-  // We don't batch DrawIndexed yet, as it's complex to merge index buffers.
-  // but we MUST flush any pending batch before drawing indexed geometry.
-  FlushBatch();
+  MTL::Buffer *rawIB = mtIB->GetBuffer();
 
   MTL::PrimitiveType type;
   switch (dt) {
   case DT_Points:
-    type = MTL::PrimitiveType::PrimitiveTypePoint;
+    type = MTL::PrimitiveTypePoint;
     break;
   case DT_Lines:
-    type = MTL::PrimitiveType::PrimitiveTypeLine;
+    type = MTL::PrimitiveTypeLine;
     break;
   case DT_TriangleStrip:
-    type = MTL::PrimitiveType::PrimitiveTypeTriangleStrip;
+    type = MTL::PrimitiveTypeTriangleStrip;
     break;
   default:
-    type = MTL::PrimitiveType::PrimitiveTypeTriangle;
+    type = MTL::PrimitiveTypeTriangle;
     break;
   }
 
-  fb->GetDebugManager()->RecordDrawCall(count, count);
-  mEncoder->drawIndexedPrimitives(type, count,
-                                  MTL::IndexTypeUInt32, mtlIB,
-                                  index * 4); // Each index is 4 bytes (UInt32)
-  mApplyCount++;
+  // Fast path: if the draw shares the same IB/VB/material/pipeline as the current
+  // indexed batch and no pipeline-breaking state has changed, skip the full Apply()
+  // and only advance the per-draw stream/matrix buffers.
+  bool canExtend = mPendingIndexedBatch.active && !mNeedApply &&
+                   rawIB == mPendingIndexedBatch.indexBuffer &&
+                   type == mPendingIndexedBatch.primitiveType &&
+                   mVertexBuffer == mPendingIndexedBatch.vertexBuffer &&
+                   mVertexOffsets[0] == mPendingIndexedBatch.vertexOffsets[0] &&
+                   mVertexOffsets[1] == mPendingIndexedBatch.vertexOffsets[1] &&
+                   mCullMode == mPendingIndexedBatch.cullMode &&
+                   mMaterial.mMaterial == mPendingIndexedBatch.material &&
+                   mMaterial.mTranslation == mPendingIndexedBatch.translation &&
+                   mMaterial.mClampMode == mPendingIndexedBatch.clampMode &&
+                   mMaterial.mOverrideShader == mPendingIndexedBatch.overrideShader;
+
+  if (canExtend) {
+    // Advance per-draw ring buffer writers and rebuild push constants.
+    ApplyStreamData();
+    ApplyMatrices();
+
+    // If WaitForStreamBuffers() fired inside ApplyStreamData/ApplyMatrices, the
+    // indexed batch was flushed by EndRenderPass() and active is now false.
+    // Fall through to the full Apply path to re-establish state.
+    if (!mPendingIndexedBatch.active) {
+      canExtend = false;
+      mNeedApply = true;
+    } else {
+      BuildPushConstants();
+    }
   }
+
+  if (!canExtend) {
+    // Full state apply: flush the old indexed batch, rebind pipeline/material.
+    FlushIndexedBatch();
+    if (apply || mNeedApply)
+      Apply(dt);
+
+    if (!mEncoder || !mPipelineBound)
+      return;
+
+    // Start a new indexed batch with the current state as the key.
+    mPendingIndexedBatch.primitiveType = type;
+    mPendingIndexedBatch.vertexBuffer = mVertexBuffer;
+    mPendingIndexedBatch.vertexOffsets[0] = mVertexOffsets[0];
+    mPendingIndexedBatch.vertexOffsets[1] = mVertexOffsets[1];
+    mPendingIndexedBatch.indexBuffer = rawIB;
+    mPendingIndexedBatch.pipelineKey = mPipelineKey;
+    mPendingIndexedBatch.cullMode = mCullMode;
+    mPendingIndexedBatch.material = mMaterial.mMaterial;
+    mPendingIndexedBatch.translation = mMaterial.mTranslation;
+    mPendingIndexedBatch.clampMode = mMaterial.mClampMode;
+    mPendingIndexedBatch.overrideShader = mMaterial.mOverrideShader;
+    mPendingIndexedBatch.subDrawCount = 0;
+    mPendingIndexedBatch.active = true;
+  }
+
+  if (!mEncoder || !mPipelineBound)
+    return;
+
+  // Flush if the sub-draw array is full.
+  if (mPendingIndexedBatch.subDrawCount >= PendingIndexedBatch::kMaxSubDraws) {
+    FlushIndexedBatch();
+    // Re-open the batch after flush (state is still bound).
+    mPendingIndexedBatch.active = true;
+    mPendingIndexedBatch.subDrawCount = 0;
+  }
+
+  auto &sub =
+      mPendingIndexedBatch.subDraws[mPendingIndexedBatch.subDrawCount++];
+  sub.pushConstants = mPushConstants;
+  sub.matrixBuffer = mMatrixBufferWriter.GetBuffer();
+  sub.matrixOffset = mMatrixBufferWriter.Offset();
+  sub.streamBuffer = mStreamBufferWriter.GetBuffer();
+  sub.streamOffset = mStreamBufferWriter.StreamDataOffset();
+  sub.indexStart = index;
+  sub.indexCount = count;
+}
 
 
 void MtRenderState::FlushBatch() {
+  // NOTE: Do NOT call FlushIndexedBatch() here.  The two batch types use different
+  // pipelines; flushing the indexed batch from inside FlushBatch() would emit
+  // indexed draws with whatever pipeline is currently bound (likely the triangle
+  // pipeline), producing incorrect rendering.  Each call site is responsible for
+  // flushing the opposite batch type before switching pipelines.
+
   if (!mPendingBatch.active || mPendingBatch.indexCount == 0) {
     mPendingBatch.active = false;
+    mPendingBatch.subDrawCount = 0;
     return;
   }
 
-  // if (mt_debug) Printf("Metal: Flushing batch: %d indices, type %d\n", mPendingBatch.indexCount, mPendingBatch.dt);
+  // Finalise the still-accumulating sub-draw (may have indices that haven't been
+  // committed to a SubDraw entry yet).
+  unsigned int lastSubDrawIndexCount =
+      mBatchIndexOffset - mPendingBatch.currentSubDrawIndexStart;
+  if (lastSubDrawIndexCount > 0 &&
+      mPendingBatch.subDrawCount < PendingBatch::kMaxSubDraws) {
+    auto &sub = mPendingBatch.subDraws[mPendingBatch.subDrawCount++];
+    sub.pushConstants = mPendingBatch.currentPushConstants;
+    sub.matrixBuffer = mPendingBatch.currentMatrixBuffer;
+    sub.matrixOffset = mPendingBatch.currentMatrixOffset;
+    sub.streamBuffer = mPendingBatch.currentStreamBuffer;
+    sub.streamOffset = mPendingBatch.currentStreamOffset;
+    sub.indexStart = mPendingBatch.currentSubDrawIndexStart;
+    sub.indexCount = lastSubDrawIndexCount;
+  }
+
+  if (mPendingBatch.subDrawCount == 0) {
+    mPendingBatch.active = false;
+    mPendingBatch.indexCount = 0;
+    return;
+  }
 
   if (mEncoder && mPipelineBound) {
-    auto batchIB = dynamic_cast<MtIndexBuffer *>(fb->GetBufferManager()->BatchIndexBuffer.get());
+    auto batchIB = dynamic_cast<MtIndexBuffer *>(
+        fb->GetBufferManager()->BatchIndexBuffer.get());
     if (batchIB) {
-      batchIB->Upload(mPendingBatch.indexStart * 4, mPendingBatch.indexCount * 4);
+      // Upload the entire accumulated index range once.
+      batchIB->Upload(mPendingBatch.indexStart * 4,
+                      mPendingBatch.indexCount * 4);
       auto mtlIB = batchIB->GetBuffer();
       if (mtlIB) {
-        fb->GetDebugManager()->RecordDrawCall(mPendingBatch.indexCount, mPendingBatch.indexCount);
-        mEncoder->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, 
-                                        mPendingBatch.indexCount, 
-                                        MTL::IndexTypeUInt32, 
-                                        mtlIB, 
-                                        mPendingBatch.indexStart * 4);
-        mApplyCount++;
+        for (int i = 0; i < mPendingBatch.subDrawCount; i++) {
+          const auto &sub = mPendingBatch.subDraws[i];
+          if (sub.indexCount == 0)
+            continue;
+
+          // Push constants change per sub-draw (DataIndex, fog, lighting…).
+          // setVertexBytes is cheap inline data — no separate buffer allocation.
+          mEncoder->setVertexBytes(&sub.pushConstants, sizeof(PushConstants),
+                                   21);
+          mEncoder->setFragmentBytes(&sub.pushConstants, sizeof(PushConstants),
+                                     21);
+
+          // Re-bind matrix buffer only if it changed from the previous sub-draw.
+          if (sub.matrixBuffer &&
+              (sub.matrixBuffer != mLastBoundBuffers[19] ||
+               sub.matrixOffset != mLastBoundOffsets[19])) {
+            mEncoder->setVertexBuffer(sub.matrixBuffer, sub.matrixOffset, 19);
+            mEncoder->setFragmentBuffer(sub.matrixBuffer, sub.matrixOffset, 19);
+            mLastBoundBuffers[19] = sub.matrixBuffer;
+            mLastBoundOffsets[19] = sub.matrixOffset;
+            mLastBoundFragmentBuffers[19] = sub.matrixBuffer;
+            mLastBoundFragmentOffsets[19] = sub.matrixOffset;
+          }
+
+          // Re-bind stream buffer only if the block rolled over (rare within a
+          // frame, but must be handled correctly).
+          if (sub.streamBuffer &&
+              (sub.streamBuffer != mLastBoundBuffers[20] ||
+               sub.streamOffset != mLastBoundOffsets[20])) {
+            mEncoder->setVertexBuffer(sub.streamBuffer, sub.streamOffset, 20);
+            mEncoder->setFragmentBuffer(sub.streamBuffer, sub.streamOffset, 20);
+            mLastBoundBuffers[20] = sub.streamBuffer;
+            mLastBoundOffsets[20] = sub.streamOffset;
+            mLastBoundFragmentBuffers[20] = sub.streamBuffer;
+            mLastBoundFragmentOffsets[20] = sub.streamOffset;
+          }
+
+          fb->GetDebugManager()->RecordDrawCallCategory(
+              sub.indexCount, sub.indexCount, "geometry");
+          mEncoder->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle,
+                                          sub.indexCount, MTL::IndexTypeUInt32,
+                                          mtlIB, sub.indexStart * 4);
+          mApplyCount++;
+        }
       }
     }
   }
 
   mPendingBatch.active = false;
   mPendingBatch.indexCount = 0;
-  // Note: we don't reset mBatchIndexOffset here, only at BeginFrame or when full
+  mPendingBatch.subDrawCount = 0;
+  // Note: mBatchIndexOffset is only reset at BeginFrame or when the buffer fills.
+}
+
+// Called at the end of Apply() to detect per-draw state changes (push constants,
+// matrix/stream buffer offsets) and break the current sub-draw without flushing
+// the entire batch.
+void MtRenderState::UpdateSubDrawState() {
+  if (!mPendingBatch.active)
+    return;
+
+  bool changed =
+      (mPushConstants != mPendingBatch.currentPushConstants) ||
+      (mMatrixBufferWriter.GetBuffer() != mPendingBatch.currentMatrixBuffer) ||
+      (mMatrixBufferWriter.Offset() != mPendingBatch.currentMatrixOffset) ||
+      (mStreamBufferWriter.GetBuffer() != mPendingBatch.currentStreamBuffer) ||
+      (mStreamBufferWriter.StreamDataOffset() !=
+       mPendingBatch.currentStreamOffset);
+
+  if (!changed)
+    return;
+
+  // Finalise the sub-draw that just ended, recording the indices it accumulated.
+  unsigned int subDrawIndexCount =
+      mBatchIndexOffset - mPendingBatch.currentSubDrawIndexStart;
+  if (subDrawIndexCount > 0 &&
+      mPendingBatch.subDrawCount < PendingBatch::kMaxSubDraws) {
+    auto &sub = mPendingBatch.subDraws[mPendingBatch.subDrawCount++];
+    sub.pushConstants = mPendingBatch.currentPushConstants;
+    sub.matrixBuffer = mPendingBatch.currentMatrixBuffer;
+    sub.matrixOffset = mPendingBatch.currentMatrixOffset;
+    sub.streamBuffer = mPendingBatch.currentStreamBuffer;
+    sub.streamOffset = mPendingBatch.currentStreamOffset;
+    sub.indexStart = mPendingBatch.currentSubDrawIndexStart;
+    sub.indexCount = subDrawIndexCount;
+  }
+
+  // If we've hit the sub-draw limit, flush the whole batch now.
+  if (mPendingBatch.subDrawCount >= PendingBatch::kMaxSubDraws) {
+    FlushBatch();
+    return;
+  }
+
+  // Start the next sub-draw with the updated state.
+  mPendingBatch.currentSubDrawIndexStart = mBatchIndexOffset;
+  mPendingBatch.currentPushConstants = mPushConstants;
+  mPendingBatch.currentMatrixBuffer = mMatrixBufferWriter.GetBuffer();
+  mPendingBatch.currentMatrixOffset = mMatrixBufferWriter.Offset();
+  mPendingBatch.currentStreamBuffer = mStreamBufferWriter.GetBuffer();
+  mPendingBatch.currentStreamOffset = mStreamBufferWriter.StreamDataOffset();
+}
+
+// Emit all deferred indexed sub-draws, reusing the pipeline/material/texture state
+// that was bound when the batch was started.  Only push constants and per-draw
+// buffer offsets are re-issued per sub-draw — expensive state is shared.
+void MtRenderState::FlushIndexedBatch() {
+  if (!mPendingIndexedBatch.active || mPendingIndexedBatch.subDrawCount == 0) {
+    mPendingIndexedBatch.active = false;
+    return;
+  }
+
+  if (mEncoder && mPipelineBound && mPendingIndexedBatch.indexBuffer) {
+    for (int i = 0; i < mPendingIndexedBatch.subDrawCount; i++) {
+      const auto &sub = mPendingIndexedBatch.subDraws[i];
+      if (sub.indexCount == 0)
+        continue;
+
+      mEncoder->setVertexBytes(&sub.pushConstants, sizeof(PushConstants), 21);
+      mEncoder->setFragmentBytes(&sub.pushConstants, sizeof(PushConstants), 21);
+
+      if (sub.matrixBuffer &&
+          (sub.matrixBuffer != mLastBoundBuffers[19] ||
+           sub.matrixOffset != mLastBoundOffsets[19])) {
+        mEncoder->setVertexBuffer(sub.matrixBuffer, sub.matrixOffset, 19);
+        mEncoder->setFragmentBuffer(sub.matrixBuffer, sub.matrixOffset, 19);
+        mLastBoundBuffers[19] = sub.matrixBuffer;
+        mLastBoundOffsets[19] = sub.matrixOffset;
+        mLastBoundFragmentBuffers[19] = sub.matrixBuffer;
+        mLastBoundFragmentOffsets[19] = sub.matrixOffset;
+      }
+
+      if (sub.streamBuffer &&
+          (sub.streamBuffer != mLastBoundBuffers[20] ||
+           sub.streamOffset != mLastBoundOffsets[20])) {
+        mEncoder->setVertexBuffer(sub.streamBuffer, sub.streamOffset, 20);
+        mEncoder->setFragmentBuffer(sub.streamBuffer, sub.streamOffset, 20);
+        mLastBoundBuffers[20] = sub.streamBuffer;
+        mLastBoundOffsets[20] = sub.streamOffset;
+        mLastBoundFragmentBuffers[20] = sub.streamBuffer;
+        mLastBoundFragmentOffsets[20] = sub.streamOffset;
+      }
+
+      fb->GetDebugManager()->RecordDrawCallCategory(sub.indexCount, sub.indexCount,
+                                                    "geometry");
+      mEncoder->drawIndexedPrimitives(mPendingIndexedBatch.primitiveType,
+                                      sub.indexCount, MTL::IndexTypeUInt32,
+                                      mPendingIndexedBatch.indexBuffer,
+                                      sub.indexStart * 4);
+      mApplyCount++;
+    }
+  }
+
+  mPendingIndexedBatch.active = false;
+  mPendingIndexedBatch.subDrawCount = 0;
+}
+
+// Build mPushConstants from current render state without issuing any Metal API calls.
+// Called in the DrawIndexed fast path to capture per-sub-draw data cheaply.
+void MtRenderState::BuildPushConstants() {
+  int fogset = 0;
+  if (mFogEnabled) {
+    if (mFogEnabled == 2)
+      fogset = -3;
+    else if ((GetFogColor() & 0xffffff) == 0)
+      fogset = gl_fogmode;
+    else
+      fogset = -gl_fogmode;
+  }
+
+  int tempTM = TM_NORMAL;
+  if (mMaterial.mMaterial && mMaterial.mMaterial->Source()->isHardwareCanvas())
+    tempTM = TM_OPAQUE;
+
+  mPushConstants.group1[0] = mClipSplit[0];
+  mPushConstants.group1[1] = mClipSplit[1];
+  mPushConstants.group1[2] = mGlossiness;
+  mPushConstants.group1[3] = mSpecularLevel;
+  if (mPushConstants.group1[2] == 0.0f && mPushConstants.group1[3] == 0.0f &&
+      mMaterial.mMaterial) {
+    auto source = mMaterial.mMaterial->Source();
+    mPushConstants.group1[2] = source->GetGlossiness();
+    mPushConstants.group1[3] = source->GetSpecularLevel();
+  }
+
+  mPushConstants.group2[0] = mLightParms[3];
+  mPushConstants.group2[1] = mLightParms[2];
+  mPushConstants.group2[2] = mLightParms[1];
+  mPushConstants.group2[3] = mLightParms[0];
+
+  mPushConstants.group3[0] = (float)GetTextureModeAndFlags(tempTM);
+  mPushConstants.group3[1] = mAlphaThreshold;
+  mPushConstants.group3[2] = (float)fogset;
+  mPushConstants.group3[3] = (float)mLightIndex;
+
+  mPushConstants.group4[0] = (float)mBoneIndexBase;
+  mPushConstants.group4[1] = (float)mStreamBufferWriter.DataIndex();
+  mPushConstants.group4[2] = (float)mClipDistanceMask;
+  mPushConstants.group4[3] = 0.0f;
 }
 
 bool MtRenderState::SetDepthClamp(bool on) {
@@ -367,44 +662,20 @@ void MtRenderState::Apply(int dt) {
   ApplyStreamData();
   ApplyMatrices();
 
-  // If we have an active batch, check if the current state still matches it.
-  // We check this BEFORE updating mLastPushConstants etc.
+  // If we have an active batch, flush it only when geometry/material/pipeline-level
+  // state changes.  Push constant and matrix/stream offset changes are handled as
+  // sub-draw breaks inside UpdateSubDrawState() after the full Apply() run.
   if (mPendingBatch.active) {
-    if (mPendingBatch.dt != dt || mNeedApply) {
+    if (mPendingBatch.dt != dt ||
+        mVertexBuffer != mPendingBatch.vertexBuffer ||
+        mVertexOffsets[0] != mPendingBatch.vertexOffsets[0] ||
+        mVertexOffsets[1] != mPendingBatch.vertexOffsets[1] ||
+        mCullMode != mPendingBatch.cullMode ||
+        mMaterial.mMaterial != mPendingBatch.material ||
+        mMaterial.mTranslation != mPendingBatch.translation ||
+        mMaterial.mClampMode != mPendingBatch.clampMode ||
+        mMaterial.mOverrideShader != mPendingBatch.overrideShader) {
       FlushBatch();
-    } else {
-      // Temporarily update PushConstants to see if they will change
-      PushConstants nextPush = mPushConstants;
-      int fogset = 0;
-      if (mFogEnabled) {
-        if (mFogEnabled == 2) fogset = -3;
-        else if ((GetFogColor() & 0xffffff) == 0) fogset = gl_fogmode;
-        else fogset = -gl_fogmode;
-      }
-      int tempTM = TM_NORMAL;
-      if (mMaterial.mMaterial && mMaterial.mMaterial->Source()->isHardwareCanvas())
-        tempTM = TM_OPAQUE;
-
-      nextPush.group3[0] = (float)GetTextureModeAndFlags(tempTM);
-      nextPush.group3[1] = mAlphaThreshold;
-      nextPush.group3[2] = (float)fogset;
-      nextPush.group3[3] = (float)mLightIndex;
-      nextPush.group4[0] = (float)mBoneIndexBase;
-      nextPush.group4[1] = (float)mStreamBufferWriter.DataIndex();
-      nextPush.group4[2] = (float)mClipDistanceMask;
-
-      if (nextPush != mPendingBatch.pushConstants || 
-          mMatrixBufferWriter.Offset() != mPendingBatch.matrixOffset ||
-          mVertexBuffer != mPendingBatch.vertexBuffer ||
-          mVertexOffsets[0] != mPendingBatch.vertexOffsets[0] ||
-          mVertexOffsets[1] != mPendingBatch.vertexOffsets[1] ||
-          mCullMode != mPendingBatch.cullMode ||
-          mMaterial.mMaterial != mPendingBatch.material ||
-          mMaterial.mTranslation != mPendingBatch.translation ||
-          mMaterial.mClampMode != mPendingBatch.clampMode ||
-          mMaterial.mOverrideShader != mPendingBatch.overrideShader) {
-        FlushBatch();
-      }
     }
   }
 
@@ -436,6 +707,12 @@ void MtRenderState::Apply(int dt) {
   ApplyMaterial();
   ApplyFixedTextures();
   mNeedApply = false;
+
+  // After all state is committed, check whether per-draw data (push constants,
+  // matrix/stream buffer offsets) has changed since the last sub-draw.  If so,
+  // finalise the previous sub-draw and start a new one — without flushing the
+  // entire batch.
+  UpdateSubDrawState();
 }
 
 void MtRenderState::ApplyFixedTextures() {
@@ -443,38 +720,40 @@ void MtRenderState::ApplyFixedTextures() {
     return;
 
   auto buffers = fb->GetBuffers();
-  if (buffers->ShadowMap && buffers->ShadowMap->GetTexture()) {
-    mEncoder->setFragmentTexture(buffers->ShadowMap->GetTexture(), 14);
-    mEncoder->setVertexTexture(buffers->ShadowMap->GetTexture(), 14);
+  if (buffers->ShadowMap) {
+    MTL::Texture *shadowTex = buffers->ShadowMap->GetTexture();
+    if (shadowTex && shadowTex != mLastShadowMapTex) {
+      mEncoder->setFragmentTexture(shadowTex, 14);
+      mEncoder->setVertexTexture(shadowTex, 14);
 
-    // Shadow map sampler: Nearest, Clamp
-    MtSamplerKey sk;
-    sk.MinFilter = 0;
-    sk.MagFilter = 0;
-    sk.MipFilter = 0;
-    sk.AddressU = 3; // CLAMP_XY
-    sk.AddressV = 3;
-    sk.AddressW = 3;
-    sk.MaxAnisotropy = 1.0f;
+      MtSamplerKey sk;
+      sk.MinFilter = 0;
+      sk.MagFilter = 0;
+      sk.MipFilter = 0;
+      sk.AddressU = 3;
+      sk.AddressV = 3;
+      sk.AddressW = 3;
+      sk.MaxAnisotropy = 1.0f;
 
-    auto sampler = fb->GetSamplerManager()->GetSamplerState(sk);
-    if (sampler) {
-      mEncoder->setFragmentSamplerState(sampler, 14);
-      mEncoder->setVertexSamplerState(sampler, 14);
+      auto sampler = fb->GetSamplerManager()->GetSamplerState(sk);
+      if (sampler) {
+        mEncoder->setFragmentSamplerState(sampler, 14);
+        mEncoder->setVertexSamplerState(sampler, 14);
+      }
+      mLastShadowMapTex = shadowTex;
     }
   }
 
   MTL::Texture *lmTex = fb->GetTextureManager()->GetLightmap();
-  if (lmTex) {
+  if (lmTex && lmTex != mLastLightmapTex) {
     mEncoder->setFragmentTexture(lmTex, 15);
     mEncoder->setVertexTexture(lmTex, 15);
 
-    // Lightmap sampler: Linear, Clamp (Vulkan Parity)
     MtSamplerKey sk;
-    sk.MinFilter = 1; // Linear
+    sk.MinFilter = 1;
     sk.MagFilter = 1;
     sk.MipFilter = 0;
-    sk.AddressU = 3; // CLAMP_XY
+    sk.AddressU = 3;
     sk.AddressV = 3;
     sk.AddressW = 3;
     sk.MaxAnisotropy = 1.0f;
@@ -484,6 +763,7 @@ void MtRenderState::ApplyFixedTextures() {
       mEncoder->setFragmentSamplerState(sampler, 15);
       mEncoder->setVertexSamplerState(sampler, 15);
     }
+    mLastLightmapTex = lmTex;
   }
 }
 
@@ -549,6 +829,7 @@ void MtRenderState::ApplyRenderPass(int dt) {
 
   // Only update pipeline state if key changed or not bound
   if (pipelineKey != mPipelineKey || !mPipelineBound) {
+    fb->GetDebugManager()->RecordStateChange("pipeline");
     auto pipelineState =
         fb->GetPipelineStateManager()->GetPipelineState(pipelineKey, mtVBuf);
     if (pipelineState && pipelineState->pipelineState) {
@@ -671,49 +952,7 @@ void MtRenderState::ApplyPushConstants() {
   if (!mEncoder)
     return;
 
-  int fogset = 0;
-  if (mFogEnabled) {
-    if (mFogEnabled == 2) {
-      fogset = -3; // 2D rendering with 'foggy' overlay.
-    } else if ((GetFogColor() & 0xffffff) == 0) {
-      fogset = gl_fogmode;
-    } else {
-      fogset = -gl_fogmode;
-    }
-  }
-
-  int tempTM = TM_NORMAL;
-  if (mMaterial.mMaterial && mMaterial.mMaterial->Source()->isHardwareCanvas())
-    tempTM = TM_OPAQUE;
-
-  // Group 1
-  mPushConstants.group1[0] = mClipSplit[0];
-  mPushConstants.group1[1] = mClipSplit[1];
-  mPushConstants.group1[2] = mGlossiness;
-  mPushConstants.group1[3] = mSpecularLevel;
-  if (mPushConstants.group1[2] == 0.0f && mPushConstants.group1[3] == 0.0f && mMaterial.mMaterial) {
-    auto source = mMaterial.mMaterial->Source();
-    mPushConstants.group1[2] = source->GetGlossiness();
-    mPushConstants.group1[3] = source->GetSpecularLevel();
-  }
-
-  // Group 2
-  mPushConstants.group2[0] = mLightParms[3];
-  mPushConstants.group2[1] = mLightParms[2];
-  mPushConstants.group2[2] = mLightParms[1];
-  mPushConstants.group2[3] = mLightParms[0];
-
-  // Group 3
-  mPushConstants.group3[0] = (float)GetTextureModeAndFlags(tempTM);
-  mPushConstants.group3[1] = mAlphaThreshold;
-  mPushConstants.group3[2] = (float)fogset;
-  mPushConstants.group3[3] = (float)mLightIndex;
-
-  // Group 4
-  mPushConstants.group4[0] = (float)mBoneIndexBase;
-  mPushConstants.group4[1] = (float)mStreamBufferWriter.DataIndex();
-  mPushConstants.group4[2] = (float)mClipDistanceMask;
-  mPushConstants.group4[3] = 0.0f;
+  BuildPushConstants();
 
   if (mPushConstants != mLastPushConstants) {
     mEncoder->setVertexBytes(&mPushConstants, sizeof(PushConstants), 21);
@@ -1090,6 +1329,8 @@ void MtRenderState::ApplyHWBufferSet() {
 }
 
 void MtRenderState::WaitForStreamBuffers() {
+  auto stallStart = std::chrono::high_resolution_clock::now();
+
   EndRenderPass();
   fb->GetCommands()->FlushCommands(true);
 
@@ -1098,6 +1339,12 @@ void MtRenderState::WaitForStreamBuffers() {
   mMatrixBufferWriter.BeginFrame();
 
   BeginRenderPass();
+
+  float stallMs = std::chrono::duration<float, std::milli>(
+                      std::chrono::high_resolution_clock::now() - stallStart)
+                      .count();
+  if (fb->GetDebugManager())
+    fb->GetDebugManager()->RecordStall("streambuffer", stallMs);
 }
 
 void MtRenderState::Bind(int bindingpoint, uint32_t offset) {
@@ -1167,14 +1414,15 @@ void MtRenderState::BeginFrame() {
 
 void MtRenderState::EndRenderPass() {
   if (mEncoder) {
+    FlushIndexedBatch(); // must come first — uses indexed pipeline while it's still bound
     FlushBatch();
     mEncoder->endEncoding();
     mEncoder = nullptr;
-    mApplyCount++; // Increment when a pass is completed
   }
 }
 
 void MtRenderState::EndFrame() {
+  FlushIndexedBatch();
   FlushBatch();
   if (mBatchIBPointer) {
     fb->GetBufferManager()->BatchIndexBuffer->Unlock();
@@ -1359,6 +1607,8 @@ void MtRenderState::BeginRenderPass() {
     mLastResidentIndexBuffer = nullptr;
     mPassCount++;
     mPipelineBound = false;
+    mLastShadowMapTex = nullptr;
+    mLastLightmapTex = nullptr;
     if (mEncoder) {
       // Vertex-Flip Fix: Because we negated gl_Position.y in the shader,
       // the front-facing winding is now Clockwise.

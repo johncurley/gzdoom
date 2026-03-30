@@ -24,6 +24,8 @@
 // Restore TimeScale
 #undef TimeScale
 
+#include <chrono>
+
 #include "hw_renderstate.h"
 #include "metal/renderer/mt_pipelinestate.h"
 #include "metal/renderer/mt_postprocess.h"
@@ -376,10 +378,30 @@ void MetalRenderDevice::BeginFrame() {
   // If we already have a drawable, don't acquire another one.
   // This happens during wipes where Update() calls BeginFrame() for us.
   if (!mCurrentDrawable) {
-    // Wait for GPU backpressure (MaxFramesInFlight frames allowed)
-    if (dispatch_semaphore_wait(
-            mInflightFramesSemaphore,
-            dispatch_time(DISPATCH_TIME_NOW, 1000 * NSEC_PER_MSEC)) != 0) {
+    // Wait for GPU backpressure (MaxFramesInFlight frames allowed).
+    // If the GPU falls more than 1 second behind, log it and force a full
+    // sync rather than silently barreling ahead (which would cause nextDrawable
+    // to block indefinitely).
+    {
+      auto semWaitStart = std::chrono::high_resolution_clock::now();
+      if (dispatch_semaphore_wait(
+              mInflightFramesSemaphore,
+              dispatch_time(DISPATCH_TIME_NOW, 1000 * NSEC_PER_MSEC)) != 0) {
+        float semMs = std::chrono::duration<float, std::milli>(
+                          std::chrono::high_resolution_clock::now() - semWaitStart)
+                          .count();
+        if (mDebugManager)
+          mDebugManager->RecordStall("semaphore_timeout", semMs);
+        // Force GPU sync to recover — signal the semaphore ourselves so
+        // the frame can proceed; the GPU must have stalled or lost a signal.
+        dispatch_semaphore_signal(mInflightFramesSemaphore);
+      } else {
+        float semMs = std::chrono::duration<float, std::milli>(
+                          std::chrono::high_resolution_clock::now() - semWaitStart)
+                          .count();
+        if (semMs >= 2.0f && mDebugManager)
+          mDebugManager->RecordStall("semaphore", semMs);
+      }
     }
 
     {
@@ -432,8 +454,18 @@ void MetalRenderDevice::BeginFrame() {
         metalLayer->setDrawableSize(CGSizeMake(GetWidth(), GetHeight()));
       }
 
-      // Ensure we have a valid drawable for this frame
-      mCurrentDrawable = (CA::MetalDrawable *)metalLayer->nextDrawable();
+      // Ensure we have a valid drawable for this frame.
+      // nextDrawable() can block if the GPU hasn't released a drawable yet —
+      // time it so we can detect when it's the source of freeze frames.
+      {
+        auto drawableStart = std::chrono::high_resolution_clock::now();
+        mCurrentDrawable = (CA::MetalDrawable *)metalLayer->nextDrawable();
+        float drawableMs = std::chrono::duration<float, std::milli>(
+                               std::chrono::high_resolution_clock::now() - drawableStart)
+                               .count();
+        if (drawableMs >= 2.0f && mDebugManager)
+          mDebugManager->RecordStall("drawable", drawableMs);
+      }
 
       if (mCurrentDrawable && mFrameCount < 10) {
         mFrameCount++;

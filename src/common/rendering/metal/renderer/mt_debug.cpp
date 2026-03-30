@@ -79,12 +79,6 @@ void MtDebugManager::EndFrame() {
   }
 }
 
-void MtDebugManager::RecordDrawCall(int vertexCount, int indexCount) {
-  mCurrentFrameStats.drawCallCount++;
-  mCurrentFrameStats.indexCount += indexCount;
-  mCurrentFrameStats.other_draws++;
-}
-
 void MtDebugManager::RecordDrawCallCategory(int vertexCount, int indexCount, const char *category) {
   mCurrentFrameStats.drawCallCount++;
   mCurrentFrameStats.indexCount += indexCount;
@@ -147,6 +141,20 @@ void MtDebugManager::RecordTextureMipmap(const char *name, int levels) {
   }
 }
 
+void MtDebugManager::RecordStall(const char *type, float durationMs) {
+  mCurrentFrameStats.stallCount++;
+  mCurrentFrameStats.stallTotalMs += durationMs;
+  if (durationMs > mCurrentFrameStats.stallMaxMs)
+    mCurrentFrameStats.stallMaxMs = durationMs;
+
+  // Always log significant stalls regardless of mt_debug — these are the
+  // freezes the user sees.
+  if (durationMs >= 2.0f) {
+    Printf(PRINT_HIGH,
+           "Metal: GPU stall (%s) %.2fms\n", type, durationMs);
+  }
+}
+
 void MtDebugManager::PrintDebugStats() {
   if (!fb || !mt_debug)
     return;
@@ -155,9 +163,17 @@ void MtDebugManager::PrintDebugStats() {
   float fps = (avgFrameTime > 0) ? 1000.0f / avgFrameTime : 0.0f;
 
   Printf(PRINT_HIGH,
-         "Metal: FPS: %.1f | Frame: %.2fms | Draws: %d | Verts: %d | State: %d\n",
+         "Metal: FPS: %.1f | Frame: %.2fms | Draws: %d | Verts: %d | State: %d",
          fps, avgFrameTime, mCurrentFrameStats.drawCallCount,
          mCurrentFrameStats.indexCount, mCurrentFrameStats.stateChanges);
+
+  if (mCurrentFrameStats.stallCount > 0)
+    Printf(PRINT_HIGH, " | Stalls: %d (%.2fms, max %.2fms)",
+           mCurrentFrameStats.stallCount,
+           mCurrentFrameStats.stallTotalMs,
+           mCurrentFrameStats.stallMaxMs);
+
+  Printf(PRINT_HIGH, "\n");
   
   // Show categorized draw calls if significant
   int total = mCurrentFrameStats.drawCallCount;

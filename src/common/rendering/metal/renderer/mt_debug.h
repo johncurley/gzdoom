@@ -17,12 +17,15 @@ public:
   void EndFrame();
 
   // Metric collection
-  void RecordDrawCall(int vertexCount, int indexCount);
   void RecordDrawCallCategory(int vertexCount, int indexCount, const char *category);
   void RecordStateChange(const char *stateName);
   void RecordTextureAllocation(size_t bytes, const char *name);
   void RecordBufferAllocation(size_t bytes, const char *name);
   void RecordTextureMipmap(const char *name, int levels);
+
+  // Stall tracking — call from render thread when a synchronous GPU wait occurs
+  // type: "drawable", "semaphore", "streambuffer", "texture_upload"
+  void RecordStall(const char *type, float durationMs);
 
   // Display (console-based)
   void PrintDebugStats();
@@ -50,6 +53,11 @@ public:
     int sky_draws = 0;
     int light_draws = 0;
     int other_draws = 0;
+
+    // Stall tracking
+    int stallCount = 0;
+    float stallTotalMs = 0.0f;
+    float stallMaxMs = 0.0f;
   };
 
   FrameStats GetLastFrameStats() const { return mLastFrameStats; }
