@@ -172,7 +172,7 @@ FString stb_include_string(FString str, FString filename, TArray<FString> &filen
         }
         text += inc;
 
-        text.AppendFormat("\n#line %zu %zu // %s\n", inc_list[i].next_line_after, curIndex, filename.GetChars());
+        text.AppendFormat("\n#line %lld %zu // %s\n", inc_list[i].next_line_after, curIndex, filename.GetChars());
         // no newlines, because we kept the #include newlines, which will get appended next
         last = inc_list[i].end;
     }

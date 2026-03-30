@@ -157,7 +157,7 @@ void ButtonMap::GetAxes ()
 	float joyaxes[NUM_AXIS_CODES];
 	I_GetAxes(joyaxes);
 
-	for (int i = 0; i < Buttons.Size(); i++)
+	for (int i = 0; i < (int)Buttons.Size(); i++)
 	{
 		FButtonStatus &btn = Buttons[i];
 		FString &btn_name = NumToName[i];

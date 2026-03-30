@@ -132,7 +132,12 @@ FTextureID LoadSkin(const char * path, const char * fn)
 
 int ModelFrameHash(FSpriteModelFrame * smf)
 {
+	// FSpriteModelFrame is non-standard-layout (virtual destructor via inheritance) but offsetof
+	// is well-defined on all target compilers for this struct layout.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Winvalid-offsetof"
 	return crc32(0, (const unsigned char *)(&smf->type), offsetof(FSpriteModelFrame, hashnext) - offsetof(FSpriteModelFrame, type));
+#pragma clang diagnostic pop
 }
 
 //===========================================================================
