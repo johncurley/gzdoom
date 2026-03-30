@@ -243,6 +243,13 @@ TranslationResult SPIRVTranslator::Translate(
 	case TargetLanguage::GLSL_Vulkan:
 		// Future: could use spirv_cross::CompilerGLSL for reference output
 		break;
+
+	case TargetLanguage::SPIRV:
+		// Passthrough: caller already has SPIRV, no translation needed
+		break;
+
+	default:
+		break;
 	}
 
 	TranslationResult result;
