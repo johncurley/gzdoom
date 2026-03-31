@@ -68,19 +68,6 @@ void MtDebugManager::EndFrame() {
   // Save to last frame stats
   mLastFrameStats = mCurrentFrameStats;
 
-  // Warn on slow frames (>33ms = below 30fps) but only when there are enough
-  // draw calls to indicate actual gameplay — frames with < 20 draws are
-  // level loads or transitions where the engine is busy on the CPU and the
-  // slow time is expected and uninformative.
-  if (frameTimeMs > 33.0f && mCurrentFrameStats.drawCallCount >= 20) {
-    Printf(PRINT_HIGH,
-           "Metal: SLOW FRAME %.1fms (%.0f fps) | draws:%d stalls:%d stall_total:%.1fms\n",
-           frameTimeMs, 1000.0f / frameTimeMs,
-           mCurrentFrameStats.drawCallCount,
-           mCurrentFrameStats.stallCount,
-           mCurrentFrameStats.stallTotalMs);
-  }
-
   // Log if enabled
   if (IsLogging()) {
     WriteLogEntry();
