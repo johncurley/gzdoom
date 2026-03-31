@@ -208,9 +208,11 @@ void MetalRenderDevice::InitializeState() {
         (NS::UInteger)mVersionManager.maxDrawableCount);
     metalLayer->setAllowsNextDrawableTimeout(true);
 
-    // Set framebufferOnly to NO to disable aggressive Intel scanout
-    // optimizations that can cause "squares" or tiling artifacts in fullscreen.
-    metalLayer->setFramebufferOnly(false);
+    // framebufferOnly=true lets Metal/IOKit use the fast scanout path on Apple
+    // Silicon (TBDR) since we only ever write to the swapchain drawable, never
+    // read it back. On Intel/AMD the driver can produce tiling artifacts in
+    // fullscreen if this is true, so keep it false for non-TBDR GPUs.
+    metalLayer->setFramebufferOnly(mVersionManager.isTBDR);
 
     if (mVersionManager.presentsWithTransaction) {
       // Synchronize with Cocoa transactions for smoother UI integration

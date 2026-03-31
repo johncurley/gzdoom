@@ -1564,11 +1564,15 @@ void MtRenderState::BeginRenderPass() {
     depthAttachment->setLoadAction(clearDepth ? MTL::LoadActionClear
                                               : MTL::LoadActionLoad);
 
-    // TBDR Optimization (Apple Silicon): Only DontCare if we are strictly writing to the
-    // SwapChain (which is never read back). For intermediate buffers, we MUST Store
-    // because they are often sampled later (Soft Particles, PostProcess).
-    // SSAO Critical Fix: Always STORE depth. We read it later.
-    depthAttachment->setStoreAction(MTL::StoreActionStore);
+    // Depth store action:
+    // - Memoryless textures (Apple Silicon PipelineDepthStencil) MUST use
+    //   DontCare — there is no backing store to write to.
+    // - SceneDepthStencil is sampled by SSAO/PostProcess so must be Store.
+    // Use the texture's storage mode to decide automatically.
+    bool depthIsMemoryless = (mRenderTarget.DepthStencil->storageMode() ==
+                              MTL::StorageModeMemoryless);
+    depthAttachment->setStoreAction(depthIsMemoryless ? MTL::StoreActionDontCare
+                                                      : MTL::StoreActionStore);
 
     bool isShadowPass = false;
     auto shadowMap = fb->GetBuffers()->ShadowMap.get();
@@ -1588,8 +1592,15 @@ void MtRenderState::BeginRenderPass() {
     stencilAttachment->setLoadAction(clearStencil ? MTL::LoadActionClear
                                                   : MTL::LoadActionLoad);
 
-    // SSAO Critical Fix: Always STORE stencil to protect the packed DepthStencil texture.
-    stencilAttachment->setStoreAction(MTL::StoreActionStore);
+    // Stencil store action:
+    // - If depth is memoryless the stencil component is too — DontCare.
+    // - On TBDR (Apple Silicon), stencil is cleared at the start of every
+    //   frame and never sampled across frames, so DontCare avoids a writeback.
+    // - On Intel/AMD/NVIDIA, stencil shares the packed Depth32Stencil8 texture
+    //   and must be Stored to protect the depth component.
+    bool stencilDontCare = depthIsMemoryless || fb->mVersionManager.isTBDR;
+    stencilAttachment->setStoreAction(stencilDontCare ? MTL::StoreActionDontCare
+                                                      : MTL::StoreActionStore);
 
     if (clearStencil) {
       stencilAttachment->setClearStencil(0);
