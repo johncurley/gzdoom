@@ -466,18 +466,7 @@ void MetalRenderDevice::BeginFrame() {
         metalLayer->setDrawableSize(CGSizeMake(GetWidth(), GetHeight()));
       }
 
-      // Ensure we have a valid drawable for this frame.
-      // nextDrawable() can block if the GPU hasn't released a drawable yet —
-      // time it so we can detect when it's the source of freeze frames.
-      {
-        auto drawableStart = std::chrono::high_resolution_clock::now();
-        mCurrentDrawable = (CA::MetalDrawable *)metalLayer->nextDrawable();
-        float drawableMs = std::chrono::duration<float, std::milli>(
-                               std::chrono::high_resolution_clock::now() - drawableStart)
-                               .count();
-        if (drawableMs >= 2.0f && mDebugManager)
-          mDebugManager->RecordStall("drawable", drawableMs);
-      }
+      mCurrentDrawable = (CA::MetalDrawable *)metalLayer->nextDrawable();
 
       if (mCurrentDrawable && mFrameCount < 10) {
         mFrameCount++;
