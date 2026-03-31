@@ -71,8 +71,10 @@
 #include "../../platform/posix/cocoa/cocoanativehandle.h"
 #endif
 
-// Max number of frames to queue for rendering
-constexpr int MaxFramesInFlight = 2;
+// Semaphore is created after version manager initialization so the count
+// matches maxDrawableCount exactly. Defined here so it can still be used
+// as the timeout guard in BeginFrame.
+static constexpr int kDefaultMaxFramesInFlight = 2;
 
 EXTERN_CVAR(Int, gl_tonemap)
 EXTERN_CVAR(Int, screenblocks)
@@ -89,7 +91,7 @@ void MetalPrintLog(const char *typestr, const std::string &msg) {
 
 MetalRenderDevice::MetalRenderDevice(void *hMonitor, bool fullscreen)
     : Super(hMonitor, fullscreen) {
-  mInflightFramesSemaphore = dispatch_semaphore_create(MaxFramesInFlight);
+  mInflightFramesSemaphore = dispatch_semaphore_create(kDefaultMaxFramesInFlight);
   mPipelineNbr = 3;
   device = std::make_shared<MetalDevice>();
   device->device = MTL::CreateSystemDefaultDevice();
@@ -227,6 +229,14 @@ void MetalRenderDevice::InitializeState() {
 
   const char *deviceName = device->device->name()->utf8String();
   mVersionManager.Initialize(device->device);
+
+  // Re-create the inflight semaphore now that we know the actual drawable
+  // count. On macOS 11+ the layer uses 3 drawables (triple buffering), so the
+  // semaphore must allow the same number of frames in flight — a mismatch
+  // causes nextDrawable() to block because the CPU races ahead and exhausts
+  // the drawable pool before the GPU has finished presenting.
+  dispatch_release(mInflightFramesSemaphore);
+  mInflightFramesSemaphore = dispatch_semaphore_create(mVersionManager.maxDrawableCount);
 
   vendorstring = deviceName;
   hwcaps = RFL_SHADER_STORAGE_BUFFER | RFL_BUFFER_STORAGE;

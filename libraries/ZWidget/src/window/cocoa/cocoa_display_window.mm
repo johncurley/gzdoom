@@ -294,8 +294,7 @@ void CocoaDisplayWindowImpl::stopDisplayLink() {
     // Just draw the existing bitmap (Update() handles regeneration
     // asynchronously)
     if (impl->cgImage) {
-      CGContextRef context =
-          (CGContextRef)[[NSGraphicsContext currentContext] graphicsPort];
+      CGContextRef context = [[NSGraphicsContext currentContext] CGContext];
       if (!context) {
         return;
       }
