@@ -266,9 +266,14 @@ void GameControllerJoystick::SetupInputHandlers()
 	if (!gamepad)
 		return;
 
-	// Handle pause button
+	// Handle pause button — controllerPausedHandler is deprecated in 10.15 but
+	// the replacement (Menu button profile) isn't universally available on older
+	// controllers, so keep this path and suppress the warning.
 	__block GameControllerJoystick* weakSelf = this;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
 	m_controller.controllerPausedHandler = ^(GCController* controller) {
+#pragma clang diagnostic pop
 		if (weakSelf && weakSelf->m_enabled) {
 			// Generate pause/menu button event
 			event_t event;

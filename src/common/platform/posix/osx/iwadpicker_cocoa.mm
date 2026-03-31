@@ -33,6 +33,10 @@
  **
  */
 
+// NSRoundedBezelStyle is deprecated in macOS 14; replacement requires macOS 14+
+// which is above our deployment target. Suppress until we drop pre-14 support.
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+
 #include "c_cvars.h"
 #include "cmdlib.h"
 #include "engineerrors.h"

@@ -32,6 +32,13 @@
  **
  */
 
+// Silence macOS deprecation warnings for the OpenGL renderer — we intentionally
+// still support it alongside Metal. These APIs work through macOS 14+ despite
+// the deprecation notice.
+#ifndef GL_SILENCE_DEPRECATION
+#define GL_SILENCE_DEPRECATION
+#endif
+
 #include "gl_load.h"
 
 #ifdef HAVE_VULKAN
@@ -826,8 +833,11 @@ SystemGLFrameBuffer::SystemGLFrameBuffer(void *hMonitor, bool fullscreen)
 void SystemGLFrameBuffer::SetVSync(bool vsync) {
   const GLint value = vsync ? 1 : 0;
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
   [[NSOpenGLContext currentContext] setValues:&value
                                  forParameter:NSOpenGLCPSwapInterval];
+#pragma clang diagnostic pop
 }
 
 void SystemGLFrameBuffer::SetMode(const bool fullscreen, const bool hiDPI) {
@@ -923,7 +933,7 @@ bool I_SetCursor(FGameTexture *cursorpic) {
       // Create image from representation and set it as cursor
 
       NSData *imageData =
-          [bitmapImageRep representationUsingType:NSPNGFileType
+          [bitmapImageRep representationUsingType:NSBitmapImageFileTypePNG
                                        properties:[NSDictionary dictionary]];
       NSImage *cursorImage = [[NSImage alloc] initWithData:imageData];
 
@@ -1060,8 +1070,11 @@ uint8_t *I_PolyPresentLock(int w, int h, bool vsync, int &pitch) {
   if (vsync != polyVSync) {
     const GLint value = vsync ? 1 : 0;
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
     [[NSOpenGLContext currentContext] setValues:&value
                                    forParameter:NSOpenGLCPSwapInterval];
+#pragma clang diagnostic pop
   }
 
   pitch = w * PIXEL_BYTES;

@@ -31,6 +31,11 @@
  **
  */
 
+// NSRoundedBezelStyle and related AppKit enums are deprecated in macOS 14.
+// The replacement (NSBezelStyleRounded) requires macOS 14+, which is above
+// our deployment target. Suppress until we drop pre-14 support.
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+
 #include "i_common.h"
 #include "startupinfo.h"
 #include "st_console.h"
