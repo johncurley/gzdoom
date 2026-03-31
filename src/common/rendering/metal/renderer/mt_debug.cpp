@@ -146,12 +146,6 @@ void MtDebugManager::RecordStall(const char *type, float durationMs) {
   mCurrentFrameStats.stallTotalMs += durationMs;
   if (durationMs > mCurrentFrameStats.stallMaxMs)
     mCurrentFrameStats.stallMaxMs = durationMs;
-
-  // Always log stalls >= 1ms — these are the micro-hitches the user sees.
-  if (durationMs >= 1.0f) {
-    Printf(PRINT_HIGH,
-           "Metal: GPU stall (%s) %.2fms\n", type, durationMs);
-  }
 }
 
 void MtDebugManager::PrintDebugStats() {
