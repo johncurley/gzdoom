@@ -825,16 +825,8 @@ void PPAmbientOcclusion::Render(PPRenderState *renderstate, float m5, int sceneW
 
 	SSAOUniforms ssaoUniforms;
 	ssaoUniforms.SampleIndex = 0;
-	if (screen->IsMetal())
-	{
-		ssaoUniforms.UVToViewA = { 2.0f * invFocalLenX, -2.0f * invFocalLenY }; // Metal: Flip math Y-scale
-		ssaoUniforms.UVToViewB = { -invFocalLenX, invFocalLenY };              // Metal: Flip math Y-offset
-	}
-	else
-	{
-		ssaoUniforms.UVToViewA = { 2.0f * invFocalLenX, 2.0f * invFocalLenY };
-		ssaoUniforms.UVToViewB = { -invFocalLenX, -invFocalLenY };
-	}
+	ssaoUniforms.UVToViewA = { 2.0f * invFocalLenX, 2.0f * invFocalLenY };
+	ssaoUniforms.UVToViewB = { -invFocalLenX, -invFocalLenY };
 	ssaoUniforms.InvFullResolution = { 1.0f / AmbientWidth, 1.0f / AmbientHeight };
 	ssaoUniforms.NDotVBias = nDotVBias;
 	ssaoUniforms.NegInvR2 = -1.0f / r2;
