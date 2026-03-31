@@ -55,10 +55,14 @@ typedef VkResult(VKAPI_PTR *PFN_vkCreateMetalSurfaceEXT)(
 #endif
 
 #ifdef HAVE_OPENGL
+// Must be defined before importing OpenGL headers to suppress deprecation warnings.
+// NSOpenGL is deprecated since macOS 10.14 but retained for the optional OpenGL fallback.
+#define GL_SILENCE_DEPRECATION
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
 #import <OpenGL/gl.h>
 #import <OpenGL/glu.h>
-
-#define GL_SILENCE_DEPRECATION
+#pragma clang diagnostic pop
 #endif
 
 // Forward declarations
@@ -595,6 +599,8 @@ void CocoaDisplayWindowImpl::stopDisplayLink() {
 
 void CocoaDisplayWindowImpl::initOpenGL(ZWidgetView *view) {
 #ifdef HAVE_OPENGL
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
   NSOpenGLPixelFormatAttribute attrs[] = {NSOpenGLPFAAccelerated,
                                           NSOpenGLPFANoRecovery,
                                           NSOpenGLPFADoubleBuffer,
@@ -615,6 +621,7 @@ void CocoaDisplayWindowImpl::initOpenGL(ZWidgetView *view) {
   } else {
     renderAPI = RenderAPI::Bitmap; // Fallback if OpenGL not available
   }
+#pragma clang diagnostic pop
 #else
   renderAPI = RenderAPI::Bitmap; // Fallback if OpenGL not available
 #endif
