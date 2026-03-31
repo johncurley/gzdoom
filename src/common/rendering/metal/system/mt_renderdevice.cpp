@@ -673,9 +673,12 @@ void MetalRenderDevice::PrecacheMaterial(FMaterial *mat, int translation) {
       if (!tex && i == 0)
         tex = mat->Source()->GetTexture();
 
-      if (tex) {
-        mtHwTexture->CreateImage(
-            tex, trans, layerInfo ? layerInfo->scaleFlags : scaleFlags);
+      if (tex && mTextureManager) {
+        bool wantMipmap = !(layerInfo && (layerInfo->scaleFlags & CTF_Indexed));
+        mTextureManager->QueueHardwareTextureLoad(
+            mtHwTexture, tex, trans,
+            layerInfo ? layerInfo->scaleFlags : scaleFlags,
+            wantMipmap);
       }
     }
   }

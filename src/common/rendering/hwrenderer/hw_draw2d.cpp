@@ -65,6 +65,8 @@ void Draw2D(F2DDrawer* drawer, FRenderState& state, int x, int y, int width, int
 	state.SetViewport(x, y, width, height);
 	screen->mViewpoints->Set2D(state, drawer->GetWidth(), drawer->GetHeight());
 
+	state.SetDrawCategory("hud");
+
 	state.EnableStencil(false);
 	state.SetStencil(0, SOP_Keep, SF_AllOn);
 	state.Clear(CT_Stencil);
@@ -261,6 +263,7 @@ void Draw2D(F2DDrawer* drawer, FRenderState& state, int x, int y, int width, int
 	state.SetScreenFade(1);
 	state.SetSoftLightLevel(255);
 	state.ResetColor();
+	state.SetDrawCategory("geometry");
 	drawer->mIsFirstPass = false;
 	twoD.Unclock();
 }

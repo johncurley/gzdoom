@@ -732,6 +732,7 @@ public:
 	virtual void SetDepthFunc(int func) = 0;					// Used by models, portals and mirror surfaces.
 	virtual void SetDepthRange(float min, float max) = 0;		// Used by portal setup.
 	virtual void SetSpecular(float glossiness, float specularLevel) {}
+	virtual void SetDrawCategory(const char *category) {}	// Cosmetic debug stats tag — backends may ignore
 	virtual void SetColorMask(bool r, bool g, bool b, bool a) = 0;	// Used by portals.
 	virtual void SetStencil(int offs, int op, int flags=-1) = 0;	// Used by portal setup and render hacks.
 	virtual void SetCulling(int mode) = 0;						// Used by model drawer only.

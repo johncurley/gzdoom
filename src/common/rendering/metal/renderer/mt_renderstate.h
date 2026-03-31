@@ -63,6 +63,10 @@ public:
   void ResetApplyCount() { mApplyCount = 0; }
   void SetInRenderTextureView(bool on);
   void SetMirrored(bool mirrored) { mMirror = mirrored; mCullModeChanged = true; }
+  // Set the logical draw category used by debug stats for the next draw call(s).
+  // Resets to "geometry" at the start of each frame. Valid values: "sky", "portal", "hud", "geometry".
+  void SetDrawCategory(const char *category) override { mCurrentDrawCategory = category; }
+  void ResetDrawCategory() { mCurrentDrawCategory = "geometry"; }
   void SetSpecular(float glossiness, float specularLevel) override
   {
        mGlossiness = glossiness;
@@ -168,16 +172,21 @@ protected:
   uint32_t mTotalDraws = 0;
   std::set<MTL::Texture *> mClearedTargets;
 
+  // Fixed texture binding cache — reset each render pass to avoid redundant API calls
+  MTL::Texture *mLastShadowMapTex = nullptr;
+  MTL::Texture *mLastLightmapTex = nullptr;
+
+  const char *mCurrentDrawCategory = "geometry";
+
   // Batching
   struct PendingBatch {
     int dt = -1;
     unsigned int indexCount = 0;
     unsigned int indexStart = 0;
-    
-    // Key states that must match to continue a batch
+
+    // Batch-level key: geometry/material/pipeline states that require flushing the entire batch.
+    // Push constants and matrix/stream offsets are NOT here — they become sub-draw breaks.
     MtPipelineKey pipelineKey = {};
-    PushConstants pushConstants = {};
-    unsigned int matrixOffset = 0xffffffff;
     IVertexBuffer* vertexBuffer = nullptr;
     int vertexOffsets[2] = {0, 0};
     int cullMode = -1;
@@ -186,12 +195,70 @@ protected:
     int clampMode = 0;
     int overrideShader = -1;
     bool active = false;
+
+    // Per-draw data captured within a batch.  Each time push constants or buffer
+    // offsets change, a new sub-draw is started rather than flushing the entire batch.
+    // This allows many logical draws with different uniforms to share one pipeline/material
+    // setup and a single index buffer upload.
+    struct SubDraw {
+      PushConstants pushConstants = {};
+      MTL::Buffer* matrixBuffer = nullptr;
+      uint32_t matrixOffset = 0xffffffff;
+      MTL::Buffer* streamBuffer = nullptr;
+      uint32_t streamOffset = 0xffffffff;
+      unsigned int indexStart = 0;
+      unsigned int indexCount = 0;
+    };
+    static constexpr int kMaxSubDraws = 256;
+    SubDraw subDraws[kMaxSubDraws];
+    int subDrawCount = 0;
+
+    // State of the currently-accumulating sub-draw (finalised into subDraws[] on a break).
+    PushConstants currentPushConstants = {};
+    MTL::Buffer* currentMatrixBuffer = nullptr;
+    uint32_t currentMatrixOffset = 0xffffffff;
+    MTL::Buffer* currentStreamBuffer = nullptr;
+    uint32_t currentStreamOffset = 0xffffffff;
+    unsigned int currentSubDrawIndexStart = 0;
   } mPendingBatch;
 
   unsigned int mBatchIndexOffset = 0;
   uint32_t* mBatchIBPointer = nullptr;
 
   void FlushBatch();
+  void UpdateSubDrawState();
+
+  // DrawIndexed batching: consecutive indexed draws sharing the same IB/VB/material
+  // are collected here.  On a state change they are emitted in FlushIndexedBatch().
+  struct PendingIndexedBatch {
+    MTL::PrimitiveType primitiveType = MTL::PrimitiveTypeTriangle;
+    IVertexBuffer* vertexBuffer = nullptr;
+    int vertexOffsets[2] = {0, 0};
+    MTL::Buffer* indexBuffer = nullptr;
+    MtPipelineKey pipelineKey = {};
+    int cullMode = -1;
+    FMaterial* material = nullptr;
+    int translation = 0;
+    int clampMode = 0;
+    int overrideShader = -1;
+    bool active = false;
+
+    struct SubDraw {
+      PushConstants pushConstants = {};
+      MTL::Buffer* matrixBuffer = nullptr;
+      uint32_t matrixOffset = 0xffffffff;
+      MTL::Buffer* streamBuffer = nullptr;
+      uint32_t streamOffset = 0xffffffff;
+      int indexStart = 0;
+      int indexCount = 0;
+    };
+    static constexpr int kMaxSubDraws = 256;
+    SubDraw subDraws[kMaxSubDraws];
+    int subDrawCount = 0;
+  } mPendingIndexedBatch;
+
+  void FlushIndexedBatch();
+  void BuildPushConstants();
 
   struct RenderTarget {
     MTL::Texture *Image = nullptr;

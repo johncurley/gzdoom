@@ -49,6 +49,8 @@ void HWSkyPortal::DrawContents(HWDrawInfo *di, FRenderState &state)
 		state.SetNoSoftLightLevel();
 	}
 
+	state.SetDrawCategory("sky");
+
 
 	state.ResetColor();
 	state.EnableFog(false);
@@ -103,6 +105,7 @@ void HWSkyPortal::DrawContents(HWDrawInfo *di, FRenderState &state)
 	}
 	di->lightmode = oldlightmode;
 	state.SetDepthClamp(oldClamp);
+	state.SetDrawCategory("geometry");
 }
 
 const char *HWSkyPortal::GetName() { return "Sky"; }

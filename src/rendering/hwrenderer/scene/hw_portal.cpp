@@ -187,6 +187,7 @@ void FPortalSceneState::RenderPortal(HWPortal *p, FRenderState &state, bool uses
 
 void HWPortal::DrawPortalStencil(FRenderState &state, int pass)
 {
+	state.SetDrawCategory("portal");
 	if (mPrimIndices.Size() == 0)
 	{
 		mPrimIndices.Resize(2 * lines.Size());
@@ -245,6 +246,7 @@ void HWPortal::DrawPortalStencil(FRenderState &state, int pass)
 
 		if (pass == STP_DepthRestore) state.SetDepthRange(0, 1);
 	}
+	state.SetDrawCategory("geometry");
 }
 
 

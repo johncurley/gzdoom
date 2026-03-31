@@ -194,7 +194,7 @@ void MtRenderState::Draw(int dt, int index, int count, bool apply) {
       type = MTL::PrimitiveType::PrimitiveTypeTriangle;
       break;
     }
-    fb->GetDebugManager()->RecordDrawCallCategory(count, count, "geometry");
+    fb->GetDebugManager()->RecordDrawCallCategory(count, count, mCurrentDrawCategory);
     mEncoder->drawPrimitives(type, index, count, 1);
     mApplyCount++;
   }
@@ -390,7 +390,7 @@ void MtRenderState::FlushBatch() {
           }
 
           fb->GetDebugManager()->RecordDrawCallCategory(
-              sub.indexCount, sub.indexCount, "geometry");
+              sub.indexCount, sub.indexCount, mCurrentDrawCategory);
           mEncoder->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle,
                                           sub.indexCount, MTL::IndexTypeUInt32,
                                           mtlIB, sub.indexStart * 4);
@@ -495,7 +495,7 @@ void MtRenderState::FlushIndexedBatch() {
       }
 
       fb->GetDebugManager()->RecordDrawCallCategory(sub.indexCount, sub.indexCount,
-                                                    "geometry");
+                                                    mCurrentDrawCategory);
       mEncoder->drawIndexedPrimitives(mPendingIndexedBatch.primitiveType,
                                       sub.indexCount, MTL::IndexTypeUInt32,
                                       mPendingIndexedBatch.indexBuffer,
@@ -1374,6 +1374,7 @@ void MtRenderState::MarkAsFilled(MTL::Texture *tex) {
 void MtRenderState::BeginFrame() {
   mMaterial.Reset();
   mApplyCount = 0;
+  mCurrentDrawCategory = "geometry";
   mIsFirstPass = true;
   mStencilFunc = 2; // DF_Always
   mStencilRef = 0;
