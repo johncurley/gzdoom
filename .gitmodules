@@ -1,0 +1,6 @@
+[submodule "libraries/ShaderTranslator/SPIRV-Cross"]
+	path = libraries/ShaderTranslator/SPIRV-Cross
+	url = https://github.com/KhronosGroup/SPIRV-Cross.git
+[submodule "libraries/ShaderTranslator/glslang"]
+	path = libraries/ShaderTranslator/glslang
+	url = https://github.com/KhronosGroup/glslang.git

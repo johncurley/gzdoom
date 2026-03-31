@@ -10,57 +10,22 @@ option(SHADER_TRANSLATOR_ENABLE_HLSL "Enable HLSL output translation support (SP
 option(SHADER_TRANSLATOR_ENABLE_HLSL_INPUT "Enable HLSL input compilation support (HLSL → SPIR-V via DXC)" OFF)
 option(SHADER_TRANSLATOR_USE_SYSTEM_DXC "Use system DXC from VulkanSDK instead of bundled" ON)
 
-# ShaderTranslator source files
+# -------------------------------------------------------------------------
+# glslang (submodule at libraries/ShaderTranslator/glslang, tag 11.6.0)
+# Disable all tools, tests, and install rules — we only need the libraries.
+# -------------------------------------------------------------------------
+set(ENABLE_GLSLANG_BINARIES OFF CACHE BOOL "" FORCE)
+set(ENABLE_HLSL             OFF CACHE BOOL "" FORCE)
+set(ENABLE_OPT              OFF CACHE BOOL "" FORCE)
+set(ENABLE_CTEST            OFF CACHE BOOL "" FORCE)
+set(SKIP_GLSLANG_INSTALL    ON  CACHE BOOL "" FORCE)
+add_subdirectory(glslang EXCLUDE_FROM_ALL)
+
+# ShaderTranslator source files (glslang sources are now built via its own CMake)
 set(SHADER_TRANSLATOR_SOURCES
 	src/spirv_translator.cpp
 	src/shader_compiler.cpp
-	src/glslang/glslang/MachineIndependent/propagateNoContraction.cpp
-	src/glslang/glslang/MachineIndependent/PoolAlloc.cpp
-	src/glslang/glslang/MachineIndependent/Intermediate.cpp
-	src/glslang/glslang/MachineIndependent/attribute.cpp
-	src/glslang/glslang/MachineIndependent/Scan.cpp
-	src/glslang/glslang/MachineIndependent/SymbolTable.cpp
-	src/glslang/glslang/MachineIndependent/RemoveTree.cpp
-	src/glslang/glslang/MachineIndependent/reflection.cpp
-	src/glslang/glslang/MachineIndependent/iomapper.cpp
-	src/glslang/glslang/MachineIndependent/intermOut.cpp
-	src/glslang/glslang/MachineIndependent/Versions.cpp
-	src/glslang/glslang/MachineIndependent/Initialize.cpp
-	src/glslang/glslang/MachineIndependent/linkValidate.cpp
-	src/glslang/glslang/MachineIndependent/InfoSink.cpp
-	src/glslang/glslang/MachineIndependent/Constant.cpp
-	src/glslang/glslang/MachineIndependent/IntermTraverse.cpp
-	src/glslang/glslang/MachineIndependent/glslang_tab.cpp
-	src/glslang/glslang/MachineIndependent/ShaderLang.cpp
-	src/glslang/glslang/MachineIndependent/preprocessor/Pp.cpp
-	src/glslang/glslang/MachineIndependent/preprocessor/PpAtom.cpp
-	src/glslang/glslang/MachineIndependent/preprocessor/PpContext.cpp
-	src/glslang/glslang/MachineIndependent/preprocessor/PpTokens.cpp
-	src/glslang/glslang/MachineIndependent/preprocessor/PpScanner.cpp
-	src/glslang/glslang/MachineIndependent/parseConst.cpp
-	src/glslang/glslang/MachineIndependent/limits.cpp
-	src/glslang/glslang/MachineIndependent/ParseContextBase.cpp
-	src/glslang/glslang/MachineIndependent/ParseHelper.cpp
-	src/glslang/glslang/MachineIndependent/SpirvIntrinsics.cpp
-	src/glslang/glslang/GenericCodeGen/Link.cpp
-	src/glslang/glslang/GenericCodeGen/CodeGen.cpp
-	src/glslang/spirv/GlslangToSpv.cpp
-	src/glslang/spirv/doc.cpp
-	src/glslang/spirv/disassemble.cpp
-	src/glslang/spirv/SpvPostProcess.cpp
-	src/glslang/spirv/InReadableOrder.cpp
-	src/glslang/spirv/SPVRemapper.cpp
-	src/glslang/spirv/SpvBuilder.cpp
-	src/glslang/spirv/SpvTools.cpp
-	src/glslang/spirv/Logger.cpp
-	src/glslang/OGLCompilersDLL/InitializeDll.cpp
 )
-
-if(WIN32)
-	list(APPEND SHADER_TRANSLATOR_SOURCES src/glslang/glslang/OSDependent/Windows/ossource.cpp)
-else()
-	list(APPEND SHADER_TRANSLATOR_SOURCES src/glslang/glslang/OSDependent/Unix/ossource.cpp)
-endif()
 
 set(SHADER_TRANSLATOR_HEADERS
 	include/shadertranslator/shader_translator.h
@@ -75,21 +40,28 @@ add_library(shader-translator STATIC
 # Public include directory
 target_include_directories(shader-translator PUBLIC
 	${CMAKE_CURRENT_SOURCE_DIR}/include
-	${CMAKE_CURRENT_SOURCE_DIR}/src # for glslang headers
-	${CMAKE_CURRENT_SOURCE_DIR}/src/glslang
 )
 
-# ShaderTranslator is standalone - it only depends on compiled libraries, not ZVulkan's internals
-# Add SPIRV-Cross as subdirectories
+# glslang targets propagate their own include dirs ($<BUILD_INTERFACE:..>)
+# but we still need the parent for "glslang/Public/ShaderLang.h" style includes.
+target_include_directories(shader-translator PRIVATE
+	${CMAKE_CURRENT_SOURCE_DIR}/glslang  # for SPIRV/GlslangToSpv.h
+	${CMAKE_CURRENT_SOURCE_DIR}          # for glslang/Public/ShaderLang.h
+)
+
+# -------------------------------------------------------------------------
+# SPIRV-Cross (submodule at libraries/ShaderTranslator/SPIRV-Cross)
+# -------------------------------------------------------------------------
 add_subdirectory(SPIRV-Cross EXCLUDE_FROM_ALL)
 
-# Include directories for SPIRV-Cross
 target_include_directories(shader-translator PRIVATE
 	${CMAKE_CURRENT_SOURCE_DIR}/SPIRV-Cross
 )
 
-# Link against SPIRV-Cross libraries
+# Link against glslang + SPIRV (OGLCompilersDLL is linked internally by glslang)
 target_link_libraries(shader-translator PUBLIC
+	glslang
+	SPIRV
 	spirv-cross-core
 	spirv-cross-glsl
 	spirv-cross-msl
@@ -132,7 +104,7 @@ if(SHADER_TRANSLATOR_ENABLE_HLSL_INPUT)
 	endif()
 endif()
 
-# Compiler warnings
+# Compiler warnings (only for our own sources, not glslang/SPIRV-Cross)
 if(MSVC)
 	target_compile_options(shader-translator PRIVATE /W4)
 else()

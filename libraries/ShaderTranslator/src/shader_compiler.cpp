@@ -41,7 +41,7 @@
 
 // glslang includes for GLSL → SPIR-V compilation
 #include "glslang/Public/ShaderLang.h"
-#include "spirv/GlslangToSpv.h"
+#include "SPIRV/GlslangToSpv.h"
 
 #ifdef SHADER_TRANSLATOR_HLSL_INPUT_ENABLED
 // DXC includes for HLSL → SPIR-V compilation
