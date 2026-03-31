@@ -5,9 +5,11 @@
 #include "metal/system/mt_hwbuffer.h"
 #include "metal/system/mt_renderdevice.h"
 #include "metal/system/mt_binaryarchive.h"
+#include "metal/renderer/mt_debug.h"
 #include "printf.h"
 #include "renderstyle.h"
 #include <Foundation/Foundation.hpp>
+#include <chrono>
 #include <Metal/Metal.hpp>
 
 EXTERN_CVAR(Bool, mt_debug)
@@ -64,6 +66,11 @@ MtPipelineStateManager::GetPipelineState(const MtPipelineKey &key,
   if (it != mPipelineCache.end())
     return it->second.get();
 
+  // Cache miss — compile a new PSO synchronously on the main thread.
+  // This can stall for 10-100ms on first use; record it so freeze spikes
+  // show up clearly in the debug log even when mt_debug is off.
+  auto compileStart = std::chrono::high_resolution_clock::now();
+
   // Create new pipeline state
   auto state = std::make_unique<MtPipelineState>();
   state->Key = key;
@@ -79,6 +86,12 @@ MtPipelineStateManager::GetPipelineState(const MtPipelineKey &key,
     state->pipelineState->release();
     return nullptr;
   }
+
+  float compileMs = std::chrono::duration<float, std::milli>(
+      std::chrono::high_resolution_clock::now() - compileStart).count();
+
+  if (fb->GetDebugManager())
+    fb->GetDebugManager()->RecordStall("pso_compile", compileMs);
 
   // Cache and return
   auto ptr = state.get();

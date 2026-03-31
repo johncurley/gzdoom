@@ -68,6 +68,17 @@ void MtDebugManager::EndFrame() {
   // Save to last frame stats
   mLastFrameStats = mCurrentFrameStats;
 
+  // Always warn on slow frames (>33ms = below 30fps) regardless of mt_debug.
+  // These show up in the console so the user can see what triggered the freeze.
+  if (frameTimeMs > 33.0f) {
+    Printf(PRINT_HIGH,
+           "Metal: SLOW FRAME %.1fms (%.0f fps) | draws:%d stalls:%d stall_total:%.1fms\n",
+           frameTimeMs, 1000.0f / frameTimeMs,
+           mCurrentFrameStats.drawCallCount,
+           mCurrentFrameStats.stallCount,
+           mCurrentFrameStats.stallTotalMs);
+  }
+
   // Log if enabled
   if (IsLogging()) {
     WriteLogEntry();
@@ -147,9 +158,8 @@ void MtDebugManager::RecordStall(const char *type, float durationMs) {
   if (durationMs > mCurrentFrameStats.stallMaxMs)
     mCurrentFrameStats.stallMaxMs = durationMs;
 
-  // Always log significant stalls regardless of mt_debug — these are the
-  // freezes the user sees.
-  if (durationMs >= 2.0f) {
+  // Always log stalls >= 1ms — these are the micro-hitches the user sees.
+  if (durationMs >= 1.0f) {
     Printf(PRINT_HIGH,
            "Metal: GPU stall (%s) %.2fms\n", type, durationMs);
   }
