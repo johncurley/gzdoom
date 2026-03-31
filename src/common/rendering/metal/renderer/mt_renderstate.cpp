@@ -913,9 +913,11 @@ void MtRenderState::ApplyViewport() {
       viewport.width = (double)mRenderTarget.Width;
       viewport.height = (double)mRenderTarget.Height;
     }
-    // REVERSE-Z: Map engine range [min, max] to [1-max, 1-min]
-    viewport.znear = 1.0 - mViewportDepthMax;
-    viewport.zfar = 1.0 - mViewportDepthMin;
+    // REVERSE-Z: The vertex shader writes gl_Position.z = (z + w) * 0.5 which
+    // maps the engine's [near, far] directly to Metal's [0, 1] NDC. Pass the
+    // depth range straight through — no inversion needed here.
+    viewport.znear = mViewportDepthMin;
+    viewport.zfar  = mViewportDepthMax;
     mEncoder->setViewport(viewport);
     mViewportChanged = false;
   }
