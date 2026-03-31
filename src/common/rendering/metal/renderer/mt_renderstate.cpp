@@ -1149,16 +1149,11 @@ void MtRenderState::ApplyMaterial() {
             // Sampler
             MtSamplerKey samplerKey;
 
-            // 2. Identify UI textures for special sampler handling
-            const char *texName = mtHwTexture->GetDebugName().c_str();
-            bool isUI =
-                (strstr(texName, "STARTUP") || strstr(texName, "BOOTLOGO") ||
-                 strstr(texName, "M_") || strstr(texName, "ST_") ||
-                 strstr(texName, "WI_") || strstr(texName, "TITLE") ||
-                 strstr(texName, "INTER") || strstr(texName, "HELP") ||
-                 strstr(texName, "CREDIT") || strstr(texName, "CONBACK") ||
-                 strstr(texName, "Font") || strstr(texName, "FONT") ||
-                 mtlTexture->width() == 640);
+            // Use the current draw category to determine sampler mode.
+            // UI/HUD passes use nearest filtering; world geometry uses the
+            // user's gl_texture_filter setting.
+            bool isUI = (mCurrentDrawCategory[0] == 'h' || // "hud"
+                         mCurrentDrawCategory[0] == 'u');  // "ui"
 
             int filter = isUI ? 0 : gl_texture_filter;
             // Vulkan-parity filter table: 0=Nearest, 1=Linear. Mip: 0=None,

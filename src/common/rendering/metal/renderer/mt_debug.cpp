@@ -82,23 +82,27 @@ void MtDebugManager::EndFrame() {
 void MtDebugManager::RecordDrawCallCategory(int vertexCount, int indexCount, const char *category) {
   mCurrentFrameStats.drawCallCount++;
   mCurrentFrameStats.indexCount += indexCount;
-  
+
+  // Skip category bucketing when not logging — avoids strstr overhead on
+  // every draw call during normal gameplay.
+  if (!IsLogging())
+    return;
+
   if (!category) {
     mCurrentFrameStats.other_draws++;
     return;
   }
-  
-  // Categorize by name patterns
-  if (strstr(category, "geometry") || strstr(category, "wall") || strstr(category, "floor")) {
-    mCurrentFrameStats.geometry_draws++;
-  } else if (strstr(category, "ui") || strstr(category, "hud") || strstr(category, "text")) {
-    mCurrentFrameStats.ui_draws++;
-  } else if (strstr(category, "sky") || strstr(category, "portal")) {
-    mCurrentFrameStats.sky_draws++;
-  } else if (strstr(category, "light") || strstr(category, "shadow")) {
-    mCurrentFrameStats.light_draws++;
-  } else {
-    mCurrentFrameStats.other_draws++;
+
+  // Category strings are compile-time constants set by us; compare by first
+  // character(s) to avoid strstr scanning the whole string on every draw.
+  switch (category[0]) {
+    case 'g': mCurrentFrameStats.geometry_draws++; break; // "geometry"
+    case 'h': mCurrentFrameStats.ui_draws++;       break; // "hud"
+    case 'u': mCurrentFrameStats.ui_draws++;       break; // "ui"
+    case 's': mCurrentFrameStats.sky_draws++;      break; // "sky"
+    case 'p': mCurrentFrameStats.sky_draws++;      break; // "portal"
+    case 'l': mCurrentFrameStats.light_draws++;    break; // "light"
+    default:  mCurrentFrameStats.other_draws++;    break;
   }
 }
 
