@@ -1457,11 +1457,33 @@ void MtRenderState::SetRenderTarget(MTL::Texture *image,
   mRenderTarget.Width = width;
   mRenderTarget.Height = height;
 
-  if (isSwapChain) {
-    mVirtualWidth = max(fb->GetWidth(), 1);
+  // Virtual (logical) dimensions drive viewport/scissor scaling.
+  // The swapchain and all main screen buffers render at physical resolution
+  // but accept viewport/scissor in logical coordinates — use fb->GetWidth/Height()
+  // as the logical reference. Off-screen targets (canvas textures, shadow maps)
+  // specify their own coordinate space, so use their actual dimensions.
+  auto buffers = fb->GetBuffers();
+  bool isScreenBuffer = isSwapChain;
+  if (!isScreenBuffer && buffers) {
+    if (image == buffers->SceneColor->GetTexture()  ||
+        image == buffers->SceneFog->GetTexture()    ||
+        image == buffers->SceneNormal->GetTexture()) {
+      isScreenBuffer = true;
+    } else {
+      for (int i = 0; i < MtRenderBuffers::NumPipelineImages; i++) {
+        if (image == buffers->PipelineImage[i]->GetTexture()) {
+          isScreenBuffer = true;
+          break;
+        }
+      }
+    }
+  }
+
+  if (isScreenBuffer) {
+    mVirtualWidth  = max(fb->GetWidth(),  1);
     mVirtualHeight = max(fb->GetHeight(), 1);
   } else {
-    mVirtualWidth = max(width, 1);
+    mVirtualWidth  = max(width,  1);
     mVirtualHeight = max(height, 1);
   }
 

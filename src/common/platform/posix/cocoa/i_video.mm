@@ -1114,14 +1114,15 @@ void I_PolyPresentDeinit() {
 MetalViewSize GetMetalViewDrawableSize(void *nsWindowPtr) {
   NSWindow *const window = (__bridge NSWindow *)nsWindowPtr;
   if (window == nil)
-    return {0, 0};
+    return {0, 0, 0, 0};
   NSView *const view = [window contentView];
   if (view == nil)
-    return {0, 0};
+    return {0, 0, 0, 0};
 
   const NSSize frameSize = [view frame].size;
-  const NSSize size =
+  const NSSize physicalSize =
       (vid_hidpi) ? [view convertSizeToBacking:frameSize] : frameSize;
 
-  return {(float)size.width, (float)size.height};
+  return {(float)physicalSize.width, (float)physicalSize.height,
+          (float)frameSize.width,    (float)frameSize.height};
 }

@@ -2,8 +2,10 @@
 
 struct MetalViewSize
 {
-    float width;
+    float width;         // Physical pixels (backing scale applied)
     float height;
+    float logicalWidth;  // Logical points (what the engine uses for coords)
+    float logicalHeight;
 };
 
 // Metal buffer binding points

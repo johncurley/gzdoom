@@ -188,17 +188,17 @@ void MetalRenderDevice::InitializeState() {
     // Validate that view size is at least minimum dimensions before using it
     // This prevents incorrect scaling during early window initialization
     if (viewSize.width >= VID_MIN_WIDTH && viewSize.height >= VID_MIN_HEIGHT) {
-      CGSize drawableSize = CGSizeMake(viewSize.width, viewSize.height);
-      metalLayer->setDrawableSize(drawableSize);
+      // Drawable size must be in physical pixels for 1:1 Retina rendering
+      metalLayer->setDrawableSize(CGSizeMake(viewSize.width, viewSize.height));
 
-      // Force internal resolution to match window size immediately to prevent startup squashing
-      SetVirtualSize((int)viewSize.width, (int)viewSize.height);
-      V_OutputResized((int)viewSize.width, (int)viewSize.height);
-      if (mVertexData) mVertexData->OutputResized((int)viewSize.width, (int)viewSize.height);
+      // Engine resolution uses logical points — viewport/scissor coordinates
+      // from GZDoom are in logical space; MtRenderState scales to physical.
+      SetVirtualSize((int)viewSize.logicalWidth, (int)viewSize.logicalHeight);
+      V_OutputResized((int)viewSize.logicalWidth, (int)viewSize.logicalHeight);
+      if (mVertexData) mVertexData->OutputResized((int)viewSize.logicalWidth, (int)viewSize.logicalHeight);
       SetViewportRects(nullptr);
     } else {
-      // Fall back to logical window size which should match configured
-      // resolution
+      // Fall back: no Retina information, use engine resolution for both
       metalLayer->setDrawableSize(CGSizeMake(GetWidth(), GetHeight()));
     }
 
@@ -437,33 +437,42 @@ void MetalRenderDevice::BeginFrame() {
       MetalViewSize viewSize = GetMetalViewDrawableSize(nativeHandle.nsWindow);
 
       if (viewSize.width >= VID_MIN_WIDTH && viewSize.height >= VID_MIN_HEIGHT) {
-        // Sync GZDoom's internal resolution with the window size
-        int targetWidth = (int)viewSize.width;
-        int targetHeight = (int)viewSize.height;
+        // Engine resolution tracks logical points
+        int targetWidth = (int)viewSize.logicalWidth;
+        int targetHeight = (int)viewSize.logicalHeight;
         int scaledWidth = ViewportScaledWidth(targetWidth, targetHeight);
         int scaledHeight = ViewportScaledHeight(targetWidth, targetHeight);
 
-        // STARTUP LAG GUARD:
-        // If the view reports a smaller size than our current configured
-        // resolution during startup, it is likely a Cocoa layout lag. We MUST NOT
-        // downscale the engine, or we get a low-res stretched frame. Instead, we
-        // force the Main Layer to match our higher internal resolution.
+        // Retina backing scale — used to size the drawable in physical pixels
+        float backingScale = (viewSize.logicalWidth > 0)
+                               ? (viewSize.width / viewSize.logicalWidth)
+                               : 1.0f;
+        float targetDrawableW = scaledWidth  * backingScale;
+        float targetDrawableH = scaledHeight * backingScale;
+
+        // STARTUP LAG GUARD: Cocoa can report a smaller-than-configured size
+        // during the first few frames while layout settles. Don't downscale.
         if (mFrameCount < 10 &&
             (scaledWidth < GetWidth() || scaledHeight < GetHeight())) {
-          metalLayer->setDrawableSize(CGSizeMake(GetWidth(), GetHeight()));
+          metalLayer->setDrawableSize(CGSizeMake(GetWidth() * backingScale,
+                                                 GetHeight() * backingScale));
         }
-        // Normal operation: Sync if different (handles Resizing and startup
-        // Upscaling)
-        else if (GetWidth() != scaledWidth || GetHeight() != scaledHeight) {
+        // Normal: resync when logical resolution or backing scale changes
+        else if (GetWidth() != scaledWidth || GetHeight() != scaledHeight ||
+                 fabsf((float)metalLayer->drawableSize().width  - targetDrawableW) > 0.1f ||
+                 fabsf((float)metalLayer->drawableSize().height - targetDrawableH) > 0.1f) {
           SetVirtualSize(scaledWidth, scaledHeight);
           V_OutputResized(scaledWidth, scaledHeight);
           if (mVertexData) mVertexData->OutputResized(scaledWidth, scaledHeight);
-
-          // Ensure drawable size matches the NEW resolution
-          metalLayer->setDrawableSize(CGSizeMake(scaledWidth, scaledHeight));
+          metalLayer->setDrawableSize(CGSizeMake(targetDrawableW, targetDrawableH));
         }
       } else {
-        metalLayer->setDrawableSize(CGSizeMake(GetWidth(), GetHeight()));
+        float backingScale = (viewSize.logicalWidth > 0)
+                               ? (viewSize.width / viewSize.logicalWidth) : 1.0f;
+        float targetDrawableW = GetWidth()  * backingScale;
+        float targetDrawableH = GetHeight() * backingScale;
+        if (fabsf((float)metalLayer->drawableSize().width - targetDrawableW) > 0.1f)
+          metalLayer->setDrawableSize(CGSizeMake(targetDrawableW, targetDrawableH));
       }
 
       mCurrentDrawable = (CA::MetalDrawable *)metalLayer->nextDrawable();
