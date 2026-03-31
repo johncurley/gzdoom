@@ -570,8 +570,13 @@ void MtRenderState::SetDepthFunc(int func) {
 }
 
 void MtRenderState::SetDepthRange(float min, float max) {
-  mViewportDepthMin = min;
-  mViewportDepthMax = max;
+  // GZDoom passes OpenGL-style depth range: 0 = near, 1 = far.
+  // Our Reverse-Z depth buffer is inverted: 0.0 = far, 1.0 = near.
+  // Convert here so ApplyViewport can pass znear/zfar straight through.
+  // e.g. SetDepthRange(0, 1) -> znear=0, zfar=1  (no change for default scene)
+  //      SetDepthRange(1, 1) -> znear=0, zfar=0  (portal depth restore -> far plane)
+  mViewportDepthMin = 1.0f - max;
+  mViewportDepthMax = 1.0f - min;
   mViewportChanged = true;
   mNeedApply = true;
 }
