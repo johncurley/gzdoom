@@ -31,10 +31,8 @@
  **
  */
 
-// NSRoundedBezelStyle and related AppKit enums are deprecated in macOS 14.
-// The replacement (NSBezelStyleRounded) requires macOS 14+, which is above
-// our deployment target. Suppress until we drop pre-14 support.
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+// NSBezelStyleRounded replaces NSRoundedBezelStyle on macOS 14+.
+// Use @available to pick the right constant at runtime.
 
 #include "i_common.h"
 #include "startupinfo.h"
@@ -173,7 +171,14 @@ void FConsoleWindow::ShowFatalError(const char* const message)
 
 	NSButton* quitButton = [[NSButton alloc] initWithFrame:NSMakeRect(textViewWidth - 76.0f, 0.0f, 72.0f, 30.0f)];
 	[quitButton setAutoresizingMask:NSViewMinXMargin];
-	[quitButton setBezelStyle:NSRoundedBezelStyle];
+	if (@available(macOS 14.0, *))
+		[quitButton setBezelStyle:NSBezelStyleRounded];
+	else {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+		[quitButton setBezelStyle:NSRoundedBezelStyle];
+#pragma clang diagnostic pop
+	}
 	[quitButton setTitle:@"Quit"];
 	[quitButton setKeyEquivalent:@"\r"];
 	[quitButton setTarget:NSApp];
@@ -453,7 +458,14 @@ void FConsoleWindow::NetInit(const char* const message, const bool host)
 		// Cancel network game button
 		m_netAbortButton = [[NSButton alloc] initWithFrame:NSMakeRect(432.0f, 8.0f, 72.0f, 28.0f)];
 		[m_netAbortButton setAutoresizingMask:NSViewMinXMargin];
-		[m_netAbortButton setBezelStyle:NSRoundedBezelStyle];
+		if (@available(macOS 14.0, *))
+			[m_netAbortButton setBezelStyle:NSBezelStyleRounded];
+		else {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+			[m_netAbortButton setBezelStyle:NSRoundedBezelStyle];
+#pragma clang diagnostic pop
+		}
 		[m_netAbortButton setTitle:@"Cancel"];
 		[m_netAbortButton setKeyEquivalent:@"\r"];
 		[m_netAbortButton setTarget:[NSApp delegate]];

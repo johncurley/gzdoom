@@ -33,9 +33,8 @@
  **
  */
 
-// NSRoundedBezelStyle is deprecated in macOS 14; replacement requires macOS 14+
-// which is above our deployment target. Suppress until we drop pre-14 support.
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+// NSBezelStyleRounded replaces NSRoundedBezelStyle on macOS 14+.
+// Use @available to pick the right constant at runtime.
 
 #include "c_cvars.h"
 #include "cmdlib.h"
@@ -346,7 +345,14 @@ static NSArray *GetKnownExtensions() { return [GetKnownFileTypes() allKeys]; }
 
   okButton = [[NSButton alloc] initWithFrame:NSMakeRect(236, 8, 96, 32)];
   [okButton setTitle:@"OK"];
-  [okButton setBezelStyle:NSRoundedBezelStyle];
+  if (@available(macOS 14.0, *))
+    [okButton setBezelStyle:NSBezelStyleRounded];
+  else {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    [okButton setBezelStyle:NSRoundedBezelStyle];
+#pragma clang diagnostic pop
+  }
   [okButton setAction:@selector(buttonPressed:)];
   [okButton setTarget:self];
   [okButton setKeyEquivalent:@"\r"];
@@ -354,7 +360,14 @@ static NSArray *GetKnownExtensions() { return [GetKnownFileTypes() allKeys]; }
 
   cancelButton = [[NSButton alloc] initWithFrame:NSMakeRect(332, 8, 96, 32)];
   [cancelButton setTitle:@"Cancel"];
-  [cancelButton setBezelStyle:NSRoundedBezelStyle];
+  if (@available(macOS 14.0, *))
+    [cancelButton setBezelStyle:NSBezelStyleRounded];
+  else {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    [cancelButton setBezelStyle:NSRoundedBezelStyle];
+#pragma clang diagnostic pop
+  }
   [cancelButton setAction:@selector(buttonPressed:)];
   [cancelButton setTarget:self];
   [cancelButton setKeyEquivalent:@"\033"];
@@ -362,7 +375,14 @@ static NSArray *GetKnownExtensions() { return [GetKnownFileTypes() allKeys]; }
 
   browseButton = [[NSButton alloc] initWithFrame:NSMakeRect(14, 8, 96, 32)];
   [browseButton setTitle:@"Browse..."];
-  [browseButton setBezelStyle:NSRoundedBezelStyle];
+  if (@available(macOS 14.0, *))
+    [browseButton setBezelStyle:NSBezelStyleRounded];
+  else {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    [browseButton setBezelStyle:NSRoundedBezelStyle];
+#pragma clang diagnostic pop
+  }
   [browseButton setAction:@selector(browseButtonPressed:)];
   [browseButton setTarget:self];
   [[window contentView] addSubview:browseButton];
