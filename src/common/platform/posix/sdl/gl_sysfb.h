@@ -24,7 +24,11 @@ public:
 
   // Metal support bridge
   virtual void SetMode(bool fullscreen, bool hiDPI) {}
+#ifdef __APPLE__
   virtual CocoaNativeHandle GetNativeHandle() const;
+#else
+  virtual CocoaNativeHandle GetNativeHandle() const { return {}; }
+#endif
 
 protected:
   SystemBaseFrameBuffer() {}
