@@ -1421,10 +1421,15 @@ include_directories(
 	../libraries/ZWidget/include
 	../libraries/webp/include
 	../libraries/range_map/include
-	../libraries/metal-cpp
-	../libraries/ShaderTranslator/include
 	${SYSTEM_SOURCES_DIR}
 )
+
+if (HAVE_METAL)
+	include_directories(
+		../libraries/metal-cpp
+		../libraries/ShaderTranslator/include
+	)
+endif()
 
 add_dependencies( zdoom revision_check )
 
