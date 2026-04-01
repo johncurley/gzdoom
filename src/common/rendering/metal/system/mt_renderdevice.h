@@ -16,6 +16,11 @@
 
 #include "mt_version.h"
 
+// Restore TimeScale
+#undef TimeScale
+
+#ifdef __APPLE__
+
 // Forward declarations (no Metal headers in public interface unless needed)
 namespace MTL {
 class Device;
@@ -199,6 +204,8 @@ private:
   void* mInflightFramesSemaphore = nullptr;
 #endif
 };
+
+#endif // __APPLE__
 
 class CMetalError : public CEngineError {
 public:

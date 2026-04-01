@@ -32,10 +32,11 @@
 #include "hw_viewpointbuffer.h"
 #include "hw_cvars.h"
 #include "gamestate.h"
+#ifdef __APPLE__
 #include "metal/system/mt_renderdevice.h"
 #include "metal/renderer/mt_renderstate.h"
-
 EXTERN_CVAR(Bool, mt_debug)
+#endif
 
 static const int INITIAL_BUFFER_SIZE = 100;	// 100 viewpoints per frame should nearly always be enough
 
@@ -116,6 +117,7 @@ int HWViewpointBuffer::SetViewpoint(FRenderState &di, HWViewpointUniforms *vp)
 {
 	if (screen->IsMetal())
 	{
+#ifdef __APPLE__
 		auto fb = static_cast<MetalRenderDevice*>(screen);
 		fb->mLastSceneViewpoint = *vp;
 
@@ -126,6 +128,7 @@ int HWViewpointBuffer::SetViewpoint(FRenderState &di, HWViewpointUniforms *vp)
 					m[4] * (m[1] * m[10] - m[2] * m[9]) +
 					m[8] * (m[1] * m[6] - m[2] * m[5]);
 		static_cast<MtRenderState*>(fb->GetRenderState())->SetMirrored(det > 0.0f);
+#endif
 	}
 
 	CheckSize();

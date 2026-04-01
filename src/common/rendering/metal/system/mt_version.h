@@ -35,10 +35,10 @@ struct MtVersionManager {
   bool supportsBinaryArchives = false;
   int maxDrawableCount = 2;
 
+#ifdef __APPLE__
   void Initialize(MTL::Device *device) {
     if (!device)
       return;
-
     // OS Version detection using NSProcessInfo (via Foundation)
     auto processInfo = NS::ProcessInfo::processInfo();
     auto version = processInfo->operatingSystemVersion();
@@ -107,6 +107,7 @@ struct MtVersionManager {
   MTL::StorageMode GetDynamicStorageMode() const {
     return useManagedStorage ? MTL::StorageModeManaged : MTL::StorageModeShared;
   }
+#endif // __APPLE__
 
   const char *GetArchName() const {
     switch (architecture) {

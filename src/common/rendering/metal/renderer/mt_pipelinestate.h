@@ -6,9 +6,13 @@
 #include <unordered_map>
 
 #include "i_time.h"
+#ifdef __APPLE__
 #define TimeScale TimeScale_GZDOOM
 #include <Metal/Metal.hpp>
 #undef TimeScale
+#endif
+
+#ifdef __APPLE__
 
 // Pipeline key for caching (similar to Vulkan)
 struct MtPipelineKey {
@@ -125,3 +129,4 @@ private:
   MTL::DepthStencilState *mDisabledDepthStencilState = nullptr;
   MTL::DepthStencilState *mPPStencilState = nullptr;
 };
+#endif // __APPLE__
