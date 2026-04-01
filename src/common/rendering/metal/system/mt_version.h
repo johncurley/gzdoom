@@ -1,7 +1,9 @@
 #pragma once
 
 #define TimeScale TimeScale_GZDOOM
+#ifdef __APPLE__
 #include <Metal/Metal.hpp>
+#endif
 #undef TimeScale
 
 #include <string>

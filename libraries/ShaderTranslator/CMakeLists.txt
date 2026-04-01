@@ -75,7 +75,7 @@ set(SPIRV_CROSS_SKIP_INSTALL             ON  CACHE BOOL "" FORCE)
 FetchContent_Declare(
     spirv_cross
     GIT_REPOSITORY https://github.com/KhronosGroup/SPIRV-Cross.git
-    GIT_TAG        sdk-1.3.268.0
+    GIT_TAG        vulkan-sdk-1.4.321.0
     GIT_SHALLOW    TRUE
 )
 FetchContent_MakeAvailable(spirv_cross)
