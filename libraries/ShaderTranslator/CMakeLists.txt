@@ -12,6 +12,10 @@ option(SHADER_TRANSLATOR_USE_SYSTEM_DXC "Use system DXC from VulkanSDK instead o
 
 include(FetchContent)
 
+# Allow FetchContent'd projects (glslang, SPIRV-Cross) that declare an old
+# cmake_minimum_required() to build under modern CMake without warnings/errors.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+
 # -------------------------------------------------------------------------
 # glslang — downloaded at configure time, no submodule required
 # Disable all tools, tests, and install rules — we only need the libraries.
