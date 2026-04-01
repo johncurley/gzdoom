@@ -151,8 +151,9 @@ void CheckNativeMouse()
 		else
 		{
 			bool captureModeInGame = sysCallbacks.CaptureModeInGame && sysCallbacks.CaptureModeInGame();
-			wantNative = (!m_use_mouse || MENU_WaitKey != menuactive)
-				&& (!captureModeInGame || GUICapture);
+			// In windowed mode, capture the mouse during gameplay (same as fullscreen).
+			// Only release to native when GUICapture is active or game doesn't need it.
+			wantNative = GUICapture || !captureModeInGame;
 		}
 	}
 	else
