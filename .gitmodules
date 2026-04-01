@@ -1,3 +1,0 @@
-[submodule "libraries/ShaderTranslator"]
-	path = libraries/ShaderTranslator
-	url = git@github.com:johncurley/ShaderTranslator.git
