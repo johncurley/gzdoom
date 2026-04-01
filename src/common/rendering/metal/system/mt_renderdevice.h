@@ -3,7 +3,11 @@
 #include "engineerrors.h"
 #include "gl_sysfb.h"
 #include "hwrenderer/data/hw_viewpointuniforms.h"
+
+#ifdef __APPLE__
 #include <dispatch/dispatch.h>
+#endif
+
 #include <mutex>
 
 // Prevent MacTypes.h from defining TimeScale by defining it as a macro
@@ -147,9 +151,11 @@ public:
   // Get a staging buffer from the pool or create a new one
   MTL::Buffer* GetStagingBuffer(size_t size);
 
+#ifdef __APPLE__
   dispatch_semaphore_t GetInflightSemaphore() {
     return mInflightFramesSemaphore;
   }
+#endif
   int GetFrameCount();
 
   CA::MetalDrawable *mCurrentDrawable = nullptr;
@@ -187,7 +193,11 @@ private:
 
   bool mVSync = false;
   int mFrameCount = 0;
+#ifdef __APPLE__
   dispatch_semaphore_t mInflightFramesSemaphore;
+#else
+  void* mInflightFramesSemaphore = nullptr;
+#endif
 };
 
 class CMetalError : public CEngineError {
