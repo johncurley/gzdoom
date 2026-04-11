@@ -5,16 +5,16 @@
 
 #include "mt_postprocess.h"
 #include "i_time.h"
-#define TimeScale TimeScale_GZDOOM
 #include <Metal/Metal.hpp>
 #include <QuartzCore/QuartzCore.hpp>
-#undef TimeScale
 
 #include "c_cvars.h"
 #include "flatvertices.h"
 #include "hwrenderer/postprocessing/hw_postprocess.h"
 #include "hwrenderer/postprocessing/hw_postprocess_cvars.h"
+#include "metal/renderer/mt_ao.h"
 #include "metal/renderer/mt_pipelinestate.h"
+#include "../utility/matrix.h"
 #include "metal/renderer/mt_postprocess.h"
 #include "metal/renderer/mt_renderbuffers.h"
 #include "metal/renderer/mt_renderstate.h"
@@ -265,6 +265,8 @@ void MtPostprocess::BlurScene(float amount) {
 }
 
 void MtPostprocess::AmbientOccludeScene(float m5) {
+  if (!fb->mAOModule) return;
+
   int sceneWidth = fb->GetBuffers()->GetSceneWidth();
   int sceneHeight = fb->GetBuffers()->GetSceneHeight();
 
@@ -275,11 +277,39 @@ void MtPostprocess::AmbientOccludeScene(float m5) {
   if (fb->mZNear < 0.1f) fb->mZNear = 5.0f;
   if (fb->mZFar < fb->mZNear) fb->mZFar = 65536.0f;
 
-  // CRITICAL: Move SceneColor to PipelineImage[0] so the SSAO combine pass can read it!
+  // CRITICAL: Blit SceneColor and SceneDepthStencil to PipelineImage[0] before AO execution.
   BlitSceneToPostprocess();
 
-  MtPPRenderState renderstate(fb);
-  hw_postprocess.ssao.Render(&renderstate, m5, sceneWidth, sceneHeight);
+  MtAOModule::SSAOParams params;
+
+  // Calculate inverse projection matrix
+  VSMatrix invProjMatrix;
+  if (!fb->mLastSceneViewpoint.mProjectionMatrix.inverseMatrix(invProjMatrix)) {
+      Printf(PRINT_BOLD, "Warning: Failed to invert projection matrix for SSAO. SSAO may be incorrect.\n");
+      return;
+  }
+  memcpy(params.invProj, invProjMatrix.get(), 16 * sizeof(float));
+  
+  // Scale radius by projection and resolution (matching GZDoom's RadiusToScreen)
+  float tanHalfFovy = 1.0f / m5;
+  params.radius = gl_ssao_radius * 0.5f / tanHalfFovy * (float)sceneHeight;
+  
+  params.bias = gl_ssao_bias;
+  params.intensity = gl_ssao_strength;
+  params.screenRes[0] = (float)sceneWidth;
+  params.screenRes[1] = (float)sceneHeight;
+
+  auto cmdBuf = fb->GetCommands()->GetRenderCommandBuffer();
+  auto depthTex = fb->GetBuffers()->SceneDepthStencil->GetTexture();
+  auto aoTex = fb->GetBuffers()->SceneNormal->GetTexture(); // Use SceneNormal as temporary AO target
+  auto sceneColorTex = fb->GetBuffers()->SceneColor->GetTexture();
+  auto sceneFogTex = fb->GetBuffers()->SceneFog->GetTexture();
+  auto ditherTex = fb->GetTextureManager()->GetPPTexture(&hw_postprocess.present.Dither);
+
+  // CRITICAL: End the current render pass before starting compute operations!
+  fb->GetRenderState()->EndRenderPass();
+
+  fb->mAOModule->Execute(cmdBuf, depthTex, aoTex, ditherTex, sceneFogTex, sceneColorTex, params);
 }
 
 void MtPostprocess::UpdateShadowMap() {
