@@ -70,6 +70,19 @@ kernel void blur_vertical(
     out.write(sum, gid);
 }
 
+kernel void downsample_box(
+    uint2 gid [[thread_position_in_grid]],
+    constant BloomParams &params [[buffer(0)]],
+    texture2d<float, access::sample> src [[texture(0)]],
+    texture2d<float, access::write> out [[texture(1)]])
+{
+    if (gid.x >= out.get_width() || gid.y >= out.get_height()) return;
+    sampler s(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
+    float2 uv = (float2(gid) + 0.5) / float2(out.get_width(), out.get_height());
+    float4 c = src.sample(s, uv);
+    out.write(c, gid);
+}
+
 kernel void bloom_combine(
     uint2 gid [[thread_position_in_grid]],
     constant BloomParams &params [[buffer(0)]],
@@ -110,6 +123,8 @@ MtBloomModule::MtBloomModule(MetalRenderDevice* device) : fb(device) {
     if (f) { blurHPSO = deviceObj->newComputePipelineState(f, (NS::Error**)nullptr); f->release(); }
     f = library->newFunction(NS::String::string("blur_vertical", NS::UTF8StringEncoding));
     if (f) { blurVPSO = deviceObj->newComputePipelineState(f, (NS::Error**)nullptr); f->release(); }
+    f = library->newFunction(NS::String::string("downsample_box", NS::UTF8StringEncoding));
+    if (f) { downsamplePSO = deviceObj->newComputePipelineState(f, (NS::Error**)nullptr); f->release(); }
     f = library->newFunction(NS::String::string("bloom_combine", NS::UTF8StringEncoding));
     if (f) { combinePSO = deviceObj->newComputePipelineState(f, (NS::Error**)nullptr); f->release(); }
 
@@ -119,6 +134,7 @@ MtBloomModule::MtBloomModule(MetalRenderDevice* device) : fb(device) {
 MtBloomModule::~MtBloomModule() {
     ReleaseTextures();
     if (extractPSO) extractPSO->release();
+    if (downsamplePSO) downsamplePSO->release();
     if (blurHPSO) blurHPSO->release();
     if (blurVPSO) blurVPSO->release();
     if (combinePSO) combinePSO->release();
@@ -211,13 +227,42 @@ void MtBloomModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* srcTex, fl
     encoder->dispatchThreads(grid, MTL::Size(16,16,1));
     encoder->memoryBarrier(MTL::BarrierScopeTextures);
 
-    // 4) Combine bloomA back into srcTex
+    // 4) Combine bloomA back into srcTex (primary)
     encoder->setComputePipelineState(combinePSO);
     encoder->setBytes(&params, sizeof(BloomParams), 0);
     encoder->setTexture(bloomA, 0);
     encoder->setTexture(srcTex, 1);
     MTL::Size fullGrid = { (NS::UInteger)srcW, (NS::UInteger)srcH, 1 };
     encoder->dispatchThreads(fullGrid, MTL::Size(16,16,1));
+    encoder->memoryBarrier(MTL::BarrierScopeTextures);
+
+    // 5) Downsample primary bloom into mip levels and combine them with reduced strength
+    for (size_t i = 0; i < mDownsampledTextures.size(); ++i) {
+        MTL::Texture* dst = mDownsampledTextures[i];
+        if (!dst) continue;
+
+        // Downsample: bloomA -> dst
+        encoder->setComputePipelineState(downsamplePSO);
+        BloomParams downParams = params;
+        downParams.bloomRes[0] = (float)dst->width(); downParams.bloomRes[1] = (float)dst->height();
+        encoder->setBytes(&downParams, sizeof(BloomParams), 0);
+        encoder->setTexture(bloomA, 0);
+        encoder->setTexture(dst, 1);
+        MTL::Size dstGrid = { (NS::UInteger)dst->width(), (NS::UInteger)dst->height(), 1 };
+        encoder->dispatchThreads(dstGrid, MTL::Size(16,16,1));
+        encoder->memoryBarrier(MTL::BarrierScopeTextures);
+
+        // Combine downsampled into scene with reduced strength
+        BloomParams combParams = downParams;
+        combParams.strength = amount * (0.5f / (float)(i + 1));
+        combParams.srcRes[0] = (float)srcW; combParams.srcRes[1] = (float)srcH;
+        encoder->setComputePipelineState(combinePSO);
+        encoder->setBytes(&combParams, sizeof(BloomParams), 0);
+        encoder->setTexture(dst, 0);
+        encoder->setTexture(srcTex, 1);
+        encoder->dispatchThreads(fullGrid, MTL::Size(16,16,1));
+        encoder->memoryBarrier(MTL::BarrierScopeTextures);
+    }
 
     encoder->endEncoding();
 

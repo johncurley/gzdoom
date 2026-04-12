@@ -24,6 +24,7 @@ private:
     MetalRenderDevice* fb;
 
     MTL::ComputePipelineState* extractPSO = nullptr;
+    MTL::ComputePipelineState* downsamplePSO = nullptr;
     MTL::ComputePipelineState* blurHPSO = nullptr;
     MTL::ComputePipelineState* blurVPSO = nullptr;
     MTL::ComputePipelineState* combinePSO = nullptr;
