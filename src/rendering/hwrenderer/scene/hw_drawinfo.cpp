@@ -937,9 +937,17 @@ void HWDrawInfo::EndDrawScene(sector_t * viewsector, FRenderState &state)
 		vp.mViewMatrix.loadIdentity();
 		auto vrmode = VRMode::GetVRMode(true);
 		vp.mProjectionMatrix = vrmode->GetHUDSpriteProjection();
+
+		// Backup current VPUniforms and set local VP for CPU-side model placement
+		HWViewpointUniforms oldVP = VPUniforms;
+		VPUniforms = vp;
+
 		screen->mViewpoints->SetViewpoint(state, &vp);
 
 		DrawPlayerSprites(true, state);
+
+		// Restore original viewpoint
+		VPUniforms = oldVP;
 	}
 
 	state.EnableStencil(false);
