@@ -1,9 +1,12 @@
 #include "mt_ao.h"
+#include "mt_renderbuffers.h"
 #include "../system/mt_renderdevice.h"
 #include "../renderer/mt_debug.h"
 #include "printf.h"
 #include <chrono>
 #include <cstdlib>
+
+EXTERN_CVAR(Bool, mt_debug)
 
 static const char* SSAO_COMPUTE_SOURCE = R"(
 #include <metal_stdlib>
@@ -15,6 +18,11 @@ struct SSAOParams {
     float bias;
     float intensity;
     float2 screenRes;
+};
+
+struct AOFlags {
+    int flipY;
+    float invBackingScale;
 };
 
 #define GOLDEN_ANGLE 2.39996323
@@ -31,17 +39,20 @@ float3 ReconstructViewPos(float2 uv, float depth, float4x4 invProj, float2 scree
 kernel void ssao_compute(
     uint2 gid [[thread_position_in_grid]],
     constant SSAOParams &params [[buffer(0)]],
+    constant AOFlags &flags [[buffer(1)]],
     texture2d<float, access::sample> ditherTexture [[texture(0)]],
     texture2d<float, access::sample> depthTexture [[texture(1)]],
     texture2d<float, access::write> aoOutput [[texture(2)]])
 {
-    if (gid.x >= params.screenRes.x || gid.y >= params.screenRes.y) return;
+    float2 outSize = float2((float)aoOutput.get_width(), (float)aoOutput.get_height());
+    if (gid.x >= outSize.x || gid.y >= outSize.y) return;
 
     sampler linearSampler(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
     sampler nearestSampler(mag_filter::nearest, min_filter::nearest, address::repeat);
 
-    float2 uv = float2(gid) / params.screenRes; // UV uses the same orientation as params.screenRes (logical or physical depending on caller)
-    float centerDepth = depthTexture.read(gid).r; // Read raw depth (Reverse-Z: 1=Near, 0=Far)
+    float2 uv = float2(gid) / outSize;
+    if (flags.flipY == 1) uv.y = 1.0 - uv.y;
+    float centerDepth = depthTexture.sample(linearSampler, uv).r; // Read depth via sampling (handles differing resolutions)
 
     if (centerDepth >= 0.9999 || centerDepth <= 0.0001) { 
         aoOutput.write(float4(1.0), gid); 
@@ -64,7 +75,9 @@ kernel void ssao_compute(
         float2 dir = float2(cos(theta), sin(theta)) * r;
         
         // Sample position around the center pixel
-        float2 sampleUV = (float2(gid) + dir * params.radius) / params.screenRes;
+        float2 sampleCoord = float2(gid) + dir * params.radius;
+        float2 sampleUV = sampleCoord / outSize;
+        if (flags.flipY == 1) sampleUV.y = 1.0 - sampleUV.y;
         
         float sampleRawDepth = depthTexture.sample(linearSampler, sampleUV).r;
         
@@ -213,10 +226,10 @@ void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL
     if (!encoder) return;
 
     // Diagnostics: log sizes and params to help trace inversion/scaling issues
-    if (fb && fb->GetDebugManager() && fb->GetDebugManager()->IsEnabled()) {
-        fb->GetDebugManager()->Log("MtAOModule::Execute: depth=%dx%d ao=%dx%d params.screenRes=%dx%d viewport=(virt:%dx%d phys:%dx%d)",
-            (int)depthTex->width(), (int)depthTex->height(), (int)aoTex->width(), (int)aoTex->height(),
-            (int)params.screenRes.x, (int)params.screenRes.y, fb->GetWidth(), fb->GetHeight(), fb->GetBuffers()->GetWidth(), fb->GetBuffers()->GetHeight());
+    if (mt_debug) {
+        Printf(PRINT_HIGH, "MtAOModule::Execute: depth=%dx%d ao=%dx%d params.screenRes=%dx%d viewport=(virt:%dx%d phys:%dx%d)\n",
+               (int)depthTex->width(), (int)depthTex->height(), (int)aoTex->width(), (int)aoTex->height(),
+               (int)params.screenRes[0], (int)params.screenRes[1], fb->GetWidth(), fb->GetHeight(), fb->GetBuffers()->GetWidth(), fb->GetBuffers()->GetHeight());
     }
 
     // 1. SSAO Pass
@@ -229,8 +242,8 @@ void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL
     // Provisional flip fix: if AO compute expects logical params but AO texture is physical-sized,
     // supply a small uniform that shaders can use to flip Y or adjust uv mapping.
     struct AOFlags { int flipY; float invBackingScale; } aoFlags;
-    aoFlags.flipY = ((int)aoTex->height() == fb->GetBuffers()->GetHeight() && (int)params.screenRes.y != (int)aoTex->height()) ? 1 : 0;
-    aoFlags.invBackingScale = aoFlags.flipY ? (float)params.screenRes.y / (float)aoTex->height() : 1.0f;
+    aoFlags.flipY = (((int)aoTex->height() == fb->GetBuffers()->GetHeight()) && ((int)params.screenRes[1] != (int)aoTex->height())) ? 1 : 0;
+    aoFlags.invBackingScale = aoFlags.flipY ? (float)params.screenRes[1] / (float)aoTex->height() : 1.0f;
     encoder->setBytes(&aoFlags, sizeof(aoFlags), 1);
 
     MTL::Size gridSize = { (NS::UInteger)aoTex->width(), (NS::UInteger)aoTex->height(), 1 };
