@@ -4,6 +4,7 @@
 #include "printf.h"
 #include <Foundation/Foundation.hpp>
 #include <Metal/Metal.hpp>
+#include <algorithm>
 
 static const char* BLOOM_COMPUTE_SOURCE = R"(
 #include <metal_stdlib>
@@ -127,13 +128,27 @@ void MtBloomModule::CreateTextures(int width, int height, MTL::PixelFormat forma
     if (mBloomA && mBloomB && mCachedBloomW == width && mCachedBloomH == height) return;
     ReleaseTextures();
     auto desc = MTL::TextureDescriptor::alloc()->init();
-    desc->setWidth(width);
-    desc->setHeight(height);
     desc->setPixelFormat(format);
     desc->setUsage(MTL::TextureUsageShaderRead | MTL::TextureUsageShaderWrite);
     desc->setStorageMode(MTL::StorageModePrivate);
+
+    // Primary bloom ping-pong textures
+    desc->setWidth(width);
+    desc->setHeight(height);
     mBloomA = fb->device->device->newTexture(desc);
     mBloomB = fb->device->device->newTexture(desc);
+
+    // Create a small mip chain for multi-scale bloom (half, quarter, eighth)
+    const int mipLevels = 3;
+    for (int i = 1; i <= mipLevels; ++i) {
+        int w2 = std::max(1, width >> i);
+        int h2 = std::max(1, height >> i);
+        desc->setWidth(w2);
+        desc->setHeight(h2);
+        MTL::Texture* t = fb->device->device->newTexture(desc);
+        mDownsampledTextures.push_back(t);
+    }
+
     desc->release();
     mCachedBloomW = width;
     mCachedBloomH = height;
@@ -142,6 +157,9 @@ void MtBloomModule::CreateTextures(int width, int height, MTL::PixelFormat forma
 void MtBloomModule::ReleaseTextures() {
     if (mBloomA) { mBloomA->release(); mBloomA = nullptr; }
     if (mBloomB) { mBloomB->release(); mBloomB = nullptr; }
+    for (auto *t : mDownsampledTextures) { if (t) t->release(); }
+    mDownsampledTextures.clear();
+    if (mTempBlurTexture) { mTempBlurTexture->release(); mTempBlurTexture = nullptr; }
     mCachedBloomW = mCachedBloomH = 0;
 }
 
