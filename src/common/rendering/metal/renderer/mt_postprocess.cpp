@@ -277,39 +277,10 @@ void MtPostprocess::AmbientOccludeScene(float m5) {
   if (fb->mZNear < 0.1f) fb->mZNear = 5.0f;
   if (fb->mZFar < fb->mZNear) fb->mZFar = 65536.0f;
 
-  // CRITICAL: Blit SceneColor and SceneDepthStencil to PipelineImage[0] before AO execution.
-  BlitSceneToPostprocess();
-
-  MtAOModule::SSAOParams params;
-
-  // Calculate inverse projection matrix
-  VSMatrix invProjMatrix;
-  if (!fb->mLastSceneViewpoint.mProjectionMatrix.inverseMatrix(invProjMatrix)) {
-      Printf(PRINT_BOLD, "Warning: Failed to invert projection matrix for SSAO. SSAO may be incorrect.\n");
-      return;
-  }
-  memcpy(params.invProj, invProjMatrix.get(), 16 * sizeof(float));
-  
-  // Scale radius by projection and resolution (matching GZDoom's RadiusToScreen)
-  float tanHalfFovy = 1.0f / m5;
-  params.radius = gl_ssao_radius * 0.5f / tanHalfFovy * (float)sceneHeight;
-  
-  params.bias = gl_ssao_bias;
-  params.intensity = gl_ssao_strength;
-  params.screenRes[0] = (float)sceneWidth;
-  params.screenRes[1] = (float)sceneHeight;
-
-  auto cmdBuf = fb->GetCommands()->GetRenderCommandBuffer();
-  auto depthTex = fb->GetBuffers()->SceneDepthStencil->GetTexture();
-  auto aoTex = fb->GetBuffers()->SceneNormal->GetTexture(); // Use SceneNormal as temporary AO target
-  auto sceneColorTex = fb->GetBuffers()->SceneColor->GetTexture();
-  auto sceneFogTex = fb->GetBuffers()->SceneFog->GetTexture();
-  auto ditherTex = fb->GetTextureManager()->GetPPTexture(&hw_postprocess.present.Dither);
-
-  // CRITICAL: End the current render pass before starting compute operations!
-  fb->GetRenderState()->EndRenderPass();
-
-  fb->mAOModule->Execute(cmdBuf, depthTex, aoTex, ditherTex, sceneFogTex, sceneColorTex, params);
+  // Use the renderer's postprocess SSAO path (matches GL/Vulkan) so depth linearization
+  // and blending are handled the same way as the reference backends.
+  MtPPRenderState renderstate(fb);
+  hw_postprocess.ssao.Render(&renderstate, m5, sceneWidth, sceneHeight);
 }
 
 void MtPostprocess::UpdateShadowMap() {
