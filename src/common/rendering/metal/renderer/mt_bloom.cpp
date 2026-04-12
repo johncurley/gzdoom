@@ -116,10 +116,33 @@ MtBloomModule::MtBloomModule(MetalRenderDevice* device) : fb(device) {
 }
 
 MtBloomModule::~MtBloomModule() {
+    ReleaseTextures();
     if (extractPSO) extractPSO->release();
     if (blurHPSO) blurHPSO->release();
     if (blurVPSO) blurVPSO->release();
     if (combinePSO) combinePSO->release();
+}
+
+void MtBloomModule::CreateTextures(int width, int height, MTL::PixelFormat format) {
+    if (mBloomA && mBloomB && mCachedBloomW == width && mCachedBloomH == height) return;
+    ReleaseTextures();
+    auto desc = MTL::TextureDescriptor::alloc()->init();
+    desc->setWidth(width);
+    desc->setHeight(height);
+    desc->setPixelFormat(format);
+    desc->setUsage(MTL::TextureUsageShaderRead | MTL::TextureUsageShaderWrite);
+    desc->setStorageMode(MTL::StorageModePrivate);
+    mBloomA = fb->device->device->newTexture(desc);
+    mBloomB = fb->device->device->newTexture(desc);
+    desc->release();
+    mCachedBloomW = width;
+    mCachedBloomH = height;
+}
+
+void MtBloomModule::ReleaseTextures() {
+    if (mBloomA) { mBloomA->release(); mBloomA = nullptr; }
+    if (mBloomB) { mBloomB->release(); mBloomB = nullptr; }
+    mCachedBloomW = mCachedBloomH = 0;
 }
 
 void MtBloomModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* srcTex, float amount) {
@@ -130,19 +153,14 @@ void MtBloomModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* srcTex, fl
     int bloomW = max(1, srcW / 2);
     int bloomH = max(1, srcH / 2);
 
-    // Create temporary bloom textures (private storage)
-    auto desc = MTL::TextureDescriptor::alloc()->init();
-    desc->setWidth(bloomW);
-    desc->setHeight(bloomH);
-    desc->setPixelFormat(srcTex->pixelFormat());
-    desc->setUsage(MTL::TextureUsageShaderRead | MTL::TextureUsageShaderWrite);
-    desc->setStorageMode(MTL::StorageModePrivate);
+    // Ensure cached bloom textures exist for this resolution
+    auto format = srcTex->pixelFormat();
+    CreateTextures(bloomW, bloomH, format);
 
-    MTL::Texture* bloomA = fb->device->device->newTexture(desc);
-    MTL::Texture* bloomB = fb->device->device->newTexture(desc);
-    desc->release();
+    MTL::Texture* bloomA = mBloomA;
+    MTL::Texture* bloomB = mBloomB;
 
-    MtBloomModule::BloomParams params;
+    BloomParams params;
     params.threshold = 0.8f; // tunable
     params.strength = amount;
     params.srcRes[0] = (float)srcW; params.srcRes[1] = (float)srcH;
@@ -185,7 +203,5 @@ void MtBloomModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* srcTex, fl
 
     encoder->endEncoding();
 
-    // Release temporaries
-    if (bloomA) bloomA->release();
-    if (bloomB) bloomB->release();
+
 }

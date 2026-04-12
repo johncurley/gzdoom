@@ -113,6 +113,10 @@ MetalRenderDevice::~MetalRenderDevice() {
     mCommands->WaitForCommands(true);
   }
 
+  // Destroy native postprocess modules
+  if (mBloomModule) { delete mBloomModule; mBloomModule = nullptr; }
+  if (mAOModule) { delete mAOModule; mAOModule = nullptr; }
+
   delete mVertexData;
   delete mSkyData;
   delete mViewpoints;
