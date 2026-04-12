@@ -28,6 +28,8 @@ private:
     MTL::ComputePipelineState* blurHPSO = nullptr;
     MTL::ComputePipelineState* blurVPSO = nullptr;
     MTL::ComputePipelineState* combinePSO = nullptr;
+    MTL::ComputePipelineState* combineRWPSO = nullptr;
+    MTL::RenderPipelineState* compositePSO = nullptr;
 
     std::vector<MTL::Texture*> mDownsampledTextures; // Mip chain for blur
     std::vector<MTL::Texture*> mDownsampledTempTextures; // ping-pong temps per level
@@ -38,6 +40,11 @@ private:
     MTL::Texture* mBloomB = nullptr;
     int mCachedBloomW = 0;
     int mCachedBloomH = 0;
+
+    // Temporary compute -> render composite target for bloom contributions
+    MTL::Texture* mCompositeTex = nullptr;
+    int mCompositeW = 0;
+    int mCompositeH = 0;
 
     void CreateTextures(int width, int height, MTL::PixelFormat format);
     void ReleaseTextures();

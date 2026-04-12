@@ -4,14 +4,12 @@
 #include <memory>
 #include <vector>
 
-#define TimeScale TimeScale_GZDOOM
 namespace MTL {
 class Texture;
 class Buffer;
 class SamplerState;
 class RenderCommandEncoder;
 } // namespace MTL
-#undef TimeScale
 
 class MetalRenderDevice;
 

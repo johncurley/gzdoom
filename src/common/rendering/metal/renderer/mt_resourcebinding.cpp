@@ -1,10 +1,9 @@
 #include "i_time.h"
-#define TimeScale TimeScale_GZDOOM
 #include <Metal/Metal.hpp>
-#undef TimeScale
 
 #include "metal/system/mt_renderdevice.h"
 #include "mt_resourcebinding.h"
+#include "metal/textures/mt_sampler.h"
 #include "c_cvars.h"
 #include "printf.h"
 
@@ -50,8 +49,28 @@ void MtResourceBindingManager::ApplyBindings(MTL::RenderCommandEncoder *encoder,
       MTL::Texture *texture = mFixedTextures[i];
       if (vertex)
         encoder->setVertexTexture(texture, i);
-      if (fragment)
+      if (fragment) {
         encoder->setFragmentTexture(texture, i);
+        // Ensure a sampler is bound for fixed textures — some shaders expect
+        // samplers at fixed binding indices (e.g., LightMap at 15).
+        MtSamplerKey sk;
+        // Special-case known fixed slots: 14 = ShadowMap (nearest),
+        // 15 = LightMap (linear clamp)
+        if ((int)i == 14) {
+          sk.MinFilter = 0; sk.MagFilter = 0; sk.MipFilter = 0; sk.AddressU = 3; sk.AddressV = 3; sk.AddressW = 3; sk.MaxAnisotropy = 1.0f;
+        } else if ((int)i == 15) {
+          sk.MinFilter = 1; sk.MagFilter = 1; sk.MipFilter = 0; sk.AddressU = 3; sk.AddressV = 3; sk.AddressW = 3; sk.MaxAnisotropy = 1.0f;
+        } else {
+          // Default: linear clamps
+          sk.MinFilter = 1; sk.MagFilter = 1; sk.MipFilter = 0; sk.AddressU = 3; sk.AddressV = 3; sk.AddressW = 3; sk.MaxAnisotropy = 1.0f;
+        }
+        MTL::SamplerState *sampler = fb->GetSamplerManager()->GetSamplerState(sk);
+        if (sampler) {
+          encoder->setFragmentSamplerState(sampler, i);
+          if (vertex)
+            encoder->setVertexSamplerState(sampler, i);
+        }
+      }
     }
   }
 

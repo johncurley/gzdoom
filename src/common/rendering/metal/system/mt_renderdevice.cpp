@@ -499,7 +499,7 @@ void MetalRenderDevice::BeginFrame() {
 
   // Use logical (engine) scene dimensions for sceneWidth/sceneHeight so
   // postprocess shaders receive the correct viewport size (fixes SSAO scaling).
-  mScreenBuffers->BeginFrame(physicalWidth, physicalHeight, fb->GetWidth(), fb->GetHeight());
+  mScreenBuffers->BeginFrame(physicalWidth, physicalHeight, GetWidth(), GetHeight());
   mSaveBuffers->BeginFrame(SAVEPICWIDTH, SAVEPICHEIGHT, SAVEPICWIDTH,
                            SAVEPICHEIGHT);
 

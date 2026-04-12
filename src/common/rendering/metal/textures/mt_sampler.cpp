@@ -1,7 +1,5 @@
 #include "i_time.h"
-#define TimeScale TimeScale_GZDOOM
 #include <Metal/Metal.hpp>
-#undef TimeScale
 
 #include "metal/system/mt_renderdevice.h"
 #include "mt_sampler.h"

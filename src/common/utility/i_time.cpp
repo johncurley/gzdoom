@@ -52,7 +52,7 @@ static uint64_t FreezeTime;
 static double lastinputtime;
 int GameTicRate = 35;	// make sure it is not 0, even if the client doesn't set it.
 
-double TimeScale = 1.0;
+double GZTimeScale = 1.0;
 
 static uint64_t GetTimePoint()
 {
@@ -68,8 +68,8 @@ void I_InitTime()
 static uint64_t GetClockTimeNS()
 {
 	auto tp = GetTimePoint() - StartupTimeNS;
-	if (TimeScale == 1.0) return tp;
-	else return uint64_t(tp / 1000 * TimeScale * 1000);
+	if (GZTimeScale == 1.0) return tp;
+	else return uint64_t(tp / 1000 * GZTimeScale * 1000);
 }
 
 static uint64_t MSToNS(unsigned int ms)

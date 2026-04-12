@@ -222,7 +222,7 @@ CUSTOM_CVAR(Float, i_timescale, 1.0f, CVAR_NOINITCALL | CVAR_VIRTUAL)
 	else if (self >= 0.05f)
 	{
 		I_FreezeTime(true);
-		TimeScale = self;
+		GZTimeScale = self;
 		I_FreezeTime(false);
 	}
 	else

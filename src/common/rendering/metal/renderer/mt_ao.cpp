@@ -40,7 +40,7 @@ kernel void ssao_compute(
     sampler linearSampler(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
     sampler nearestSampler(mag_filter::nearest, min_filter::nearest, address::repeat);
 
-    float2 uv = float2(gid) / params.screenRes;
+    float2 uv = float2(gid) / params.screenRes; // UV uses the same orientation as params.screenRes (logical or physical depending on caller)
     float centerDepth = depthTexture.read(gid).r; // Read raw depth (Reverse-Z: 1=Near, 0=Far)
 
     if (centerDepth >= 0.9999 || centerDepth <= 0.0001) { 
@@ -189,11 +189,10 @@ MtAOModule::MtAOModule(MetalRenderDevice* device) : fb(device) {
         blurFunc->release();
     }
 
-    auto combineFunc = library->newFunction(NS::String::string("ssao_combine", NS::UTF8StringEncoding));
-    if (combineFunc) {
-        combinePSO = deviceObj->newComputePipelineState(combineFunc, (NS::Error**)nullptr);
-        combineFunc->release();
-    }
+    // ssao_combine (compute) intentionally not created: the engine postprocess
+    // provides a fragment-based SSAO combine that avoids writing to the scene
+    // color from compute shaders (some hardware doesn't support read-write on
+    // BGRA8Unorm). Rely on the engine path for final compositing.
     
     library->release();
 }
@@ -205,19 +204,36 @@ MtAOModule::~MtAOModule() {
 }
 
 void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL::Texture* aoTex, MTL::Texture* ditherTex, MTL::Texture* fogTex, MTL::Texture* combineTex, const SSAOParams& params) {
-    if (!ssaoPSO || !blurPSO || !combinePSO || !ditherTex || !combineTex) return;
+    // Execute SSAO + blur compute passes. Final compositing into the scene is
+    // intentionally omitted here (the engine postprocess handles SSAO combine)
+    if (!ssaoPSO || !blurPSO || !ditherTex || !aoTex) return;
     auto startTime = std::chrono::high_resolution_clock::now();
     
     auto encoder = cmdBuf->computeCommandEncoder();
-    
+    if (!encoder) return;
+
+    // Diagnostics: log sizes and params to help trace inversion/scaling issues
+    if (fb && fb->GetDebugManager() && fb->GetDebugManager()->IsEnabled()) {
+        fb->GetDebugManager()->Log("MtAOModule::Execute: depth=%dx%d ao=%dx%d params.screenRes=%dx%d viewport=(virt:%dx%d phys:%dx%d)",
+            (int)depthTex->width(), (int)depthTex->height(), (int)aoTex->width(), (int)aoTex->height(),
+            (int)params.screenRes.x, (int)params.screenRes.y, fb->GetWidth(), fb->GetHeight(), fb->GetBuffers()->GetWidth(), fb->GetBuffers()->GetHeight());
+    }
+
     // 1. SSAO Pass
     encoder->setComputePipelineState(ssaoPSO);
     encoder->setBytes(&params, sizeof(SSAOParams), 0);
     encoder->setTexture(ditherTex, 0);
     encoder->setTexture(depthTex, 1);
     encoder->setTexture(aoTex, 2);
-    
-    MTL::Size gridSize = {aoTex->width(), aoTex->height(), 1};
+
+    // Provisional flip fix: if AO compute expects logical params but AO texture is physical-sized,
+    // supply a small uniform that shaders can use to flip Y or adjust uv mapping.
+    struct AOFlags { int flipY; float invBackingScale; } aoFlags;
+    aoFlags.flipY = ((int)aoTex->height() == fb->GetBuffers()->GetHeight() && (int)params.screenRes.y != (int)aoTex->height()) ? 1 : 0;
+    aoFlags.invBackingScale = aoFlags.flipY ? (float)params.screenRes.y / (float)aoTex->height() : 1.0f;
+    encoder->setBytes(&aoFlags, sizeof(aoFlags), 1);
+
+    MTL::Size gridSize = { (NS::UInteger)aoTex->width(), (NS::UInteger)aoTex->height(), 1 };
     encoder->dispatchThreads(gridSize, MTL::Size(16, 16, 1));
     
     // Barrier to resolve read-write hazards
@@ -228,18 +244,8 @@ void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL
     encoder->setTexture(aoTex, 0);
     encoder->dispatchThreads(gridSize, MTL::Size(16, 16, 1));
 
-    // Barrier before combine
+    // Barrier and finish compute work. Composite is done by engine postprocess.
     encoder->memoryBarrier(MTL::BarrierScopeTextures);
-
-    // 3. Combine Pass (Native Metal blend emulation)
-    encoder->setComputePipelineState(combinePSO);
-    int debugMode = (getenv("GZ_AO_DEBUG") != nullptr) ? 1 : 0;
-    encoder->setBytes(&debugMode, sizeof(debugMode), 0);
-    encoder->setTexture(aoTex, 0);
-    encoder->setTexture(fogTex, 1);
-    encoder->setTexture(combineTex, 2);
-    encoder->dispatchThreads(gridSize, MTL::Size(16, 16, 1));
-    
     encoder->endEncoding();
     
     auto endTime = std::chrono::high_resolution_clock::now();

@@ -1,8 +1,6 @@
 #include "i_time.h"
-#define TimeScale TimeScale_GZDOOM
 #include <Metal/Metal.hpp>
 #include <cstdio>
-#undef TimeScale
 
 #include "mt_commandbuffer.h"
 #include "mt_renderdevice.h"

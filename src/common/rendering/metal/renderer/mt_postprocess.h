@@ -7,11 +7,9 @@
 class MetalRenderDevice;
 class MtTextureImage;
 
-#define TimeScale TimeScale_GZDOOM
 namespace MTL {
 class Texture;
 } // namespace MTL
-#undef TimeScale
 
 // Post-processing effects
 class MtPostprocess {

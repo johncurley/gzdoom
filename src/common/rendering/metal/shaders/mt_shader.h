@@ -8,12 +8,10 @@
 #include <unordered_map>
 #include <vector>
 
-#define TimeScale TimeScale_GZDOOM
 namespace MTL {
 class Library;
 class Function;
 } // namespace MTL
-#undef TimeScale
 
 class MetalRenderDevice;
 

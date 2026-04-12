@@ -1538,6 +1538,9 @@ void MtRenderState::BeginRenderPass() {
       }
   }
 
+  // Ensure pipeline key reflects actual attachments we'll bind
+  mRenderTarget.DrawBuffers = numAttachments;
+
   for (int i = 0; i < numAttachments; i++) {
     auto colorAtt = pRPD->colorAttachments()->object(i);
     MTL::Texture *tex = (i == 0)              ? targetTex
@@ -1646,6 +1649,24 @@ void MtRenderState::BeginRenderPass() {
     mLastShadowMapTex = nullptr;
     mLastLightmapTex = nullptr;
     if (mEncoder) {
+      // Bind default samplers for fixed texture slots to satisfy shader expectations
+      // (e.g. LightMap at slot 15) even before textures are explicitly bound.
+      MtSamplerKey sk;
+      // ShadowMap (14): nearest clamp
+      sk.MinFilter = 0; sk.MagFilter = 0; sk.MipFilter = 0; sk.AddressU = 3; sk.AddressV = 3; sk.AddressW = 3; sk.MaxAnisotropy = 1.0f;
+      MTL::SamplerState *shadowSampler = fb->GetSamplerManager()->GetSamplerState(sk);
+      if (shadowSampler) {
+        mEncoder->setFragmentSamplerState(shadowSampler, 14);
+        mEncoder->setVertexSamplerState(shadowSampler, 14);
+      }
+      // LightMap (15): linear clamp
+      sk.MinFilter = 1; sk.MagFilter = 1; sk.MipFilter = 0; sk.AddressU = 3; sk.AddressV = 3; sk.AddressW = 3; sk.MaxAnisotropy = 1.0f;
+      MTL::SamplerState *lmSampler = fb->GetSamplerManager()->GetSamplerState(sk);
+      if (lmSampler) {
+        mEncoder->setFragmentSamplerState(lmSampler, 15);
+        mEncoder->setVertexSamplerState(lmSampler, 15);
+      }
+
       // Vertex-Flip Fix: Because we negated gl_Position.y in the shader,
       // the front-facing winding is now Clockwise.
       mCurrentWinding = mMirror ? MTL::WindingCounterClockwise : MTL::WindingClockwise;
@@ -1655,11 +1676,18 @@ void MtRenderState::BeginRenderPass() {
       if (fb->GetBufferManager()->DummyBuffer) {
         mEncoder->setVertexBuffer(fb->GetBufferManager()->DummyBuffer, 0, 30);
         mEncoder->useResource(fb->GetBufferManager()->DummyBuffer, MTL::ResourceUsageRead, MTL::RenderStageVertex);
+
+        // Bind dummy fragment buffers for shader expected slots 4..6
+        mEncoder->setFragmentBuffer(fb->GetBufferManager()->DummyBuffer, 0, 4);
+        mEncoder->setFragmentBuffer(fb->GetBufferManager()->DummyBuffer, 0, 5);
+        mEncoder->setFragmentBuffer(fb->GetBufferManager()->DummyBuffer, 0, 6);
+        mEncoder->useResource(fb->GetBufferManager()->DummyBuffer, MTL::ResourceUsageRead, MTL::RenderStageFragment);
       }
 
       // Use current state if set, otherwise default to full target
       MTL::Viewport viewport;
       if (mViewportWidth > 0) {
+
         double scaleX = (double)mRenderTarget.Width / (double)mVirtualWidth;
         double scaleY = (double)mRenderTarget.Height / (double)mVirtualHeight;
 

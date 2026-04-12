@@ -1,7 +1,5 @@
 #include "i_time.h"
-#define TimeScale TimeScale_GZDOOM
 #include <Metal/Metal.hpp>
-#undef TimeScale
 
 #include "hw_renderstate.h"
 #include "hwrenderer/data/shaderuniforms.h"
@@ -33,6 +31,9 @@ MtStreamBuffer::MtStreamBuffer(MetalRenderDevice *fb, size_t structSize, size_t 
           "MtStreamBuffer: Failed to allocate Metal buffer of size %zu bytes",
           mBufferSize);
     }
+    // Debug: log requested vs actual buffer storage mode (always logged)
+    Printf(PRINT_LOG, "MtStreamBuffer: requested storage %d, buffer storage %d\n",
+           (int)fb->mVersionManager.GetDynamicStorageMode(), (int)mBuffers[i]->storageMode());
   }
 }
 
@@ -105,7 +106,15 @@ bool MtStreamBufferWriter::Write(const StreamData &data) {
   if (ptr) {
     size_t offset = mStreamDataOffset + sizeof(StreamData) * mDataIndex;
     memcpy(ptr + offset, &data, sizeof(StreamData));
-    mBuffer->GetBuffer()->didModifyRange(NS::Range(offset, sizeof(StreamData)));
+    static bool __mt_streambuffer_logged = false;
+    if (!__mt_streambuffer_logged) {
+      Printf(PRINT_LOG, "MtStreamBuffer::Write: buffer storage %d, offset %u\n", (int)mBuffer->GetBuffer()->storageMode(), (unsigned)offset);
+      __mt_streambuffer_logged = true;
+    }
+    if (mBuffer->GetBuffer()->storageMode() == MTL::StorageModeManaged) {
+      if (mt_debug) Printf(PRINT_LOG, "MtStreamBuffer::Write: calling didModifyRange for offset %u\n", (unsigned)offset);
+      mBuffer->GetBuffer()->didModifyRange(NS::Range(offset, sizeof(StreamData)));
+    }
     mLastData = data;
   }
 
@@ -176,7 +185,15 @@ bool MtMatrixBufferWriter::Write(const VSMatrix &modelMatrix,
     uint8_t *ptr = mBuffer->GetBufferPointer();
     if (ptr) {
       memcpy(ptr + mOffset, &mMatrices, sizeof(MatricesUBO));
-      mBuffer->GetBuffer()->didModifyRange(NS::Range(mOffset, sizeof(MatricesUBO)));
+      static bool __mt_matrixbuffer_logged = false;
+      if (!__mt_matrixbuffer_logged) {
+        Printf(PRINT_LOG, "MtMatrixBufferWriter::Write: buffer storage %d, mOffset %u\n", (int)mBuffer->GetBuffer()->storageMode(), (unsigned)mOffset);
+        __mt_matrixbuffer_logged = true;
+      }
+      if (mBuffer->GetBuffer()->storageMode() == MTL::StorageModeManaged) {
+        if (mt_debug) Printf(PRINT_LOG, "MtMatrixBufferWriter::Write: calling didModifyRange for mOffset %u\n", (unsigned)mOffset);
+        mBuffer->GetBuffer()->didModifyRange(NS::Range(mOffset, sizeof(MatricesUBO)));
+      }
     }
   }
 

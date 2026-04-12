@@ -7,9 +7,7 @@
 
 #include "i_time.h"
 #ifdef __APPLE__
-#define TimeScale TimeScale_GZDOOM
 #include <Metal/Metal.hpp>
-#undef TimeScale
 #endif
 
 #ifdef __APPLE__

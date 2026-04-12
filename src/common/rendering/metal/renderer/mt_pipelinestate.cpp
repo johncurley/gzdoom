@@ -10,6 +10,7 @@
 #include "renderstyle.h"
 #include <Foundation/Foundation.hpp>
 #include <chrono>
+#include <algorithm>
 #include <Metal/Metal.hpp>
 
 EXTERN_CVAR(Bool, mt_debug)

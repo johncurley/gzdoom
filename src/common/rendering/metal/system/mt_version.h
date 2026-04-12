@@ -1,10 +1,8 @@
 #pragma once
 
-#define TimeScale TimeScale_GZDOOM
 #ifdef __APPLE__
 #include <Metal/Metal.hpp>
 #endif
-#undef TimeScale
 
 #include <string>
 
@@ -26,6 +24,7 @@ struct MtVersionManager {
   bool supportsMemoryless = false;
   bool supportsAppleGPU = false;
   bool supportsRGB10A2 = false;
+  bool supportsReadWriteBGRA8 = false;
 
   // Feature flags for workarounds
   bool useManagedStorage = false;
@@ -97,6 +96,11 @@ struct MtVersionManager {
       metalVersion = 22;
     if (device->supportsFamily(MTL::GPUFamilyApple7))
       metalVersion = 23; // A14/M1
+
+    // Read-write texture support tier: Tier2 enables writing to common formats like BGRA8Unorm
+    // MTL::ReadWriteTextureTier2 indicates broader read-write format support.
+    auto rwTier = device->readWriteTextureSupport();
+    supportsReadWriteBGRA8 = (rwTier == MTL::ReadWriteTextureTier2);
 
     // Intel specific workarounds
     if (architecture == MtGPUArchitecture::Intel) {

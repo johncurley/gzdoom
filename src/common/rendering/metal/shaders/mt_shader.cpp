@@ -1,7 +1,5 @@
 #include "i_time.h"
-#define TimeScale TimeScale_GZDOOM
 #include <Metal/Metal.hpp>
-#undef TimeScale
 
 #include "cmdlib.h"
 #include "common/textures/textures.h" // For usershaders array
@@ -713,7 +711,14 @@ static void PatchVertexShader(std::string &source,
   // We negate Y here to align Metal with OpenGL's Y-up convention natively.
   
   std::regex glPosRegex(R"(gl_Position\s*=\s*([^;]+);)");
-  
+
+  // Don't flip screen-space postprocess/present shaders (present/pp)
+  if (shadername.find("present") != std::string::npos || shadername.find("pp/") != std::string::npos) {
+      std::string patch = "gl_Position = $1;";
+      source = std::regex_replace(source, glPosRegex, patch);
+      return;
+  }
+
   if (shadername.find("shadowmap") == std::string::npos) {
       // Scene: Flip Y and apply Reverse-Z [1..0]
       std::string patch =

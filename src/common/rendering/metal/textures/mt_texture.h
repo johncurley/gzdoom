@@ -7,11 +7,9 @@
 #include <unordered_map>
 #include <vector>
 
-#define TimeScale TimeScale_GZDOOM
 namespace MTL {
 class Texture;
 } // namespace MTL
-#undef TimeScale
 
 class MetalRenderDevice;
 class FGameTexture;

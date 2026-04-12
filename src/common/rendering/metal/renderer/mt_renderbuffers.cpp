@@ -1,15 +1,18 @@
-#include "mt_renderbuffers.h"
-#include "c_cvars.h"
-#include "metal/system/mt_renderdevice.h"
-#include "metal/textures/mt_texture.h"
-#include "printf.h" // New include
-
-EXTERN_CVAR(Int, gl_shadowmap_quality)
+/*
+**  Metal backend - Render Buffers
+*/
 
 #include "i_time.h"
-#define TimeScale TimeScale_GZDOOM
-#include <Metal/Metal.hpp>
-#undef TimeScale
+
+#include "../mt_system_wrapper.h"
+
+#include "mt_renderbuffers.h"
+#include "c_cvars.h"
+#include "../system/mt_renderdevice.h"
+#include "../textures/mt_texture.h"
+#include "printf.h"
+
+EXTERN_CVAR(Int, gl_shadowmap_quality)
 
 MtRenderBuffers::MtRenderBuffers(MetalRenderDevice *fb) : fb(fb) {}
 
@@ -89,8 +92,6 @@ void MtRenderBuffers::CreateScene(int width, int height, int samples) {
 void MtRenderBuffers::CreateShadowMap() {
   ShadowMap = std::make_unique<MtTextureImage>(fb);
 
-  // Default to 1024 for now, engine will resize via BeginFrame if needed
-  // (though ShadowMap quality is usually fixed)
   int quality = gl_shadowmap_quality;
   if (quality <= 0)
     quality = 1024;
@@ -98,7 +99,6 @@ void MtRenderBuffers::CreateShadowMap() {
   auto desc = MTL::TextureDescriptor::alloc()->init();
   desc->setWidth(quality);
   desc->setHeight(1024);
-  // GZDoom 1D shadow maps store squared distance as data, must use R32Float.
   desc->setPixelFormat(MTL::PixelFormatR32Float);
   desc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
   desc->setStorageMode(MTL::StorageModePrivate);
@@ -120,7 +120,12 @@ void MtRenderBuffers::CreateSceneColor(int width, int height, int samples) {
   desc->setWidth(width);
   desc->setHeight(height);
   desc->setPixelFormat(MTL::PixelFormatBGRA8Unorm);
-  desc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
+  // Allow compute shaders (e.g. bloom combine) to write into the scene color texture only on devices that support read-write BGRA8
+  if (fb->mVersionManager.supportsReadWriteBGRA8) {
+    desc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead | MTL::TextureUsageShaderWrite);
+  } else {
+    desc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
+  }
   desc->setStorageMode(MTL::StorageModePrivate);
   desc->setSampleCount(samples);
   if (samples > 1)
@@ -143,8 +148,6 @@ void MtRenderBuffers::CreateSceneDepthStencil(int width, int height,
   desc->setPixelFormat(MTL::PixelFormatDepth32Float_Stencil8);
   desc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
 
-  // Scene depth/stencil needs to be sampled for SSAO/PostProcess, so it cannot
-  // be memoryless.
   desc->setStorageMode(MTL::StorageModePrivate);
 
   desc->setSampleCount(samples);

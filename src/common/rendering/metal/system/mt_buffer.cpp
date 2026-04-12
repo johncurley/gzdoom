@@ -1,7 +1,5 @@
 #include "i_time.h"
-#define TimeScale TimeScale_GZDOOM
 #include <Metal/Metal.hpp>
-#undef TimeScale
 
 #include "hwrenderer/data/shaderuniforms.h"
 #include "metal/renderer/mt_streambuffer.h"

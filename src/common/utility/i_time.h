@@ -3,7 +3,7 @@
 #include <stdint.h>
 
 extern int GameTicRate;
-extern double TimeScale;
+extern double GZTimeScale;
 
 void I_InitTime();
 

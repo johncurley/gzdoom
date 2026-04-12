@@ -13,6 +13,7 @@
 #include "hwrenderer/postprocessing/hw_postprocess.h"
 #include "hwrenderer/postprocessing/hw_postprocess_cvars.h"
 #include "metal/renderer/mt_ao.h"
+#include "metal/renderer/mt_bloom.h"
 #include "metal/renderer/mt_pipelinestate.h"
 #include "../utility/matrix.h"
 #include "metal/renderer/mt_postprocess.h"
@@ -121,6 +122,8 @@ public:
 
     mtRenderState->SetRenderTarget(outputTex, depthStencil, width, height,
                                    (int)format, 1);
+    // Ensure PP pass uses a single color attachment
+    mtRenderState->EnableDrawBuffers(1, false);
 
     // Explicitly set the viewport for the PP pass
     mtRenderState->SetViewport(Viewport.left, Viewport.top, Viewport.width,
@@ -278,8 +281,13 @@ void MtPostprocess::BlurScene(float amount) {
 void MtPostprocess::AmbientOccludeScene(float m5) {
   if (!fb->mAOModule) return;
 
+  auto depthTex = fb->GetBuffers()->SceneDepthStencil.get();
   int sceneWidth = fb->GetBuffers()->GetSceneWidth();
   int sceneHeight = fb->GetBuffers()->GetSceneHeight();
+  if (depthTex) {
+    sceneWidth = depthTex->GetWidth();
+    sceneHeight = depthTex->GetHeight();
+  }
 
   // Set Z planes from the last scene viewpoint for correct linearization
   fb->mZNear = fb->mLastSceneViewpoint.mProjectionMatrix.get()[14] / (fb->mLastSceneViewpoint.mProjectionMatrix.get()[10] - 1.0f);
@@ -308,6 +316,8 @@ void MtPostprocess::SetActiveRenderTarget() {
   fb->GetRenderState()->SetRenderTarget(
       tex, buffers->PipelineDepthStencil->GetTexture(), buffers->GetWidth(),
       buffers->GetHeight(), (int)MTL::PixelFormatBGRA8Unorm, 1);
+  // Ensure this active postprocess target uses a single color attachment
+  fb->GetRenderState()->EnableDrawBuffers(1, false);
   fb->GetRenderState()->SetViewport(0, 0, buffers->GetWidth(),
                                     buffers->GetHeight());
 }
@@ -341,27 +351,42 @@ void MtPostprocess::BlitSceneToPostprocess() {
   auto buffers = fb->GetBuffers();
   mCurrentPipelineImage = 0;
 
-  // Use the main command buffer for the blit (asynchronous)
-  MTL::CommandBuffer *blitCmdBuf = fb->GetCommands()->GetRenderCommandBuffer();
-  if (!blitCmdBuf)
-    return;
-
-  auto blitEncoder = blitCmdBuf->blitCommandEncoder();
-  if (!blitEncoder)
-    return;
-
-  auto src = buffers->SceneColor->GetTexture();
+  // Use a render pass to copy & scale SceneColor into the pipeline image (handles differing sizes)
   auto dst = buffers->PipelineImage[0]->GetTexture();
+  if (!dst)
+    return;
 
-  if (src && dst) {
-    blitEncoder->copyFromTexture(src, dst);
-
-    // Explicitly mark destination as filled
-    auto mtRenderState = static_cast<MtRenderState *>(fb->RenderState());
-    mtRenderState->MarkAsFilled(dst);
+  MtPPRenderState renderstate(fb);
+  // Render directly into the pipeline image (customOutputTex is honored by Draw())
+  renderstate.customOutputTex = dst;
+  renderstate.Clear();
+  renderstate.Shader = &hw_postprocess.present.Present;
+  PresentUniforms uniforms;
+  uniforms.InvGamma = 1.0f;
+  uniforms.Contrast = 1.0f;
+  uniforms.Brightness = 0.0f;
+  uniforms.Saturation = 1.0f;
+  uniforms.GrayFormula = 0;
+  uniforms.ColorScale = (gl_dither_bpc == -1) ? 255.0f : (float)((1 << gl_dither_bpc) - 1);
+  // Map the scene viewport into pipeline image space using SceneScale/SceneOffset
+  {
+    auto sceneScale = screen->SceneScale();
+    auto sceneOffset = screen->SceneOffset();
+    uniforms.Scale = { sceneScale.X, sceneScale.Y };
+    uniforms.Offset = { sceneOffset.X, sceneOffset.Y };
   }
+  uniforms.HdrMode = 0;
+  renderstate.Uniforms.Set(uniforms);
+  renderstate.Viewport = { 0, 0, (int)buffers->GetWidth(), (int)buffers->GetHeight() };
+  renderstate.SetInputSceneColor(0, PPFilterMode::Linear);
+  // Bind dither texture (present shader expects sampler at index 1)
+  renderstate.SetInputTexture(1, &hw_postprocess.present.Dither, PPFilterMode::Nearest, PPWrapMode::Repeat);
+  renderstate.SetNoBlend();
+  renderstate.Draw();
 
-  blitEncoder->endEncoding();
+  // Mark destination as filled so future passes don't clear it
+  auto mtRenderState = static_cast<MtRenderState *>(fb->RenderState());
+  mtRenderState->MarkAsFilled(dst);
 }
 
 void MtPostprocess::BlitCurrentToImage(MTL::Texture *dstimage) {

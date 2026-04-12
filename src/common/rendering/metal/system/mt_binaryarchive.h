@@ -3,10 +3,8 @@
 #include <string>
 #include <vector>
 
-#define TimeScale TimeScale_GZDOOM
 #include <Metal/Metal.hpp>
 #include <Foundation/Foundation.hpp>
-#undef TimeScale
 
 class MetalRenderDevice;
 

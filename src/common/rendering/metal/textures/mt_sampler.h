@@ -3,11 +3,9 @@
 #include <memory>
 #include <unordered_map>
 
-#define TimeScale TimeScale_GZDOOM
 namespace MTL {
 class SamplerState;
 } // namespace MTL
-#undef TimeScale
 
 class MetalRenderDevice;
 

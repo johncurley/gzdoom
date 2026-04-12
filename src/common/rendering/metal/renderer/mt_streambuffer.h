@@ -6,11 +6,9 @@
 #include <cstdint>
 #include <memory>
 
-#define TimeScale TimeScale_GZDOOM
 namespace MTL {
 class Buffer;
 } // namespace MTL
-#undef TimeScale
 
 class MetalRenderDevice;
 

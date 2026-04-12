@@ -3,11 +3,9 @@
 #include <functional>
 #include <memory>
 
-#define TimeScale TimeScale_GZDOOM
 namespace MTL {
 class CommandBuffer;
 } // namespace MTL
-#undef TimeScale
 
 class MetalRenderDevice;
 
