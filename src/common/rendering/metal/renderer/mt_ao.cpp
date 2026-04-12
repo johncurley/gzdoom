@@ -239,10 +239,10 @@ void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL
     encoder->setTexture(depthTex, 1);
     encoder->setTexture(aoTex, 2);
 
-    // Provisional flip fix: if AO compute expects logical params but AO texture is physical-sized,
-    // supply a small uniform that shaders can use to flip Y or adjust uv mapping.
+    // Determine whether internal render textures are inverted. Use the last scene's viewpoint flip sign
+    // so that compute sampling matches the vertex shader flip policy (uFlipSign).
     struct AOFlags { int flipY; float invBackingScale; } aoFlags;
-    aoFlags.flipY = (((int)aoTex->height() == fb->GetBuffers()->GetHeight()) && ((int)params.screenRes[1] != (int)aoTex->height())) ? 1 : 0;
+    aoFlags.flipY = (fb->mLastSceneViewpoint.mFlipSign < 0.0f) ? 1 : 0;
     aoFlags.invBackingScale = aoFlags.flipY ? (float)params.screenRes[1] / (float)aoTex->height() : 1.0f;
     encoder->setBytes(&aoFlags, sizeof(aoFlags), 1);
 

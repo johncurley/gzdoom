@@ -931,6 +931,14 @@ void HWDrawInfo::EndDrawScene(sector_t * viewsector, FRenderState &state)
 	{
 		// [BB] The HUD model should be drawn over everything else already drawn.
 		state.Clear(CT_Depth);
+
+		// Use HUD sprite projection and identity view matrix so HUD models are oriented upright on screen
+		HWViewpointUniforms vp = VPUniforms;
+		vp.mViewMatrix.loadIdentity();
+		auto vrmode = VRMode::GetVRMode(true);
+		vp.mProjectionMatrix = vrmode->GetHUDSpriteProjection();
+		screen->mViewpoints->SetViewpoint(state, &vp);
+
 		DrawPlayerSprites(true, state);
 	}
 
