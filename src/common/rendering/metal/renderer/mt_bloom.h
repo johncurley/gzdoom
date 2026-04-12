@@ -30,6 +30,7 @@ private:
     MTL::ComputePipelineState* combinePSO = nullptr;
 
     std::vector<MTL::Texture*> mDownsampledTextures; // Mip chain for blur
+    std::vector<MTL::Texture*> mDownsampledTempTextures; // ping-pong temps per level
     MTL::Texture* mTempBlurTexture = nullptr; // For ping-pong blurring
 
     // Cached bloom ping-pong textures

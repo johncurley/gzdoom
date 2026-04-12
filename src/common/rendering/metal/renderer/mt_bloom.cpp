@@ -163,6 +163,9 @@ void MtBloomModule::CreateTextures(int width, int height, MTL::PixelFormat forma
         desc->setHeight(h2);
         MTL::Texture* t = fb->device->device->newTexture(desc);
         mDownsampledTextures.push_back(t);
+        // Allocate a temporary ping-pong texture for this mip level
+        MTL::Texture* tmp = fb->device->device->newTexture(desc);
+        mDownsampledTempTextures.push_back(tmp);
     }
 
     desc->release();
@@ -175,6 +178,8 @@ void MtBloomModule::ReleaseTextures() {
     if (mBloomB) { mBloomB->release(); mBloomB = nullptr; }
     for (auto *t : mDownsampledTextures) { if (t) t->release(); }
     mDownsampledTextures.clear();
+    for (auto *t : mDownsampledTempTextures) { if (t) t->release(); }
+    mDownsampledTempTextures.clear();
     if (mTempBlurTexture) { mTempBlurTexture->release(); mTempBlurTexture = nullptr; }
     mCachedBloomW = mCachedBloomH = 0;
 }
@@ -249,6 +254,23 @@ void MtBloomModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* srcTex, fl
         encoder->setTexture(bloomA, 0);
         encoder->setTexture(dst, 1);
         MTL::Size dstGrid = { (NS::UInteger)dst->width(), (NS::UInteger)dst->height(), 1 };
+        encoder->dispatchThreads(dstGrid, MTL::Size(16,16,1));
+        encoder->memoryBarrier(MTL::BarrierScopeTextures);
+
+        // Blur the downsampled texture in-place using the temp ping-pong texture:
+        MTL::Texture* tmp = mDownsampledTempTextures[i];
+        // Horizontal blur: dst -> tmp
+        encoder->setComputePipelineState(blurHPSO);
+        encoder->setBytes(&downParams, sizeof(BloomParams), 0);
+        encoder->setTexture(dst, 0);
+        encoder->setTexture(tmp, 1);
+        encoder->dispatchThreads(dstGrid, MTL::Size(16,16,1));
+        encoder->memoryBarrier(MTL::BarrierScopeTextures);
+        // Vertical blur: tmp -> dst
+        encoder->setComputePipelineState(blurVPSO);
+        encoder->setBytes(&downParams, sizeof(BloomParams), 0);
+        encoder->setTexture(tmp, 0);
+        encoder->setTexture(dst, 1);
         encoder->dispatchThreads(dstGrid, MTL::Size(16,16,1));
         encoder->memoryBarrier(MTL::BarrierScopeTextures);
 
