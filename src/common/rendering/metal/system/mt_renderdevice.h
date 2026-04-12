@@ -3,6 +3,7 @@
 #include "engineerrors.h"
 #include "gl_sysfb.h"
 #include "hwrenderer/data/hw_viewpointuniforms.h"
+#include "mt_ao.h"
 
 #ifdef __APPLE__
 #include <dispatch/dispatch.h>
@@ -10,14 +11,7 @@
 
 #include <mutex>
 
-// Prevent MacTypes.h from defining TimeScale by defining it as a macro
-// temporarily
-#define TimeScale TimeScale_GZDOOM
-
 #include "mt_version.h"
-
-// Restore TimeScale
-#undef TimeScale
 
 #ifdef __APPLE__
 
@@ -29,11 +23,7 @@ class Buffer;
 class Texture;
 } // namespace MTL
 
-// Restore TimeScale
-#undef TimeScale
-
-namespace CA {
-class MetalLayer;
+namespace CA {class MetalLayer;
 class MetalDrawable;
 } // namespace CA
 
@@ -51,6 +41,7 @@ class MtHardwareDataBuffer;
 class MtHardwareTexture;
 class MtRenderBuffers;
 class MtPostprocess;
+class MtBloomModule;
 class MtBinaryArchive;
 class MtDebugManager;
 class SWSceneDrawer;
@@ -94,6 +85,8 @@ public:
   MtDebugManager *GetDebugManager() { return mDebugManager.get(); }
   MtRenderBuffers *GetBuffers() { return mActiveRenderBuffers; }
   FRenderState *RenderState() override;
+  MtAOModule* mAOModule = nullptr;
+  MtBloomModule* mBloomModule = nullptr;
 
   unsigned int GetLightBufferBlockSize() const;
 

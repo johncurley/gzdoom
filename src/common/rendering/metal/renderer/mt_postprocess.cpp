@@ -259,9 +259,20 @@ void MtPostprocess::BlurScene(float amount) {
   int sceneWidth = fb->GetBuffers()->GetSceneWidth();
   int sceneHeight = fb->GetBuffers()->GetSceneHeight();
 
+  // If a native Metal bloom module exists, use it (compute-based). Fall back
+  // to engine postprocess implementation otherwise.
+  if (fb->mBloomModule) {
+    auto cmdBuf = fb->GetCommands()->GetRenderCommandBuffer();
+    if (!cmdBuf) return;
+    // End any active render pass before running compute kernels
+    fb->GetRenderState()->EndRenderPass();
+    auto srcTex = fb->GetBuffers()->SceneColor->GetTexture();
+    fb->mBloomModule->Execute(cmdBuf, srcTex, amount);
+    return;
+  }
+
   MtPPRenderState renderstate(fb);
-  hw_postprocess.bloom.RenderBlur(&renderstate, sceneWidth, sceneHeight,
-                                  amount);
+  hw_postprocess.bloom.RenderBlur(&renderstate, sceneWidth, sceneHeight, amount);
 }
 
 void MtPostprocess::AmbientOccludeScene(float m5) {

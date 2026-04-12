@@ -7,12 +7,8 @@
 **  arising from the use of this software.
 */
 
-// Include i_time.h BEFORE Metal headers to avoid TimeScale conflict
 #include "i_time.h"
-#include "metal/metal_common.h" // New include
-
-// Prevent MacTypes.h from defining TimeScale by defining it as a macro
-#define TimeScale TimeScale_GZDOOM
+#include "metal/metal_common.h"
 
 #define NS_PRIVATE_IMPLEMENTATION
 #define MTL_PRIVATE_IMPLEMENTATION
@@ -21,14 +17,12 @@
 #include <Metal/Metal.hpp>
 #include <QuartzCore/QuartzCore.hpp>
 
-// Restore TimeScale
-#undef TimeScale
-
 #include <chrono>
 
 #include "hw_renderstate.h"
 #include "metal/renderer/mt_pipelinestate.h"
 #include "metal/renderer/mt_postprocess.h"
+#include "metal/renderer/mt_bloom.h"
 #include "metal/renderer/mt_renderbuffers.h"
 #include "metal/renderer/mt_renderstate.h"
 #include "metal/renderer/mt_resourcebinding.h"
@@ -104,6 +98,9 @@ MetalRenderDevice::MetalRenderDevice(void *hMonitor, bool fullscreen)
   if (!device->commandQueue) {
     MetalError("Failed to create Metal command queue");
   }
+
+  mAOModule = new MtAOModule(this);
+  mBloomModule = new MtBloomModule(this);
 }
 
 MetalRenderDevice::~MetalRenderDevice() {
