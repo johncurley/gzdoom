@@ -3,21 +3,18 @@
 #include <zwidget/window/window.h>
 #include <cstdio>
 
-// Prevent infinite event processing loops
-static int event_recursion_depth = 0;
-static const int MAX_EVENT_RECURSION = 2;
-static bool event_processing_error_reported = false;
+// Prevent re-entry of event processing from ZWidget callbacks
+// Events should be processed linearly, not recursively
+static bool event_processing_in_progress = false;
 
 void I_GetEvent() {
-    if (event_recursion_depth >= MAX_EVENT_RECURSION) {
-        if (!event_processing_error_reported) {
-            fprintf(stderr, "WARNING: Event recursion depth exceeded in I_GetEvent()\n");
-            event_processing_error_reported = true;
-        }
-        return;  // Prevent recursive event processing
+    // If we're already processing events, don't re-enter
+    // This prevents infinite loops when ZWidget callbacks trigger more events
+    if (event_processing_in_progress) {
+        return;
     }
     
-    ++event_recursion_depth;
+    event_processing_in_progress = true;
     
     try {
         DisplayWindow::ProcessEvents();
@@ -27,7 +24,7 @@ void I_GetEvent() {
         fprintf(stderr, "ERROR: Unknown exception in DisplayWindow::ProcessEvents()\n");
     }
     
-    --event_recursion_depth;
+    event_processing_in_progress = false;
 }
 
 void I_StartTic() {
