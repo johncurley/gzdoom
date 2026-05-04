@@ -1104,7 +1104,8 @@ bool G_Responder (event_t *ev)
 		break;
 
 	case EV_KeyUp:
-		C_DoKey (ev, &Bindings, &DoubleBindings);
+		if (C_DoKey (ev, &Bindings, &DoubleBindings))
+			return true;
 		break;
 
 	// [RH] mouse buttons are sent as key up/down events

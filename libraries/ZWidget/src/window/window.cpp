@@ -105,12 +105,17 @@ std::unique_ptr<DisplayBackend> DisplayBackend::TryCreateBackend()
 		{
 			backend = TryCreateCocoa();
 		}
+		else if (backendSelectionStr == "Haiku")
+		{
+			backend = TryCreateHaiku();
+		}
 	}
 
 	if (!backend)
 	{
 		backend = TryCreateWin32();
 		if (!backend) backend = TryCreateCocoa();
+		if (!backend) backend = TryCreateHaiku();
 		if (!backend) backend = TryCreateWayland();
 		if (!backend) backend = TryCreateX11();
 		if (!backend) backend = TryCreateSDL2();
@@ -222,3 +227,8 @@ std::unique_ptr<DisplayBackend> DisplayBackend::TryCreateCocoa()
 }
 
 #endif
+
+std::unique_ptr<DisplayBackend> DisplayBackend::TryCreateHaiku()
+{
+	return nullptr;
+}

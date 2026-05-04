@@ -324,34 +324,167 @@ WidgetTheme::WidgetTheme(const struct SimpleTheme &theme)
 
 /////////////////////////////////////////////////////////////////////////////
 
-DarkWidgetTheme::DarkWidgetTheme(): WidgetTheme({
-	Colorf::fromRgb(0x2A2A2A), // background
-	Colorf::fromRgb(0xE2DFDB), //
-	Colorf::fromRgb(0x212121), // headers / inputs
-	Colorf::fromRgb(0xE2DFDB), //
-	Colorf::fromRgb(0x444444), // interactive elements
-	Colorf::fromRgb(0xFFFFFF), //
-	Colorf::fromRgb(0xC83C00), // hover / highlight
-	Colorf::fromRgb(0xFFFFFF), //
-	Colorf::fromRgb(0xBBBBBB), // click
-	Colorf::fromRgb(0x000000), //
-	Colorf::fromRgb(0x646464), // around elements
-	Colorf::fromRgb(0x555555)  // between elements
-}) {};
+WidgetTheme::SimpleTheme DarkWidgetTheme::GetSimpleTheme()
+{
+	return {
+		Colorf(0x2A, 0x2A, 0x2A), // background
+		Colorf(0xE2, 0xDF, 0xDB), //
+		Colorf(0x21, 0x21, 0x21), // headers / inputs
+		Colorf(0xE2, 0xDF, 0xDB), //
+		Colorf(0x44, 0x44, 0x44), // interactive elements
+		Colorf(0xFF, 0xFF, 0xFF), //
+		Colorf(0xC8, 0x3C, 0x00), // hover / highlight
+		Colorf(0xFF, 0xFF, 0xFF), //
+		Colorf(0xBB, 0xBB, 0xBB), // click
+		Colorf(0x00, 0x00, 0x00), //
+		Colorf(0x64, 0x64, 0x64), // around elements
+		Colorf(0x55, 0x55, 0x55)  // between elements
+	};
+}
+
+DarkWidgetTheme::DarkWidgetTheme(): WidgetTheme(GetSimpleTheme()) {};
 
 /////////////////////////////////////////////////////////////////////////////
 
-LightWidgetTheme::LightWidgetTheme(): WidgetTheme({
-	Colorf::fromRgb(0xF0F0F0), // background
-	Colorf::fromRgb(0x191919), //
-	Colorf::fromRgb(0xFAFAFA), // headers / inputs
-	Colorf::fromRgb(0x191919), //
-	Colorf::fromRgb(0xC8C8C8), // interactive elements
-	Colorf::fromRgb(0x000000), //
-	Colorf::fromRgb(0xD2D2FF), // hover / highlight
-	Colorf::fromRgb(0x000000), //
-	Colorf::fromRgb(0xC7B4FF), // click
-	Colorf::fromRgb(0x000000), //
-	Colorf::fromRgb(0xA0A0A0), // around elements
-	Colorf::fromRgb(0xB9B9B9)  // between elements
-}) {};
+WidgetTheme::SimpleTheme LightWidgetTheme::GetSimpleTheme()
+{
+	return {
+		Colorf(0xF0, 0xF0, 0xF0), // background
+		Colorf(0x19, 0x19, 0x19), //
+		Colorf(0xFA, 0xFA, 0xFA), // headers / inputs
+		Colorf(0x19, 0x19, 0x19), //
+		Colorf(0xC8, 0xC8, 0xC8), // interactive elements
+		Colorf(0x00, 0x00, 0x00), //
+		Colorf(0xD2, 0xD2, 0xFF), // hover / highlight
+		Colorf(0x00, 0x00, 0x00), //
+		Colorf(0xC7, 0xB4, 0xFF), // click
+		Colorf(0x00, 0x00, 0x00), //
+		Colorf(0xA0, 0xA0, 0xA0), // around elements
+		Colorf(0xB9, 0xB9, 0xB9)  // between elements
+	};
+}
+
+LightWidgetTheme::LightWidgetTheme(): WidgetTheme(GetSimpleTheme()) {};
+
+/////////////////////////////////////////////////////////////////////////////
+
+#include <fstream>
+#include <sstream>
+
+class POSIXNativeThemeImpl
+{
+public:
+	static WidgetTheme::SimpleTheme DetectColors()
+	{
+		WidgetTheme::SimpleTheme theme = DarkWidgetTheme::GetSimpleTheme();
+
+#if defined(UNIX) && !defined(__APPLE__)
+		bool detected = false;
+		const char* home = std::getenv("HOME");
+
+		// 1. Try KDE detection
+		if (home && !detected)
+		{
+			std::string kdepath = std::string(home) + "/.config/kdeglobals";
+			std::ifstream f(kdepath);
+			if (f.is_open())
+			{
+				std::string line;
+				bool inColorsWindow = false;
+				while (std::getline(f, line))
+				{
+					if (line == "[Colors:Window]") inColorsWindow = true;
+					else if (line.length() > 0 && line[0] == '[') inColorsWindow = false;
+
+					if (inColorsWindow)
+					{
+						if (line.compare(0, 17, "BackgroundNormal=") == 0) {
+							theme.bgMain = ParseKDEColor(line.substr(17));
+							detected = true;
+						}
+						else if (line.compare(0, 17, "ForegroundNormal=") == 0)
+							theme.fgMain = ParseKDEColor(line.substr(17));
+					}
+				}
+			}
+		}
+
+		// 2. Try GTK settings.ini detection (XFCE, MATE, GNOME fallback)
+		if (home && !detected)
+		{
+			std::string gtkpath = std::string(home) + "/.config/gtk-3.0/settings.ini";
+			std::ifstream f(gtkpath);
+			if (f.is_open())
+			{
+				std::string line;
+				while (std::getline(f, line))
+				{
+					if (line.find("gtk-application-prefer-dark-theme=1") != std::string::npos ||
+					    line.find("gtk-application-prefer-dark-theme=true") != std::string::npos)
+					{
+						theme = DarkWidgetTheme::GetSimpleTheme();
+						detected = true;
+						break;
+					}
+				}
+			}
+		}
+
+		// 3. Try Xresources (Sovereign/Tiling WM setup)
+		if (home && !detected)
+		{
+			std::string xpath = std::string(home) + "/.Xresources";
+			std::ifstream f(xpath);
+			if (!f.is_open()) {
+				xpath = std::string(home) + "/.Xdefaults";
+				f.open(xpath);
+			}
+
+			if (f.is_open())
+			{
+				std::string line;
+				while (std::getline(f, line))
+				{
+					if (line.find("background:") != std::string::npos || line.find("*.background:") != std::string::npos)
+						theme.bgMain = ParseXColor(line);
+					else if (line.find("foreground:") != std::string::npos || line.find("*.foreground:") != std::string::npos)
+						theme.fgMain = ParseXColor(line);
+				}
+				detected = true;
+			}
+		}
+#endif
+		return theme;
+	}
+
+private:
+#if defined(UNIX) && !defined(__APPLE__)
+	static Colorf ParseKDEColor(const std::string& s)
+	{
+		int r, g, b;
+		if (sscanf(s.c_str(), "%d,%d,%d", &r, &g, &b) == 3)
+			return Colorf(r, g, b);
+		return Colorf::white();
+	}
+
+	static Colorf ParseXColor(const std::string& line)
+	{
+		size_t pos = line.find("#");
+		if (pos != std::string::npos)
+		{
+			std::string hex = line.substr(pos + 1);
+			if (hex.length() >= 6)
+			{
+				unsigned int r, g, b;
+				if (sscanf(hex.c_str(), "%02x%02x%02x", &r, &g, &b) == 3)
+					return Colorf((int)r, (int)g, (int)b);
+			}
+		}
+		return Colorf::white();
+	}
+#endif
+};
+
+POSIXNativeTheme::POSIXNativeTheme() : WidgetTheme(POSIXNativeThemeImpl::DetectColors())
+{
+}

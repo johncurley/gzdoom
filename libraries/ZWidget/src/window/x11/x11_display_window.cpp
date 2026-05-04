@@ -49,6 +49,8 @@ X11DisplayWindow::X11DisplayWindow(DisplayWindowHost* windowHost, bool popupWind
 	unsigned long mask = CWBackingStore | CWSaveUnder | CWEventMask | CWOverrideRedirect;
 
 	window = XCreateWindow(display, XRootWindow(display, screen), 0, 0, 100, 100, 0, depth, InputOutput, visual, mask, &attributes);
+	nativeHandle.display = display;
+	nativeHandle.window = window;
 	connection->windows[window] = this;
 
 	if (connection->XInput2Supported)
@@ -629,7 +631,7 @@ Point X11DisplayWindow::MapToGlobal(const Point& pos) const
 
 void* X11DisplayWindow::GetNativeHandle()
 {
-	return reinterpret_cast<void*>(window);
+	return &nativeHandle;
 }
 
 void X11DisplayWindow::OnEvent(XEvent* event)

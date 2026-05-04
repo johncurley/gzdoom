@@ -31,6 +31,14 @@ void InitWidgetResources(const char* filename)
 	if (!WidgetResources)
 		I_FatalError("Unable to open %s", filename);
 
+#if defined(__unix__) && !defined(__APPLE__)
+	if (ui_theme == 0)
+	{
+		WidgetTheme::SetTheme(std::unique_ptr<WidgetTheme>(new POSIXNativeTheme()));
+		return;
+	}
+#endif
+
 	bool use_dark = ui_theme == 1 || (ui_theme == 0 && I_IsDarkMode());
 
 	if (use_dark)

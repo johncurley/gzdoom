@@ -178,8 +178,12 @@ bool FButtonStatus::PressKey (int keynum)
 
 	keynum &= KEY_DBLCLICKED-1;
 
+	// Debug logging before operation
+	fprintf(stderr, "PressKey: keynum=%d\n", keynum);
+
 	if (keynum == 0)
 	{ // Issued from console instead of a key, so force on
+		fprintf(stderr, "PressKey(0): Forcing button on.\n");
 		Keys[0] = 0xffff;
 		for (i = MAX_KEYS-1; i > 0; --i)
 		{
@@ -196,18 +200,27 @@ bool FButtonStatus::PressKey (int keynum)
 			}
 			else if (Keys[i] == keynum)
 			{ // Key is already down; do nothing
+				fprintf(stderr, "  PressKey: Key %d already down. bDown=%d\n", keynum, bDown);
+				for(int k=0; k<MAX_KEYS; ++k) fprintf(stderr, "    Keys[%d]=%d\n", k, Keys[k]);
 				return false;
 			}
 		}
 		if (open < 0)
 		{ // No free key slots, so do nothing
 			Printf ("More than %u keys pressed for a single action!\n", MAX_KEYS);
+			fprintf(stderr, "  PressKey: No free key slots. bDown=%d\n", bDown);
+			for(int k=0; k<MAX_KEYS; ++k) fprintf(stderr, "    Keys[%d]=%d\n", k, Keys[k]);
 			return false;
 		}
 		Keys[open] = keynum;
 	}
 	uint8_t wasdown = bDown;
 	bDown = bWentDown = true;
+
+	// Debug logging after operation
+	fprintf(stderr, "  PressKey: After operation. bDown=%d\n", bDown);
+	for(int k=0; k<MAX_KEYS; ++k) fprintf(stderr, "    Keys[%d]=%d\n", k, Keys[k]);
+
 	// Returns true if this key caused the button to go down.
 	return !wasdown;
 }
@@ -225,8 +238,12 @@ bool FButtonStatus::ReleaseKey (int keynum)
 
 	keynum &= KEY_DBLCLICKED-1;
 
+	// Debug logging before operation
+	fprintf(stderr, "ReleaseKey: keynum=%d\n", keynum);
+
 	if (keynum == 0)
 	{ // Issued from console instead of a key, so force off
+		fprintf(stderr, "ReleaseKey(0): Forcing button off.\n");
 		for (i = MAX_KEYS-1; i >= 0; --i)
 		{
 			Keys[i] = 0;
@@ -249,6 +266,8 @@ bool FButtonStatus::ReleaseKey (int keynum)
 		}
 		if (match < 0)
 		{ // Key was not down; do nothing
+			fprintf(stderr, "  ReleaseKey: Key %d was not down. bDown=%d\n", keynum, bDown);
+			for(int k=0; k<MAX_KEYS; ++k) fprintf(stderr, "    Keys[%d]=%d\n", k, Keys[k]);
 			return false;
 		}
 		Keys[match] = 0;
@@ -258,6 +277,11 @@ bool FButtonStatus::ReleaseKey (int keynum)
 			bDown = false;
 		}
 	}
+
+	// Debug logging after operation
+	fprintf(stderr, "  ReleaseKey: After operation. bDown=%d\n", bDown);
+	for(int k=0; k<MAX_KEYS; ++k) fprintf(stderr, "    Keys[%d]=%d\n", k, Keys[k]);
+
 	// Returns true if releasing this key caused the button to go up.
 	return wasdown && !bDown;
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <zwidget/window/window.h>
+#include <zwidget/window/x11nativehandle.h>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
@@ -122,6 +123,8 @@ private:
 	std::map<InputKey, bool> keyState;
 
 	std::string clipboardText;
+
+	X11NativeHandle nativeHandle;
 
 	struct
 	{

@@ -132,10 +132,12 @@ else()
 
 	# Non-Windows version also needs SDL except native OS X backend
 	if( NOT APPLE OR NOT OSX_COCOA_BACKEND )
-		find_package( SDL2 REQUIRED )
-		include_directories( SYSTEM "${SDL2_INCLUDE_DIR}" )
-		link_directories(${SDL2_LINK_DIR})
-		set( PROJECT_LIBRARIES ${PROJECT_LIBRARIES} "${SDL2_LIBRARY}" )
+		if( NOT GZDOOM_NATIVE_LINUX )
+			find_package( SDL2 REQUIRED )
+			include_directories( SYSTEM "${SDL2_INCLUDE_DIR}" )
+			link_directories(${SDL2_LINK_DIR})
+			set( PROJECT_LIBRARIES ${PROJECT_LIBRARIES} "${SDL2_LIBRARY}" )
+		endif()
 	endif()
 
 endif()
@@ -431,6 +433,16 @@ set( PLAT_SDL_SOURCES
 	common/platform/posix/sdl/i_system.cpp
 	common/platform/posix/sdl/sdlglvideo.cpp
 	common/platform/posix/sdl/st_start.cpp )
+
+set( PLAT_NATIVE_SOURCES
+	common/platform/posix/native/i_input.cpp
+	common/platform/posix/native/i_main.cpp
+	common/platform/posix/native/i_system.cpp
+	common/platform/posix/native/nativevideo.cpp
+	common/platform/posix/native/gl_sysfb.cpp
+	common/platform/posix/native/st_start.cpp
+	common/platform/posix/native/native_display.cpp
+	common/platform/posix/native/i_joystick.cpp )
 set( PLAT_UNIX_SOURCES
 	common/platform/posix/unix/i_specialpaths.cpp
 	common/platform/posix/unix/gtk_dialogs.cpp )
@@ -485,9 +497,36 @@ elseif( APPLE )
 else()
 	option (SYSTEMINSTALL "Set global progdir based on CMake Install Dir" OFF)
 
-	set( SYSTEM_SOURCES_DIR common/platform/posix common/platform/posix/sdl )
-	set( SYSTEM_SOURCES ${PLAT_POSIX_SOURCES} ${PLAT_SDL_SOURCES} ${PLAT_UNIX_SOURCES} )
-	set( OTHER_SYSTEM_SOURCES ${PLAT_WIN32_SOURCES} ${PLAT_OSX_SOURCES} ${PLAT_COCOA_SOURCES} )
+if (NOT GZDOOM_NATIVE_LINUX)
+    find_package(SDL2 QUIET)
+    if (NOT SDL2_FOUND)
+        # Fallback logic...
+    endif()
+endif()
+
+if( GZDOOM_NATIVE_LINUX )
+    set(ZWIDGET_NO_SDL ON CACHE INTERNAL "" FORCE)
+    set( SYSTEM_SOURCES_DIR common/platform/posix common/platform/posix/native )
+
+    # ... (existing native source setup)
+		set( SYSTEM_SOURCES ${PLAT_POSIX_SOURCES} ${PLAT_NATIVE_SOURCES} ${PLAT_UNIX_SOURCES} )
+		set( OTHER_SYSTEM_SOURCES ${PLAT_WIN32_SOURCES} ${PLAT_OSX_SOURCES} ${PLAT_COCOA_SOURCES} ${PLAT_SDL_SOURCES} )
+        find_package( X11 REQUIRED )
+        find_package( OpenGL REQUIRED )
+        include_directories( SYSTEM "${X11_INCLUDE_DIR}" "${OPENGL_INCLUDE_DIR}" )
+        set( PROJECT_LIBRARIES ${PROJECT_LIBRARIES} "${X11_LIBRARIES}" "${OPENGL_LIBRARIES}" zwidget )
+        add_definitions( -DUSE_X11 -DUSE_WAYLAND )
+        if( HAVE_DISPATCH_APPLY AND NOT APPLE )
+            find_library( DISPATCH_LIB dispatch )
+            if( DISPATCH_LIB )
+                set( PROJECT_LIBRARIES ${PROJECT_LIBRARIES} ${DISPATCH_LIB} )
+            endif()
+        endif()
+	else()
+		set( SYSTEM_SOURCES_DIR common/platform/posix common/platform/posix/sdl )
+		set( SYSTEM_SOURCES ${PLAT_POSIX_SOURCES} ${PLAT_SDL_SOURCES} ${PLAT_UNIX_SOURCES} )
+		set( OTHER_SYSTEM_SOURCES ${PLAT_WIN32_SOURCES} ${PLAT_OSX_SOURCES} ${PLAT_COCOA_SOURCES} )
+	endif()
 
 	if ( SYSTEMINSTALL )
 		add_definitions( -DPROGDIR="${CMAKE_INSTALL_PREFIX}/${INSTALL_PK3_PATH}" )
