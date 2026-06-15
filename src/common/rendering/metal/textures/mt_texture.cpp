@@ -666,17 +666,69 @@ void MtTextureManager::GenerateMipmaps(MTL::Texture *texture) {
   cmdBuf->release();
 }
 
-MTL::Texture *MtTextureManager::GetPPTexture(PPTexture *texture) {
-  auto it = mPPTextures.find(texture);
-  if (it != mPPTextures.end())
-    return it->second;
-
-  if (texture->Backend == nullptr) {
-    texture->Backend = std::make_unique<MtPPTexture>(fb, texture);
+static MTL::PixelFormat GetMetalPPTextureFormat(PixelFormat format,
+                                                int *bytesPerPixel = nullptr) {
+  int bpp = 4;
+  MTL::PixelFormat metalFormat = MTL::PixelFormatBGRA8Unorm;
+  switch (format) {
+  case PixelFormat::Rgba8:
+    metalFormat = MTL::PixelFormatBGRA8Unorm;
+    bpp = 4;
+    break;
+  case PixelFormat::Rgba16f:
+    metalFormat = MTL::PixelFormatBGRA8Unorm;
+    bpp = 4;
+    break;
+  case PixelFormat::R32f:
+    metalFormat = MTL::PixelFormatR32Float;
+    bpp = 4;
+    break;
+  case PixelFormat::Rg16f:
+    metalFormat = MTL::PixelFormatRG16Float;
+    bpp = 4;
+    break;
+  case PixelFormat::Rgba16_snorm:
+    metalFormat = MTL::PixelFormatRGBA16Snorm;
+    bpp = 8;
+    break;
+  default:
+    metalFormat = MTL::PixelFormatBGRA8Unorm;
+    bpp = 4;
+    break;
   }
-  mPPTextures[texture] =
-      static_cast<MtPPTexture *>(texture->Backend.get())->mTexture;
-  return mPPTextures[texture];
+  if (bytesPerPixel)
+    *bytesPerPixel = bpp;
+  return metalFormat;
+}
+
+MTL::Texture *MtTextureManager::GetPPTexture(PPTexture *texture) {
+  if (!texture)
+    return nullptr;
+
+  auto backend = static_cast<MtPPTexture *>(texture->Backend.get());
+  MTL::PixelFormat expectedFormat = GetMetalPPTextureFormat(texture->Format);
+
+  if (backend && backend->mTexture) {
+    bool stale =
+        backend->mTexture->width() != (NS::UInteger)texture->Width ||
+        backend->mTexture->height() != (NS::UInteger)texture->Height ||
+        backend->mTexture->pixelFormat() != expectedFormat;
+    if (stale) {
+      texture->Backend.reset();
+      backend = nullptr;
+      mPPTextures.erase(texture);
+    }
+  } else {
+    mPPTextures.erase(texture);
+  }
+
+  if (!backend) {
+    texture->Backend = std::make_unique<MtPPTexture>(fb, texture);
+    backend = static_cast<MtPPTexture *>(texture->Backend.get());
+  }
+
+  mPPTextures[texture] = backend->mTexture;
+  return backend->mTexture;
 }
 
 IHardwareTexture *MtTextureManager::GetPaletteTexture(int translation, bool highlight) {
@@ -710,35 +762,9 @@ IHardwareTexture *MtTextureManager::GetPaletteTexture(int translation, bool high
 }
 
 MtPPTexture::MtPPTexture(MetalRenderDevice *fb, PPTexture *texture) : fb(fb) {
-  MTL::PixelFormat format =
-      MTL::PixelFormatInvalid; // Initialize to an invalid but known value
   int bytesPerPixel = 4;
-  switch (texture->Format) {
-  case PixelFormat::Rgba8:
-    format = MTL::PixelFormatBGRA8Unorm;
-    bytesPerPixel = 4;
-    break;
-  case PixelFormat::Rgba16f:
-    format = MTL::PixelFormatBGRA8Unorm;
-    bytesPerPixel = 4;
-    break;
-  case PixelFormat::R32f:
-    format = MTL::PixelFormatR32Float;
-    bytesPerPixel = 4;
-    break;
-  case PixelFormat::Rg16f:
-    format = MTL::PixelFormatRG16Float;
-    bytesPerPixel = 4;
-    break;
-  case PixelFormat::Rgba16_snorm:
-    format = MTL::PixelFormatRGBA16Snorm;
-    bytesPerPixel = 8;
-    break;
-  default:
-    format = MTL::PixelFormatBGRA8Unorm;
-    bytesPerPixel = 4;
-    break;
-  }
+  MTL::PixelFormat format =
+      GetMetalPPTextureFormat(texture->Format, &bytesPerPixel);
 
   auto desc = MTL::TextureDescriptor::alloc()->init();
   desc->setWidth(texture->Width);
@@ -896,5 +922,3 @@ void MtTextureManager::PerformAsyncGPUUpload(MtHardwareTexture *hwTex,
   static_cast<MtRenderState *>(fb->RenderState())->MarkAsFilled(texture);
   hwTex->ResetStagingBuffer(); // clears mNeedsUpload
 }
-
-

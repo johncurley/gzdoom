@@ -15,6 +15,15 @@ layout(binding=2) uniform sampler2D RandomTexture;
 #endif
 
 #define PI 3.14159265358979323846
+#define TAU 6.28318530717958647692
+#ifndef AO_VISIBILITY_STRENGTH
+#define AO_VISIBILITY_STRENGTH 2.75
+#endif
+
+float InterleavedGradientNoise(vec2 p)
+{
+	return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
+}
 
 // Calculate eye space position for the specified texture coordinate
 vec3 FetchViewPos(vec2 uv)
@@ -63,53 +72,58 @@ vec2 RotateDirection(vec2 dir, vec2 cossin)
 
 vec4 GetJitter()
 {
+	float ign = InterleavedGradientNoise(gl_FragCoord.xy);
 #if !defined(USE_RANDOM_TEXTURE)
-    // High quality golden ratio pseudo-random noise
-    float noise = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
-    float angle = noise * 2.0 * PI;
-    return vec4(cos(angle), sin(angle), fract(noise * 1.618), fract(noise * 2.236));
+	float angle = ign * TAU;
+	return vec4(cos(angle), sin(angle), fract(ign * 1.61803398875), fract(ign * 2.2360679775));
 #else
-    return texture(RandomTexture, gl_FragCoord.xy / RANDOM_TEXTURE_WIDTH);
+	vec4 noise = texture(RandomTexture, gl_FragCoord.xy / RANDOM_TEXTURE_WIDTH);
+	return vec4(noise.xy, fract(noise.z + ign * 0.754877666), fract(noise.w + ign * 0.569840296));
 #endif
 }
-// Calculates the ambient occlusion of a sample
-float ComputeSampleAO(vec3 kernelPos, vec3 normal, vec3 samplePos)
+
+float ComputeSampleHorizon(vec3 viewPosition, vec3 viewNormal, vec2 sampleUV, inout float horizon)
 {
-	vec3 v = samplePos - kernelPos;
-	float distanceSquare = dot(v, v);
-	float nDotV = dot(normal, v) * inversesqrt(distanceSquare);
-	return clamp(nDotV - NDotVBias, 0.0, 1.0) * clamp(distanceSquare * NegInvR2 + 1.0, 0.0, 1.0);
+	vec3 samplePos = FetchViewPos(clamp(sampleUV, InvFullResolution * 0.5, vec2(1.0) - InvFullResolution * 0.5));
+	vec3 viewDelta = samplePos - viewPosition;
+	float distanceSquare = max(dot(viewDelta, viewDelta), 1e-6);
+	float invDistance = inversesqrt(distanceSquare);
+	float normalAngle = dot(viewNormal, viewDelta) * invDistance;
+	float sampleHorizon = max(normalAngle - NDotVBias, 0.0);
+	float falloff = clamp(distanceSquare * NegInvR2 + 1.0, 0.0, 1.0);
+	float contribution = max(sampleHorizon - horizon, 0.0) * falloff;
+	horizon = max(horizon, sampleHorizon);
+	return contribution;
 }
 
 // Calculates the total ambient occlusion for the entire fragment
 float ComputeAO(vec3 viewPosition, vec3 viewNormal)
 {
-    vec4 rand = GetJitter();
+	vec4 rand = GetJitter();
 
 	float radiusPixels = RadiusToScreen / viewPosition.z;
 	float stepSizePixels = radiusPixels / (NUM_STEPS + 1.0);
+	float minStepPixels = max(stepSizePixels, 1.0);
 
-	const float directionAngleStep = 2.0 * PI / NUM_DIRECTIONS;
+	const float directionAngleStep = TAU / NUM_DIRECTIONS;
 	float ao = 0.0;
 
-    for (float directionIndex = 0.0; directionIndex < NUM_DIRECTIONS; ++directionIndex)
-    {
-        float angle = directionAngleStep * directionIndex;
+	for (float directionIndex = 0.0; directionIndex < NUM_DIRECTIONS; ++directionIndex)
+	{
+		float angle = directionAngleStep * (directionIndex + rand.w * 0.25);
+		vec2 direction = RotateDirection(vec2(cos(angle), sin(angle)), rand.xy);
+		float horizon = 0.0;
 
-        vec2 direction = RotateDirection(vec2(cos(angle), sin(angle)), rand.xy);
-        float rayPixels = (rand.z * stepSizePixels + 1.0);
+		for (float stepIndex = 0.0; stepIndex < NUM_STEPS; ++stepIndex)
+		{
+			float rayPixels = (stepIndex + rand.z + 1.0) * minStepPixels;
+			vec2 sampleUV = TexCoord + direction * rayPixels * InvFullResolution;
+			ao += ComputeSampleHorizon(viewPosition, viewNormal, sampleUV, horizon);
+		}
+	}
 
-        for (float StepIndex = 0.0; StepIndex < NUM_STEPS; ++StepIndex)
-        {
-            vec2 sampleUV = round(rayPixels * direction) * InvFullResolution + TexCoord;
-            vec3 samplePos = FetchViewPos(sampleUV);
-            ao += ComputeSampleAO(viewPosition, viewNormal, samplePos);
-            rayPixels += stepSizePixels;
-        }
-    }
-
-    ao *= AOMultiplier / (NUM_DIRECTIONS * NUM_STEPS);
-    return clamp(1.0 - ao * 2.0, 0.0, 1.0);
+	ao *= AOMultiplier / (NUM_DIRECTIONS * NUM_STEPS);
+	return clamp(1.0 - ao * AO_VISIBILITY_STRENGTH, 0.0, 1.0);
 }
 
 void main()

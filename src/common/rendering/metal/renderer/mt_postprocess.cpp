@@ -7,6 +7,7 @@
 #include "i_time.h"
 #include <Metal/Metal.hpp>
 #include <QuartzCore/QuartzCore.hpp>
+#include <chrono>
 
 #include "c_cvars.h"
 #include "flatvertices.h"
@@ -14,6 +15,7 @@
 #include "hwrenderer/postprocessing/hw_postprocess_cvars.h"
 #include "metal/renderer/mt_ao.h"
 #include "metal/renderer/mt_bloom.h"
+#include "metal/renderer/mt_debug.h"
 #include "metal/renderer/mt_pipelinestate.h"
 #include "../utility/matrix.h"
 #include "metal/renderer/mt_postprocess.h"
@@ -25,12 +27,17 @@
 #include "metal/system/mt_renderdevice.h"
 #include "metal/textures/mt_sampler.h"
 #include "metal/textures/mt_texture.h"
-#include "printf.h"
 #include "r_videoscale.h"
 #include "v_video.h"
 
 EXTERN_CVAR(Int, gl_dither_bpc)
-EXTERN_CVAR(Bool, mt_debug)
+CVAR(Bool, mt_compute_ao, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Bool, mt_compute_bloom, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CUSTOM_CVAR(Int, mt_compute_ao_scale, 4, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+  if (self < 2) self = 2;
+  if (self > 4) self = 4;
+}
 
 class MtPPRenderState : public PPRenderState {
 public:
@@ -254,7 +261,6 @@ private:
   MetalRenderDevice *fb;
 };
 
-// FORCE RECOMPILE: December 25 V8 Final Audit Build
 MtPostprocess::MtPostprocess(MetalRenderDevice *fb) : fb(fb) {}
 MtPostprocess::~MtPostprocess() {}
 
@@ -266,12 +272,14 @@ void MtPostprocess::BlurScene(float amount) {
   // to engine postprocess implementation otherwise.
   if (fb->mBloomModule) {
     auto cmdBuf = fb->GetCommands()->GetRenderCommandBuffer();
-    if (!cmdBuf) return;
-    // End any active render pass before running compute kernels
-    fb->GetRenderState()->EndRenderPass();
-    auto srcTex = fb->GetBuffers()->SceneColor->GetTexture();
-    fb->mBloomModule->Execute(cmdBuf, srcTex, amount);
-    return;
+    if (cmdBuf) {
+      // End any active render pass before running compute kernels
+      fb->GetRenderState()->EndRenderPass();
+      auto srcTex = fb->GetBuffers()->SceneColor->GetTexture();
+      if (fb->mBloomModule->Execute(cmdBuf, srcTex, amount)) {
+        return;
+      }
+    }
   }
 
   MtPPRenderState renderstate(fb);
@@ -296,10 +304,21 @@ void MtPostprocess::AmbientOccludeScene(float m5) {
   if (fb->mZNear < 0.1f) fb->mZNear = 5.0f;
   if (fb->mZFar < fb->mZNear) fb->mZFar = 65536.0f;
 
-  // Use the renderer's postprocess SSAO path (matches GL/Vulkan) so depth linearization
-  // and blending are handled the same way as the reference backends.
+  if (mt_compute_ao && fb->mAOModule->Render(m5, sceneWidth, sceneHeight)) {
+    return;
+  }
+
+  // Use the renderer's postprocess SSAO path (matches GL/Vulkan) so depth
+  // linearization and blending are handled the same way as the reference
+  // backends.
   MtPPRenderState renderstate(fb);
+  auto aoStart = std::chrono::high_resolution_clock::now();
   hw_postprocess.ssao.Render(&renderstate, m5, sceneWidth, sceneHeight);
+  auto aoEnd = std::chrono::high_resolution_clock::now();
+  if (fb->GetDebugManager()) {
+    float ms = std::chrono::duration<float, std::milli>(aoEnd - aoStart).count();
+    fb->GetDebugManager()->RecordMetric(MtMetric::PPAO, ms);
+  }
 }
 
 void MtPostprocess::UpdateShadowMap() {
@@ -318,8 +337,7 @@ void MtPostprocess::SetActiveRenderTarget() {
       buffers->GetHeight(), (int)MTL::PixelFormatBGRA8Unorm, 1);
   // Ensure this active postprocess target uses a single color attachment
   fb->GetRenderState()->EnableDrawBuffers(1, false);
-  fb->GetRenderState()->SetViewport(0, 0, buffers->GetWidth(),
-                                    buffers->GetHeight());
+  fb->GetRenderState()->SetViewport(0, 0, fb->GetWidth(), fb->GetHeight());
 }
 
 void MtPostprocess::PostProcessScene(
@@ -331,7 +349,35 @@ void MtPostprocess::PostProcessScene(
   MtPPRenderState renderstate(fb);
 
   if (!swscene) {
-    hw_postprocess.Pass1(&renderstate, fixedcm, sceneWidth, sceneHeight);
+    const bool bloomEligible = gl_bloom && fixedcm == CM_DEFAULT &&
+                               gl_ssao_debug == 0 &&
+                               sceneWidth > 0 && sceneHeight > 0;
+    const bool useComputeBloom = bloomEligible && mt_compute_bloom && fb->mBloomModule;
+
+    hw_postprocess.Pass1(&renderstate, fixedcm, sceneWidth, sceneHeight, bloomEligible);
+
+    if (bloomEligible) {
+      bool computeBloomRendered = false;
+      if (useComputeBloom) {
+        auto cmdBuf = fb->GetCommands()->GetRenderCommandBuffer();
+        auto srcTex = fb->GetBuffers()->PipelineImage[mCurrentPipelineImage]->GetTexture();
+        if (cmdBuf && srcTex) {
+          fb->GetRenderState()->EndRenderPass();
+          computeBloomRendered = fb->mBloomModule->Execute(cmdBuf, srcTex, gl_bloom_amount);
+        }
+      }
+
+      if (!computeBloomRendered) {
+        auto bloomStart = std::chrono::high_resolution_clock::now();
+        hw_postprocess.bloom.RenderBloom(&renderstate, sceneWidth, sceneHeight, fixedcm);
+        auto bloomEnd = std::chrono::high_resolution_clock::now();
+        if (fb->GetDebugManager()) {
+          float ms = std::chrono::duration<float, std::milli>(bloomEnd - bloomStart).count();
+          fb->GetDebugManager()->RecordMetric(MtMetric::PPBloom, ms);
+        }
+      }
+    }
+
     SetActiveRenderTarget();
     afterBloomDrawEndScene2D();
     hw_postprocess.Pass2(&renderstate, fixedcm, flash, sceneWidth, sceneHeight);
@@ -377,7 +423,7 @@ void MtPostprocess::BlitSceneToPostprocess() {
   }
   uniforms.HdrMode = 0;
   renderstate.Uniforms.Set(uniforms);
-  renderstate.Viewport = { 0, 0, (int)buffers->GetWidth(), (int)buffers->GetHeight() };
+  renderstate.Viewport = { 0, 0, fb->GetWidth(), fb->GetHeight() };
   renderstate.SetInputSceneColor(0, PPFilterMode::Linear);
   // Bind dither texture (present shader expects sampler at index 1)
   renderstate.SetInputTexture(1, &hw_postprocess.present.Dither, PPFilterMode::Nearest, PPWrapMode::Repeat);
@@ -391,6 +437,7 @@ void MtPostprocess::BlitSceneToPostprocess() {
 
 void MtPostprocess::BlitCurrentToImage(MTL::Texture *dstimage) {
   fb->GetRenderState()->EndRenderPass();
+  fb->GetCommands()->FlushCommands(true);
 
   auto srcimage =
       fb->GetBuffers()->PipelineImage[mCurrentPipelineImage]->GetTexture();
@@ -457,11 +504,8 @@ void MtPostprocess::BlitCurrentToImage(MTL::Texture *dstimage) {
     renderstate.SetNoBlend();
     renderstate.Draw();
   }
-
-  // CRITICAL: Wipes happen outside the normal frame flow.
-  // We MUST submit these commands immediately so the texture is ready when the
-  // engine draws the wipe.
-  fb->GetCommands()->FlushCommands(true);
+  if (srcimage->pixelFormat() != dstimage->pixelFormat())
+    fb->GetCommands()->FlushCommands(true);
 }
 
 void MtPostprocess::DrawPresentTexture(IntRect box, bool applyGamma,
@@ -525,6 +569,7 @@ void MtPostprocess::SetSceneRenderTarget(bool useSSAO) {
   fb->GetRenderState()->SetRenderTarget(
       fb->GetBuffers()->SceneColor->GetTexture(),
       fb->GetBuffers()->SceneDepthStencil->GetTexture(),
-      fb->GetBuffers()->GetWidth(), fb->GetBuffers()->GetHeight(),
+      fb->GetBuffers()->GetSceneWidth(),
+      fb->GetBuffers()->GetSceneHeight(),
       (int)MTL::PixelFormatBGRA8Unorm, fb->GetBuffers()->GetSceneSamples());
 }

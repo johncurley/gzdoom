@@ -1650,4 +1650,3 @@ DBaseStatusBar *CreateCustomStatusBar(int scriptno)
 
 	return sbar;
 }
-

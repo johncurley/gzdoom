@@ -11,6 +11,7 @@
 namespace MTL {
 class Library;
 class Function;
+class ComputePipelineState;
 } // namespace MTL
 
 class MetalRenderDevice;
@@ -104,6 +105,10 @@ public:
 
   std::string LoadPublicShaderLump(const char *lumpname);
   std::string LoadPrivateShaderLump(const char *lumpname);
+  MTL::Library *LoadNativeLibrary();
+  MTL::ComputePipelineState *CreateComputePipeline(const char *functionName,
+                                                   const char *fallbackSource,
+                                                   const char *debugName);
 
 private:
   std::string GetCachePath(const std::string &key);
@@ -130,6 +135,7 @@ private:
                  const char *defines, bool alphatest, bool gbufferpass);
 
   MetalRenderDevice *fb = nullptr;
+  MTL::Library *mNativeLibrary = nullptr;
 
 private:
   std::unordered_map<std::string, std::shared_ptr<MtShaderModule>> mShaderCache;

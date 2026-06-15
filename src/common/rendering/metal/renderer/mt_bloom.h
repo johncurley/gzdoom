@@ -18,7 +18,7 @@ public:
     MtBloomModule(MetalRenderDevice* fb);
     ~MtBloomModule();
 
-    void Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* sceneColor, float amount);
+    bool Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* sceneColor, float amount);
 
 private:
     MetalRenderDevice* fb;
@@ -28,6 +28,7 @@ private:
     MTL::ComputePipelineState* blurHPSO = nullptr;
     MTL::ComputePipelineState* blurVPSO = nullptr;
     MTL::ComputePipelineState* combinePSO = nullptr;
+    MTL::ComputePipelineState* combineAllPSO = nullptr;
     MTL::ComputePipelineState* combineRWPSO = nullptr;
     MTL::RenderPipelineState* compositePSO = nullptr;
 

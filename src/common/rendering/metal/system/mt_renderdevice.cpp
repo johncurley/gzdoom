@@ -16,10 +16,13 @@
 
 #include <Metal/Metal.hpp>
 #include <QuartzCore/QuartzCore.hpp>
+#include <CoreVideo/CoreVideo.h>
 
 #include <chrono>
+#include <cmath>
 
 #include "hw_renderstate.h"
+#include "i_interface.h"
 #include "metal/renderer/mt_pipelinestate.h"
 #include "metal/renderer/mt_postprocess.h"
 #include "metal/renderer/mt_bloom.h"
@@ -27,6 +30,7 @@
 #include "metal/renderer/mt_renderstate.h"
 #include "metal/renderer/mt_resourcebinding.h"
 #include "metal/renderer/mt_debug.h"
+#include "metal/renderer/mt_compute.h"
 #include "metal/shaders/mt_shader.h"
 #include "metal/textures/mt_sampler.h"
 #include "metal/textures/mt_texture.h"
@@ -70,6 +74,18 @@
 // as the timeout guard in BeginFrame.
 static constexpr int kDefaultMaxFramesInFlight = 2;
 
+static CVReturn MetalDisplayLinkCallback(CVDisplayLinkRef,
+                                         const CVTimeStamp *,
+                                         const CVTimeStamp *,
+                                         CVOptionFlags,
+                                         CVOptionFlags *,
+                                         void *displayLinkContext) {
+  auto fb = static_cast<MetalRenderDevice *>(displayLinkContext);
+  if (fb)
+    fb->NotifyDisplayTick();
+  return kCVReturnSuccess;
+}
+
 EXTERN_CVAR(Int, gl_tonemap)
 EXTERN_CVAR(Int, screenblocks)
 EXTERN_CVAR(Bool, cl_capfps)
@@ -86,6 +102,7 @@ void MetalPrintLog(const char *typestr, const std::string &msg) {
 MetalRenderDevice::MetalRenderDevice(void *hMonitor, bool fullscreen)
     : Super(hMonitor, fullscreen) {
   mInflightFramesSemaphore = dispatch_semaphore_create(kDefaultMaxFramesInFlight);
+  mDisplayLinkSemaphore = dispatch_semaphore_create(0);
   mPipelineNbr = 3;
   device = std::make_shared<MetalDevice>();
   device->device = MTL::CreateSystemDefaultDevice();
@@ -99,12 +116,11 @@ MetalRenderDevice::MetalRenderDevice(void *hMonitor, bool fullscreen)
     MetalError("Failed to create Metal command queue");
   }
 
-  mAOModule = new MtAOModule(this);
-  mBloomModule = new MtBloomModule(this);
 }
 
 MetalRenderDevice::~MetalRenderDevice() {
   mIsDestroyed = true;
+  StopDisplayLink();
 
   // Safely reset all post-processing backend resources while we are still alive
   PPResource::ResetAll();
@@ -127,6 +143,7 @@ MetalRenderDevice::~MetalRenderDevice() {
   mMtRenderState.reset();
   mPipelineStateManager.reset();
   mResourceBindingManager.reset();
+  mComputeManager.reset();
   mPostprocess.reset();
   mSaveBuffers.reset();
   mScreenBuffers.reset();
@@ -168,6 +185,10 @@ MetalRenderDevice::~MetalRenderDevice() {
   if (mInFrame) {
     dispatch_semaphore_signal(mInflightFramesSemaphore);
   }
+  if (mDisplayLinkSemaphore) {
+    dispatch_release(mDisplayLinkSemaphore);
+    mDisplayLinkSemaphore = nullptr;
+  }
   dispatch_release(mInflightFramesSemaphore);
 }
 
@@ -203,8 +224,7 @@ void MetalRenderDevice::InitializeState() {
       metalLayer->setDrawableSize(CGSizeMake(GetWidth(), GetHeight()));
     }
 
-    // Enable VSync to prevent screen tearing (flashing horizontal lines)
-    metalLayer->setDisplaySyncEnabled(true);
+    metalLayer->setDisplaySyncEnabled(mVSync);
     metalLayer->setMaximumDrawableCount(
         (NS::UInteger)mVersionManager.maxDrawableCount);
     metalLayer->setAllowsNextDrawableTimeout(true);
@@ -261,9 +281,12 @@ void MetalRenderDevice::InitializeState() {
   mBinaryArchive.reset(new MtBinaryArchive(this));
   mBinaryArchive->Init();
   mDebugManager.reset(new MtDebugManager(this));
+  mComputeManager.reset(new MtComputeManager(this));
   mResourceBindingManager.reset(new MtResourceBindingManager(this));
   mPipelineStateManager.reset(new MtPipelineStateManager(this));
   mShaderManager.reset(new MtShaderManager(this));
+  mAOModule = new MtAOModule(this);
+  mBloomModule = new MtBloomModule(this);
   mMtRenderState.reset(new MtRenderState(this));
 
   FMaterial::SetLayerCallback([](int layer, int translation) -> IHardwareTexture* {
@@ -273,9 +296,9 @@ void MetalRenderDevice::InitializeState() {
 
   mVertexData = new FFlatVertexBuffer(GetWidth(), GetHeight(), mPipelineNbr);
   mSkyData = new FSkyVertexBuffer;
-  mViewpoints = new HWViewpointBuffer;
-  mLights = new FLightBuffer();
-  mBones = new BoneBuffer();
+  mViewpoints = new HWViewpointBuffer(mPipelineNbr);
+  mLights = new FLightBuffer(mPipelineNbr);
+  mBones = new BoneBuffer(mPipelineNbr);
 
   mFrameCount = 0; // Reset for Startup Lag Guard effectiveness
 
@@ -286,7 +309,20 @@ void MetalRenderDevice::InitializeState() {
 void MetalRenderDevice::Update() {
   NS::AutoreleasePool *pool = NS::AutoreleasePool::alloc()->init();
 
+  // Normal rendering enters through D_Display(), which calls BeginFrame()
+  // before drawing. Wipes call Update() directly in a loop, so start a frame
+  // here only for that path instead of pre-acquiring the next drawable at the
+  // end of every regular frame.
+  if (!mInFrame) {
+    BeginFrame();
+    if (!mInFrame) {
+      pool->release();
+      return;
+    }
+  }
+
   twoD.Reset();
+  Flush3D.Reset();
   Flush3D.Clock();
 
   // 1. Set target and Draw 2D into PipelineImage[0] (where the scene is now)
@@ -323,11 +359,6 @@ void MetalRenderDevice::Update() {
     if (mMtRenderState)
       mMtRenderState->EndRenderPass();
 
-    // 4. Frame pacing and presentation
-    if (!mVSync) {
-      this->FPSLimit();
-    }
-
     PresentFrame(mCurrentDrawable);
 
     // Force synchronous flush during startup to ensure loading screen
@@ -339,6 +370,10 @@ void MetalRenderDevice::Update() {
 
   if (mCommands) {
     mCommands->EndFrame();
+  }
+
+  if (!mVSync) {
+    this->FPSLimit();
   }
 
   twod->Clear();
@@ -357,12 +392,6 @@ void MetalRenderDevice::Update() {
     mDebugManager->EndFrame();
 
   mInFrame = false;
-
-  // CRITICAL: If we are in a wipe, the engine calls Update() in a loop without
-  // calling BeginFrame(). We must ensure the next frame is initialized here,
-  // but ONLY if we haven't already acquired a drawable for the next frame.
-  if (!mCurrentDrawable)
-    this->BeginFrame();
 }
 
 void MetalRenderDevice::PresentFrame(void *drawablePtr) {
@@ -378,6 +407,67 @@ void MetalRenderDevice::PresentFrame(void *drawablePtr) {
   commandBuffer->presentDrawable(drawable);
 }
 
+void MetalRenderDevice::StartDisplayLink() {
+#ifdef __APPLE__
+  if (mDisplayLink && CVDisplayLinkIsRunning(mDisplayLink))
+    return;
+
+  if (!mDisplayLink) {
+    CVReturn result = CVDisplayLinkCreateWithActiveCGDisplays(&mDisplayLink);
+    if (result != kCVReturnSuccess || !mDisplayLink) {
+      Printf(PRINT_LOG, "Metal: Failed to create CVDisplayLink (%d)\n",
+             (int)result);
+      mDisplayLink = nullptr;
+      return;
+    }
+    CVDisplayLinkSetOutputCallback(mDisplayLink, MetalDisplayLinkCallback,
+                                   this);
+  }
+
+  CVReturn result = CVDisplayLinkStart(mDisplayLink);
+  if (result != kCVReturnSuccess)
+    Printf(PRINT_LOG, "Metal: Failed to start CVDisplayLink (%d)\n",
+           (int)result);
+#endif
+}
+
+void MetalRenderDevice::StopDisplayLink() {
+#ifdef __APPLE__
+  if (mDisplayLink) {
+    if (CVDisplayLinkIsRunning(mDisplayLink))
+      CVDisplayLinkStop(mDisplayLink);
+    CVDisplayLinkRelease(mDisplayLink);
+    mDisplayLink = nullptr;
+  }
+#endif
+}
+
+void MetalRenderDevice::NotifyDisplayTick() {
+#ifdef __APPLE__
+  if (mDisplayLinkSemaphore)
+    dispatch_semaphore_signal(mDisplayLinkSemaphore);
+#endif
+}
+
+void MetalRenderDevice::WaitForDisplayTick() {
+#ifdef __APPLE__
+  if (!mDisplayLinkSemaphore || !mDisplayLink ||
+      !CVDisplayLinkIsRunning(mDisplayLink))
+    return;
+
+  while (dispatch_semaphore_wait(mDisplayLinkSemaphore,
+                                 DISPATCH_TIME_NOW) == 0) {
+  }
+
+  if (dispatch_semaphore_wait(
+          mDisplayLinkSemaphore,
+          dispatch_time(DISPATCH_TIME_NOW, 1000 * NSEC_PER_MSEC)) != 0) {
+    if (mDebugManager)
+      mDebugManager->RecordStall("displaylink_timeout", 1000.0f);
+  }
+#endif
+}
+
 void MetalRenderDevice::BeginFrame() {
   if (mInFrame)
     return;
@@ -391,10 +481,10 @@ void MetalRenderDevice::BeginFrame() {
   // If we already have a drawable, don't acquire another one.
   // This happens during wipes where Update() calls BeginFrame() for us.
   if (!mCurrentDrawable) {
-    // Wait for GPU backpressure (MaxFramesInFlight frames allowed).
-    // If the GPU falls more than 1 second behind, log it and force a full
-    // sync rather than silently barreling ahead (which would cause nextDrawable
-    // to block indefinitely).
+    // Wait for GPU backpressure (MaxFramesInFlight frames allowed). If the
+    // wait exceeds the diagnostic threshold, keep waiting for the real
+    // completion signal; fabricating a signal lets the CPU outrun the drawable
+    // pool and creates large timing spikes.
     {
       auto semWaitStart = std::chrono::high_resolution_clock::now();
       if (dispatch_semaphore_wait(
@@ -405,9 +495,8 @@ void MetalRenderDevice::BeginFrame() {
                           .count();
         if (mDebugManager)
           mDebugManager->RecordStall("semaphore_timeout", semMs);
-        // Force GPU sync to recover — signal the semaphore ourselves so
-        // the frame can proceed; the GPU must have stalled or lost a signal.
-        dispatch_semaphore_signal(mInflightFramesSemaphore);
+        dispatch_semaphore_wait(mInflightFramesSemaphore,
+                                DISPATCH_TIME_FOREVER);
       } else {
         float semMs = std::chrono::duration<float, std::milli>(
                           std::chrono::high_resolution_clock::now() - semWaitStart)
@@ -466,6 +555,7 @@ void MetalRenderDevice::BeginFrame() {
           V_OutputResized(scaledWidth, scaledHeight);
           if (mVertexData) mVertexData->OutputResized(scaledWidth, scaledHeight);
           metalLayer->setDrawableSize(CGSizeMake(targetDrawableW, targetDrawableH));
+          SetViewportRects(nullptr);
         }
       } else {
         float backingScale = (viewSize.logicalWidth > 0)
@@ -497,9 +587,10 @@ void MetalRenderDevice::BeginFrame() {
   int physicalWidth = (int)drawableTexture->width();
   int physicalHeight = (int)drawableTexture->height();
 
-  // Use logical (engine) scene dimensions for sceneWidth/sceneHeight so
-  // postprocess shaders receive the correct viewport size (fixes SSAO scaling).
-  mScreenBuffers->BeginFrame(physicalWidth, physicalHeight, GetWidth(), GetHeight());
+  // Pipeline buffers are physical drawable-sized. Scene buffers use the
+  // logical screen viewport, matching the GL/Vulkan postprocess contract.
+  mScreenBuffers->BeginFrame(physicalWidth, physicalHeight,
+                             mScreenViewport.width, mScreenViewport.height);
   mSaveBuffers->BeginFrame(SAVEPICWIDTH, SAVEPICHEIGHT, SAVEPICWIDTH,
                            SAVEPICHEIGHT);
 
@@ -544,14 +635,45 @@ void MetalRenderDevice::SetVSync(bool vsync) {
     CA::MetalLayer *metalLayer = (CA::MetalLayer *)nativeHandle.metalLayer;
     metalLayer->setDisplaySyncEnabled(vsync);
   }
+  StopDisplayLink();
 #endif
+}
+
+void MetalRenderDevice::SetViewportRects(IntRect *bounds) {
+  Super::SetViewportRects(bounds);
+
+  // The base framebuffer may scale mScreenViewport/mSceneViewport to the
+  // physical output letterbox for GL-style rendering. Metal keeps scene
+  // textures in logical space and scales only when presenting to the drawable,
+  // so rebuild the internal viewports from logical dimensions every frame.
+  // mOutputLetterbox from the base class remains physical.
+  if (bounds)
+    return;
+
+  int logicalWidth = GetWidth();
+  int logicalHeight = GetHeight();
+  if (logicalWidth <= 0 || logicalHeight <= 0)
+    return;
+
+  mScreenViewport.left = 0;
+  mScreenViewport.top = 0;
+  mScreenViewport.width = logicalWidth;
+  mScreenViewport.height = logicalHeight;
+
+  if (sysCallbacks.GetSceneRect)
+    mSceneViewport = sysCallbacks.GetSceneRect();
+  else
+    mSceneViewport = mScreenViewport;
 }
 
 void MetalRenderDevice::SetMode(bool fullscreen, bool hiDPI) {
   Super::SetMode(fullscreen, hiDPI);
   if (mVertexData) mVertexData->OutputResized(GetWidth(), GetHeight());
 
-  mFrameCount = 0; // Re-trigger Lag Guard for the new mode
+  // Keep the startup lag guard for initial window creation, but do not
+  // re-enable it after explicit mode switches; doing so can keep the previous
+  // fullscreen/windowed logical size alive for several frames.
+  mFrameCount = mScreenBuffers ? 10 : 0;
 
   // Force Metal layer drawable size update after mode change
 #ifdef __APPLE__
@@ -587,6 +709,26 @@ const char *MetalRenderDevice::DeviceName() const {
   if (device && device->device)
     return device->device->name()->utf8String();
   return "Metal Device";
+}
+
+int MetalRenderDevice::GetClientWidth() {
+#ifdef __APPLE__
+  CocoaNativeHandle nativeHandle = GetNativeHandle();
+  MetalViewSize viewSize = GetMetalViewDrawableSize(nativeHandle.nsWindow);
+  if (viewSize.logicalWidth >= VID_MIN_WIDTH)
+    return (int)viewSize.logicalWidth;
+#endif
+  return Super::GetClientWidth();
+}
+
+int MetalRenderDevice::GetClientHeight() {
+#ifdef __APPLE__
+  CocoaNativeHandle nativeHandle = GetNativeHandle();
+  MetalViewSize viewSize = GetMetalViewDrawableSize(nativeHandle.nsWindow);
+  if (viewSize.logicalHeight >= VID_MIN_HEIGHT)
+    return (int)viewSize.logicalHeight;
+#endif
+  return Super::GetClientHeight();
 }
 
 FRenderState *MetalRenderDevice::RenderState() {
@@ -757,24 +899,6 @@ void MetalRenderDevice::Draw2D() {
   // Explicitly set viewport for 2D pass
   mMtRenderState->SetViewport(0, 0, GetWidth(), GetHeight());
 
-  // Set up 2D projection matrix
-  {
-    HWViewpointUniforms matrices;
-    matrices.mViewMatrix.loadIdentity();
-    matrices.mNormalViewMatrix.loadIdentity();
-    matrices.mViewHeight = 0;
-    matrices.mGlobVis = 1.f;
-    matrices.mPalLightLevels = 0;
-    matrices.mClipLine.X = -10000000.0f;
-    matrices.mShadowmapFilter = 0;
-    matrices.mLightBlendMode = 0;
-    // Use Y-up ortho matrix (0 at bottom) to counteract vertex shader flip.
-    matrices.mProjectionMatrix.ortho(0, (float)GetWidth(), 0,
-                                     (float)GetHeight(), -1.0f, 1.0f);
-    matrices.CalcDependencies();
-    mViewpoints->SetViewpoint(*mMtRenderState, &matrices);
-  }
-
   // Force disable culling and depth for 2D pass to avoid winding/occlusion
   // issues
   mMtRenderState->SetCulling(Cull_None);
@@ -842,8 +966,6 @@ FTexture *MetalRenderDevice::WipeStartScreen() {
   auto tex = new FWrapperTexture(mScreenViewport.width, mScreenViewport.height, 1);
   auto systex = static_cast<MtHardwareTexture *>(tex->GetSystemTexture());
   systex->CreateWipeTexture(mScreenViewport.width, mScreenViewport.height, "WipeStartScreen");
-  mPostprocess->BlitCurrentToImage(systex->GetImage()->GetTexture());
-  mCommands->FlushCommands(true); // Synchronous flush to prevent stale frame
   return tex;
 }
 
@@ -856,8 +978,6 @@ FTexture *MetalRenderDevice::WipeEndScreen() {
   auto tex = new FWrapperTexture(mScreenViewport.width, mScreenViewport.height, 1);
   auto systex = static_cast<MtHardwareTexture *>(tex->GetSystemTexture());
   systex->CreateWipeTexture(mScreenViewport.width, mScreenViewport.height, "WipeEndScreen");
-  mPostprocess->BlitCurrentToImage(systex->GetImage()->GetTexture());
-  mCommands->FlushCommands(true); // Synchronous flush to prevent stale frame
   return tex;
 }
 TArray<uint8_t> MetalRenderDevice::GetScreenshotBuffer(int &pitch,

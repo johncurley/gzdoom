@@ -937,6 +937,7 @@ void HWDrawInfo::EndDrawScene(sector_t * viewsector, FRenderState &state)
 		vp.mViewMatrix.loadIdentity();
 		auto vrmode = VRMode::GetVRMode(true);
 		vp.mProjectionMatrix = vrmode->GetHUDSpriteProjection();
+		vp.CalcDependencies();
 
 		// Backup current VPUniforms and set local VP for CPU-side model placement
 		HWViewpointUniforms oldVP = VPUniforms;
@@ -968,6 +969,15 @@ void HWDrawInfo::DrawEndScene2D(sector_t * viewsector, FRenderState &state)
 	HWViewpointUniforms vp = VPUniforms;
 	vp.mViewMatrix.loadIdentity();
 	vp.mProjectionMatrix = vrmode->GetHUDSpriteProjection();
+	if (screen->UseBottomLeft2DProjection())
+	{
+		int w = screen->GetWidth();
+		int h = screen->GetHeight();
+		float scaled_w = w / vrmode->mWeaponProjectionScale;
+		float left_ofs = (w - scaled_w) / 2.f;
+		vp.mProjectionMatrix.ortho(left_ofs, left_ofs + scaled_w, 0, (float)h, -1.0f, 1.0f);
+	}
+	vp.CalcDependencies();
 	screen->mViewpoints->SetViewpoint(state, &vp);
 	state.EnableDepthTest(false);
 	state.EnableMultisampling(false);
@@ -1108,4 +1118,3 @@ void HWDrawInfo::AddSubsectorToPortal(FSectorPortalGroup *ptg, subsector_t *sub)
     auto ptl = static_cast<HWSectorStackPortal*>(portal);
 	ptl->AddSubsector(sub);
 }
-

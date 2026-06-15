@@ -791,6 +791,8 @@ set (METAL_SOURCES
 	common/rendering/metal/renderer/mt_postprocess.cpp
 	common/rendering/metal/renderer/mt_ao.cpp
 	common/rendering/metal/renderer/mt_bloom.cpp
+	common/rendering/metal/renderer/mt_compute.cpp
+	common/rendering/metal/renderer/mt_metrics.cpp
 	common/rendering/metal/renderer/mt_resourcebinding.cpp
 	common/rendering/metal/renderer/mt_debug.cpp
 	common/rendering/metal/shaders/mt_shader.cpp
@@ -798,6 +800,39 @@ set (METAL_SOURCES
 	common/rendering/metal/textures/mt_textureloader.cpp
 	common/rendering/metal/textures/mt_sampler.cpp
 )
+
+if (HAVE_METAL AND APPLE)
+	set (METAL_NATIVE_SHADER_SOURCES
+		common/rendering/metal/shaders/native/mt_ao.metal
+		common/rendering/metal/shaders/native/mt_bloom.metal
+	)
+
+	set (METAL_NATIVE_AIR_FILES)
+	set (METAL_NATIVE_MODULE_CACHE ${CMAKE_CURRENT_BINARY_DIR}/metal-module-cache)
+	foreach (METAL_NATIVE_SHADER ${METAL_NATIVE_SHADER_SOURCES})
+		get_filename_component(METAL_NATIVE_SHADER_NAME ${METAL_NATIVE_SHADER} NAME_WE)
+		set(METAL_NATIVE_AIR ${CMAKE_CURRENT_BINARY_DIR}/${METAL_NATIVE_SHADER_NAME}.air)
+		add_custom_command(OUTPUT ${METAL_NATIVE_AIR}
+			COMMAND ${CMAKE_COMMAND} -E make_directory ${METAL_NATIVE_MODULE_CACHE}
+			COMMAND xcrun -sdk macosx metal -std=macos-metal2.0
+				-fmodules-cache-path=${METAL_NATIVE_MODULE_CACHE}
+				-c ${CMAKE_CURRENT_SOURCE_DIR}/${METAL_NATIVE_SHADER}
+				-o ${METAL_NATIVE_AIR}
+			DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/${METAL_NATIVE_SHADER}
+			COMMENT "Compiling Metal shader ${METAL_NATIVE_SHADER_NAME}"
+			VERBATIM)
+		list(APPEND METAL_NATIVE_AIR_FILES ${METAL_NATIVE_AIR})
+	endforeach()
+
+	set(METAL_NATIVE_LIBRARY ${CMAKE_CURRENT_BINARY_DIR}/native_shaders.metallib)
+	add_custom_command(OUTPUT ${METAL_NATIVE_LIBRARY}
+		COMMAND xcrun -sdk macosx metallib ${METAL_NATIVE_AIR_FILES}
+			-o ${METAL_NATIVE_LIBRARY}
+		DEPENDS ${METAL_NATIVE_AIR_FILES}
+		COMMENT "Linking native Metal shader library"
+		VERBATIM)
+	add_custom_target(metal_native_shaders DEPENDS ${METAL_NATIVE_LIBRARY})
+endif()
 
 if (HAVE_GLES2)
 	set (GLES_SOURCES
@@ -1329,6 +1364,20 @@ if (HAVE_METAL)
 		common/rendering/metal/shaders
 		common/rendering/metal/textures
 	)
+	if (APPLE)
+		add_dependencies(zdoom metal_native_shaders)
+		add_custom_command(TARGET zdoom POST_BUILD
+			COMMAND ${CMAKE_COMMAND} -E make_directory
+				$<TARGET_BUNDLE_DIR:zdoom>/Contents/Resources
+			COMMAND ${CMAKE_COMMAND} -E copy_if_different
+				${METAL_NATIVE_LIBRARY}
+				$<TARGET_BUNDLE_DIR:zdoom>/Contents/Resources/native_shaders.metallib
+			COMMAND ${CMAKE_COMMAND} -E copy_if_different
+				${METAL_NATIVE_LIBRARY}
+				$<TARGET_FILE_DIR:zdoom>/native_shaders.metallib
+			COMMENT "Copying native Metal shader library"
+			VERBATIM)
+	endif()
 endif()
 
 target_precompile_headers( zdoom PRIVATE g_pch.h )
@@ -1578,7 +1627,7 @@ if( APPLE )
 	endif()
 
 	if( HAVE_METAL )
-		set( LINK_FRAMEWORKS "${LINK_FRAMEWORKS} -framework Metal -framework QuartzCore" )
+		set( LINK_FRAMEWORKS "${LINK_FRAMEWORKS} -framework Metal -framework QuartzCore -framework CoreVideo" )
 	endif()
 
 	set_target_properties(zdoom PROPERTIES

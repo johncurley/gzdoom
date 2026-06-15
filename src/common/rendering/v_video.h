@@ -249,6 +249,11 @@ public:
 		return true;
 	}
 
+	virtual bool UseBottomLeft2DProjection() const
+	{
+		return false;
+	}
+
 	virtual bool IsReverseZ() const
 	{
 		return false;

@@ -129,11 +129,22 @@ void Draw2D(F2DDrawer* drawer, FRenderState& state, int x, int y, int width, int
 		if (cmd.mFlags & F2DDrawer::DTF_Scissor)
 		{
 			// scissor test doesn't use the current viewport for the coordinates, so use real screen coordinates
-			// Note that the origin here is the lower left corner!
-			sciX = screen->ScreenToWindowX(cmd.mScissor[0]);
-			sciY = screen->ScreenToWindowY(cmd.mScissor[3]);
-			sciW = screen->ScreenToWindowX(cmd.mScissor[2]) - sciX;
-			sciH = screen->ScreenToWindowY(cmd.mScissor[1]) - sciY;
+			// OpenGL uses a lower-left scissor origin. Metal uses top-left pixel coordinates.
+			if (screen->IsMetal())
+			{
+				const auto& viewport = screen->mScreenViewport;
+				sciX = screen->ScreenToWindowX(cmd.mScissor[0]);
+				sciY = viewport.top + viewport.height - screen->ScreenToWindowY(cmd.mScissor[1]);
+				sciW = screen->ScreenToWindowX(cmd.mScissor[2]) - sciX;
+				sciH = (viewport.top + viewport.height - screen->ScreenToWindowY(cmd.mScissor[3])) - sciY;
+			}
+			else
+			{
+				sciX = screen->ScreenToWindowX(cmd.mScissor[0]);
+				sciY = screen->ScreenToWindowY(cmd.mScissor[3]);
+				sciW = screen->ScreenToWindowX(cmd.mScissor[2]) - sciX;
+				sciH = screen->ScreenToWindowY(cmd.mScissor[1]) - sciY;
+			}
 			// If coordinates turn out negative, clip to sceen here to avoid undefined behavior. 
 			if (sciX < 0) sciW += sciX, sciX = 0;
 			if (sciY < 0) sciH += sciY, sciY = 0;

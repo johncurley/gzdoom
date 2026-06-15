@@ -317,6 +317,10 @@ MtShaderManager::MtShaderManager(MetalRenderDevice *fb) : fb(fb) {
 
 MtShaderManager::~MtShaderManager() {
   ClearCache();
+  if (mNativeLibrary) {
+    mNativeLibrary->release();
+    mNativeLibrary = nullptr;
+  }
   // Finalize glslang
   glslang::FinalizeProcess();
 }
@@ -812,6 +816,23 @@ static void PatchFragmentShader(std::string &source,
   }
 }
 
+static void PatchPostprocessFragmentShader(std::string &source,
+                                           const std::string &shadername) {
+  if (shadername.find("ssaocombine") != std::string::npos) {
+    size_t pos = source.find("vec4 ssao = texture(AODepthTexture, TexCoord);");
+    if (pos != std::string::npos) {
+      source.replace(pos, strlen("vec4 ssao = texture(AODepthTexture, TexCoord);"),
+                     "vec4 ssao = texture(AODepthTexture, vec2(TexCoord.x, 1.0 - TexCoord.y));");
+    }
+
+    pos = source.find("FragColor = vec4(fogColor, (1.0 - attenutation) * depthMask);");
+    if (pos != std::string::npos) {
+      source.replace(pos, strlen("FragColor = vec4(fogColor, (1.0 - attenutation) * depthMask);"),
+                     "FragColor = vec4(vec3(0.0), clamp((1.0 - attenutation) * depthMask * 1.85, 0.0, 1.0));");
+    }
+  }
+}
+
 std::shared_ptr<MtShaderModule>
 MtShaderManager::LoadVertShader(const std::string &shadername,
                                 const char *vert_lump, const char *defines) {
@@ -951,6 +972,105 @@ void MtShaderManager::ClearCache() {
   }
   mShaderCache.clear();
   mPPShaders.clear();
+}
+
+MTL::Library *MtShaderManager::LoadNativeLibrary() {
+  if (mNativeLibrary)
+    return mNativeLibrary;
+
+  FString base = progdir;
+  if (base.IsNotEmpty() && base.Back() != '/')
+    base += "/";
+
+  std::vector<std::string> candidates;
+  if (base.IsNotEmpty()) {
+    candidates.emplace_back(std::string(base.GetChars()) + "../Resources/native_shaders.metallib");
+    candidates.emplace_back(std::string(base.GetChars()) + "native_shaders.metallib");
+  }
+  candidates.emplace_back("native_shaders.metallib");
+
+  for (const auto &path : candidates) {
+    std::ifstream test(path, std::ios::binary);
+    if (!test.good())
+      continue;
+
+    NS::String *libraryPath =
+        NS::String::string(path.c_str(), NS::UTF8StringEncoding);
+    NS::Error *error = nullptr;
+    mNativeLibrary = fb->device->device->newLibrary(libraryPath, &error);
+    if (mNativeLibrary) {
+      if (mt_debug)
+        Printf(PRINT_LOG, "Metal: Loaded native shader library: %s\n",
+               path.c_str());
+      return mNativeLibrary;
+    }
+
+    if (error) {
+      Printf(PRINT_LOG, "Metal: Failed to load native shader library %s: %s\n",
+             path.c_str(), error->localizedDescription()->utf8String());
+      error->release();
+    }
+  }
+
+  if (mt_debug)
+    Printf(PRINT_LOG,
+           "Metal: native_shaders.metallib not found; using runtime shader compilation fallback.\n");
+  return nullptr;
+}
+
+MTL::ComputePipelineState *
+MtShaderManager::CreateComputePipeline(const char *functionName,
+                                       const char *fallbackSource,
+                                       const char *debugName) {
+  auto deviceObj = fb->device->device;
+
+  auto createFromLibrary = [&](MTL::Library *library) -> MTL::ComputePipelineState * {
+    if (!library)
+      return nullptr;
+
+    auto function =
+        library->newFunction(NS::String::string(functionName, NS::UTF8StringEncoding));
+    if (!function)
+      return nullptr;
+
+    NS::Error *error = nullptr;
+    auto pso = deviceObj->newComputePipelineState(function, &error);
+    function->release();
+
+    if (!pso && error) {
+      Printf(PRINT_LOG, "Metal: Failed to create compute pipeline %s: %s\n",
+             debugName, error->localizedDescription()->utf8String());
+      error->release();
+    }
+    return pso;
+  };
+
+  if (auto pso = createFromLibrary(LoadNativeLibrary()))
+    return pso;
+
+  if (!fallbackSource)
+    return nullptr;
+
+  auto sourceString =
+      NS::String::string(fallbackSource, NS::UTF8StringEncoding);
+  auto compileOptions = MTL::CompileOptions::alloc()->init();
+  compileOptions->setLanguageVersion(MTL::LanguageVersion2_0);
+
+  NS::Error *error = nullptr;
+  auto library = deviceObj->newLibrary(sourceString, compileOptions, &error);
+  compileOptions->release();
+  if (!library) {
+    if (error) {
+      Printf(PRINT_LOG, "Metal: %s shader compilation failed: %s\n", debugName,
+             error->localizedDescription()->utf8String());
+      error->release();
+    }
+    return nullptr;
+  }
+
+  auto pso = createFromLibrary(library);
+  library->release();
+  return pso;
 }
 
 std::string MtShaderManager::GetCachePath(const std::string &key) {
@@ -1156,8 +1276,10 @@ MtPPShader::MtPPShader(MetalRenderDevice *fb, PPShader *shader) : fb(fb) {
   // We'll let the GZDoom GLSL shaders handle their own bindings but we can add
   // helpers.
   fragCode += "\n#line 1\n";
-  fragCode += fb->GetShaderManager()->LoadPrivateShaderLump(
+  std::string fragSource = fb->GetShaderManager()->LoadPrivateShaderLump(
       shader->FragmentShader.GetChars());
+  PatchPostprocessFragmentShader(fragSource, shader->FragmentShader.GetChars());
+  fragCode += fragSource;
 
   mProgram.vert = fb->GetShaderManager()->CompileShader(
       shader->VertexShader.GetChars(), vertCode, "", {});

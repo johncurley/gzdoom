@@ -845,10 +845,9 @@ public:
 
 
 	void SetTonemapMode(ETonemapMode tm) { tonemap.SetTonemapMode(tm); }
-	void Pass1(PPRenderState *state, int fixedcm, int sceneWidth, int sceneHeight);
+	void Pass1(PPRenderState *state, int fixedcm, int sceneWidth, int sceneHeight, bool skipBloom = false);
 	void Pass2(PPRenderState* state, int fixedcm, float flash, int sceneWidth, int sceneHeight);
 };
 
 
 extern Postprocess hw_postprocess;
-

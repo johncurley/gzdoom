@@ -100,7 +100,10 @@ void HWViewpointBuffer::Set2D(FRenderState &di, int width, int height, int pll)
 	matrices.mShadowmapFilter = gl_shadowmap_filter;
 	matrices.mLightBlendMode = 0;
 
-	matrices.mProjectionMatrix.ortho(0, (float)width, (float)height, 0, -1.0f, 1.0f);
+	if (screen->UseBottomLeft2DProjection())
+		matrices.mProjectionMatrix.ortho(0, (float)width, 0, (float)height, -1.0f, 1.0f);
+	else
+		matrices.mProjectionMatrix.ortho(0, (float)width, (float)height, 0, -1.0f, 1.0f);
 	matrices.CalcDependencies();
 
 	CheckSize();
@@ -157,4 +160,3 @@ void HWViewpointBuffer::Clear()
 
 	mBuffer = mBufferPipeline[mPipelinePos];
 }
-

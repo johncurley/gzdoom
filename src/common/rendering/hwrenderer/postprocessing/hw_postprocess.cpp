@@ -708,9 +708,12 @@ void PPAmbientOcclusion::CreateShaders()
 
 
 
-	// Optimized sample counts for better performance with 64x64 noise
+	// Optimized sample counts for better performance with 64x64 noise.
+	// Higher grades also get a slightly stronger horizon response so the
+	// quality setting has a visible effect beyond sample count.
 
 	int numDirections, numSteps;
+	float visibilityStrength;
 
 	switch (gl_ssao)
 
@@ -718,11 +721,11 @@ void PPAmbientOcclusion::CreateShaders()
 
 	default:
 
-	case LowQuality:    numDirections = 4; numSteps = 4; break;
+	case LowQuality:    numDirections = 4; numSteps = 4; visibilityStrength = 2.35f; break;
 
-	case MediumQuality: numDirections = 6; numSteps = 4; break;
+	case MediumQuality: numDirections = 4; numSteps = 4; visibilityStrength = 2.75f; break;
 
-	case HighQuality:   numDirections = 8; numSteps = 6; break;
+	case HighQuality:   numDirections = 5; numSteps = 4; visibilityStrength = 3.15f; break;
 
 	}
 
@@ -740,7 +743,9 @@ void PPAmbientOcclusion::CreateShaders()
 
 		#define NUM_STEPS %d.0
 
-	)", numDirections, numSteps);
+		#define AO_VISIBILITY_STRENGTH %.3f
+
+	)", numDirections, numSteps, visibilityStrength);
 
 	LinearDepth = { "shaders/pp/lineardepth.fp", "", LinearDepthUniforms::Desc() };
 	LinearDepthMS = { "shaders/pp/lineardepth.fp", "#define MULTISAMPLE\n", LinearDepthUniforms::Desc() };
@@ -784,6 +789,18 @@ void PPAmbientOcclusion::Render(PPRenderState *renderstate, float m5, int sceneW
 	float aoRadius = gl_ssao_radius;
 	const float blurAmount = gl_ssao_blur;
 	float aoStrength = gl_ssao_strength;
+	switch (gl_ssao)
+	{
+	default:
+	case LowQuality:    aoStrength *= 0.85f; break;
+	case MediumQuality: break;
+	case HighQuality:   aoStrength *= 1.15f; break;
+	}
+	aoStrength = clamp(aoStrength, 0.0f, 1.0f);
+	if (aoStrength <= 0.0f && gl_ssao_debug == 0)
+	{
+		return;
+	}
 
 	//float tanHalfFovy = tan(fovy * (M_PI / 360.0f));
 	float tanHalfFovy = 1.0f / m5;
@@ -904,10 +921,10 @@ void PPAmbientOcclusion::Render(PPRenderState *renderstate, float m5, int sceneW
 	renderstate->Shader = gl_multisample > 1 ? &CombineMS : &Combine;
 	renderstate->Uniforms.Set(combineUniforms);
 	renderstate->Viewport = screen->mSceneViewport;
-	if (gl_ssao_debug < 4)
-		renderstate->SetInputTexture(0, &Ambient0, PPFilterMode::Linear);
-	else
+	if (gl_ssao_debug == 4)
 		renderstate->SetInputSceneNormal(0, PPFilterMode::Linear);
+	else
+		renderstate->SetInputTexture(0, &Ambient0, PPFilterMode::Linear);
 	renderstate->SetInputSceneFog(1);
 	renderstate->SetOutputSceneColor();
 	if (gl_ssao_debug != 0)
@@ -1194,11 +1211,14 @@ void PPCustomShaderInstance::AddUniformField(size_t &offset, const FString &name
 }
 
 
-void Postprocess::Pass1(PPRenderState* state, int fixedcm, int sceneWidth, int sceneHeight)
+void Postprocess::Pass1(PPRenderState* state, int fixedcm, int sceneWidth, int sceneHeight, bool skipBloom)
 {
 	exposure.Render(state, sceneWidth, sceneHeight);
 	customShaders.Run(state, "beforebloom");
-	bloom.RenderBloom(state, sceneWidth, sceneHeight, fixedcm);
+	if (!skipBloom)
+	{
+		bloom.RenderBloom(state, sceneWidth, sceneHeight, fixedcm);
+	}
 }
 
 void Postprocess::Pass2(PPRenderState* state, int fixedcm, float flash, int sceneWidth, int sceneHeight)

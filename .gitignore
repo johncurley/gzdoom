@@ -1,11 +1,13 @@
 # build artifacts
 /build*
+/cache/
 /wadsrc/*.pk3
 .flatpak-builder/
 *.AppImage
 *.flatpak
 flatpak/
 gzdoom-crash.log
+debug_out.txt
 fmodapi*linux/
 
 # generated code

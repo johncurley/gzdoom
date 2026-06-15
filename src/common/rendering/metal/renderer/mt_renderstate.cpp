@@ -36,6 +36,7 @@
 
 #include "flatvertices.h"
 #include "gamestate.h"
+#include "hw_bonebuffer.h"
 #include "hw_clock.h"
 #include "hw_cvars.h"
 #include "hw_lightbuffer.h"
@@ -1253,8 +1254,11 @@ void MtRenderState::ApplyHWBufferSet() {
 
   // 2. Light (16)
   MTL::Buffer *ltBuf = mBoundBuffers[LIGHTBUF_BINDINGPOINT];
-  if (!ltBuf && fb->GetBufferManager()->LightBufferSSO) {
-    ltBuf = fb->GetBufferManager()->LightBufferSSO->GetBuffer();
+  if (!ltBuf && screen->mLights) {
+    auto lightData =
+        static_cast<MtHardwareDataBuffer *>(screen->mLights->GetBuffer());
+    if (lightData)
+      ltBuf = lightData->GetBuffer();
   }
   uint32_t ltOff = mBoundOffsets[LIGHTBUF_BINDINGPOINT];
   if (!ltBuf) {
@@ -1274,8 +1278,11 @@ void MtRenderState::ApplyHWBufferSet() {
 
   // 3. Bone (18)
   MTL::Buffer *bnBuf = mBoundBuffers[BONEBUF_BINDINGPOINT];
-  if (!bnBuf && fb->GetBufferManager()->BoneBufferSSO) {
-    bnBuf = fb->GetBufferManager()->BoneBufferSSO->GetBuffer();
+  if (!bnBuf && screen->mBones) {
+    auto boneData =
+        static_cast<MtHardwareDataBuffer *>(screen->mBones->GetBuffer());
+    if (boneData)
+      bnBuf = boneData->GetBuffer();
   }
   uint32_t bnOff = mBoundOffsets[BONEBUF_BINDINGPOINT];
   if (!bnBuf) {
@@ -1498,7 +1505,6 @@ void MtRenderState::SetRenderTarget(MTL::Texture *image,
   mRenderTarget.Samples = samples;
 }
 
-// FORCE RECOMPILE: December 26 V10 Diagnostic Build
 void MtRenderState::BeginRenderPass() {
   EndRenderPass(); // Ensure previous encoder is ended
 
@@ -1619,15 +1625,11 @@ void MtRenderState::BeginRenderPass() {
     stencilAttachment->setLoadAction(clearStencil ? MTL::LoadActionClear
                                                   : MTL::LoadActionLoad);
 
-    // Stencil store action:
-    // - If depth is memoryless the stencil component is too — DontCare.
-    // - On TBDR (Apple Silicon), stencil is cleared at the start of every
-    //   frame and never sampled across frames, so DontCare avoids a writeback.
-    // - On Intel/AMD/NVIDIA, stencil shares the packed Depth32Stencil8 texture
-    //   and must be Stored to protect the depth component.
-    bool stencilDontCare = depthIsMemoryless || fb->mVersionManager.isTBDR;
-    stencilAttachment->setStoreAction(stencilDontCare ? MTL::StoreActionDontCare
-                                                      : MTL::StoreActionStore);
+    // Stencil is consumed by later postprocess passes, including SSAO/GTAO
+    // combine into SceneColor. Only memoryless attachments may discard it at
+    // the end of a render pass.
+    stencilAttachment->setStoreAction(depthIsMemoryless ? MTL::StoreActionDontCare
+                                                        : MTL::StoreActionStore);
 
     if (clearStencil) {
       stencilAttachment->setClearStencil(0);

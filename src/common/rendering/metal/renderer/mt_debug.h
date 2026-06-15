@@ -1,8 +1,9 @@
 #pragma once
 
+#include "mt_metrics.h"
+
 #include <chrono>
 #include <vector>
-#include <cstdint>
 
 class MetalRenderDevice;
 
@@ -22,6 +23,9 @@ public:
   void RecordTextureAllocation(size_t bytes, const char *name);
   void RecordBufferAllocation(size_t bytes, const char *name);
   void RecordTextureMipmap(const char *name, int levels);
+  void RecordMetric(MtMetric metric, float durationMs);
+  void RecordAOTiming(bool computePath, float durationMs);
+  void RecordBloomTiming(float durationMs);
 
   // Stall tracking — call from render thread when a synchronous GPU wait occurs
   // type: "drawable", "semaphore", "streambuffer", "texture_upload"
@@ -58,9 +62,26 @@ public:
     int stallCount = 0;
     float stallTotalMs = 0.0f;
     float stallMaxMs = 0.0f;
+
+    // CPU encode/composite timing for comparing native compute modules with
+    // engine postprocess reference paths.
+    MtMetricFrame metrics;
+
+    float GetMetric(MtMetric metric) const {
+      return metrics.Get(metric);
+    }
   };
 
   FrameStats GetLastFrameStats() const { return mLastFrameStats; }
+  MtMetricStats GetFrameTimeStats() const;
+  MtMetricStats GetMetricStats(MtMetric metric) const {
+    return mMetricHistory.GetStats(metric);
+  }
+  void ClearMetricHistory() { mMetricHistory.Clear(); }
+  void ClearBenchmarkHistory() {
+    mMetricHistory.Clear();
+    mFrameTimeHistory.clear();
+  }
 
   // Architecture info
   void PrintArchitectureInfo();
@@ -71,6 +92,7 @@ private:
   // Metrics for current frame
   FrameStats mCurrentFrameStats = {};
   FrameStats mLastFrameStats = {};
+  MtMetricHistory mMetricHistory;
 
   // Timing
   std::chrono::high_resolution_clock::time_point mFrameStartTime;

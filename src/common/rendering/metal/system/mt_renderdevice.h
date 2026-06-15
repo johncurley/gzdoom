@@ -6,6 +6,7 @@
 #include "mt_ao.h"
 
 #ifdef __APPLE__
+#include <CoreVideo/CVDisplayLink.h>
 #include <dispatch/dispatch.h>
 #endif
 
@@ -44,6 +45,7 @@ class MtPostprocess;
 class MtBloomModule;
 class MtBinaryArchive;
 class MtDebugManager;
+class MtComputeManager;
 class SWSceneDrawer;
 
 // Metal device wrapper
@@ -83,6 +85,7 @@ public:
   MtPostprocess *GetPostprocess() { return mPostprocess.get(); }
   MtBinaryArchive *GetBinaryArchive() { return mBinaryArchive.get(); }
   MtDebugManager *GetDebugManager() { return mDebugManager.get(); }
+  MtComputeManager *GetComputeManager() { return mComputeManager.get(); }
   MtRenderBuffers *GetBuffers() { return mActiveRenderBuffers; }
   FRenderState *RenderState() override;
   MtAOModule* mAOModule = nullptr;
@@ -93,7 +96,8 @@ public:
   MetalRenderDevice(void *hMonitor, bool fullscreen);
   ~MetalRenderDevice();
   bool IsMetal() override { return true; }
-  bool RenderTextureIsFlipped() const override { return true; }
+  bool RenderTextureIsFlipped() const override { return false; }
+  bool UseBottomLeft2DProjection() const override { return true; }
   bool IsReverseZ() const override { return true; }
   float GetZNear() const override { return mZNear; }
   float GetZFar() const override { return mZFar; }
@@ -102,6 +106,9 @@ public:
 
   void InitializeState() override;
   void SetMode(bool fullscreen, bool hiDPI) override;
+  void SetViewportRects(IntRect *bounds) override;
+  int GetClientWidth() override;
+  int GetClientHeight() override;
   bool CompileNextShader() override;
   void PrecacheMaterial(FMaterial *mat, int translation) override;
   void UpdatePalette() override;
@@ -139,6 +146,7 @@ public:
 
   bool GetVSync() { return mVSync; }
   void SetVSync(bool vsync) override;
+  void NotifyDisplayTick();
 
   void Draw2D() override;
 
@@ -171,6 +179,9 @@ private:
   void PrintStartupLog();
   void CopyScreenToBuffer(int w, int h, uint8_t *data) override;
   void PresentFrame(void *drawable);
+  void StartDisplayLink();
+  void StopDisplayLink();
+  void WaitForDisplayTick();
 
   // Manager instances (following Vulkan pattern)
   std::unique_ptr<MtCommandBufferManager> mCommands;
@@ -183,6 +194,7 @@ private:
   std::unique_ptr<MtPostprocess> mPostprocess;
   std::unique_ptr<MtBinaryArchive> mBinaryArchive;
   std::unique_ptr<MtDebugManager> mDebugManager;
+  std::unique_ptr<MtComputeManager> mComputeManager;
   std::unique_ptr<MtResourceBindingManager> mResourceBindingManager;
   std::unique_ptr<MtPipelineStateManager> mPipelineStateManager;
   std::unique_ptr<MtRenderState> mMtRenderState;
@@ -193,6 +205,8 @@ private:
   int mFrameCount = 0;
 #ifdef __APPLE__
   dispatch_semaphore_t mInflightFramesSemaphore;
+  dispatch_semaphore_t mDisplayLinkSemaphore = nullptr;
+  CVDisplayLinkRef mDisplayLink = nullptr;
 #else
   void* mInflightFramesSemaphore = nullptr;
 #endif

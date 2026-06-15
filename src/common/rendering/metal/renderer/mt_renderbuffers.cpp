@@ -34,7 +34,6 @@ void MtRenderBuffers::BeginFrame(int width, int height, int sceneWidth,
   }
 }
 
-// FORCE RECOMPILE: December 25 V8 Final Audit Build
 void MtRenderBuffers::CreatePipelineDepthStencil(int width, int height) {
   PipelineDepthStencil = std::make_unique<MtTextureImage>(fb);
 
@@ -168,7 +167,7 @@ void MtRenderBuffers::CreateSceneNormal(int width, int height, int samples) {
   desc->setWidth(width);
   desc->setHeight(height);
 
-  MTL::PixelFormat format = MTL::PixelFormatBGRA8Unorm;
+  MTL::PixelFormat format = MTL::PixelFormatRGBA8Unorm;
   if (fb->mVersionManager.supportsRGB10A2) {
     format = MTL::PixelFormatRGB10A2Unorm;
   }

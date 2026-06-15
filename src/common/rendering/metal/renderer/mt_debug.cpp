@@ -21,19 +21,51 @@
 */
 
 #include "mt_debug.h"
+#include "c_dispatch.h"
 #include "metal/system/mt_renderdevice.h"
 #include "metal/system/mt_version.h"
 #include "printf.h"
+#include "v_video.h"
 #include <algorithm>
 #include <ctime>
 #include <cstring>
 
 EXTERN_CVAR(Bool, mt_debug)
 
+namespace {
+MtDebugManager *GetActiveMetalDebugManager() {
+  if (!screen || !screen->IsMetal())
+    return nullptr;
+
+  auto fb = static_cast<MetalRenderDevice *>(screen);
+  return fb->GetDebugManager();
+}
+
+void PrintMetricSummary(MtDebugManager *debug, MtMetric metric) {
+  const auto &info = MtMetricHistory::GetInfo(metric);
+  const auto stats = debug->GetMetricStats(metric);
+  if (stats.samples == 0)
+    return;
+
+  Printf(PRINT_HIGH, "  %-7s %-5s current=%6.3fms active_avg=%6.3fms min=%6.3fms max=%6.3fms samples=%zu\n",
+         info.group, info.label, stats.current, stats.average,
+         stats.minimum, stats.maximum, stats.samples);
+}
+
+void PrintFrameSummary(MtDebugManager *debug) {
+  const auto stats = debug->GetFrameTimeStats();
+  if (stats.maximum <= 0.0f)
+    return;
+
+  const float fps = stats.average > 0.0f ? 1000.0f / stats.average : 0.0f;
+  Printf(PRINT_HIGH, "  Frame          current=%6.3fms avg=%6.3fms min=%6.3fms max=%6.3fms fps=%5.1f\n",
+         stats.current, stats.average, stats.minimum, stats.maximum, fps);
+}
+}
+
 MtDebugManager::MtDebugManager(MetalRenderDevice *renderDevice)
-    : fb(renderDevice) {
+    : fb(renderDevice), mMetricHistory(120) {
   mFrameTimeHistory.reserve(120);
-  Printf(PRINT_HIGH, "Metal Debug Manager initialized (enable with: mt_debug 1)\n");
 }
 
 MtDebugManager::~MtDebugManager() {
@@ -67,6 +99,7 @@ void MtDebugManager::EndFrame() {
 
   // Save to last frame stats
   mLastFrameStats = mCurrentFrameStats;
+  mMetricHistory.RecordFrame(mCurrentFrameStats.metrics);
 
   // Log if enabled
   if (IsLogging()) {
@@ -145,6 +178,19 @@ void MtDebugManager::RecordTextureMipmap(const char *name, int levels) {
   }
 }
 
+void MtDebugManager::RecordMetric(MtMetric metric, float durationMs) {
+  mCurrentFrameStats.metrics.Record(metric, durationMs);
+}
+
+void MtDebugManager::RecordAOTiming(bool computePath, float durationMs) {
+  RecordMetric(computePath ? MtMetric::ComputeAO : MtMetric::PPAO,
+               durationMs);
+}
+
+void MtDebugManager::RecordBloomTiming(float durationMs) {
+  RecordMetric(MtMetric::ComputeBloom, durationMs);
+}
+
 void MtDebugManager::RecordStall(const char *type, float durationMs) {
   mCurrentFrameStats.stallCount++;
   mCurrentFrameStats.stallTotalMs += durationMs;
@@ -169,6 +215,26 @@ void MtDebugManager::PrintDebugStats() {
            mCurrentFrameStats.stallCount,
            mCurrentFrameStats.stallTotalMs,
            mCurrentFrameStats.stallMaxMs);
+
+  const float computeAO = mCurrentFrameStats.GetMetric(MtMetric::ComputeAO);
+  const float computeBloom = mCurrentFrameStats.GetMetric(MtMetric::ComputeBloom);
+  if (computeAO > 0.0f || computeBloom > 0.0f) {
+    Printf(PRINT_HIGH, " | Compute:");
+    if (computeAO > 0.0f)
+      Printf(PRINT_HIGH, " AO=%.2fms", computeAO);
+    if (computeBloom > 0.0f)
+      Printf(PRINT_HIGH, " Bloom=%.2fms", computeBloom);
+  }
+
+  const float ppAO = mCurrentFrameStats.GetMetric(MtMetric::PPAO);
+  const float ppBloom = mCurrentFrameStats.GetMetric(MtMetric::PPBloom);
+  if (ppAO > 0.0f || ppBloom > 0.0f) {
+    Printf(PRINT_HIGH, " | PP:");
+    if (ppAO > 0.0f)
+      Printf(PRINT_HIGH, " AO=%.2fms", ppAO);
+    if (ppBloom > 0.0f)
+      Printf(PRINT_HIGH, " Bloom=%.2fms", ppBloom);
+  }
 
   Printf(PRINT_HIGH, "\n");
   
@@ -231,7 +297,8 @@ void MtDebugManager::StartLogging(const char *filepath) {
     // Write header
     fprintf(mLogFile,
             "Frame,FPS,DrawCalls,FrameTimeMS,GPUMemoryMB,StateChanges,"
-            "TextureAllocs,BufferAllocs\n");
+            "TextureAllocs,BufferAllocs,ComputeAOMS,ComputeBloomMS,"
+            "PPAOMS,PPBloomMS\n");
     mLogFrameCount = 0;
     mLoggingStartTime = std::chrono::high_resolution_clock::now();
     Printf(PRINT_HIGH, "Metal Debug: Logging started to %s\n", filename.c_str());
@@ -257,12 +324,16 @@ void MtDebugManager::WriteLogEntry() {
   float avgFrameTime = GetAverageFrameTime();
   float fps = (avgFrameTime > 0) ? 1000.0f / avgFrameTime : 0.0f;
 
-  fprintf(mLogFile, "%d,%.1f,%d,%.2f,%.1f,%d,%d,%d\n", mLogFrameCount, fps,
+  fprintf(mLogFile, "%d,%.1f,%d,%.2f,%.1f,%d,%d,%d,%.3f,%.3f,%.3f,%.3f\n", mLogFrameCount, fps,
           mCurrentFrameStats.drawCallCount, mCurrentFrameStats.frameTimeMs,
           mCurrentFrameStats.gpuMemoryCurrent / (1024.0f * 1024.0f),
           mCurrentFrameStats.stateChanges,
           mCurrentFrameStats.textureAllocations,
-          mCurrentFrameStats.bufferAllocations);
+          mCurrentFrameStats.bufferAllocations,
+          mCurrentFrameStats.GetMetric(MtMetric::ComputeAO),
+          mCurrentFrameStats.GetMetric(MtMetric::ComputeBloom),
+          mCurrentFrameStats.GetMetric(MtMetric::PPAO),
+          mCurrentFrameStats.GetMetric(MtMetric::PPBloom));
 
   mLogFrameCount++;
 
@@ -281,4 +352,51 @@ float MtDebugManager::GetAverageFrameTime() const {
     sum += t;
   }
   return sum / mFrameTimeHistory.size();
+}
+
+MtMetricStats MtDebugManager::GetFrameTimeStats() const {
+  MtMetricStats stats;
+  if (mFrameTimeHistory.empty())
+    return stats;
+
+  stats.current = mFrameTimeHistory.back();
+  stats.minimum = stats.current;
+  stats.maximum = stats.current;
+
+  float total = 0.0f;
+  for (float value : mFrameTimeHistory) {
+    total += value;
+    stats.minimum = std::min(stats.minimum, value);
+    stats.maximum = std::max(stats.maximum, value);
+  }
+  stats.average = total / (float)mFrameTimeHistory.size();
+  return stats;
+}
+
+CCMD(mt_metrics)
+{
+  auto debug = GetActiveMetalDebugManager();
+  if (!debug) {
+    Printf(PRINT_HIGH, "Metal metrics are not available.\n");
+    return;
+  }
+
+  Printf(PRINT_HIGH, "Metal metrics over the rolling debug window:\n");
+  PrintFrameSummary(debug);
+  PrintMetricSummary(debug, MtMetric::ComputeAO);
+  PrintMetricSummary(debug, MtMetric::ComputeBloom);
+  PrintMetricSummary(debug, MtMetric::PPAO);
+  PrintMetricSummary(debug, MtMetric::PPBloom);
+}
+
+CCMD(mt_metrics_reset)
+{
+  auto debug = GetActiveMetalDebugManager();
+  if (!debug) {
+    Printf(PRINT_HIGH, "Metal metrics are not available.\n");
+    return;
+  }
+
+  debug->ClearBenchmarkHistory();
+  Printf(PRINT_HIGH, "Metal benchmark history reset.\n");
 }

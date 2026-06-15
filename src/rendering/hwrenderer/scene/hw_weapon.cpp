@@ -644,7 +644,7 @@ bool HUDSprite::GetWeaponRect(HWDrawInfo *di, DPSprite *psp, float sx, float sy,
 
 		Vert.v[i] = t;
 	}
-	
+
 	// [MC] If this is absolutely necessary, uncomment it. It just checks if all the vertices 
 	// are all off screen either to the right or left, but is it honestly needed?
 	/*
@@ -681,7 +681,7 @@ void HWDrawInfo::PreparePlayerSprites2D(sector_t * viewsector, area_t in_area)
 	static PClass * wpCls = PClass::FindClass("Weapon");
 	static unsigned ModifyBobLayerVIndex = GetVirtualIndex(wpCls, "ModifyBobLayer");
 	static VMFunction * ModifyBobLayerOrigFunc = wpCls->Virtuals.Size() > ModifyBobLayerVIndex ? wpCls->Virtuals[ModifyBobLayerVIndex] : nullptr;
-	
+
 	AActor * playermo = players[consoleplayer].camera;
 	player_t * player = playermo->player;
 
@@ -946,4 +946,3 @@ void HWDrawInfo::PrepareTargeterSprites(double ticfrac)
 		}
 	}
 }
-

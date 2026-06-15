@@ -1,6 +1,8 @@
 #include "mt_bloom.h"
 #include "../system/mt_renderdevice.h"
+#include "../shaders/mt_shader.h"
 #include "../renderer/mt_debug.h"
+#include "metal/renderer/mt_compute.h"
 #include "metal/renderer/mt_renderstate.h"
 #include "metal/textures/mt_sampler.h"
 #include "printf.h"
@@ -18,6 +20,12 @@ struct BloomParams {
     float strength;
     float2 srcRes;
     float2 bloomRes;
+};
+
+struct BloomCompositeParams {
+    float strength[4];
+    float2 srcRes;
+    float2 bloomRes[4];
 };
 
 kernel void bloom_extract(
@@ -101,6 +109,26 @@ kernel void bloom_combine_contrib(
     outTex.write(contrib, gid);
 }
 
+kernel void bloom_combine_contrib_all(
+    uint2 gid [[thread_position_in_grid]],
+    constant BloomCompositeParams &params [[buffer(0)]],
+    texture2d<float, access::sample> bloom0 [[texture(0)]],
+    texture2d<float, access::sample> bloom1 [[texture(1)]],
+    texture2d<float, access::sample> bloom2 [[texture(2)]],
+    texture2d<float, access::sample> bloom3 [[texture(3)]],
+    texture2d<float, access::write> outTex [[texture(4)]])
+{
+    if (gid.x >= outTex.get_width() || gid.y >= outTex.get_height()) return;
+    sampler s(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
+    float2 pixel = float2(gid) + 0.5;
+    float3 sum = float3(0.0);
+    if (params.strength[0] > 0.0) sum += bloom0.sample(s, pixel / params.bloomRes[0]).rgb * params.strength[0];
+    if (params.strength[1] > 0.0) sum += bloom1.sample(s, pixel / params.bloomRes[1]).rgb * params.strength[1];
+    if (params.strength[2] > 0.0) sum += bloom2.sample(s, pixel / params.bloomRes[2]).rgb * params.strength[2];
+    if (params.strength[3] > 0.0) sum += bloom3.sample(s, pixel / params.bloomRes[3]).rgb * params.strength[3];
+    outTex.write(float4(sum, 1.0), gid);
+}
+
 // Compute kernel that writes directly into the scene render target (RW BGRA8) on Tier 2 devices.
 kernel void bloom_combine_rw(
     uint2 gid [[thread_position_in_grid]],
@@ -148,36 +176,57 @@ fragment float4 bloom_fs(VSOut in [[stage_in]],
 MtBloomModule::MtBloomModule(MetalRenderDevice* device) : fb(device) {
     auto deviceObj = fb->device->device;
 
-    auto sourceString = NS::String::string(BLOOM_COMPUTE_SOURCE, NS::UTF8StringEncoding);
-
-    NS::Error* error = nullptr;
-    auto library = deviceObj->newLibrary(sourceString, nullptr, &error);
-
+    bool releaseLibrary = false;
+    auto library = fb->GetShaderManager()->LoadNativeLibrary();
     if (!library) {
-        if (error) {
-            Printf(PRINT_BOLD, "Error: Failed to compile Metal Bloom library: %s\n", error->localizedDescription()->utf8String());
-        } else {
-            Printf(PRINT_BOLD, "Error: Failed to compile Metal Bloom library (unknown error).\n");
+        auto sourceString = NS::String::string(BLOOM_COMPUTE_SOURCE, NS::UTF8StringEncoding);
+        auto compileOptions = MTL::CompileOptions::alloc()->init();
+        compileOptions->setLanguageVersion(MTL::LanguageVersion2_0);
+        NS::Error* error = nullptr;
+        library = deviceObj->newLibrary(sourceString, compileOptions, &error);
+        compileOptions->release();
+        releaseLibrary = library != nullptr;
+
+        if (!library) {
+            if (error) {
+                Printf(PRINT_BOLD, "Error: Failed to compile Metal Bloom library: %s\n", error->localizedDescription()->utf8String());
+                error->release();
+            } else {
+                Printf(PRINT_BOLD, "Error: Failed to compile Metal Bloom library (unknown error).\n");
+            }
+            return;
         }
-        return;
     }
 
-    auto f = library->newFunction(NS::String::string("bloom_extract", NS::UTF8StringEncoding));
-    if (f) { extractPSO = deviceObj->newComputePipelineState(f, (NS::Error**)nullptr); f->release(); }
-    f = library->newFunction(NS::String::string("blur_horizontal", NS::UTF8StringEncoding));
-    if (f) { blurHPSO = deviceObj->newComputePipelineState(f, (NS::Error**)nullptr); f->release(); }
-    f = library->newFunction(NS::String::string("blur_vertical", NS::UTF8StringEncoding));
-    if (f) { blurVPSO = deviceObj->newComputePipelineState(f, (NS::Error**)nullptr); f->release(); }
-    f = library->newFunction(NS::String::string("downsample_box", NS::UTF8StringEncoding));
-    if (f) { downsamplePSO = deviceObj->newComputePipelineState(f, (NS::Error**)nullptr); f->release(); }
+    auto createComputePipeline = [&](const char *functionName, const char *debugName) -> MTL::ComputePipelineState* {
+        auto f = library->newFunction(NS::String::string(functionName, NS::UTF8StringEncoding));
+        if (!f) {
+            Printf(PRINT_LOG, "Metal: Missing bloom compute function %s\n", functionName);
+            return nullptr;
+        }
+
+        NS::Error* error = nullptr;
+        auto pso = deviceObj->newComputePipelineState(f, &error);
+        f->release();
+        if (!pso && error) {
+            Printf(PRINT_LOG, "Metal: Failed to create compute pipeline %s: %s\n",
+                   debugName, error->localizedDescription()->utf8String());
+            error->release();
+        }
+        return pso;
+    };
+
+    extractPSO = createComputePipeline("bloom_extract", "Bloom extract");
+    blurHPSO = createComputePipeline("blur_horizontal", "Bloom horizontal blur");
+    blurVPSO = createComputePipeline("blur_vertical", "Bloom vertical blur");
+    downsamplePSO = createComputePipeline("downsample_box", "Bloom downsample");
 
     // Create compute combine pipeline to write bloom contributions into a temporary texture
-    f = library->newFunction(NS::String::string("bloom_combine_contrib", NS::UTF8StringEncoding));
-    if (f) { combinePSO = deviceObj->newComputePipelineState(f, (NS::Error**)nullptr); f->release(); }
+    combinePSO = createComputePipeline("bloom_combine_contrib", "Bloom contribution combine");
+    combineAllPSO = createComputePipeline("bloom_combine_contrib_all", "Bloom multi-level contribution combine");
 
     // Create compute pipeline that writes directly into the scene color (read-write) for Tier 2 devices
-    f = library->newFunction(NS::String::string("bloom_combine_rw", NS::UTF8StringEncoding));
-    if (f) { combineRWPSO = deviceObj->newComputePipelineState(f, (NS::Error**)nullptr); f->release(); }
+    combineRWPSO = createComputePipeline("bloom_combine_rw", "Bloom read-write combine");
 
     // Create composite render pipeline (vertex + fragment) for additive bloom compose
     auto vert = library->newFunction(NS::String::string("bloom_vs", NS::UTF8StringEncoding));
@@ -207,7 +256,8 @@ MtBloomModule::MtBloomModule(MetalRenderDevice* device) : fb(device) {
     if (vert) vert->release();
     if (frag) frag->release();
 
-    library->release();
+    if (releaseLibrary)
+        library->release();
 }
 
 MtBloomModule::~MtBloomModule() {
@@ -217,6 +267,7 @@ MtBloomModule::~MtBloomModule() {
     if (blurHPSO) blurHPSO->release();
     if (blurVPSO) blurVPSO->release();
     if (combinePSO) combinePSO->release();
+    if (combineAllPSO) combineAllPSO->release();
     if (combineRWPSO) combineRWPSO->release();
     if (compositePSO) compositePSO->release();
     if (mCompositeTex) { mCompositeTex->release(); mCompositeTex = nullptr; }
@@ -225,33 +276,32 @@ MtBloomModule::~MtBloomModule() {
 void MtBloomModule::CreateTextures(int width, int height, MTL::PixelFormat format) {
     if (mBloomA && mBloomB && mCachedBloomW == width && mCachedBloomH == height) return;
     ReleaseTextures();
-    auto desc = MTL::TextureDescriptor::alloc()->init();
-    // Use a high-precision float format for compute-friendly bloom buffers
-    desc->setPixelFormat(MTL::PixelFormatRGBA16Float);
-    desc->setUsage(MTL::TextureUsageShaderRead | MTL::TextureUsageShaderWrite);
-    desc->setStorageMode(MTL::StorageModePrivate);
+    auto compute = fb->GetComputeManager();
+    if (!compute)
+        return;
+
+    const auto usage = (MTL::TextureUsage)(MTL::TextureUsageShaderRead | MTL::TextureUsageShaderWrite);
 
     // Primary bloom ping-pong textures
-    desc->setWidth(width);
-    desc->setHeight(height);
-    mBloomA = fb->device->device->newTexture(desc);
-    mBloomB = fb->device->device->newTexture(desc);
+    mBloomA = compute->CreateTexture(width, height, MTL::PixelFormatRGBA16Float,
+                                     usage, MTL::StorageModePrivate);
+    mBloomB = compute->CreateTexture(width, height, MTL::PixelFormatRGBA16Float,
+                                     usage, MTL::StorageModePrivate);
 
     // Create a small mip chain for multi-scale bloom (half, quarter, eighth)
     const int mipLevels = 3;
     for (int i = 1; i <= mipLevels; ++i) {
         int w2 = std::max(1, width >> i);
         int h2 = std::max(1, height >> i);
-        desc->setWidth(w2);
-        desc->setHeight(h2);
-        MTL::Texture* t = fb->device->device->newTexture(desc);
+        MTL::Texture* t = compute->CreateTexture(w2, h2, MTL::PixelFormatRGBA16Float,
+                                                 usage, MTL::StorageModePrivate);
         mDownsampledTextures.push_back(t);
         // Allocate a temporary ping-pong texture for this mip level
-        MTL::Texture* tmp = fb->device->device->newTexture(desc);
+        MTL::Texture* tmp = compute->CreateTexture(w2, h2, MTL::PixelFormatRGBA16Float,
+                                                   usage, MTL::StorageModePrivate);
         mDownsampledTempTextures.push_back(tmp);
     }
 
-    desc->release();
     mCachedBloomW = width;
     mCachedBloomH = height;
 }
@@ -269,9 +319,9 @@ void MtBloomModule::ReleaseTextures() {
     mCompositeW = mCompositeH = 0;
 }
 
-void MtBloomModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* srcTex, float amount) {
+bool MtBloomModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* srcTex, float amount) {
     auto tStart = std::chrono::high_resolution_clock::now();
-    if (!extractPSO || !blurHPSO || !blurVPSO || !cmdBuf || !srcTex) return;
+    if (!extractPSO || !blurHPSO || !blurVPSO || !cmdBuf || !srcTex) return false;
 
     int srcW = (int)srcTex->width();
     int srcH = (int)srcTex->height();
@@ -284,6 +334,8 @@ void MtBloomModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* srcTex, fl
 
     MTL::Texture* bloomA = mBloomA;
     MTL::Texture* bloomB = mBloomB;
+    if (!bloomA || !bloomB)
+        return false;
 
     BloomParams params;
     params.threshold = 0.8f; // tunable
@@ -369,7 +421,8 @@ void MtBloomModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* srcTex, fl
     // Full-resolution dispatch grid
     MTL::Size fullGrid = { (NS::UInteger)srcW, (NS::UInteger)srcH, 1 };
 
-    if (fb->mVersionManager.supportsReadWriteBGRA8 && combineRWPSO) {
+    const bool srcSupportsShaderWrite = (srcTex->usage() & MTL::TextureUsageShaderWrite) != 0;
+    if (fb->mVersionManager.supportsReadWriteBGRA8 && combineRWPSO && srcSupportsShaderWrite) {
         // Fast-path: compute directly writes into the scene color (requires Tier 2)
         auto combEnc = cmdBuf->computeCommandEncoder();
         combEnc->setComputePipelineState(combineRWPSO);
@@ -401,74 +454,82 @@ void MtBloomModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* srcTex, fl
         }
 
         combEnc->endEncoding();
-    } else if (compositePSO && combinePSO) {
+    } else if (compositePSO && combineAllPSO) {
         // Create a temporary high-precision target for compute contributions if needed
-        if (!mCompositeTex || mCompositeW != srcW || mCompositeH != srcH) {
-            if (mCompositeTex) { mCompositeTex->release(); mCompositeTex = nullptr; }
-            auto desc2 = MTL::TextureDescriptor::alloc()->init();
-            desc2->setWidth(srcW);
-            desc2->setHeight(srcH);
-            desc2->setPixelFormat(MTL::PixelFormatRGBA16Float);
-            desc2->setUsage(MTL::TextureUsageShaderRead | MTL::TextureUsageShaderWrite);
-            desc2->setStorageMode(MTL::StorageModePrivate);
-            mCompositeTex = fb->device->device->newTexture(desc2);
-            desc2->release();
-            mCompositeW = srcW; mCompositeH = srcH;
+        if (auto compute = fb->GetComputeManager()) {
+            const auto usage = (MTL::TextureUsage)(MTL::TextureUsageShaderRead | MTL::TextureUsageShaderWrite);
+            compute->EnsureTexture(mCompositeTex, mCompositeW, mCompositeH, srcW, srcH,
+                                   MTL::PixelFormatRGBA16Float, usage,
+                                   MTL::StorageModePrivate);
+        }
+        if (!mCompositeTex)
+            return false;
+
+        struct BloomCompositeParamsCPU {
+            float strength[4];
+            float srcRes[2];
+            float bloomRes[4][2];
+        } compositeParams = {};
+
+        compositeParams.srcRes[0] = (float)srcW;
+        compositeParams.srcRes[1] = (float)srcH;
+        compositeParams.strength[0] = amount;
+        compositeParams.bloomRes[0][0] = (float)bloomW;
+        compositeParams.bloomRes[0][1] = (float)bloomH;
+
+        MTL::Texture* compositeInputs[4] = { bloomA, bloomA, bloomA, bloomA };
+        const size_t compositeLevels = std::min<size_t>(mDownsampledTextures.size(), 3);
+        for (size_t i = 0; i < compositeLevels; ++i) {
+            auto dst = mDownsampledTextures[i];
+            if (!dst)
+                continue;
+            const size_t slot = i + 1;
+            compositeInputs[slot] = dst;
+            compositeParams.strength[slot] = amount * (0.5f / (float)(i + 1));
+            compositeParams.bloomRes[slot][0] = (float)dst->width();
+            compositeParams.bloomRes[slot][1] = (float)dst->height();
         }
 
-        // Helper lambda to run compute combine then render composite
-        auto doCombineAndComposite = [&](MTL::Texture* srcBloom, const BloomParams &localParams) {
-            // Compute: write bloom contribution into mCompositeTex
-            auto combEnc = cmdBuf->computeCommandEncoder();
-            combEnc->setComputePipelineState(combinePSO);
-            combEnc->setBytes(&localParams, sizeof(BloomParams), 0);
-            combEnc->setTexture(srcBloom, 0);
-            combEnc->setTexture(mCompositeTex, 1);
-            combEnc->dispatchThreads(fullGrid, MTL::Size(16,16,1));
-            combEnc->memoryBarrier(MTL::BarrierScopeTextures);
-            combEnc->endEncoding();
+        auto combEnc = cmdBuf->computeCommandEncoder();
+        combEnc->setComputePipelineState(combineAllPSO);
+        combEnc->setBytes(&compositeParams, sizeof(compositeParams), 0);
+        for (int i = 0; i < 4; ++i)
+            combEnc->setTexture(compositeInputs[i], i);
+        combEnc->setTexture(mCompositeTex, 4);
+        combEnc->dispatchThreads(fullGrid, MTL::Size(16,16,1));
+        combEnc->memoryBarrier(MTL::BarrierScopeTextures);
+        combEnc->endEncoding();
 
-            // Render-pass: add mCompositeTex into the scene
-            auto mtRenderState = static_cast<MtRenderState *>(fb->GetRenderState());
-            mtRenderState->SetRenderTarget(srcTex, nullptr, srcW, srcH, (int)srcTex->pixelFormat(), 1);
-            mtRenderState->EnableDrawBuffers(1, false);
-            mtRenderState->SetViewport(0, 0, srcW, srcH);
-            mtRenderState->SetScissor(0, 0, srcW, srcH);
-            mtRenderState->BeginRenderPass();
-            auto renc = mtRenderState->GetEncoder();
-            if (renc) {
-                renc->setRenderPipelineState(compositePSO);
-                renc->setFragmentBytes(&localParams, sizeof(BloomParams), 0);
-                renc->setFragmentTexture(mCompositeTex, 0);
-                if (sampler) renc->setFragmentSamplerState(sampler, 0);
-                renc->drawPrimitives(MTL::PrimitiveTypeTriangle, (NS::UInteger)0, (NS::UInteger)3);
-            }
-            mtRenderState->EndRenderPass();
-        };
+        BloomParams renderParams = params;
+        renderParams.strength = 1.0f;
+        renderParams.srcRes[0] = (float)srcW;
+        renderParams.srcRes[1] = (float)srcH;
+        renderParams.bloomRes[0] = (float)srcW;
+        renderParams.bloomRes[1] = (float)srcH;
 
-        // First: main bloomA at half resolution (will be sampled appropriately)
-        BloomParams bp = params;
-        bp.bloomRes[0] = (float)bloomW; bp.bloomRes[1] = (float)bloomH;
-        bp.srcRes[0] = (float)srcW; bp.srcRes[1] = (float)srcH;
-        bp.strength = amount;
-        doCombineAndComposite(bloomA, bp);
-
-        // Then: each downsampled level with reduced strength
-        for (size_t i = 0; i < mDownsampledTextures.size(); ++i) {
-            MTL::Texture* dst = mDownsampledTextures[i];
-            if (!dst) continue;
-            BloomParams downParams = params;
-            downParams.bloomRes[0] = (float)dst->width(); downParams.bloomRes[1] = (float)dst->height();
-            downParams.srcRes[0] = (float)srcW; downParams.srcRes[1] = (float)srcH;
-            downParams.strength = amount * (0.5f / (float)(i + 1));
-            doCombineAndComposite(dst, downParams);
+        auto mtRenderState = static_cast<MtRenderState *>(fb->GetRenderState());
+        mtRenderState->SetRenderTarget(srcTex, nullptr, srcW, srcH, (int)srcTex->pixelFormat(), 1);
+        mtRenderState->EnableDrawBuffers(1, false);
+        mtRenderState->SetViewport(0, 0, srcW, srcH);
+        mtRenderState->SetScissor(0, 0, srcW, srcH);
+        mtRenderState->BeginRenderPass();
+        auto renc = mtRenderState->GetEncoder();
+        if (renc) {
+            renc->setRenderPipelineState(compositePSO);
+            renc->setFragmentBytes(&renderParams, sizeof(BloomParams), 0);
+            renc->setFragmentTexture(mCompositeTex, 0);
+            if (sampler) renc->setFragmentSamplerState(sampler, 0);
+            renc->drawPrimitives(MTL::PrimitiveTypeTriangle, (NS::UInteger)0, (NS::UInteger)3);
         }
+        mtRenderState->EndRenderPass();
+    } else {
+        return false;
     }
 
     auto tEnd = std::chrono::high_resolution_clock::now();
-    double elapsedMs = std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(tEnd - tStart).count();
-    Printf(PRINT_LOG, "MtBloomModule::Execute encode time: %.3f ms, bloom %dx%d, mips %d\n", elapsedMs, bloomW, bloomH, (int)mDownsampledTextures.size());
-
-
+    if (auto compute = fb->GetComputeManager()) {
+        float elapsedMs = std::chrono::duration<float, std::milli>(tEnd - tStart).count();
+        compute->RecordTiming(HWComputeEffect::Bloom, elapsedMs);
+    }
+    return true;
 }
-

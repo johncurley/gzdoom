@@ -212,4 +212,3 @@ DVector3 VREyeInfo::GetViewShift(float yaw) const
 		return { dx, dy, 0 };
 	}
 }
-

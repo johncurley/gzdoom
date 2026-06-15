@@ -61,7 +61,7 @@ class CommandDrawImage : public SBarInfoCommandFlowControl
 				return;
 
 			int w = maxwidth, h = maxheight;
-			
+
 			// We must calculate this per frame in order to prevent glitches with cl_capfps true.
 			double frameAlpha = block->Alpha() * alpha;
 			
@@ -2512,10 +2512,10 @@ class CommandDrawBar : public SBarInfoCommand
 				else
 					statusBar->DrawGraphic(fg, this->x, this->y, block->XOffset(), block->YOffset(), block->Alpha(), block->FullScreenOffsets(), false, false, 0, false, -1, -1, nulclip, true);
 			}
-		
+
 			// {cx, cy, cr, cb}
 			double Clip[4] = {0, 0, 0, 0};
-		
+
 			double sizeOfImage = (horizontal ? fg->GetDisplayWidth()-border*2 : fg->GetDisplayHeight()-border*2);
 			Clip[(!horizontal)|((horizontal ? !reverse : reverse)<<1)] = sizeOfImage - sizeOfImage *value;
 			// Draw background
@@ -3625,5 +3625,4 @@ SBarInfoCommand *SBarInfoCommandFlowControl::NextCommand(FScanner &sc)
 	sc.MustGetToken('}');
 	return NULL;
 }
-
 

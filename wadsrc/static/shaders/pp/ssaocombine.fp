@@ -22,20 +22,31 @@ void main()
 	ivec2 ipos = ivec2(uv * vec2(texSize));
 
 #if defined(MULTISAMPLE)
-	vec3 fogColor = texelFetch(SceneFogTexture, ipos, 0).rgb;
+	vec4 fogSample = texelFetch(SceneFogTexture, ipos, 0);
 #else
-	vec3 fogColor = texelFetch(SceneFogTexture, ipos, 0).rgb;
+	vec4 fogSample = texelFetch(SceneFogTexture, ipos, 0);
 #endif
+	vec3 fogColor = fogSample.rgb;
 
 	vec4 ssao = texture(AODepthTexture, TexCoord);
 	float attenutation = ssao.x;
+	float depthSignal = 1.0 - exp2(-ssao.y * 0.01);
+	float depthMask = clamp(depthSignal, 0.0, 1.0);
 
 	if (DebugMode == 0)
-		FragColor = vec4(fogColor, 1.0 - attenutation);
+		FragColor = vec4(fogColor, (1.0 - attenutation) * depthMask);
 	else if (DebugMode < 3)
 		FragColor = vec4(attenutation, attenutation, attenutation, 1.0);
 	else if (DebugMode == 3)
 		FragColor = vec4(ssao.yyy / 1000.0, 1.0);
+	else if (DebugMode == 5)
+		FragColor = vec4(vec3(ssao.x), 1.0);
+	else if (DebugMode == 6)
+		FragColor = vec4(vec3(depthSignal), 1.0);
+	else if (DebugMode == 7)
+		FragColor = vec4(vec3(step(1e-5, ssao.y)), 1.0);
+	else if (DebugMode == 8)
+		FragColor = vec4(vec3(depthMask), 1.0);
 	else
 		FragColor = vec4(ssao.xyz, 1.0);
 }

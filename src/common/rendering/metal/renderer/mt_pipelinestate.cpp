@@ -216,23 +216,7 @@ MtPipelineStateManager::GetPPPipelineState(MtShaderProgram *program,
       desc->setStencilAttachmentPixelFormat(depthStencilFormat);
   }
 
-  // Configure blend mode
-  // Opaque (STYLEOP_Add, STYLEALPHA_One, STYLEALPHA_Zero)
-  if (blendMode.SrcAlpha == (uint8_t)STYLEALPHA_One &&
-      blendMode.DestAlpha == (uint8_t)STYLEALPHA_Zero) {
-    colorAttachment->setBlendingEnabled(false); // Disable blending for opaque overwrite
-  } else if (blendMode.SrcAlpha == (uint8_t)STYLEALPHA_One &&
-             blendMode.DestAlpha == (uint8_t)STYLEALPHA_One) { // Additive
-    colorAttachment->setBlendingEnabled(true);
-    colorAttachment->setSourceRGBBlendFactor(MTL::BlendFactorOne);
-    colorAttachment->setDestinationRGBBlendFactor(MTL::BlendFactorOne);
-  } else if (blendMode.SrcAlpha == (uint8_t)STYLEALPHA_Src &&
-             blendMode.DestAlpha == (uint8_t)STYLEALPHA_InvSrc) { // Translucent
-    colorAttachment->setBlendingEnabled(true);
-    colorAttachment->setSourceRGBBlendFactor(MTL::BlendFactorSourceAlpha);
-    colorAttachment->setDestinationRGBBlendFactor(
-        MTL::BlendFactorOneMinusSourceAlpha);
-  }
+  ConfigureBlendMode(colorAttachment, blendMode.AsDWORD);
 
   // Use Binary Archive for caching if available
   auto archive = fb->GetBinaryArchive() ? fb->GetBinaryArchive()->GetArchive() : nullptr;
@@ -524,7 +508,7 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
         format = MTL::PixelFormatBGRA8Unorm; // Fog
     } else if (i == 2) {
         // Normal
-        format = fb->mVersionManager.supportsRGB10A2 ? MTL::PixelFormatRGB10A2Unorm : MTL::PixelFormatBGRA8Unorm;
+        format = fb->mVersionManager.supportsRGB10A2 ? MTL::PixelFormatRGB10A2Unorm : MTL::PixelFormatRGBA8Unorm;
     }
     colorAttachment->setPixelFormat(format);
 
