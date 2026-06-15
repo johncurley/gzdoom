@@ -74,8 +74,18 @@ void MtBinaryArchive::AddRenderPipeline(const MTL::RenderPipelineDescriptor* des
     if (mArchive->addRenderPipelineFunctions(descriptor, &error)) {
         mModified = true;
     } else if (error) {
-        // This is expected if the pipeline is already in the archive or there's a minor mismatch
-        // We don't necessarily need to log every "add" failure.
+        // Expected if already present
+    }
+}
+
+void MtBinaryArchive::AddComputePipeline(const MTL::ComputePipelineDescriptor* descriptor) {
+    if (!mArchive) return;
+
+    NS::Error* error = nullptr;
+    if (mArchive->addComputePipelineFunctions(descriptor, &error)) {
+        mModified = true;
+    } else if (error) {
+        // Expected if already present
     }
 }
 

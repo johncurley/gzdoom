@@ -65,4 +65,13 @@ private:
     MTL::SamplerState *sampler = nullptr;
   };
   std::vector<TextureBinding> mMaterialTextures;
+
+  // Redundant state tracking (Shadow State)
+  // We track vertex and fragment stages separately as Metal requires it
+  struct State {
+    MTL::Texture *textures[32] = {};
+    MTL::SamplerState *samplers[32] = {};
+    MTL::Buffer *buffers[32] = {};
+    uint32_t offsets[32] = {};
+  } mVertexState, mFragmentState;
 };

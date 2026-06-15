@@ -20,6 +20,7 @@ public:
     
     // Add a pipeline to the archive for future serialization
     void AddRenderPipeline(const MTL::RenderPipelineDescriptor* descriptor);
+    void AddComputePipeline(const MTL::ComputePipelineDescriptor* descriptor);
 
 private:
     std::string GetArchivePath();

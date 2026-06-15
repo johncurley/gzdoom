@@ -145,15 +145,7 @@ protected:
 
   MTL::Buffer *mBoundBuffers[32] = { nullptr };
   uint32_t mBoundOffsets[32] = { 0 };
-  MTL::Buffer *mLastBoundBuffers[32] = { nullptr };
-  uint32_t mLastBoundOffsets[32] = { 0xFFFFFFFF };
 
-  MTL::Buffer *mLastBoundFragmentBuffers[32] = { nullptr };
-  uint32_t mLastBoundFragmentOffsets[32] = { 0xFFFFFFFF };
-
-  uint32_t mLastViewpointOffset = 0xffffffff;
-  uint32_t mLastMatricesOffset = 0xffffffff;
-  uint32_t mLastStreamDataOffset = 0xffffffff;
   uint32_t mViewpointOffset = 0;
 
   MtStreamBufferWriter mStreamBufferWriter;
@@ -171,10 +163,6 @@ protected:
   int mPassCount = 0;
   uint32_t mTotalDraws = 0;
   std::set<MTL::Texture *> mClearedTargets;
-
-  // Fixed texture binding cache — reset each render pass to avoid redundant API calls
-  MTL::Texture *mLastShadowMapTex = nullptr;
-  MTL::Texture *mLastLightmapTex = nullptr;
 
   const char *mCurrentDrawCategory = "geometry";
 

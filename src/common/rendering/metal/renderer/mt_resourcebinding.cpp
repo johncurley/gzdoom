@@ -43,67 +43,87 @@ void MtResourceBindingManager::ApplyBindings(MTL::RenderCommandEncoder *encoder,
     return;
 
   // Tier 0: Bind fixed textures (shadowmaps, lightmaps, etc.)
-  // These are typically bound once and rarely change
   for (size_t i = 0; i < mFixedTextures.size(); i++) {
-    if (mFixedTextures[i]) {
-      MTL::Texture *texture = mFixedTextures[i];
-      if (vertex)
-        encoder->setVertexTexture(texture, i);
-      if (fragment) {
+    MTL::Texture *texture = mFixedTextures[i];
+    if (!texture) continue;
+
+    if (vertex && mVertexState.textures[i] != texture) {
+      encoder->setVertexTexture(texture, i);
+      mVertexState.textures[i] = texture;
+    }
+
+    if (fragment) {
+      if (mFragmentState.textures[i] != texture) {
         encoder->setFragmentTexture(texture, i);
-        // Ensure a sampler is bound for fixed textures — some shaders expect
-        // samplers at fixed binding indices (e.g., LightMap at 15).
-        MtSamplerKey sk;
-        // Special-case known fixed slots: 14 = ShadowMap (nearest),
-        // 15 = LightMap (linear clamp)
-        if ((int)i == 14) {
-          sk.MinFilter = 0; sk.MagFilter = 0; sk.MipFilter = 0; sk.AddressU = 3; sk.AddressV = 3; sk.AddressW = 3; sk.MaxAnisotropy = 1.0f;
-        } else if ((int)i == 15) {
-          sk.MinFilter = 1; sk.MagFilter = 1; sk.MipFilter = 0; sk.AddressU = 3; sk.AddressV = 3; sk.AddressW = 3; sk.MaxAnisotropy = 1.0f;
-        } else {
-          // Default: linear clamps
-          sk.MinFilter = 1; sk.MagFilter = 1; sk.MipFilter = 0; sk.AddressU = 3; sk.AddressV = 3; sk.AddressW = 3; sk.MaxAnisotropy = 1.0f;
-        }
-        MTL::SamplerState *sampler = fb->GetSamplerManager()->GetSamplerState(sk);
-        if (sampler) {
-          encoder->setFragmentSamplerState(sampler, i);
-          if (vertex)
-            encoder->setVertexSamplerState(sampler, i);
-        }
+        mFragmentState.textures[i] = texture;
       }
-    }
-  }
 
-  // Tier 1: Bind per-frame buffers (viewpoint, matrices, stream data, lights,
-  // bones) These update every frame but use dynamic offsets for efficiency
-  for (size_t i = 0; i < mPerFrameBuffers.size(); i++) {
-    if (mPerFrameBuffers[i].buffer) {
-      MTL::Buffer *buffer = mPerFrameBuffers[i].buffer;
-      NS::UInteger offset = mPerFrameBuffers[i].offset;
-
-      if (vertex)
-        encoder->setVertexBuffer(buffer, offset, (NS::UInteger)i);
-      if (fragment)
-        encoder->setFragmentBuffer(buffer, offset, (NS::UInteger)i);
-    }
-  }
-
-  // Tier 2: Bind per-material textures (texture layers)
-  // These change per-material during rendering
-  for (size_t i = 0; i < mMaterialTextures.size(); i++) {
-    if (mMaterialTextures[i].texture) {
-      MTL::Texture *texture = mMaterialTextures[i].texture;
-      MTL::SamplerState *sampler = mMaterialTextures[i].sampler;
-
-      if (vertex) {
-        encoder->setVertexTexture(texture, i);
-        if (sampler)
+      // Handle samplers for fixed slots
+      MtSamplerKey sk;
+      if ((int)i == 14) {
+        sk.MinFilter = 0; sk.MagFilter = 0; sk.MipFilter = 0; sk.AddressU = 3; sk.AddressV = 3; sk.AddressW = 3; sk.MaxAnisotropy = 1.0f;
+      } else if ((int)i == 15) {
+        sk.MinFilter = 1; sk.MagFilter = 1; sk.MipFilter = 0; sk.AddressU = 3; sk.AddressV = 3; sk.AddressW = 3; sk.MaxAnisotropy = 1.0f;
+      } else {
+        sk.MinFilter = 1; sk.MagFilter = 1; sk.MipFilter = 0; sk.AddressU = 3; sk.AddressV = 3; sk.AddressW = 3; sk.MaxAnisotropy = 1.0f;
+      }
+      
+      MTL::SamplerState *sampler = fb->GetSamplerManager()->GetSamplerState(sk);
+      if (sampler) {
+        if (mFragmentState.samplers[i] != sampler) {
+          encoder->setFragmentSamplerState(sampler, i);
+          mFragmentState.samplers[i] = sampler;
+        }
+        if (vertex && mVertexState.samplers[i] != sampler) {
           encoder->setVertexSamplerState(sampler, i);
+          mVertexState.samplers[i] = sampler;
+        }
       }
-      if (fragment) {
+    }
+  }
+
+  // Tier 1: Bind per-frame buffers
+  for (size_t i = 0; i < mPerFrameBuffers.size(); i++) {
+    MTL::Buffer *buffer = mPerFrameBuffers[i].buffer;
+    if (!buffer) continue;
+    uint32_t offset = mPerFrameBuffers[i].offset;
+
+    if (vertex && (mVertexState.buffers[i] != buffer || mVertexState.offsets[i] != offset)) {
+      encoder->setVertexBuffer(buffer, (NS::UInteger)offset, (NS::UInteger)i);
+      mVertexState.buffers[i] = buffer;
+      mVertexState.offsets[i] = offset;
+    }
+    if (fragment && (mFragmentState.buffers[i] != buffer || mFragmentState.offsets[i] != offset)) {
+      encoder->setFragmentBuffer(buffer, (NS::UInteger)offset, (NS::UInteger)i);
+      mFragmentState.buffers[i] = buffer;
+      mFragmentState.offsets[i] = offset;
+    }
+  }
+
+  // Tier 2: Bind per-material textures
+  for (size_t i = 0; i < mMaterialTextures.size(); i++) {
+    MTL::Texture *texture = mMaterialTextures[i].texture;
+    if (!texture) continue;
+    MTL::SamplerState *sampler = mMaterialTextures[i].sampler;
+
+    if (vertex) {
+      if (mVertexState.textures[i] != texture) {
+        encoder->setVertexTexture(texture, i);
+        mVertexState.textures[i] = texture;
+      }
+      if (sampler && mVertexState.samplers[i] != sampler) {
+        encoder->setVertexSamplerState(sampler, i);
+        mVertexState.samplers[i] = sampler;
+      }
+    }
+    if (fragment) {
+      if (mFragmentState.textures[i] != texture) {
         encoder->setFragmentTexture(texture, i);
-        if (sampler)
-          encoder->setFragmentSamplerState(sampler, i);
+        mFragmentState.textures[i] = texture;
+      }
+      if (sampler && mFragmentState.samplers[i] != sampler) {
+        encoder->setFragmentSamplerState(sampler, i);
+        mFragmentState.samplers[i] = sampler;
       }
     }
   }
@@ -111,13 +131,13 @@ void MtResourceBindingManager::ApplyBindings(MTL::RenderCommandEncoder *encoder,
 
 void MtResourceBindingManager::BeginFrame() {
   // Clear material textures (Tier 2) - these are rebound every draw
-  // Keep fixed textures (Tier 0) and per-frame buffers (Tier 1) intact
   mMaterialTextures.clear();
 }
 
 void MtResourceBindingManager::ResetEncoderState() {
-  // Current implementation doesn't track redundant state across encoders,
-  // so this is a no-op for now.
+  // Clear tracking caches when starting a new encoder
+  memset(&mVertexState, 0, sizeof(mVertexState));
+  memset(&mFragmentState, 0, sizeof(mFragmentState));
 }
 
 void MtResourceBindingManager::ClearMaterialTextures() {

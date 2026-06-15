@@ -1033,15 +1033,31 @@ MtShaderManager::CreateComputePipeline(const char *functionName,
     if (!function)
       return nullptr;
 
-    NS::Error *error = nullptr;
-    auto pso = deviceObj->newComputePipelineState(function, &error);
-    function->release();
+    auto desc = MTL::ComputePipelineDescriptor::alloc()->init();
+    desc->setComputeFunction(function);
 
+    // Use Binary Archive for caching if available
+    auto archive = fb->GetBinaryArchive() ? fb->GetBinaryArchive()->GetArchive() : nullptr;
+    if (archive) {
+        auto archives = NS::Array::array((NS::Object* const *)&archive, 1);
+        desc->setBinaryArchives(archives);
+    }
+
+    NS::Error *error = nullptr;
+    auto pso = deviceObj->newComputePipelineState(desc, MTL::PipelineOptionNone, nullptr, &error);
+    
     if (!pso && error) {
       Printf(PRINT_LOG, "Metal: Failed to create compute pipeline %s: %s\n",
              debugName, error->localizedDescription()->utf8String());
-      error->release();
+    } else if (pso) {
+        // Add to archive for persistence
+        if (fb->GetBinaryArchive()) {
+            fb->GetBinaryArchive()->AddComputePipeline(desc);
+        }
     }
+
+    desc->release();
+    function->release();
     return pso;
   };
 

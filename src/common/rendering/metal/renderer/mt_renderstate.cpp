@@ -366,29 +366,14 @@ void MtRenderState::FlushBatch() {
                                      21);
 
           // Re-bind matrix buffer only if it changed from the previous sub-draw.
-          if (sub.matrixBuffer &&
-              (sub.matrixBuffer != mLastBoundBuffers[19] ||
-               sub.matrixOffset != mLastBoundOffsets[19])) {
-            mEncoder->setVertexBuffer(sub.matrixBuffer, sub.matrixOffset, 19);
-            mEncoder->setFragmentBuffer(sub.matrixBuffer, sub.matrixOffset, 19);
-            mLastBoundBuffers[19] = sub.matrixBuffer;
-            mLastBoundOffsets[19] = sub.matrixOffset;
-            mLastBoundFragmentBuffers[19] = sub.matrixBuffer;
-            mLastBoundFragmentOffsets[19] = sub.matrixOffset;
+          auto bindingManager = fb->GetResourceBindingManager();
+          if (sub.matrixBuffer) {
+            bindingManager->BindPerFrameBuffer(19, sub.matrixBuffer, sub.matrixOffset);
           }
-
-          // Re-bind stream buffer only if the block rolled over (rare within a
-          // frame, but must be handled correctly).
-          if (sub.streamBuffer &&
-              (sub.streamBuffer != mLastBoundBuffers[20] ||
-               sub.streamOffset != mLastBoundOffsets[20])) {
-            mEncoder->setVertexBuffer(sub.streamBuffer, sub.streamOffset, 20);
-            mEncoder->setFragmentBuffer(sub.streamBuffer, sub.streamOffset, 20);
-            mLastBoundBuffers[20] = sub.streamBuffer;
-            mLastBoundOffsets[20] = sub.streamOffset;
-            mLastBoundFragmentBuffers[20] = sub.streamBuffer;
-            mLastBoundFragmentOffsets[20] = sub.streamOffset;
+          if (sub.streamBuffer) {
+            bindingManager->BindPerFrameBuffer(20, sub.streamBuffer, sub.streamOffset);
           }
+          bindingManager->ApplyBindings(mEncoder, true, true);
 
           fb->GetDebugManager()->RecordDrawCallCategory(
               sub.indexCount, sub.indexCount, mCurrentDrawCategory);
@@ -473,27 +458,14 @@ void MtRenderState::FlushIndexedBatch() {
       mEncoder->setVertexBytes(&sub.pushConstants, sizeof(PushConstants), 21);
       mEncoder->setFragmentBytes(&sub.pushConstants, sizeof(PushConstants), 21);
 
-      if (sub.matrixBuffer &&
-          (sub.matrixBuffer != mLastBoundBuffers[19] ||
-           sub.matrixOffset != mLastBoundOffsets[19])) {
-        mEncoder->setVertexBuffer(sub.matrixBuffer, sub.matrixOffset, 19);
-        mEncoder->setFragmentBuffer(sub.matrixBuffer, sub.matrixOffset, 19);
-        mLastBoundBuffers[19] = sub.matrixBuffer;
-        mLastBoundOffsets[19] = sub.matrixOffset;
-        mLastBoundFragmentBuffers[19] = sub.matrixBuffer;
-        mLastBoundFragmentOffsets[19] = sub.matrixOffset;
+      auto bindingManager = fb->GetResourceBindingManager();
+      if (sub.matrixBuffer) {
+        bindingManager->BindPerFrameBuffer(19, sub.matrixBuffer, sub.matrixOffset);
       }
-
-      if (sub.streamBuffer &&
-          (sub.streamBuffer != mLastBoundBuffers[20] ||
-           sub.streamOffset != mLastBoundOffsets[20])) {
-        mEncoder->setVertexBuffer(sub.streamBuffer, sub.streamOffset, 20);
-        mEncoder->setFragmentBuffer(sub.streamBuffer, sub.streamOffset, 20);
-        mLastBoundBuffers[20] = sub.streamBuffer;
-        mLastBoundOffsets[20] = sub.streamOffset;
-        mLastBoundFragmentBuffers[20] = sub.streamBuffer;
-        mLastBoundFragmentOffsets[20] = sub.streamOffset;
+      if (sub.streamBuffer) {
+        bindingManager->BindPerFrameBuffer(20, sub.streamBuffer, sub.streamOffset);
       }
+      bindingManager->ApplyBindings(mEncoder, true, true);
 
       fb->GetDebugManager()->RecordDrawCallCategory(sub.indexCount, sub.indexCount,
                                                     mCurrentDrawCategory);
@@ -726,51 +698,18 @@ void MtRenderState::ApplyFixedTextures() {
     return;
 
   auto buffers = fb->GetBuffers();
+  auto bindingManager = fb->GetResourceBindingManager();
+
   if (buffers->ShadowMap) {
     MTL::Texture *shadowTex = buffers->ShadowMap->GetTexture();
-    if (shadowTex && shadowTex != mLastShadowMapTex) {
-      mEncoder->setFragmentTexture(shadowTex, 14);
-      mEncoder->setVertexTexture(shadowTex, 14);
-
-      MtSamplerKey sk;
-      sk.MinFilter = 0;
-      sk.MagFilter = 0;
-      sk.MipFilter = 0;
-      sk.AddressU = 3;
-      sk.AddressV = 3;
-      sk.AddressW = 3;
-      sk.MaxAnisotropy = 1.0f;
-
-      auto sampler = fb->GetSamplerManager()->GetSamplerState(sk);
-      if (sampler) {
-        mEncoder->setFragmentSamplerState(sampler, 14);
-        mEncoder->setVertexSamplerState(sampler, 14);
-      }
-      mLastShadowMapTex = shadowTex;
-    }
+    bindingManager->BindFixedTexture(14, shadowTex);
   }
 
   MTL::Texture *lmTex = fb->GetTextureManager()->GetLightmap();
-  if (lmTex && lmTex != mLastLightmapTex) {
-    mEncoder->setFragmentTexture(lmTex, 15);
-    mEncoder->setVertexTexture(lmTex, 15);
-
-    MtSamplerKey sk;
-    sk.MinFilter = 1;
-    sk.MagFilter = 1;
-    sk.MipFilter = 0;
-    sk.AddressU = 3;
-    sk.AddressV = 3;
-    sk.AddressW = 3;
-    sk.MaxAnisotropy = 1.0f;
-
-    MTL::SamplerState *sampler = fb->GetSamplerManager()->GetSamplerState(sk);
-    if (sampler) {
-      mEncoder->setFragmentSamplerState(sampler, 15);
-      mEncoder->setVertexSamplerState(sampler, 15);
-    }
-    mLastLightmapTex = lmTex;
-  }
+  bindingManager->BindFixedTexture(15, lmTex);
+  
+  // Actually apply all bindings (Tier 0, 1, and 2) to the encoder.
+  bindingManager->ApplyBindings(mEncoder, true, true);
 }
 
 void MtRenderState::ApplyRenderPass(int dt) {
@@ -1151,21 +1090,14 @@ void MtRenderState::ApplyMaterial() {
 
           MTL::Texture *mtlTexture = image->GetTexture();
           if (mtlTexture) {
-            mEncoder->setFragmentTexture(mtlTexture, i);
-            mEncoder->setVertexTexture(mtlTexture, i);
-
             // Sampler
             MtSamplerKey samplerKey;
 
             // Use the current draw category to determine sampler mode.
-            // UI/HUD passes use nearest filtering; world geometry uses the
-            // user's gl_texture_filter setting.
             bool isUI = (mCurrentDrawCategory[0] == 'h' || // "hud"
                          mCurrentDrawCategory[0] == 'u');  // "ui"
 
             int filter = isUI ? 0 : gl_texture_filter;
-            // Vulkan-parity filter table: 0=Nearest, 1=Linear. Mip: 0=None,
-            // 1=Nearest, 2=Linear
             static const int minFilters[] = {0, 0, 1, 1, 1, 0, 1};
             static const int magFilters[] = {0, 0, 1, 1, 1, 0, 0};
             static const int mipFilters[] = {0, 1, 0, 1, 2, 2, 2};
@@ -1175,7 +1107,6 @@ void MtRenderState::ApplyMaterial() {
             samplerKey.MagFilter = magFilters[f];
             samplerKey.MipFilter = mipFilters[f];
 
-            // CRITICAL: If texture has no mips, force sampler to NotMipmapped
             if (mtlTexture->mipmapLevelCount() == 1) {
               samplerKey.MipFilter = 0;
             }
@@ -1188,10 +1119,8 @@ void MtRenderState::ApplyMaterial() {
 
             MTL::SamplerState *sampler =
                 fb->GetSamplerManager()->GetSamplerState(samplerKey);
-            if (sampler) {
-              mEncoder->setFragmentSamplerState(sampler, i);
-              mEncoder->setVertexSamplerState(sampler, i);
-            }
+            
+            fb->GetResourceBindingManager()->BindMaterialTexture(i, mtlTexture, sampler);
           }
         }
       }
@@ -1226,9 +1155,7 @@ void MtRenderState::ApplyHWBufferSet() {
   if (!mEncoder)
     return;
 
-  // Binding Indices (Matching shaderBindings in mt_shader.cpp)
-  // Viewpoint = 17, Light = 16, Bone = 18, Matrix = 19, Stream = 20
-
+  auto bindingManager = fb->GetResourceBindingManager();
   auto dummyBuf = fb->GetBufferManager()->DummyBuffer;
 
   // 1. Viewpoint (17)
@@ -1237,20 +1164,7 @@ void MtRenderState::ApplyHWBufferSet() {
     vpBuf = fb->GetBufferManager()->ViewpointUBO->GetBuffer();
   }
   uint32_t vpOff = mBoundOffsets[VIEWPOINT_BINDINGPOINT];
-  if (!vpBuf) {
-    vpBuf = dummyBuf;
-    vpOff = 0;
-  }
-
-  if (vpBuf &&
-      (vpBuf != mLastBoundBuffers[17] || vpOff != mLastBoundOffsets[17])) {
-    mEncoder->setVertexBuffer(vpBuf, vpOff, 17);
-    mEncoder->setFragmentBuffer(vpBuf, vpOff, 17);
-    mLastBoundBuffers[17] = vpBuf;
-    mLastBoundOffsets[17] = vpOff;
-    mLastBoundFragmentBuffers[17] = vpBuf;
-    mLastBoundFragmentOffsets[17] = vpOff;
-  }
+  bindingManager->BindPerFrameBuffer(17, vpBuf ? vpBuf : dummyBuf, vpBuf ? vpOff : 0);
 
   // 2. Light (16)
   MTL::Buffer *ltBuf = mBoundBuffers[LIGHTBUF_BINDINGPOINT];
@@ -1261,20 +1175,7 @@ void MtRenderState::ApplyHWBufferSet() {
       ltBuf = lightData->GetBuffer();
   }
   uint32_t ltOff = mBoundOffsets[LIGHTBUF_BINDINGPOINT];
-  if (!ltBuf) {
-    ltBuf = dummyBuf;
-    ltOff = 0;
-  }
-
-  if (ltBuf &&
-      (ltBuf != mLastBoundBuffers[16] || ltOff != mLastBoundOffsets[16])) {
-    mEncoder->setVertexBuffer(ltBuf, ltOff, 16);
-    mEncoder->setFragmentBuffer(ltBuf, ltOff, 16);
-    mLastBoundBuffers[16] = ltBuf;
-    mLastBoundOffsets[16] = ltOff;
-    mLastBoundFragmentBuffers[16] = ltBuf;
-    mLastBoundFragmentOffsets[16] = ltOff;
-  }
+  bindingManager->BindPerFrameBuffer(16, ltBuf ? ltBuf : dummyBuf, ltBuf ? ltOff : 0);
 
   // 3. Bone (18)
   MTL::Buffer *bnBuf = mBoundBuffers[BONEBUF_BINDINGPOINT];
@@ -1285,56 +1186,17 @@ void MtRenderState::ApplyHWBufferSet() {
       bnBuf = boneData->GetBuffer();
   }
   uint32_t bnOff = mBoundOffsets[BONEBUF_BINDINGPOINT];
-  if (!bnBuf) {
-    bnBuf = dummyBuf;
-    bnOff = 0;
-  }
-
-  if (bnBuf &&
-      (bnBuf != mLastBoundBuffers[18] || bnOff != mLastBoundOffsets[18])) {
-    mEncoder->setVertexBuffer(bnBuf, bnOff, 18);
-    mEncoder->setFragmentBuffer(bnBuf, bnOff, 18);
-    mLastBoundBuffers[18] = bnBuf;
-    mLastBoundOffsets[18] = bnOff;
-    mLastBoundFragmentBuffers[18] = bnBuf;
-    mLastBoundFragmentOffsets[18] = bnOff;
-  }
+  bindingManager->BindPerFrameBuffer(18, bnBuf ? bnBuf : dummyBuf, bnBuf ? bnOff : 0);
 
   // 4. Matrix (Model/Texture) (19)
   uint32_t matrixOffset = mMatrixBufferWriter.Offset();
   MTL::Buffer *matrixBuffer = mMatrixBufferWriter.GetBuffer();
-  if (matrixOffset == 0xffffffff) {
-    matrixBuffer = dummyBuf;
-    matrixOffset = 0;
-  }
-
-  if (matrixBuffer && (matrixBuffer != mLastBoundBuffers[19] ||
-                       matrixOffset != mLastBoundOffsets[19])) {
-    mEncoder->setVertexBuffer(matrixBuffer, matrixOffset, 19);
-    mEncoder->setFragmentBuffer(matrixBuffer, matrixOffset, 19);
-    mLastBoundBuffers[19] = matrixBuffer;
-    mLastBoundOffsets[19] = matrixOffset;
-    mLastBoundFragmentBuffers[19] = matrixBuffer;
-    mLastBoundFragmentOffsets[19] = matrixOffset;
-  }
+  bindingManager->BindPerFrameBuffer(19, matrixBuffer ? matrixBuffer : dummyBuf, matrixBuffer ? matrixOffset : 0);
 
   // 5. Stream (Per-draw uniforms) (20)
   uint32_t streamDataOffset = mStreamBufferWriter.StreamDataOffset();
   MTL::Buffer *streamBuffer = mStreamBufferWriter.GetBuffer();
-  if (streamDataOffset == 0xffffffff) {
-    streamBuffer = dummyBuf;
-    streamDataOffset = 0;
-  }
-
-  if (streamBuffer && (streamBuffer != mLastBoundBuffers[20] ||
-                       streamDataOffset != mLastBoundOffsets[20])) {
-    mEncoder->setVertexBuffer(streamBuffer, streamDataOffset, 20);
-    mEncoder->setFragmentBuffer(streamBuffer, streamDataOffset, 20);
-    mLastBoundBuffers[20] = streamBuffer;
-    mLastBoundOffsets[20] = streamDataOffset;
-    mLastBoundFragmentBuffers[20] = streamBuffer;
-    mLastBoundFragmentOffsets[20] = streamDataOffset;
-  }
+  bindingManager->BindPerFrameBuffer(20, streamBuffer ? streamBuffer : dummyBuf, streamBuffer ? streamDataOffset : 0);
 }
 
 void MtRenderState::WaitForStreamBuffers() {
@@ -1648,8 +1510,6 @@ void MtRenderState::BeginRenderPass() {
     mLastResidentIndexBuffer = nullptr;
     mPassCount++;
     mPipelineBound = false;
-    mLastShadowMapTex = nullptr;
-    mLastLightmapTex = nullptr;
     if (mEncoder) {
       // Bind default samplers for fixed texture slots to satisfy shader expectations
       // (e.g. LightMap at slot 15) even before textures are explicitly bound.
@@ -1754,14 +1614,4 @@ void MtRenderState::BeginRenderPass() {
 
   mLastVertexBuffer = nullptr;
   mLastIndexBuffer = nullptr;
-  mLastViewpointOffset = 0xffffffff;
-  mLastMatricesOffset = 0xffffffff;
-  mLastStreamDataOffset = 0xffffffff;
-
-  for (int i = 0; i < 32; i++) {
-    mLastBoundBuffers[i] = nullptr;
-    mLastBoundOffsets[i] = 0xffffffff;
-    mLastBoundFragmentBuffers[i] = nullptr;
-    mLastBoundFragmentOffsets[i] = 0xffffffff;
-  }
 }

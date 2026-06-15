@@ -25,6 +25,10 @@ struct MtVersionManager {
   bool supportsAppleGPU = false;
   bool supportsRGB10A2 = false;
   bool supportsReadWriteBGRA8 = false;
+  bool supportsArgumentBuffers = false;
+  int argumentBufferTier = 0;
+  bool supportsSIMDGroup = false;
+  bool supportsNonUniformThreadgroups = false;
 
   // Feature flags for workarounds
   bool useManagedStorage = false;
@@ -101,6 +105,17 @@ struct MtVersionManager {
     // MTL::ReadWriteTextureTier2 indicates broader read-write format support.
     auto rwTier = device->readWriteTextureSupport();
     supportsReadWriteBGRA8 = (rwTier == MTL::ReadWriteTextureTier2);
+
+    // Argument Buffers detection
+    auto argTier = device->argumentBuffersSupport();
+    supportsArgumentBuffers = (argTier != MTL::ArgumentBuffersTier1); // Tier 1 is limited, Tier 2 is preferred
+    argumentBufferTier = (int)argTier;
+
+    // SIMDGroup and Non-uniform threadgroup support
+    if (device->supportsFamily(MTL::GPUFamilyApple4) || device->supportsFamily(MTL::GPUFamilyMac2)) {
+        supportsSIMDGroup = true;
+        supportsNonUniformThreadgroups = true;
+    }
 
     // Intel specific workarounds
     if (architecture == MtGPUArchitecture::Intel) {
