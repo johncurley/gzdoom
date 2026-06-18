@@ -72,7 +72,7 @@
 // Semaphore is created after version manager initialization so the count
 // matches maxDrawableCount exactly. Defined here so it can still be used
 // as the timeout guard in BeginFrame.
-static constexpr int kDefaultMaxFramesInFlight = 2;
+static constexpr int kDefaultMaxFramesInFlight = 3;
 
 static CVReturn MetalDisplayLinkCallback(CVDisplayLinkRef,
                                          const CVTimeStamp *,

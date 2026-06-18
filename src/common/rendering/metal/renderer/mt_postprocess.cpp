@@ -33,10 +33,35 @@
 EXTERN_CVAR(Int, gl_dither_bpc)
 CVAR(Bool, mt_compute_ao, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Bool, mt_compute_bloom, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
-CUSTOM_CVAR(Int, mt_compute_ao_scale, 4, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CUSTOM_CVAR(Int, mt_compute_ao_scale, 2, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
   if (self < 2) self = 2;
   if (self > 4) self = 4;
+}
+CVAR(Bool, mt_compute_ao_normal_upsample, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Bool, mt_compute_ao_normal_blur, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Bool, mt_compute_ao_fullres_cleanup, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CUSTOM_CVAR(Int, mt_compute_ao_blur_passes, 2, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+  if (self < 1) self = 1;
+  if (self > 4) self = 4;
+}
+CVAR(Float, mt_compute_ao_combine_smooth, 0.25f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Bool, mt_compute_ao_skip_fullres, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CUSTOM_CVAR(Int, mt_compute_ao_atrous_passes, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+  if (self < 0) self = 0;
+  if (self > 3) self = 3;
+}
+CUSTOM_CVAR(Int, mt_compute_ao_steps, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+  if (self < 0) self = 0;
+  if (self > 16) self = 16;
+}
+CUSTOM_CVAR(Int, mt_compute_ao_directions, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+  if (self < 0) self = 0;
+  if (self > 16) self = 16;
 }
 
 class MtPPRenderState : public PPRenderState {
@@ -267,20 +292,6 @@ MtPostprocess::~MtPostprocess() {}
 void MtPostprocess::BlurScene(float amount) {
   int sceneWidth = fb->GetBuffers()->GetSceneWidth();
   int sceneHeight = fb->GetBuffers()->GetSceneHeight();
-
-  // If a native Metal bloom module exists, use it (compute-based). Fall back
-  // to engine postprocess implementation otherwise.
-  if (fb->mBloomModule) {
-    auto cmdBuf = fb->GetCommands()->GetRenderCommandBuffer();
-    if (cmdBuf) {
-      // End any active render pass before running compute kernels
-      fb->GetRenderState()->EndRenderPass();
-      auto srcTex = fb->GetBuffers()->SceneColor->GetTexture();
-      if (fb->mBloomModule->Execute(cmdBuf, srcTex, amount)) {
-        return;
-      }
-    }
-  }
 
   MtPPRenderState renderstate(fb);
   hw_postprocess.bloom.RenderBlur(&renderstate, sceneWidth, sceneHeight, amount);

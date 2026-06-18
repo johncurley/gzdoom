@@ -22,6 +22,15 @@
 #include <vector>
 
 EXTERN_CVAR(Int, mt_compute_ao_scale)
+EXTERN_CVAR(Bool, mt_compute_ao_normal_upsample)
+EXTERN_CVAR(Bool, mt_compute_ao_normal_blur)
+EXTERN_CVAR(Bool, mt_compute_ao_fullres_cleanup)
+EXTERN_CVAR(Int, mt_compute_ao_blur_passes)
+EXTERN_CVAR(Float, mt_compute_ao_combine_smooth)
+EXTERN_CVAR(Bool, mt_compute_ao_skip_fullres)
+EXTERN_CVAR(Int, mt_compute_ao_atrous_passes)
+EXTERN_CVAR(Int, mt_compute_ao_steps)
+EXTERN_CVAR(Int, mt_compute_ao_directions)
 
 static const char* SSAO_COMPUTE_SOURCE = R"(
 #include <metal_stdlib>
@@ -49,11 +58,35 @@ struct SSAOParams {
     float aoMultiplier;
     float visibilityStrength;
     int numDirections;
+    int numSteps;
+    float maxThickness;
 };
 
 struct AOFlags {
     int flipY;
     float invBackingScale;
+};
+struct AOBlurParams {
+    float scaleX;
+    float scaleY;
+    float offsetX;
+    float offsetY;
+    float blurSharpness;
+    float powExponent;
+    int normalAware;
+    int flipY;
+    float maxThickness;
+};
+
+struct AOFullresParams {
+    float2 sceneScale;
+    float2 sceneOffset;
+    float2 fullRes;
+    float blurSharpness;
+    float zNear;
+    float zFar;
+    int normalAware;
+    int atrousStep;
 };
 
 #define GOLDEN_ANGLE 2.39996323
@@ -80,6 +113,13 @@ float LinearizeSceneDepth(float depth, constant SSAOParams &params) {
     return 1.0 / (normalizedDepth * linearizeA + linearizeB);
 }
 
+float LinearizeDepth(float depth, float zNear, float zFar) {
+    float normalizedDepth = clamp(1.0 - depth, 0.0, 1.0);
+    float linearizeA = 1.0 / zFar - 1.0 / zNear;
+    float linearizeB = max(1.0 / zNear, 1e-8);
+    return 1.0 / (normalizedDepth * linearizeA + linearizeB);
+}
+
 float3 DecodeSceneNormal(float3 encodedNormal) {
     float3 normal = encodedNormal * 2.0 - 1.0;
     if (length(normal) <= 0.1) {
@@ -91,12 +131,21 @@ float3 DecodeSceneNormal(float3 encodedNormal) {
     return normalize(normal);
 }
 
+float NormalWeight(float3 centerNormal, float3 sampleNormal) {
+    if (all(centerNormal == float3(0.0)) || all(sampleNormal == float3(0.0))) {
+        return 0.0;
+    }
+    // Much sharper normal weight to prevent bleeding across 90-degree edges
+    return pow(saturate(dot(centerNormal, sampleNormal)), 8.0);
+}
+
 float InterleavedGradientNoise(float2 p) {
     return fract(52.9829189 * fract(dot(p, float2(0.06711056, 0.00583715))));
 }
 
 kernel void ssao_compute(
     uint2 gid [[thread_position_in_grid]],
+    uint2 tid [[thread_position_in_threadgroup]],
     constant SSAOParams &params [[buffer(0)]],
     constant AOFlags &flags [[buffer(1)]],
     texture2d<float, access::sample> ditherTexture [[texture(0)]],
@@ -108,6 +157,11 @@ kernel void ssao_compute(
     float2 outSize = float2((float)aoOutput.get_width(), (float)aoOutput.get_height());
     if (gid.x >= outSize.x || gid.y >= outSize.y) return;
 
+    // LDS optimization: Cache depth/normals for the threadgroup to save bandwidth
+    // For 8x8 threadgroup, we need a slightly larger buffer for sample range
+    threadgroup float ldsDepth[16][16];
+    threadgroup float3 ldsNormal[16][16];
+    
     sampler nearestSampler(mag_filter::nearest, min_filter::nearest, address::repeat);
     sampler nearestClampSampler(mag_filter::nearest, min_filter::nearest, address::clamp_to_edge);
 
@@ -116,44 +170,41 @@ kernel void ssao_compute(
     float2 uv = pixelCenter / outSize;
     if (flags.flipY == 1) uv.y = 1.0 - uv.y;
     float2 sceneUV = float2(params.offsetX, params.offsetY) + uv * float2(params.scaleX, params.scaleY);
+    
+    // Initial fetch for LDS
+    float centerDepth = depthTexture.sample(nearestClampSampler, sceneUV).r;
+    float3 centerNormal = DecodeSceneNormal(normalTexture.sample(nearestClampSampler, sceneUV).xyz);
+    
+    ldsDepth[tid.x + 4][tid.y + 4] = centerDepth;
+    ldsNormal[tid.x + 4][tid.y + 4] = centerNormal;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
     float centerCoverage = sceneColorTexture.sample(nearestClampSampler, sceneUV).a;
-    if (centerCoverage <= 0.0001) {
+    if (centerCoverage <= 0.0001 || centerDepth <= 0.0001 || all(centerNormal == float3(0.0))) {
         aoOutput.write(float4(1.0, 0.0, 0.0, 1.0), gid);
         return;
-    }
-
-    float centerDepth = depthTexture.sample(nearestClampSampler, sceneUV).r;
-
-    if (centerDepth <= 0.0001) {
-        aoOutput.write(float4(1.0, 0.0, 0.0, 1.0), gid);
-        return; 
     }
 
     float centerLinearDepth = LinearizeSceneDepth(centerDepth, params);
     float3 centerViewPos = FetchViewPos(uv, centerLinearDepth, params);
-    float3 centerNormal = DecodeSceneNormal(normalTexture.sample(nearestClampSampler, sceneUV).xyz);
-    if (all(centerNormal == float3(0.0))) {
-        aoOutput.write(float4(1.0, 0.0, 0.0, 1.0), gid);
-        return;
-    }
 
-    float2 noiseUV = pixelCenter / 64.0; // Assuming 64x64 noise texture
+    float2 noiseUV = pixelCenter / 64.0;
     float4 noise = ditherTexture.sample(nearestSampler, noiseUV);
     float ign = InterleavedGradientNoise(pixelCenter);
-    float rotation = atan2(noise.y, noise.x);
-    float stepJitter = fract(noise.z + ign * 0.754877666);
-    float directionJitter = fract(noise.w + ign * 0.569840296);
+    float rotation = (noise.x * 2.0 - 1.0) * 3.14159 + ign * 2.39996;
+    float stepJitter = fract(noise.z + ign * 0.618033);
+    float directionJitter = fract(noise.w + ign * 1.324717);
 
     float radiusPixels = params.radiusToScreen / max(centerViewPos.z, 1e-5);
-    const int numSteps = 4;
-    const int numDirections = clamp(params.numDirections, 4, 5);
+    const int numSteps = clamp(params.numSteps, 2, 8); // Capped for Intel
+    const int numDirections = clamp(params.numDirections, 2, 6); // Capped for Intel
     float stepSizePixels = radiusPixels / (float(numSteps) + 1.0);
     float minStepPixels = max(stepSizePixels, 1.0);
 
     float occlusion = 0.0;
     
     for(int directionIndex = 0; directionIndex < numDirections; directionIndex++) {
-        float theta = (6.28318530718 / float(numDirections)) * (float(directionIndex) + directionJitter * 0.25) + rotation;
+        float theta = (6.2831853 / float(numDirections)) * (float(directionIndex) + directionJitter) + rotation;
         float2 dir = float2(cos(theta), sin(theta));
         float horizon = 0.0;
 
@@ -163,35 +214,43 @@ kernel void ssao_compute(
             sampleUV = clamp(sampleUV, halfTexel, float2(1.0) - halfTexel);
             float2 sampleSceneUV = float2(params.offsetX, params.offsetY) + sampleUV * float2(params.scaleX, params.scaleY);
 
-            float sampleCoverage = sceneColorTexture.sample(nearestClampSampler, sampleSceneUV).a;
-            if (sampleCoverage <= 0.0001) {
-                continue;
+            // Fast path: if sample is within our LDS tile, use cached data
+            float sampleRawDepth;
+            float3 sampleNormal;
+            
+            int2 localOff = int2(floor(dir * rayPixels));
+            int2 ldsCoord = int2(tid) + 4 + localOff;
+            if (all(ldsCoord >= 0 && ldsCoord < 16)) {
+                sampleRawDepth = ldsDepth[ldsCoord.x][ldsCoord.y];
+                sampleNormal = ldsNormal[ldsCoord.x][ldsCoord.y];
+            } else {
+                // Fallback to texture sample if outside tile
+                sampleRawDepth = depthTexture.sample(nearestClampSampler, sampleSceneUV).r;
+                sampleNormal = DecodeSceneNormal(normalTexture.sample(nearestClampSampler, sampleSceneUV).xyz);
             }
 
-            float sampleRawDepth = depthTexture.sample(nearestClampSampler, sampleSceneUV).r;
-            if (sampleRawDepth <= 0.0001) {
-                continue;
-            }
-
-            float3 sampleNormal = DecodeSceneNormal(normalTexture.sample(nearestClampSampler, sampleSceneUV).xyz);
-            if (all(sampleNormal == float3(0.0))) {
-                continue;
-            }
+            if (sampleRawDepth <= 0.0001 || all(sampleNormal == float3(0.0))) continue;
 
             float sampleLinearDepth = LinearizeSceneDepth(sampleRawDepth, params);
             float3 sampleViewPos = FetchViewPos(sampleUV, sampleLinearDepth, params);
             float3 sampleVector = sampleViewPos - centerViewPos;
+            
+            float depthDiff = sampleViewPos.z - centerViewPos.z;
+            float thicknessThreshold = params.maxThickness * (1.0 + centerViewPos.z * 0.05);
+            if (depthDiff > thicknessThreshold || depthDiff < -params.maxThickness * 0.5) continue;
+
             float distanceSquare = max(dot(sampleVector, sampleVector), 1e-6);
             float invDistance = rsqrt(distanceSquare);
             float normalAngle = dot(centerNormal, sampleVector) * invDistance;
-            float sampleHorizon = max(normalAngle - params.bias, 0.0);
+            
+            float sampleHorizon = max(normalAngle - params.bias * 0.5, 0.0);
             float falloff = saturate(distanceSquare * params.negInvR2 + 1.0);
             occlusion += max(sampleHorizon - horizon, 0.0) * falloff;
             horizon = max(horizon, sampleHorizon);
         }
     }
 
-    occlusion *= params.aoMultiplier / float(numDirections * numSteps);
+    occlusion *= (params.aoMultiplier * 1.15) / float(numDirections * numSteps);
     float visibility = clamp(1.0 - occlusion * params.visibilityStrength, 0.0, 1.0);
     visibility = visibility * params.intensity + (1.0 - params.intensity);
     
@@ -200,11 +259,14 @@ kernel void ssao_compute(
 
 kernel void bilateral_blur(
     uint2 gid [[thread_position_in_grid]],
+    constant AOBlurParams &params [[buffer(0)]],
     texture2d<float, access::read> sourceTexture [[texture(0)]],
-    texture2d<float, access::write> destTexture [[texture(1)]])
+    texture2d<float, access::write> destTexture [[texture(1)]],
+    texture2d<float, access::sample> normalTexture [[texture(2)]])
 {
     if (gid.x >= destTexture.get_width() || gid.y >= destTexture.get_height()) return;
 
+    constexpr sampler nearestSampler(mag_filter::nearest, min_filter::nearest, address::clamp_to_edge);
     float4 centerSample = sourceTexture.read(gid);
     float center = centerSample.r;
     float depth = centerSample.g;
@@ -215,13 +277,23 @@ kernel void bilateral_blur(
 
     float sum = center;
     float totalWeight = 1.0;
+    bool useNormals = params.normalAware != 0;
+    float2 texSize = float2((float)sourceTexture.get_width(), (float)sourceTexture.get_height());
+    float2 centerUV = (float2(gid) + 0.5) / texSize;
+    if (params.flipY != 0) {
+        centerUV.y = 1.0 - centerUV.y;
+    }
+    float2 centerSceneUV = float2(params.offsetX, params.offsetY) + centerUV * float2(params.scaleX, params.scaleY);
+    float3 centerNormal = DecodeSceneNormal(normalTexture.sample(nearestSampler, centerSceneUV).xyz);
+    if (all(centerNormal == float3(0.0))) {
+        useNormals = false;
+    }
 
-    int2 offsets[8] = {
-        int2(1, 0), int2(-1, 0), int2(0, 1), int2(0, -1),
-        int2(1, 1), int2(-1, 1), int2(1, -1), int2(-1, -1)
+    int2 offsets[4] = {
+        int2(1, 0), int2(-1, 0), int2(0, 1), int2(0, -1)
     };
 
-    for(int i = 0; i < 8; i++) {
+    for(int i = 0; i < 4; i++) {
         uint2 sampleCoord = uint2(int2(gid) + offsets[i]);
         if (sampleCoord.x < sourceTexture.get_width() && sampleCoord.y < sourceTexture.get_height()) {
             float4 sampleValue = sourceTexture.read(sampleCoord);
@@ -230,18 +302,154 @@ kernel void bilateral_blur(
             if (sampleDepth <= 1e-5) {
                 continue;
             }
-            float weight = 1.0 - abs(val - center) * 10.0;
-            weight *= exp2(-abs(sampleDepth - depth) * 0.01);
-            if (i >= 4) {
-                weight *= 0.7071;
+            float r = 1.0;
+            // Improved bilateral weight: use a more robust sharpness scale
+            float depthDelta = abs(sampleDepth - depth) * params.blurSharpness;
+            
+            // Thickness clamping in blur: prevent background AO from leaking onto foreground
+            if (sampleDepth - depth > params.maxThickness) {
+                continue;
             }
-            weight = saturate(weight);
+            
+            // Extra sharp falloff for depth to avoid halos bleeding in blur pass
+            float weight = exp2(-r * r * 0.5 - depthDelta * depthDelta * 8.0);
+            
+            if (useNormals) {
+                float2 sampleUV = (float2(sampleCoord) + 0.5) / texSize;
+                if (params.flipY != 0) {
+                    sampleUV.y = 1.0 - sampleUV.y;
+                }
+                float2 sampleSceneUV = float2(params.offsetX, params.offsetY) + sampleUV * float2(params.scaleX, params.scaleY);
+                float3 sampleNormal = DecodeSceneNormal(normalTexture.sample(nearestSampler, sampleSceneUV).xyz);
+                weight *= mix(0.1, 1.0, NormalWeight(centerNormal, sampleNormal));
+            }
+            
             sum += val * weight;
             totalWeight += weight;
         }
     }
 
-    destTexture.write(float4(sum / totalWeight, depth, 0, 1.0), gid);
+    float blurred = sum / totalWeight;
+    if (params.applyExponent != 0) {
+        blurred = pow(saturate(blurred), params.powExponent);
+    }
+    destTexture.write(float4(blurred, depth, 0, 1.0), gid);
+}
+
+kernel void ao_upsample_fullres(
+    uint2 gid [[thread_position_in_grid]],
+    constant AOFullresParams &params [[buffer(0)]],
+    texture2d<float, access::sample> lowresAO [[texture(0)]],
+    texture2d<float, access::sample> depthTexture [[texture(1)]],
+    texture2d<float, access::sample> normalTexture [[texture(2)]],
+    texture2d<float, access::write> outTexture [[texture(3)]])
+{
+    if (gid.x >= outTexture.get_width() || gid.y >= outTexture.get_height()) return;
+
+    constexpr sampler nearestSampler(mag_filter::nearest, min_filter::nearest, address::clamp_to_edge);
+    float2 localUV = (float2(gid) + 0.5) / params.fullRes;
+    float2 sceneUV = params.sceneOffset + localUV * params.sceneScale;
+    float rawDepth = depthTexture.sample(nearestSampler, sceneUV).r;
+    float3 centerNormal = DecodeSceneNormal(normalTexture.sample(nearestSampler, sceneUV).xyz);
+    if (rawDepth <= 0.0001 || all(centerNormal == float3(0.0))) {
+        outTexture.write(float4(1.0, 0.0, 0.0, 1.0), gid);
+        return;
+    }
+
+    float sceneDepth = LinearizeDepth(rawDepth, params.zNear, params.zFar);
+    float2 aoSize = float2((float)lowresAO.get_width(), (float)lowresAO.get_height());
+    float2 aoUV = float2(localUV.x, 1.0 - localUV.y);
+    float2 aoCoord = aoUV * aoSize - 0.5;
+    float2 aoBase = floor(aoCoord);
+    float2 aoFrac = fract(aoCoord);
+    float combineSharpness = max(params.blurSharpness * 8.0, 0.1);
+
+    float alpha = 0.0;
+    float totalWeight = 0.0;
+    for (int y = 0; y < 2; y++) {
+        for (int x = 0; x < 2; x++) {
+            float2 tap = float2((float)x, (float)y);
+            float2 tapCoord = clamp(aoBase + tap, float2(0.0), aoSize - 1.0);
+            float2 tapUV = (tapCoord + 0.5) / aoSize;
+            float2 tapLocalUV = float2(tapUV.x, 1.0 - tapUV.y);
+            float2 tapSceneUV = params.sceneOffset + tapLocalUV * params.sceneScale;
+            float4 sampleAO = lowresAO.sample(nearestSampler, tapUV);
+            if (sampleAO.y <= 1e-5) {
+                continue;
+            }
+
+            float bilinearWeight = ((x == 0) ? (1.0 - aoFrac.x) : aoFrac.x) *
+                                   ((y == 0) ? (1.0 - aoFrac.y) : aoFrac.y);
+            float depthDelta = (sampleAO.y - sceneDepth) * combineSharpness;
+            float weight = bilinearWeight * exp2(-depthDelta * depthDelta * 4.0);
+            if (params.normalAware != 0) {
+                float3 tapNormal = DecodeSceneNormal(normalTexture.sample(nearestSampler, tapSceneUV).xyz);
+                weight *= NormalWeight(centerNormal, tapNormal);
+            }
+
+            alpha += (1.0 - sampleAO.x) * weight;
+            totalWeight += weight;
+        }
+    }
+
+    alpha = (totalWeight > 1e-5) ? alpha / totalWeight : 0.0;
+    outTexture.write(float4(1.0 - alpha, sceneDepth, 0.0, 1.0), gid);
+}
+
+kernel void ao_atrous_fullres(
+    uint2 gid [[thread_position_in_grid]],
+    constant AOFullresParams &params [[buffer(0)]],
+    texture2d<float, access::read> sourceTexture [[texture(0)]],
+    texture2d<float, access::sample> normalTexture [[texture(1)]],
+    texture2d<float, access::write> destTexture [[texture(2)]])
+{
+    if (gid.x >= destTexture.get_width() || gid.y >= destTexture.get_height()) return;
+
+    constexpr sampler nearestSampler(mag_filter::nearest, min_filter::nearest, address::clamp_to_edge);
+    float4 centerAO = sourceTexture.read(gid);
+    float centerDepth = centerAO.y;
+    float2 localUV = (float2(gid) + 0.5) / params.fullRes;
+    float2 sceneUV = params.sceneOffset + localUV * params.sceneScale;
+    float3 centerNormal = DecodeSceneNormal(normalTexture.sample(nearestSampler, sceneUV).xyz);
+    if (centerDepth <= 1e-5 || all(centerNormal == float3(0.0))) {
+        destTexture.write(float4(1.0, 0.0, 0.0, 1.0), gid);
+        return;
+    }
+
+    int stepSize = max(params.atrousStep, 1);
+    int2 offsets[4] = {
+        int2(1, 0), int2(-1, 0), int2(0, 1), int2(0, -1)
+    };
+    float sum = centerAO.x;
+    float totalWeight = 1.0;
+    for (int i = 0; i < 4; i++) {
+        int2 icoord = int2(gid) + offsets[i] * stepSize;
+        if (icoord.x < 0 || icoord.y < 0 ||
+            icoord.x >= (int)sourceTexture.get_width() ||
+            icoord.y >= (int)sourceTexture.get_height()) {
+            continue;
+        }
+
+        uint2 sampleCoord = uint2(icoord);
+        float4 sampleAO = sourceTexture.read(sampleCoord);
+        if (sampleAO.y <= 1e-5) {
+            continue;
+        }
+
+        float2 sampleLocalUV = (float2(sampleCoord) + 0.5) / params.fullRes;
+        float2 sampleSceneUV = params.sceneOffset + sampleLocalUV * params.sceneScale;
+        float3 sampleNormal = DecodeSceneNormal(normalTexture.sample(nearestSampler, sampleSceneUV).xyz);
+        float depthDelta = (sampleAO.y - centerDepth) * max(params.blurSharpness * 4.0, 0.02);
+        float weight = 0.75 * exp2(-depthDelta * depthDelta);
+        if (params.normalAware != 0) {
+            weight *= NormalWeight(centerNormal, sampleNormal);
+        }
+
+        sum += sampleAO.x * weight;
+        totalWeight += weight;
+    }
+
+    destTexture.write(float4(sum / totalWeight, centerDepth, 0.0, 1.0), gid);
 }
 
 struct AOCombineParams {
@@ -250,6 +458,11 @@ struct AOCombineParams {
     float scaleY;
     float offsetX;
     float offsetY;
+    float blurSharpness;
+    float zNear;
+    float zFar;
+    float combineSmooth;
+    int fullresAO;
 };
 
 struct VSOut {
@@ -269,7 +482,8 @@ fragment float4 ssao_combine_fs(VSOut in [[stage_in]],
                                 constant AOCombineParams &params [[buffer(0)]],
                                 texture2d<float, access::sample> aoTexture [[texture(0)]],
                                 texture2d<float, access::sample> fogTexture [[texture(1)]],
-                                texture2d<float, access::sample> normalTexture [[texture(2)]])
+                                texture2d<float, access::sample> normalTexture [[texture(2)]],
+                                texture2d<float, access::sample> depthTexture [[texture(3)]])
 {
     constexpr sampler linearSampler(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
     constexpr sampler nearestSampler(mag_filter::nearest, min_filter::nearest, address::clamp_to_edge);
@@ -280,25 +494,70 @@ fragment float4 ssao_combine_fs(VSOut in [[stage_in]],
     float4 fogSample = fogTexture.sample(nearestSampler, fogUV);
     float3 sceneNormal = normalTexture.sample(linearSampler, fogUV).xyz;
     float attenuation = ssao.x;
-    float depthSignal = 1.0 - exp2(-ssao.y * 0.01);
+    float rawSceneDepth = depthTexture.sample(nearestSampler, fogUV).r;
+    float normalizedDepth = clamp(1.0 - rawSceneDepth, 0.0, 1.0);
+    float sceneDepth = 1.0 / (normalizedDepth * (1.0 / params.zFar - 1.0 / params.zNear) + max(1.0 / params.zNear, 1e-8));
+    // Improved depth mask: softer falloff for distant objects
+    float depthSignal = 1.0 - exp2(-sceneDepth * 0.005);
     float depthMask = saturate(depthSignal);
+    float3 decodedNormal = sceneNormal * 2.0 - 1.0;
 
     if (params.debugMode == 0) {
-        float aoAlpha = (1.0 - attenuation) * depthMask;
+        if (rawSceneDepth <= 0.0001 || length(decodedNormal) <= 0.1) {
+            return float4(fogSample.rgb, 0.0);
+        }
+
+        if (params.fullresAO != 0) {
+            float aoAlpha = (1.0 - ssao.x) * depthMask;
+            // Less aggressive smoothstep to preserve subtle AO while still killing speckles
+            aoAlpha *= smoothstep(0.002, 0.020, aoAlpha);
+            return float4(fogSample.rgb, aoAlpha);
+        }
+
+        float centerAlpha = (1.0 - attenuation) * saturate(1.0 - exp2(-ssao.y * 0.005));
         float2 aoTexel = 1.0 / float2((float)aoTexture.get_width(), (float)aoTexture.get_height());
         float4 ssaoL = aoTexture.sample(linearSampler, aoUV + float2(-aoTexel.x, 0.0));
         float4 ssaoR = aoTexture.sample(linearSampler, aoUV + float2( aoTexel.x, 0.0));
         float4 ssaoU = aoTexture.sample(linearSampler, aoUV + float2(0.0, -aoTexel.y));
         float4 ssaoD = aoTexture.sample(linearSampler, aoUV + float2(0.0,  aoTexel.y));
-        float neighborAlpha =
-            ((1.0 - ssaoL.x) * saturate(1.0 - exp2(-ssaoL.y * 0.01)) +
-             (1.0 - ssaoR.x) * saturate(1.0 - exp2(-ssaoR.y * 0.01)) +
-             (1.0 - ssaoU.x) * saturate(1.0 - exp2(-ssaoU.y * 0.01)) +
-             (1.0 - ssaoD.x) * saturate(1.0 - exp2(-ssaoD.y * 0.01))) * 0.25;
-        if (aoAlpha < 0.20) {
-            aoAlpha = min(aoAlpha, neighborAlpha * 3.0);
+        float centerDepth = max(ssao.y, 1e-5);
+        float blurSharpness = max(params.blurSharpness * 4.0, 0.02);
+        float4 taps[4] = { ssaoL, ssaoR, ssaoU, ssaoD };
+        float alphaSum = centerAlpha;
+        float weightSum = 1.0;
+        for (int i = 0; i < 4; i++) {
+            if (taps[i].y <= 1e-5) {
+                continue;
+            }
+            float tapAlpha = (1.0 - taps[i].x) * saturate(1.0 - exp2(-taps[i].y * 0.005));
+            float depthDelta = (taps[i].y - centerDepth) * blurSharpness;
+            float weight = exp2(-0.35 - depthDelta * depthDelta);
+            alphaSum += tapAlpha * weight;
+            weightSum += weight;
         }
-        aoAlpha *= smoothstep(0.020, 0.100, aoAlpha);
+        float aoAlpha = mix(centerAlpha, alphaSum / weightSum, saturate(params.combineSmooth));
+        float neighborAlpha =
+            ((1.0 - ssaoL.x) * saturate(1.0 - exp2(-ssaoL.y * 0.005)) +
+             (1.0 - ssaoR.x) * saturate(1.0 - exp2(-ssaoR.y * 0.005)) +
+             (1.0 - ssaoU.x) * saturate(1.0 - exp2(-ssaoU.y * 0.005)) +
+             (1.0 - ssaoD.x) * saturate(1.0 - exp2(-ssaoD.y * 0.005))) * 0.25;
+        
+        // Speckle removal: if center has much weaker AO than neighbors,
+        // pull it toward the neighbor average to kill bright speckles.
+        if (aoAlpha < neighborAlpha * 0.6 && neighborAlpha > 0.005) {
+            aoAlpha = mix(aoAlpha, neighborAlpha, 0.65);
+        }
+        
+        // Multi-bounce AO approximation (Jimenez 2016)
+        // Helps darken corners while preventing the "glow" artifact around edges.
+        float3 albedo = float3(0.5); // Assume neutral albedo
+        float3 a = 2.0 * albedo - 0.33;
+        float3 b = -4.8 * albedo + 0.64;
+        float3 c = 2.8 * albedo + 0.69;
+        float3 multiBounce = max(aoAlpha, ((a * aoAlpha + b) * aoAlpha + c) * aoAlpha);
+        aoAlpha = multiBounce.x;
+
+        aoAlpha *= smoothstep(0.001, 0.015, aoAlpha);
         return float4(fogSample.rgb, aoAlpha);
     }
     else if (params.debugMode < 3)
@@ -370,6 +629,8 @@ MtAOModule::MtAOModule(MetalRenderDevice* device) : fb(device) {
     auto shaderManager = fb->GetShaderManager();
     ssaoPSO = shaderManager->CreateComputePipeline("ssao_compute", SSAO_COMPUTE_SOURCE, "SSAO ssao_compute");
     blurPSO = shaderManager->CreateComputePipeline("bilateral_blur", SSAO_COMPUTE_SOURCE, "SSAO bilateral_blur");
+    upsamplePSO = shaderManager->CreateComputePipeline("ao_upsample_fullres", SSAO_COMPUTE_SOURCE, "SSAO fullres upsample");
+    atrousPSO = shaderManager->CreateComputePipeline("ao_atrous_fullres", SSAO_COMPUTE_SOURCE, "SSAO fullres atrous");
 
     auto createCombinePipeline = [&](MTL::Library* library) -> MTL::RenderPipelineState* {
         if (!library)
@@ -434,10 +695,14 @@ MtAOModule::MtAOModule(MetalRenderDevice* device) : fb(device) {
 MtAOModule::~MtAOModule() {
     if (ssaoPSO) ssaoPSO->release();
     if (blurPSO) blurPSO->release();
+    if (upsamplePSO) upsamplePSO->release();
+    if (atrousPSO) atrousPSO->release();
     if (combinePSO) combinePSO->release();
     if (combineRenderPSO) combineRenderPSO->release();
     if (mAOTexture) mAOTexture->release();
     if (mBlurTexture) mBlurTexture->release();
+    if (mFullresAOTexture) mFullresAOTexture->release();
+    if (mFullresTempTexture) mFullresTempTexture->release();
     if (mDitherTexture) mDitherTexture->release();
 }
 
@@ -501,6 +766,36 @@ void MtAOModule::EnsureTextures(int width, int height) {
     mAOHeight = height;
 }
 
+void MtAOModule::EnsureFullresTextures(int width, int height) {
+    width = std::max(width, 1);
+    height = std::max(height, 1);
+
+    if (mFullresAOTexture && mFullresTempTexture &&
+        mFullresWidth == width && mFullresHeight == height)
+        return;
+
+    if (mFullresAOTexture) {
+        mFullresAOTexture->release();
+        mFullresAOTexture = nullptr;
+    }
+    if (mFullresTempTexture) {
+        mFullresTempTexture->release();
+        mFullresTempTexture = nullptr;
+    }
+
+    auto compute = fb->GetComputeManager();
+    if (!compute)
+        return;
+
+    const auto usage = (MTL::TextureUsage)(MTL::TextureUsageShaderRead | MTL::TextureUsageShaderWrite);
+    mFullresAOTexture = compute->CreateTexture(width, height, MTL::PixelFormatRG16Float,
+                                               usage, MTL::StorageModePrivate);
+    mFullresTempTexture = compute->CreateTexture(width, height, MTL::PixelFormatRG16Float,
+                                                 usage, MTL::StorageModePrivate);
+    mFullresWidth = width;
+    mFullresHeight = height;
+}
+
 bool MtAOModule::Render(float m5, int sceneWidth, int sceneHeight) {
     if (!ssaoPSO || !blurPSO || !combineRenderPSO || !mDitherTexture || !fb->GetBuffers())
         return false;
@@ -512,10 +807,28 @@ bool MtAOModule::Render(float m5, int sceneWidth, int sceneHeight) {
         return false;
     }
 
-    const int aoScale = clamp((int)mt_compute_ao_scale, 2, 4);
+    int aoScale = (int)mt_compute_ao_scale;
+    // Intel integrated GPUs default to quarter-res to stay within 16ms budget.
+    // Apple Silicon and discrete GPUs can handle half-res comfortably.
+    if (fb->mVersionManager.architecture == MtGPUArchitecture::Intel && aoScale < 4)
+        aoScale = 4;
+    aoScale = clamp(aoScale, 2, 4);
     EnsureTextures((sceneWidth + aoScale - 1) / aoScale, (sceneHeight + aoScale - 1) / aoScale);
     if (!mAOTexture || !mBlurTexture)
         return false;
+    
+    // Automatically enable fullres cleanup for High quality settings if not explicitly set
+    bool useFullresCleanup = mt_compute_ao_fullres_cleanup && !mt_compute_ao_skip_fullres;
+    if (gl_ssao >= 3 && mt_compute_ao_atrous_passes >= 0 && !mt_compute_ao_skip_fullres) {
+        useFullresCleanup = true;
+    }
+    useFullresCleanup = useFullresCleanup && upsamplePSO && atrousPSO;
+
+    if (useFullresCleanup) {
+        EnsureFullresTextures(sceneWidth, sceneHeight);
+        if (!mFullresAOTexture || !mFullresTempTexture)
+            return false;
+    }
 
     VSMatrix invProj;
     if (!fb->mLastSceneViewpoint.mProjectionMatrix.inverseMatrix(invProj))
@@ -559,12 +872,23 @@ bool MtAOModule::Render(float m5, int sceneWidth, int sceneHeight) {
     params.negInvR2 = -1.0f / r2;
     params.radiusToScreen = gl_ssao_radius * 0.5f / tanHalfFovy * (float)mAOHeight;
     params.aoMultiplier = 1.0f / std::max(1.0f - params.bias, 1e-5f);
+    
+    // Quality-based defaults:
+    // Low: 4x4, Med: 4x4 (stronger), High: 5x4
     switch (gl_ssao) {
     default:
-    case 1: params.visibilityStrength = 2.35f; params.numDirections = 4; break;
-    case 2: params.visibilityStrength = 2.75f; params.numDirections = 4; break;
-    case 3: params.visibilityStrength = 3.15f; params.numDirections = 5; break;
+    case 1: params.visibilityStrength = 2.35f; params.numDirections = 4; params.numSteps = 4; break;
+    case 2: params.visibilityStrength = 2.75f; params.numDirections = 4; params.numSteps = 4; break;
+    case 3: params.visibilityStrength = 3.15f; params.numDirections = 6; params.numSteps = 8; break;
     }
+
+    // Override with CVARs if they are > 0
+    if (mt_compute_ao_directions > 0) params.numDirections = mt_compute_ao_directions;
+    if (mt_compute_ao_steps > 0) params.numSteps = mt_compute_ao_steps;
+    
+    // Thickness heuristic: prevent background from occluding foreground.
+    // 1.5-2.0 units is usually a good balance for GZDoom scale.
+    params.maxThickness = 1.25f;
 
     auto cmdBuf = fb->GetCommands()->GetRenderCommandBuffer();
     if (!cmdBuf)
@@ -577,7 +901,9 @@ bool MtAOModule::Render(float m5, int sceneWidth, int sceneHeight) {
             buffers->SceneNormal->GetTexture(), buffers->SceneColor->GetTexture(),
             mAOTexture, mDitherTexture,
             buffers->SceneFog->GetTexture(), nullptr, params, blurAO);
-    Combine(mAOTexture, sceneWidth, sceneHeight);
+    MTL::Texture *combineAO = (useFullresCleanup && mFullresResultTexture) ? mFullresResultTexture :
+        (mLowresResultTexture ? mLowresResultTexture : mAOTexture);
+    Combine(combineAO, sceneWidth, sceneHeight, combineAO == mFullresResultTexture);
     auto aoEnd = std::chrono::high_resolution_clock::now();
     if (fb->GetComputeManager()) {
         float ms = std::chrono::duration<float, std::milli>(aoEnd - aoStart).count();
@@ -587,7 +913,7 @@ bool MtAOModule::Render(float m5, int sceneWidth, int sceneHeight) {
     return true;
 }
 
-void MtAOModule::Combine(MTL::Texture* aoTex, int sceneWidth, int sceneHeight) {
+void MtAOModule::Combine(MTL::Texture* aoTex, int sceneWidth, int sceneHeight, bool fullresAO) {
     if (!aoTex || !combineRenderPSO || !fb->GetBuffers())
         return;
 
@@ -614,6 +940,11 @@ void MtAOModule::Combine(MTL::Texture* aoTex, int sceneWidth, int sceneHeight) {
         float scaleY;
         float offsetX;
         float offsetY;
+        float blurSharpness;
+        float zNear;
+        float zFar;
+        float combineSmooth;
+        int fullresAO;
     } combineParams = {};
     combineParams.debugMode = gl_ssao_debug;
     auto sceneScale = fb->SceneScale();
@@ -622,6 +953,11 @@ void MtAOModule::Combine(MTL::Texture* aoTex, int sceneWidth, int sceneHeight) {
     combineParams.scaleY = sceneScale.Y;
     combineParams.offsetX = sceneOffset.X;
     combineParams.offsetY = sceneOffset.Y;
+    combineParams.blurSharpness = 1.0f / std::max((float)gl_ssao_blur, 0.1f);
+    combineParams.zNear = fb->GetZNear();
+    combineParams.zFar = fb->GetZFar();
+    combineParams.combineSmooth = clamp((float)mt_compute_ao_combine_smooth, 0.0f, 1.0f);
+    combineParams.fullresAO = fullresAO ? 1 : 0;
 
     renderState->SetVertexBuffer(screen->mVertexData);
     auto vb = dynamic_cast<MtVertexBuffer *>(screen->mVertexData->GetBufferObjects().first);
@@ -641,19 +977,20 @@ void MtAOModule::Combine(MTL::Texture* aoTex, int sceneWidth, int sceneHeight) {
     encoder->setFragmentTexture(aoTex, 0);
     encoder->setFragmentTexture(buffers->SceneFog->GetTexture(), 1);
     encoder->setFragmentTexture(buffers->SceneNormal->GetTexture(), 2);
+    encoder->setFragmentTexture(buffers->SceneDepthStencil->GetTexture(), 3);
     encoder->drawPrimitives(MTL::PrimitiveTypeTriangle, (NS::UInteger)0,
                             (NS::UInteger)3);
 }
 
 void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL::Texture* normalTex, MTL::Texture* sceneColorTex, MTL::Texture* aoTex, MTL::Texture* ditherTex, MTL::Texture* fogTex, MTL::Texture* combineTex, const SSAOParams& params, bool blurAO) {
-    // Execute SSAO + blur compute passes. Final compositing into the scene is
-    // intentionally omitted here (the engine postprocess handles SSAO combine)
     if (!ssaoPSO || (blurAO && (!blurPSO || !mBlurTexture)) || !depthTex || !normalTex || !sceneColorTex || !ditherTex || !aoTex) return;
+    mFullresResultTexture = nullptr;
+    mLowresResultTexture = aoTex;
     
     auto encoder = cmdBuf->computeCommandEncoder();
     if (!encoder) return;
 
-    // 1. SSAO Pass
+    // 1. SSAO Pass (LDS Optimized)
     encoder->setComputePipelineState(ssaoPSO);
     encoder->setBytes(&params, sizeof(SSAOParams), 0);
     encoder->setTexture(ditherTex, 0);
@@ -662,35 +999,107 @@ void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL
     encoder->setTexture(normalTex, 3);
     encoder->setTexture(sceneColorTex, 4);
 
-    // Determine whether internal render textures are inverted.
     struct AOFlags { int flipY; float invBackingScale; } aoFlags;
     aoFlags.flipY = fb->RenderTextureIsFlipped() ? 1 : 0;
     aoFlags.invBackingScale = aoFlags.flipY ? params.screenResY / (float)aoTex->height() : 1.0f;
     encoder->setBytes(&aoFlags, sizeof(aoFlags), 1);
 
     MTL::Size gridSize = { (NS::UInteger)aoTex->width(), (NS::UInteger)aoTex->height(), 1 };
-    encoder->dispatchThreads(gridSize, MTL::Size(16, 16, 1));
-    
-    // Barrier to resolve read-write hazards
-    encoder->memoryBarrier(MTL::BarrierScopeTextures);
+    encoder->dispatchThreads(gridSize, MTL::Size(8, 8, 1));
     
     if (blurAO) {
-        // 2. Blur Pass
-        encoder->setComputePipelineState(blurPSO);
-        encoder->setTexture(aoTex, 0);
-        encoder->setTexture(mBlurTexture, 1);
-        encoder->dispatchThreads(gridSize, MTL::Size(16, 16, 1));
-
-        // 3. Second bilateral pass back into the AO texture. This costs a
-        // small amount of compute time but removes the residual stable dither
-        // speckle that otherwise reads as snow in motion.
         encoder->memoryBarrier(MTL::BarrierScopeTextures);
-        encoder->setTexture(mBlurTexture, 0);
-        encoder->setTexture(aoTex, 1);
-        encoder->dispatchThreads(gridSize, MTL::Size(16, 16, 1));
+
+        struct AOBlurParams {
+            float scaleX, scaleY, offsetX, offsetY;
+            float blurSharpness, powExponent;
+            int normalAware, flipY;
+            float maxThickness;
+            int applyExponent; // Moved to end for alignment safety
+        } blurParams = {};
+        blurParams.scaleX = params.scaleX;
+        blurParams.scaleY = params.scaleY;
+        blurParams.offsetX = params.offsetX;
+        blurParams.offsetY = params.offsetY;
+        blurParams.blurSharpness = 1.0f / std::max((float)gl_ssao_blur, 0.1f);
+        blurParams.powExponent = std::max((float)gl_ssao_exponent, 0.1f);
+        blurParams.normalAware = mt_compute_ao_normal_blur ? 1 : 0;
+        blurParams.flipY = aoFlags.flipY;
+        blurParams.maxThickness = params.maxThickness;
+
+        encoder->setComputePipelineState(blurPSO);
+        const int blurPasses = clamp((int)mt_compute_ao_blur_passes, 1, 4);
+        MTL::Texture *src = aoTex;
+        MTL::Texture *dst = mBlurTexture;
+        for (int pass = 0; pass < blurPasses; pass++) {
+            if (pass > 0) encoder->memoryBarrier(MTL::BarrierScopeTextures);
+            dst = (src == aoTex) ? mBlurTexture : aoTex;
+            blurParams.applyExponent = (pass == blurPasses - 1) ? 1 : 0;
+            encoder->setBytes(&blurParams, sizeof(blurParams), 0);
+            encoder->setTexture(src, 0);
+            encoder->setTexture(dst, 1);
+            encoder->setTexture(normalTex, 2);
+            encoder->dispatchThreads(gridSize, MTL::Size(8, 8, 1));
+            src = dst;
+        }
+        mLowresResultTexture = src;
     }
 
-    // Barrier and finish compute work. Composite is done by engine postprocess.
-    encoder->memoryBarrier(MTL::BarrierScopeTextures);
+    // Correctly check if fullres cleanup should be performed (matches Render logic)
+    bool useFullresCleanup = mt_compute_ao_fullres_cleanup && !mt_compute_ao_skip_fullres;
+    if (gl_ssao >= 3 && mt_compute_ao_atrous_passes >= 0 && !mt_compute_ao_skip_fullres) {
+        useFullresCleanup = true;
+    }
+    useFullresCleanup = useFullresCleanup && upsamplePSO && atrousPSO && mFullresAOTexture && mFullresTempTexture;
+
+    if (useFullresCleanup) {
+        encoder->memoryBarrier(MTL::BarrierScopeTextures);
+        struct AOFullresParamsCPU {
+            float sceneScale[2], sceneOffset[2], fullRes[2];
+            float blurSharpness, zNear, zFar;
+            int normalAware, atrousStep;
+        } fullresParams = {};
+        fullresParams.sceneScale[0] = params.scaleX;
+        fullresParams.sceneScale[1] = params.scaleY;
+        fullresParams.sceneOffset[0] = params.offsetX;
+        fullresParams.sceneOffset[1] = params.offsetY;
+        fullresParams.fullRes[0] = (float)mFullresWidth;
+        fullresParams.fullRes[1] = (float)mFullresHeight;
+        fullresParams.blurSharpness = 1.0f / std::max((float)gl_ssao_blur, 0.1f);
+        fullresParams.zNear = params.zNear;
+        fullresParams.zFar = params.zFar;
+        fullresParams.normalAware = mt_compute_ao_normal_upsample ? 1 : 0;
+
+        MTL::Size fullGrid = { (NS::UInteger)mFullresWidth, (NS::UInteger)mFullresHeight, 1 };
+        encoder->setComputePipelineState(upsamplePSO);
+        encoder->setBytes(&fullresParams, sizeof(fullresParams), 0);
+        encoder->setTexture(mLowresResultTexture ? mLowresResultTexture : aoTex, 0);
+        encoder->setTexture(depthTex, 1);
+        encoder->setTexture(normalTex, 2);
+        encoder->setTexture(mFullresAOTexture, 3);
+        encoder->dispatchThreads(fullGrid, MTL::Size(8, 8, 1));
+        mFullresResultTexture = mFullresAOTexture;
+
+        int atrousPasses = clamp((int)mt_compute_ao_atrous_passes, 0, 3);
+        if (gl_ssao >= 3 && atrousPasses == 0) atrousPasses = 1;
+
+        MTL::Texture *srcPass = mFullresAOTexture;
+        MTL::Texture *dstPass = mFullresTempTexture;
+        for (int pass = 0; pass < atrousPasses; pass++) {
+            fullresParams.atrousStep = 1 << pass;
+            encoder->memoryBarrier(MTL::BarrierScopeTextures);
+            encoder->setComputePipelineState(atrousPSO);
+            encoder->setBytes(&fullresParams, sizeof(fullresParams), 0);
+            encoder->setTexture(srcPass, 0);
+            encoder->setTexture(normalTex, 1);
+            encoder->setTexture(dstPass, 2);
+            encoder->dispatchThreads(fullGrid, MTL::Size(8, 8, 1));
+            mFullresResultTexture = dstPass;
+            MTL::Texture *tmp = srcPass;
+            srcPass = dstPass;
+            dstPass = tmp;
+        }
+    }
+
     encoder->endEncoding();
 }

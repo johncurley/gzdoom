@@ -6,6 +6,10 @@ struct BloomParams {
     float strength;
     float2 srcRes;
     float2 bloomRes;
+    float2 srcScale;
+    float2 srcOffset;
+    float2 viewportOrigin;
+    float sampleWeights[8];
 };
 
 struct BloomCompositeParams {
@@ -22,11 +26,10 @@ kernel void bloom_extract(
 {
     if (gid.x >= out.get_width() || gid.y >= out.get_height()) return;
     sampler s(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
-    float2 uv = (float2(gid) + 0.5) / params.bloomRes;
+    float2 uv = params.srcOffset + ((float2(gid) + 0.5) / params.bloomRes) * params.srcScale;
     float4 c = src.sample(s, uv);
-    float lum = dot(c.rgb, float3(0.2126,0.7152,0.0722));
-    float4 res = (lum > params.threshold) ? c * (lum - params.threshold) : float4(0.0);
-    out.write(res, gid);
+    float3 res = max(c.rgb - float3(params.threshold), float3(0.0));
+    out.write(float4(res, 1.0), gid);
 }
 
 kernel void blur_horizontal(
@@ -40,11 +43,13 @@ kernel void blur_horizontal(
     float2 uv = (float2(gid) + 0.5) / params.bloomRes;
     float texelX = 1.0 / params.bloomRes.x;
     float4 sum = float4(0.0);
-    sum += inTex.sample(s, uv + float2(-2.0*texelX, 0.0)) * 0.0625;
-    sum += inTex.sample(s, uv + float2(-1.0*texelX, 0.0)) * 0.25;
-    sum += inTex.sample(s, uv) * 0.375;
-    sum += inTex.sample(s, uv + float2(1.0*texelX, 0.0)) * 0.25;
-    sum += inTex.sample(s, uv + float2(2.0*texelX, 0.0)) * 0.0625;
+    sum += inTex.sample(s, uv) * params.sampleWeights[0];
+    sum += inTex.sample(s, uv + float2(1.0*texelX, 0.0)) * params.sampleWeights[1];
+    sum += inTex.sample(s, uv + float2(-1.0*texelX, 0.0)) * params.sampleWeights[2];
+    sum += inTex.sample(s, uv + float2(2.0*texelX, 0.0)) * params.sampleWeights[3];
+    sum += inTex.sample(s, uv + float2(-2.0*texelX, 0.0)) * params.sampleWeights[4];
+    sum += inTex.sample(s, uv + float2(3.0*texelX, 0.0)) * params.sampleWeights[5];
+    sum += inTex.sample(s, uv + float2(-3.0*texelX, 0.0)) * params.sampleWeights[6];
     out.write(sum, gid);
 }
 
@@ -59,11 +64,13 @@ kernel void blur_vertical(
     float2 uv = (float2(gid) + 0.5) / params.bloomRes;
     float texelY = 1.0 / params.bloomRes.y;
     float4 sum = float4(0.0);
-    sum += inTex.sample(s, uv + float2(0.0, -2.0*texelY)) * 0.0625;
-    sum += inTex.sample(s, uv + float2(0.0, -1.0*texelY)) * 0.25;
-    sum += inTex.sample(s, uv) * 0.375;
-    sum += inTex.sample(s, uv + float2(0.0, 1.0*texelY)) * 0.25;
-    sum += inTex.sample(s, uv + float2(0.0, 2.0*texelY)) * 0.0625;
+    sum += inTex.sample(s, uv) * params.sampleWeights[0];
+    sum += inTex.sample(s, uv + float2(0.0, 1.0*texelY)) * params.sampleWeights[1];
+    sum += inTex.sample(s, uv + float2(0.0, -1.0*texelY)) * params.sampleWeights[2];
+    sum += inTex.sample(s, uv + float2(0.0, 2.0*texelY)) * params.sampleWeights[3];
+    sum += inTex.sample(s, uv + float2(0.0, -2.0*texelY)) * params.sampleWeights[4];
+    sum += inTex.sample(s, uv + float2(0.0, 3.0*texelY)) * params.sampleWeights[5];
+    sum += inTex.sample(s, uv + float2(0.0, -3.0*texelY)) * params.sampleWeights[6];
     out.write(sum, gid);
 }
 
@@ -89,7 +96,7 @@ kernel void bloom_combine_contrib(
 {
     if (gid.x >= outTex.get_width() || gid.y >= outTex.get_height()) return;
     sampler s(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
-    float2 bloomUv = (float2(gid) + 0.5) / params.bloomRes;
+    float2 bloomUv = (float2(gid) + 0.5) / params.srcRes;
     float4 bloom = bloomTex.sample(s, bloomUv);
     float4 contrib = float4(bloom.rgb * params.strength, 1.0);
     outTex.write(contrib, gid);
@@ -107,11 +114,12 @@ kernel void bloom_combine_contrib_all(
     if (gid.x >= outTex.get_width() || gid.y >= outTex.get_height()) return;
     sampler s(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
     float2 pixel = float2(gid) + 0.5;
+    float2 uv = pixel / params.srcRes;
     float3 sum = float3(0.0);
-    if (params.strength[0] > 0.0) sum += bloom0.sample(s, pixel / params.bloomRes[0]).rgb * params.strength[0];
-    if (params.strength[1] > 0.0) sum += bloom1.sample(s, pixel / params.bloomRes[1]).rgb * params.strength[1];
-    if (params.strength[2] > 0.0) sum += bloom2.sample(s, pixel / params.bloomRes[2]).rgb * params.strength[2];
-    if (params.strength[3] > 0.0) sum += bloom3.sample(s, pixel / params.bloomRes[3]).rgb * params.strength[3];
+    if (params.strength[0] > 0.0) sum += bloom0.sample(s, uv).rgb * params.strength[0];
+    if (params.strength[1] > 0.0) sum += bloom1.sample(s, uv).rgb * params.strength[1];
+    if (params.strength[2] > 0.0) sum += bloom2.sample(s, uv).rgb * params.strength[2];
+    if (params.strength[3] > 0.0) sum += bloom3.sample(s, uv).rgb * params.strength[3];
     outTex.write(float4(sum, 1.0), gid);
 }
 
@@ -122,13 +130,15 @@ kernel void bloom_combine_rw(
     texture2d<float, access::read_write> sceneTex [[texture(0)]],
     texture2d<float, access::sample> bloomTex [[texture(1)]])
 {
-    if (gid.x >= sceneTex.get_width() || gid.y >= sceneTex.get_height()) return;
+    uint2 sceneGid = gid + uint2(params.viewportOrigin.x, params.viewportOrigin.y);
+    if (gid.x >= uint(params.srcRes.x) || gid.y >= uint(params.srcRes.y) ||
+        sceneGid.x >= sceneTex.get_width() || sceneGid.y >= sceneTex.get_height()) return;
     sampler s(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
-    float2 bloomUv = (float2(gid) + 0.5) / params.bloomRes;
+    float2 bloomUv = (float2(gid) + 0.5) / params.srcRes;
     float4 bloom = bloomTex.sample(s, bloomUv);
-    float4 scene = sceneTex.read(gid);
+    float4 scene = sceneTex.read(sceneGid);
     scene.rgb += bloom.rgb * params.strength;
-    sceneTex.write(scene, gid);
+    sceneTex.write(scene, sceneGid);
 }
 
 // Fullscreen triangle vertex and composite fragment shader
@@ -150,10 +160,7 @@ fragment float4 bloom_fs(VSOut in [[stage_in]],
                          constant BloomParams &params [[buffer(0)]],
                          texture2d<float, access::sample> bloomTex [[texture(0)]],
                          sampler samp [[sampler(0)]]) {
-    // Map fullscreen uv to bloom texture coordinates (bloomTex is lower resolution)
-    float2 frag = in.uv * params.srcRes;
-    float2 bloomUv = (frag + 0.5) / params.bloomRes;
-    float4 bloom = bloomTex.sample(samp, bloomUv);
+    float4 bloom = bloomTex.sample(samp, in.uv);
     // Output bloom contribution; additive blending will be used when rendering.
     return float4(bloom.rgb * params.strength, 1.0);
 }

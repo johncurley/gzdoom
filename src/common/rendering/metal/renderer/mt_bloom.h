@@ -11,6 +11,10 @@ struct BloomParams {
     float strength;
     float srcRes[2];
     float bloomRes[2];
+    float srcScale[2];
+    float srcOffset[2];
+    float viewportOrigin[2];
+    float sampleWeights[8];
 };
 
 class MtBloomModule {

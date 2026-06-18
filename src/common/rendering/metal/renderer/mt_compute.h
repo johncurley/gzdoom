@@ -22,6 +22,12 @@ public:
                       int &cachedHeight);
   void RecordTiming(HWComputeEffect effect, float durationMs);
 
+  // New infrastructure helpers
+  MTL::ComputeCommandEncoder* BeginComputePass(MTL::CommandBuffer* cmdBuf);
+  void Dispatch(MTL::ComputeCommandEncoder* encoder, MTL::ComputePipelineState* pso, 
+                int width, int height, int threadGroupWidth = 16, int threadGroupHeight = 16);
+  void EndComputePass(MTL::ComputeCommandEncoder* encoder);
+
 private:
   MetalRenderDevice *fb = nullptr;
 };

@@ -74,3 +74,30 @@ void MtComputeManager::RecordTiming(HWComputeEffect effect, float durationMs) {
     break;
   }
 }
+
+MTL::ComputeCommandEncoder *
+MtComputeManager::BeginComputePass(MTL::CommandBuffer *cmdBuf) {
+  if (!cmdBuf)
+    return nullptr;
+  return cmdBuf->computeCommandEncoder();
+}
+
+void MtComputeManager::Dispatch(MTL::ComputeCommandEncoder *encoder,
+                                MTL::ComputePipelineState *pso, int width,
+                                int height, int threadGroupWidth,
+                                int threadGroupHeight) {
+  if (!encoder || !pso)
+    return;
+
+  encoder->setComputePipelineState(pso);
+  MTL::Size gridSize = {(NS::UInteger)width, (NS::UInteger)height, 1};
+  MTL::Size threadGroupSize = {(NS::UInteger)threadGroupWidth,
+                               (NS::UInteger)threadGroupHeight, 1};
+  encoder->dispatchThreads(gridSize, threadGroupSize);
+}
+
+void MtComputeManager::EndComputePass(MTL::ComputeCommandEncoder *encoder) {
+  if (encoder) {
+    encoder->endEncoding();
+  }
+}
