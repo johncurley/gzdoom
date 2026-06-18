@@ -1,6 +1,14 @@
 #include <metal_stdlib>
 using namespace metal;
 
+// NOTE: The authoritative Metal SSAO shader source is the inline string in
+// src/common/rendering/metal/renderer/mt_ao.cpp (SSAO_COMPUTE_SOURCE).
+// This file is a reference copy; the combine vertex/fragment shaders are
+// used as a fallback for the combine render pipeline, but compute kernels
+// (ssao_compute, bilateral_blur, etc.) are compiled from the inline source.
+//
+// Keep this file in sync with mt_ao.cpp to avoid divergent behavior.
+
 struct SSAOParams {
     float4x4 invProj;
     float radius;
@@ -23,6 +31,8 @@ struct SSAOParams {
     float aoMultiplier;
     float visibilityStrength;
     int numDirections;
+    int numSteps;
+    float maxThickness;
 };
 
 struct AOFlags {
@@ -37,9 +47,10 @@ struct AOBlurParams {
     float offsetY;
     float blurSharpness;
     float powExponent;
-    int applyExponent;
     int normalAware;
     int flipY;
+    float maxThickness;
+    int applyExponent; // Moved to end for alignment safety
 };
 
 struct AOFullresParams {
@@ -99,8 +110,8 @@ float NormalWeight(float3 centerNormal, float3 sampleNormal) {
     if (all(centerNormal == float3(0.0)) || all(sampleNormal == float3(0.0))) {
         return 0.0;
     }
-    float normalDot = saturate(dot(centerNormal, sampleNormal) * 0.5 + 0.5);
-    return normalDot * normalDot * normalDot * normalDot;
+    // Much sharper normal weight to prevent bleeding across 90-degree edges
+    return pow(saturate(dot(centerNormal, sampleNormal)), 8.0);
 }
 
 float InterleavedGradientNoise(float2 p) {
@@ -447,7 +458,7 @@ fragment float4 ssao_combine_fs(VSOut in [[stage_in]],
     float rawSceneDepth = depthTexture.sample(nearestSampler, fogUV).r;
     float normalizedDepth = clamp(1.0 - rawSceneDepth, 0.0, 1.0);
     float sceneDepth = 1.0 / (normalizedDepth * (1.0 / params.zFar - 1.0 / params.zNear) + max(1.0 / params.zNear, 1e-8));
-    float depthSignal = 1.0 - exp2(-sceneDepth * 0.01);
+    float depthSignal = 1.0 - exp2(-sceneDepth * 0.005);
     float depthMask = saturate(depthSignal);
     float3 decodedNormal = sceneNormal * 2.0 - 1.0;
 
@@ -458,11 +469,12 @@ fragment float4 ssao_combine_fs(VSOut in [[stage_in]],
 
         if (params.fullresAO != 0) {
             float aoAlpha = (1.0 - ssao.x) * depthMask;
-            aoAlpha *= smoothstep(0.020, 0.100, aoAlpha);
+            // Less aggressive smoothstep to preserve subtle AO while still killing speckles
+            aoAlpha *= smoothstep(0.002, 0.020, aoAlpha);
             return float4(fogSample.rgb, aoAlpha);
         }
 
-        float centerAlpha = (1.0 - attenuation) * saturate(1.0 - exp2(-ssao.y * 0.01));
+        float centerAlpha = (1.0 - attenuation) * saturate(1.0 - exp2(-ssao.y * 0.005));
         float2 aoTexel = 1.0 / float2((float)aoTexture.get_width(), (float)aoTexture.get_height());
         float4 ssaoL = aoTexture.sample(linearSampler, aoUV + float2(-aoTexel.x, 0.0));
         float4 ssaoR = aoTexture.sample(linearSampler, aoUV + float2( aoTexel.x, 0.0));
@@ -477,22 +489,45 @@ fragment float4 ssao_combine_fs(VSOut in [[stage_in]],
             if (taps[i].y <= 1e-5) {
                 continue;
             }
-            float tapAlpha = (1.0 - taps[i].x) * saturate(1.0 - exp2(-taps[i].y * 0.01));
+            float tapAlpha = (1.0 - taps[i].x) * saturate(1.0 - exp2(-taps[i].y * 0.005));
             float depthDelta = (taps[i].y - centerDepth) * blurSharpness;
             float weight = exp2(-0.35 - depthDelta * depthDelta);
             alphaSum += tapAlpha * weight;
             weightSum += weight;
         }
         float aoAlpha = mix(centerAlpha, alphaSum / weightSum, saturate(params.combineSmooth));
-        float neighborAlpha =
-            ((1.0 - ssaoL.x) * saturate(1.0 - exp2(-ssaoL.y * 0.01)) +
-             (1.0 - ssaoR.x) * saturate(1.0 - exp2(-ssaoR.y * 0.01)) +
-             (1.0 - ssaoU.x) * saturate(1.0 - exp2(-ssaoU.y * 0.01)) +
-             (1.0 - ssaoD.x) * saturate(1.0 - exp2(-ssaoD.y * 0.01))) * 0.25;
-        if (aoAlpha < neighborAlpha * 0.6 && neighborAlpha > 0.005) {
-            aoAlpha = mix(aoAlpha, neighborAlpha, 0.65);
+        // Depth-weighted neighbor average — prevents stair-edge bleeding
+        float neighborAlpha = 0.0;
+        float neighborWeight = 0.0;
+        float4 neighborVals[4] = { ssaoL, ssaoR, ssaoU, ssaoD };
+        for (int n = 0; n < 4; n++) {
+            if (neighborVals[n].y <= 1e-5) continue;
+            float nAlpha = (1.0 - neighborVals[n].x) * saturate(1.0 - exp2(-neighborVals[n].y * 0.005));
+            float nDepthDelta = abs(neighborVals[n].y - centerDepth) * blurSharpness;
+            float nWeight = exp2(-0.35 - nDepthDelta * nDepthDelta);
+            neighborAlpha += nAlpha * nWeight;
+            neighborWeight += nWeight;
         }
-        aoAlpha *= smoothstep(0.020, 0.100, aoAlpha);
+        neighborAlpha = (neighborWeight > 1e-5) ? neighborAlpha / neighborWeight : 0.0;
+        
+        // Speckle removal: pull weak isolated pixels toward neighbor average.
+        // A single bright pixel surrounded by darker neighbors is noise.
+        if (aoAlpha < neighborAlpha * 0.85 && neighborAlpha > 0.005) {
+            aoAlpha = mix(aoAlpha, neighborAlpha, 0.8);
+        }
+        // Hard floor: no pixel can be drastically brighter than its neighbors
+        aoAlpha = max(aoAlpha, neighborAlpha * 0.3);
+        
+        // Multi-bounce AO approximation (Jimenez 2016)
+        // Helps darken corners while preventing the "glow" artifact around edges.
+        float3 albedo = float3(0.5); // Assume neutral albedo
+        float3 a = 2.0 * albedo - 0.33;
+        float3 b = -4.8 * albedo + 0.64;
+        float3 c = 2.8 * albedo + 0.69;
+        float3 multiBounce = max(aoAlpha, ((a * aoAlpha + b) * aoAlpha + c) * aoAlpha);
+        aoAlpha = multiBounce.x;
+
+        aoAlpha *= smoothstep(0.001, 0.015, aoAlpha);
         return float4(fogSample.rgb, aoAlpha);
     }
     else if (params.debugMode < 3)

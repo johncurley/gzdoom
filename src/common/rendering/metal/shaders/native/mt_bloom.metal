@@ -1,6 +1,10 @@
 #include <metal_stdlib>
 using namespace metal;
 
+// NOTE: The authoritative Metal Bloom shader source is the inline string in
+// src/common/rendering/metal/renderer/mt_bloom.cpp (BLOOM_COMPUTE_SOURCE).
+// This file is kept in sync as a reference copy.
+
 struct BloomParams {
     float threshold;
     float strength;

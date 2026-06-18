@@ -536,17 +536,27 @@ fragment float4 ssao_combine_fs(VSOut in [[stage_in]],
             weightSum += weight;
         }
         float aoAlpha = mix(centerAlpha, alphaSum / weightSum, saturate(params.combineSmooth));
-        float neighborAlpha =
-            ((1.0 - ssaoL.x) * saturate(1.0 - exp2(-ssaoL.y * 0.005)) +
-             (1.0 - ssaoR.x) * saturate(1.0 - exp2(-ssaoR.y * 0.005)) +
-             (1.0 - ssaoU.x) * saturate(1.0 - exp2(-ssaoU.y * 0.005)) +
-             (1.0 - ssaoD.x) * saturate(1.0 - exp2(-ssaoD.y * 0.005))) * 0.25;
-        
-        // Speckle removal: if center has much weaker AO than neighbors,
-        // pull it toward the neighbor average to kill bright speckles.
-        if (aoAlpha < neighborAlpha * 0.6 && neighborAlpha > 0.005) {
-            aoAlpha = mix(aoAlpha, neighborAlpha, 0.65);
+        // Depth-weighted neighbor average — prevents stair-edge bleeding
+        float neighborAlpha = 0.0;
+        float neighborWeight = 0.0;
+        float4 neighborVals[4] = { ssaoL, ssaoR, ssaoU, ssaoD };
+        for (int n = 0; n < 4; n++) {
+            if (neighborVals[n].y <= 1e-5) continue;
+            float nAlpha = (1.0 - neighborVals[n].x) * saturate(1.0 - exp2(-neighborVals[n].y * 0.005));
+            float nDepthDelta = abs(neighborVals[n].y - centerDepth) * blurSharpness;
+            float nWeight = exp2(-0.35 - nDepthDelta * nDepthDelta);
+            neighborAlpha += nAlpha * nWeight;
+            neighborWeight += nWeight;
         }
+        neighborAlpha = (neighborWeight > 1e-5) ? neighborAlpha / neighborWeight : 0.0;
+        
+        // Speckle removal: pull weak isolated pixels toward neighbor average.
+        // A single bright pixel surrounded by darker neighbors is noise.
+        if (aoAlpha < neighborAlpha * 0.85 && neighborAlpha > 0.005) {
+            aoAlpha = mix(aoAlpha, neighborAlpha, 0.8);
+        }
+        // Hard floor: no pixel can be drastically brighter than its neighbors
+        aoAlpha = max(aoAlpha, neighborAlpha * 0.3);
         
         // Multi-bounce AO approximation (Jimenez 2016)
         // Helps darken corners while preventing the "glow" artifact around edges.
@@ -900,7 +910,8 @@ bool MtAOModule::Render(float m5, int sceneWidth, int sceneHeight) {
     Execute(cmdBuf, buffers->SceneDepthStencil->GetTexture(),
             buffers->SceneNormal->GetTexture(), buffers->SceneColor->GetTexture(),
             mAOTexture, mDitherTexture,
-            buffers->SceneFog->GetTexture(), nullptr, params, blurAO);
+            buffers->SceneFog->GetTexture(), nullptr, params, blurAO,
+            useFullresCleanup);
     MTL::Texture *combineAO = (useFullresCleanup && mFullresResultTexture) ? mFullresResultTexture :
         (mLowresResultTexture ? mLowresResultTexture : mAOTexture);
     Combine(combineAO, sceneWidth, sceneHeight, combineAO == mFullresResultTexture);
@@ -982,7 +993,7 @@ void MtAOModule::Combine(MTL::Texture* aoTex, int sceneWidth, int sceneHeight, b
                             (NS::UInteger)3);
 }
 
-void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL::Texture* normalTex, MTL::Texture* sceneColorTex, MTL::Texture* aoTex, MTL::Texture* ditherTex, MTL::Texture* fogTex, MTL::Texture* combineTex, const SSAOParams& params, bool blurAO) {
+void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL::Texture* normalTex, MTL::Texture* sceneColorTex, MTL::Texture* aoTex, MTL::Texture* ditherTex, MTL::Texture* fogTex, MTL::Texture* combineTex, const SSAOParams& params, bool blurAO, bool useFullresCleanup) {
     if (!ssaoPSO || (blurAO && (!blurPSO || !mBlurTexture)) || !depthTex || !normalTex || !sceneColorTex || !ditherTex || !aoTex) return;
     mFullresResultTexture = nullptr;
     mLowresResultTexture = aoTex;
@@ -1045,11 +1056,7 @@ void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL
         mLowresResultTexture = src;
     }
 
-    // Correctly check if fullres cleanup should be performed (matches Render logic)
-    bool useFullresCleanup = mt_compute_ao_fullres_cleanup && !mt_compute_ao_skip_fullres;
-    if (gl_ssao >= 3 && mt_compute_ao_atrous_passes >= 0 && !mt_compute_ao_skip_fullres) {
-        useFullresCleanup = true;
-    }
+    // Fullres cleanup decision was computed in Render() — just verify textures exist
     useFullresCleanup = useFullresCleanup && upsamplePSO && atrousPSO && mFullresAOTexture && mFullresTempTexture;
 
     if (useFullresCleanup) {
