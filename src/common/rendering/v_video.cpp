@@ -101,7 +101,19 @@ CUSTOM_CVAR(Int, vid_maxfps, 500, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 	}
 }
 
-CUSTOM_CVAR(Int, vid_preferbackend, 1, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL)
+// Pick a sensible default backend per platform.
+// 0 = OpenGL, 1 = Vulkan, 2 = OpenGL ES, 3 = Metal
+#if defined(HAVE_METAL) && defined(__APPLE__)
+#define DEFAULT_RENDER_BACKEND 3
+#elif defined(HAVE_VULKAN)
+#define DEFAULT_RENDER_BACKEND 1
+#elif defined(HAVE_GLES2)
+#define DEFAULT_RENDER_BACKEND 2
+#else
+#define DEFAULT_RENDER_BACKEND 0
+#endif
+
+CUSTOM_CVAR(Int, vid_preferbackend, DEFAULT_RENDER_BACKEND, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL)
 {
 	// [SP] This may seem pointless - but I don't want to implement live switching just
 	// yet - I'm pretty sure it's going to require a lot of reinits and destructions to

@@ -34,7 +34,7 @@ void main()
 	float depthMask = clamp(depthSignal, 0.0, 1.0);
 
 	if (DebugMode == 0)
-		FragColor = vec4(fogColor, (1.0 - attenutation) * depthMask);
+		FragColor = vec4(fogColor, ssao.y > 2.0 ? (1.0 - attenutation) * depthMask : 0.0);
 	else if (DebugMode < 3)
 		FragColor = vec4(attenutation, attenutation, attenutation, 1.0);
 	else if (DebugMode == 3)

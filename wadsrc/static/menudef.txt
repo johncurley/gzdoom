@@ -382,8 +382,8 @@ OptionMenu "InputMenu" protected
 
 	IfOption(Windows)
 	{
-		StaticText ""
-		Option "$MISCMNU_MERGEKEYS", 			"k_mergekeys", "OnOff"
+			StaticText ""
+	Option "$MISCMNU_MERGEKEYS", 			"k_mergekeys", "OnOff"
 		Option "$MISCMNU_WINFULLSCREENTOGGLE",	"k_allowfullscreentoggle", "OnOff"
 	}
 	IfOption(Mac)
@@ -854,7 +854,7 @@ OptionMenu "MouseOptions" protected
 	Option "$MOUSEMNU_SHOWBACKBUTTON",	"m_show_backbutton", "Corners", "use_mouse"
 	IfOption(Windows)
 	{
-		Option "$MOUSEMNU_SWAPBUTTONS", "m_swapbuttons", "YesNo"
+			Option "$MOUSEMNU_SWAPBUTTONS", "m_swapbuttons", "YesNo"
 	}
 	Option "$MOUSEMNU_CURSOR",			"vid_cursor", "Cursors"
 	StaticText 	""
@@ -887,8 +887,8 @@ OptionMenu "JoystickOptionsDefaults" protected
 	Option "$JOYMNU_NOMENU", "m_blockcontrollers", "YesNo"
 	IfOption(Windows)
 	{
-		Option "$JOYMNU_DINPUT", "joy_dinput", "YesNo"
-		Option "$JOYMNU_XINPUT", "joy_xinput", "YesNo"
+			Option "$JOYMNU_DINPUT", "joy_dinput", "YesNo"
+	Option "$JOYMNU_XINPUT", "joy_xinput", "YesNo"
 		Option "$JOYMNU_PS2", "joy_ps2raw", "YesNo"
 	}
 	StaticText ""
@@ -1064,7 +1064,7 @@ OptionMenu "VideoOptions" protected
 	Option "$VIDMNU_PREFERBACKEND",		"vid_preferbackend", "PreferBackend"
 	StaticText " "
 	Option "$VIDMNU_FULLSCREEN",		"vid_fullscreen", "YesNo"
-	Option "$GLTEXMNU_TEXFILTER",		gl_texture_filter,				"FilterModes" // should only be on/off!
+	Option "$GLTEXMNU_TEXFILTER",		gl_texture_filter,				"SimpleFilterModes"
 	Option "$GLTEXMNU_ANISOTROPIC",		gl_texture_filter_anisotropic,	"Anisotropy"
 	Option "$GLPREFMNU_RENDERQUALITY",			gl_seamless,					"Precision"
 	Option "$GLPREFMNU_MULTISAMPLE", 			gl_multisample,					"Multisample"
@@ -1102,12 +1102,18 @@ OptionMenu "AdvDisplayOptions" protected
 	Submenu "$OPTMNU_LIGHT", 					"LightOptions"
 	Submenu "$GLMNU_TEXOPT", 					"GLTextureGLOptions"
 	Submenu "$GLMNU_POSTPROCESS",				"PostProcessMenu"
-	Submenu "$GLPREFMNU_VRMODE",				"VR3DMenu"
+	IfOption(Windows)
+	{
+		Submenu "$GLPREFMNU_VRMODE",				"VR3DMenu"
+	}
 	IfOption(SWRender)
 	{
 		Submenu "$OPTMNU_SWRENDERER",				"SWROptions"
 	}
-	Submenu "$DSPLYMNU_VKOPT",			"VKOptions"
+	IfOption(Vulkan)
+	{
+		Submenu "$DSPLYMNU_VKOPT",			"VKOptions"
+	}
 }
 
 OptionMenu "AppearOptions" protected
@@ -2714,6 +2720,13 @@ OptionValue "EnhancedStealth"
 	3, "$OPTVAL_ANYFIXEDCOLORMAP"
 }
 
+OptionValue "SimpleFilterModes"
+{
+	0, "None (Nearest)"
+	4, "Smooth (Trilinear)"
+	2, "Linear (Bilinear)"
+}
+
 OptionValue "FilterModes"
 {
 	0, "$OPTVAL_NONE"
@@ -2941,7 +2954,7 @@ OptionMenu "VR3DMenu" protected
 	Option "$GLMNU_3DMODE",					vr_mode, 						"VRMode"
 	IfOption(Windows)
 	{
-		Option "$GLPREFMNU_VRQUADSTEREO",			vr_enable_quadbuffered,			"OnOff"
+			Option "$GLPREFMNU_VRQUADSTEREO",			vr_enable_quadbuffered,			"OnOff"
 	}
 	Slider "$GLPREFMNU_VRIPD",					vr_ipd,							0.041, 0.073, 0.001, 3
 	Slider "$GLPREFMNU_VRSCREENDIST",			vr_screendist,					0.2, 10.0, 0.1, 1

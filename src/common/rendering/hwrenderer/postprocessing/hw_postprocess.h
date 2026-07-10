@@ -613,7 +613,13 @@ struct SSAOUniforms
 	float AOMultiplier;
 	float AOStrength;
 	int SampleIndex;
-	float Padding0, Padding1;
+	// AO fade-out distance range (view-space Z, world units). Screen-space AO
+	// is unreliable and perceptually unwanted at long range — e.g. a sky
+	// camera room (a "true" skybox: real physical geometry, real normals,
+	// portaled in to stand in for the sky) will otherwise pick up genuine
+	// occlusion from its own creases despite being meant to read as open
+	// sky. Repurposes the two former padding floats; layout is unchanged.
+	float FadeStart, FadeEnd;
 	FVector2 Scale;
 	FVector2 Offset;
 
@@ -630,8 +636,8 @@ struct SSAOUniforms
 			{ "AOMultiplier", UniformType::Float, offsetof(SSAOUniforms, AOMultiplier) },
 			{ "AOStrength", UniformType::Float, offsetof(SSAOUniforms, AOStrength) },
 			{ "SampleIndex", UniformType::Int, offsetof(SSAOUniforms, SampleIndex) },
-			{ "Padding0", UniformType::Float, offsetof(SSAOUniforms, Padding0) },
-			{ "Padding1", UniformType::Float, offsetof(SSAOUniforms, Padding1) },
+			{ "FadeStart", UniformType::Float, offsetof(SSAOUniforms, FadeStart) },
+			{ "FadeEnd", UniformType::Float, offsetof(SSAOUniforms, FadeEnd) },
 			{ "Scale", UniformType::Vec2, offsetof(SSAOUniforms, Scale) },
 			{ "Offset", UniformType::Vec2, offsetof(SSAOUniforms, Offset) },
 		};

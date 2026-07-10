@@ -69,7 +69,10 @@ void MtRenderBuffers::CreatePipeline(int width, int height) {
     desc->setWidth(width);
     desc->setHeight(height);
     desc->setPixelFormat(MTL::PixelFormatBGRA8Unorm);
-    desc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
+    auto usage = MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead;
+    if (fb->mVersionManager.supportsReadWriteBGRA8)
+      usage = usage | MTL::TextureUsageShaderWrite;
+    desc->setUsage(usage);
     desc->setStorageMode(MTL::StorageModePrivate);
 
     MTL::Texture *texture = fb->device->device->newTexture(desc);

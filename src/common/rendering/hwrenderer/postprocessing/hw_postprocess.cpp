@@ -850,6 +850,8 @@ void PPAmbientOcclusion::Render(PPRenderState *renderstate, float m5, int sceneW
 	ssaoUniforms.RadiusToScreen = aoRadius * 0.5f / tanHalfFovy * AmbientHeight;
 	ssaoUniforms.AOMultiplier = 1.0f / (1.0f - nDotVBias);
 	ssaoUniforms.AOStrength = aoStrength;
+	ssaoUniforms.FadeStart = max((float)gl_ssao_fade_start, 0.0f);
+	ssaoUniforms.FadeEnd = max((float)gl_ssao_fade_end, ssaoUniforms.FadeStart + 1.0f);
 	ssaoUniforms.Scale = sceneScale;
 	ssaoUniforms.Offset = sceneOffset;
 

@@ -20,6 +20,7 @@ struct BloomCompositeParams {
     float strength[4];
     float2 srcRes;
     float2 bloomRes[4];
+    float2 viewportOrigin;
 };
 
 kernel void bloom_extract(
@@ -32,7 +33,9 @@ kernel void bloom_extract(
     sampler s(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
     float2 uv = params.srcOffset + ((float2(gid) + 0.5) / params.bloomRes) * params.srcScale;
     float4 c = src.sample(s, uv);
-    float3 res = max(c.rgb - float3(params.threshold), float3(0.0));
+    // Match PP bloom extract: add a tiny bias before threshold so pure black
+    // doesn't bloom, and allow the threshold to be tuned (default 1.0).
+    float3 res = max(c.rgb - float3(params.threshold) + float3(0.001), float3(0.0));
     out.write(float4(res, 1.0), gid);
 }
 
@@ -91,21 +94,6 @@ kernel void downsample_box(
     out.write(c, gid);
 }
 
-// Compute kernel that writes the bloom contribution (no direct scene writes).
-kernel void bloom_combine_contrib(
-    uint2 gid [[thread_position_in_grid]],
-    constant BloomParams &params [[buffer(0)]],
-    texture2d<float, access::sample> bloomTex [[texture(0)]],
-    texture2d<float, access::write> outTex [[texture(1)]])
-{
-    if (gid.x >= outTex.get_width() || gid.y >= outTex.get_height()) return;
-    sampler s(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
-    float2 bloomUv = (float2(gid) + 0.5) / params.srcRes;
-    float4 bloom = bloomTex.sample(s, bloomUv);
-    float4 contrib = float4(bloom.rgb * params.strength, 1.0);
-    outTex.write(contrib, gid);
-}
-
 kernel void bloom_combine_contrib_all(
     uint2 gid [[thread_position_in_grid]],
     constant BloomCompositeParams &params [[buffer(0)]],
@@ -127,44 +115,48 @@ kernel void bloom_combine_contrib_all(
     outTex.write(float4(sum, 1.0), gid);
 }
 
-// Compute kernel that writes directly into the scene render target (RW BGRA8) on Tier 2 devices.
-kernel void bloom_combine_rw(
+// Tier 2: combine every bloom level and update the scene in one read-write pass.
+kernel void bloom_combine_rw_all(
     uint2 gid [[thread_position_in_grid]],
-    constant BloomParams &params [[buffer(0)]],
+    constant BloomCompositeParams &params [[buffer(0)]],
     texture2d<float, access::read_write> sceneTex [[texture(0)]],
-    texture2d<float, access::sample> bloomTex [[texture(1)]])
+    texture2d<float, access::sample> bloom0 [[texture(1)]],
+    texture2d<float, access::sample> bloom1 [[texture(2)]],
+    texture2d<float, access::sample> bloom2 [[texture(3)]],
+    texture2d<float, access::sample> bloom3 [[texture(4)]])
 {
     uint2 sceneGid = gid + uint2(params.viewportOrigin.x, params.viewportOrigin.y);
     if (gid.x >= uint(params.srcRes.x) || gid.y >= uint(params.srcRes.y) ||
         sceneGid.x >= sceneTex.get_width() || sceneGid.y >= sceneTex.get_height()) return;
     sampler s(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
-    float2 bloomUv = (float2(gid) + 0.5) / params.srcRes;
-    float4 bloom = bloomTex.sample(s, bloomUv);
+    float2 uv = (float2(gid) + 0.5) / params.srcRes;
+    float3 bloom = float3(0.0);
+    if (params.strength[0] > 0.0) bloom += bloom0.sample(s, uv).rgb * params.strength[0];
+    if (params.strength[1] > 0.0) bloom += bloom1.sample(s, uv).rgb * params.strength[1];
+    if (params.strength[2] > 0.0) bloom += bloom2.sample(s, uv).rgb * params.strength[2];
+    if (params.strength[3] > 0.0) bloom += bloom3.sample(s, uv).rgb * params.strength[3];
     float4 scene = sceneTex.read(sceneGid);
-    scene.rgb += bloom.rgb * params.strength;
+    scene.rgb += bloom;
     sceneTex.write(scene, sceneGid);
 }
 
-// Fullscreen triangle vertex and composite fragment shader
-struct VSOut {
+struct BloomVSOut {
     float4 position [[position]];
     float2 uv;
 };
 
-vertex VSOut bloom_vs(uint vid [[vertex_id]]) {
-    VSOut out;
-    float2 pos[3] = { float2(-1.0, -1.0), float2(3.0, -1.0), float2(-1.0, 3.0) };
+vertex BloomVSOut bloom_vs(uint vid [[vertex_id]]) {
+    BloomVSOut out;
+    float2 pos[3] = {
+        float2(-1.0, -1.0), float2(3.0, -1.0), float2(-1.0, 3.0)
+    };
     out.position = float4(pos[vid], 0.0, 1.0);
-    // uv in 0..1
     out.uv = out.position.xy * 0.5 + float2(0.5);
     return out;
 }
 
-fragment float4 bloom_fs(VSOut in [[stage_in]],
-                         constant BloomParams &params [[buffer(0)]],
+fragment float4 bloom_fs(BloomVSOut in [[stage_in]],
                          texture2d<float, access::sample> bloomTex [[texture(0)]],
                          sampler samp [[sampler(0)]]) {
-    float4 bloom = bloomTex.sample(samp, in.uv);
-    // Output bloom contribution; additive blending will be used when rendering.
-    return float4(bloom.rgb * params.strength, 1.0);
+    return float4(bloomTex.sample(samp, in.uv).rgb, 0.0);
 }

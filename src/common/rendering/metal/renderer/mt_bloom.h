@@ -31,7 +31,6 @@ private:
     MTL::ComputePipelineState* downsamplePSO = nullptr;
     MTL::ComputePipelineState* blurHPSO = nullptr;
     MTL::ComputePipelineState* blurVPSO = nullptr;
-    MTL::ComputePipelineState* combinePSO = nullptr;
     MTL::ComputePipelineState* combineAllPSO = nullptr;
     MTL::ComputePipelineState* combineRWPSO = nullptr;
     MTL::RenderPipelineState* compositePSO = nullptr;
@@ -46,7 +45,7 @@ private:
     int mCachedBloomW = 0;
     int mCachedBloomH = 0;
 
-    // Temporary compute -> render composite target for bloom contributions
+    // Full-resolution high-precision bloom contribution
     MTL::Texture* mCompositeTex = nullptr;
     int mCompositeW = 0;
     int mCompositeH = 0;

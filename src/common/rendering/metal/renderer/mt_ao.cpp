@@ -31,6 +31,8 @@ EXTERN_CVAR(Bool, mt_compute_ao_skip_fullres)
 EXTERN_CVAR(Int, mt_compute_ao_atrous_passes)
 EXTERN_CVAR(Int, mt_compute_ao_steps)
 EXTERN_CVAR(Int, mt_compute_ao_directions)
+EXTERN_CVAR(Float, mt_compute_ao_fade_start)
+EXTERN_CVAR(Float, mt_compute_ao_fade_end)
 
 static const char* SSAO_COMPUTE_SOURCE = R"(
 #include <metal_stdlib>
@@ -60,6 +62,8 @@ struct SSAOParams {
     int numDirections;
     int numSteps;
     float maxThickness;
+    float fadeStartDistance;
+    float fadeEndDistance;
 };
 
 struct AOFlags {
@@ -152,7 +156,8 @@ kernel void ssao_compute(
     texture2d<float, access::sample> depthTexture [[texture(1)]],
     texture2d<float, access::write> aoOutput [[texture(2)]],
     texture2d<float, access::sample> normalTexture [[texture(3)]],
-    texture2d<float, access::sample> sceneColorTexture [[texture(4)]])
+    texture2d<float, access::sample> sceneColorTexture [[texture(4)]],
+    texture2d<float, access::sample> coverageMask [[texture(5)]])
 {
     float2 outSize = float2((float)aoOutput.get_width(), (float)aoOutput.get_height());
     if (gid.x >= outSize.x || gid.y >= outSize.y) return;
@@ -188,6 +193,13 @@ kernel void ssao_compute(
     float centerLinearDepth = LinearizeSceneDepth(centerDepth, params);
     float3 centerViewPos = FetchViewPos(uv, centerLinearDepth, params);
 
+    // Sky-dome guard: depth-clamped sky geometry sits at far plane.
+    // Degenerate normals may not be zero depending on GPU, so use depth.
+    if (centerLinearDepth >= params.zFar * 0.99) {
+        aoOutput.write(float4(1.0, 0.0, 0.0, 1.0), gid);
+        return;
+    }
+
     float2 noiseUV = pixelCenter / 64.0;
     float4 noise = ditherTexture.sample(nearestSampler, noiseUV);
     float ign = InterleavedGradientNoise(pixelCenter);
@@ -214,6 +226,15 @@ kernel void ssao_compute(
             sampleUV = clamp(sampleUV, halfTexel, float2(1.0) - halfTexel);
             float2 sampleSceneUV = float2(params.offsetX, params.offsetY) + sampleUV * float2(params.scaleX, params.scaleY);
 
+            float sampleCoverage = sceneColorTexture.sample(nearestClampSampler, sampleSceneUV).a;
+            if (sampleCoverage <= 0.0001) {
+                continue;
+            }
+
+            // Stencil coverage guard: skip samples from different portal layers
+            float sampleCov = coverageMask.sample(nearestClampSampler, sampleUV).r;
+            if (sampleCov < 0.5) continue;
+
             // Fast path: if sample is within our LDS tile, use cached data
             float sampleRawDepth;
             float3 sampleNormal;
@@ -237,7 +258,12 @@ kernel void ssao_compute(
             
             float depthDiff = sampleViewPos.z - centerViewPos.z;
             float thicknessThreshold = params.maxThickness * (1.0 + centerViewPos.z * 0.05);
-            if (depthDiff > thicknessThreshold || depthDiff < -params.maxThickness * 0.5) continue;
+            float frontThickness = params.maxThickness * (0.5 + centerViewPos.z * 0.02);
+            if (depthDiff > thicknessThreshold || depthDiff < -frontThickness) continue;
+            // Skybox/portal guard: reject samples from incompatible camera views
+            // (Trenchfoot skybox renders with different depth range, creating seams)
+            float depthRatio = max(centerViewPos.z, sampleViewPos.z) / max(min(centerViewPos.z, sampleViewPos.z), 1e-5f);
+            if (depthRatio > 100.0) continue;
 
             float distanceSquare = max(dot(sampleVector, sampleVector), 1e-6);
             float invDistance = rsqrt(distanceSquare);
@@ -252,8 +278,18 @@ kernel void ssao_compute(
 
     occlusion *= (params.aoMultiplier * 1.15) / float(numDirections * numSteps);
     float visibility = clamp(1.0 - occlusion * params.visibilityStrength, 0.0, 1.0);
-    visibility = visibility * params.intensity + (1.0 - params.intensity);
-    
+
+    // Distance fade: screen-space AO is both numerically unreliable and
+    // perceptually unwanted at long range (e.g. a large sky-camera room,
+    // built far from the playable area to serve as a "true" skybox, is
+    // genuine geometry with genuine normals and will otherwise pick up
+    // real occlusion from its own creases). Fade occlusion strength back
+    // to 0 between fadeStartDistance and fadeEndDistance using the same
+    // blend-toward-no-AO idiom already used for the intensity slider.
+    float distanceFade = 1.0 - smoothstep(params.fadeStartDistance, params.fadeEndDistance, centerViewPos.z);
+    float effectiveStrength = params.intensity * distanceFade;
+    visibility = visibility * effectiveStrength + (1.0 - effectiveStrength);
+
     aoOutput.write(float4(saturate(visibility), centerLinearDepth, 0.0, 1.0), gid);
 }
 
@@ -358,7 +394,7 @@ kernel void ao_upsample_fullres(
 
     float sceneDepth = LinearizeDepth(rawDepth, params.zNear, params.zFar);
     float2 aoSize = float2((float)lowresAO.get_width(), (float)lowresAO.get_height());
-    float2 aoUV = float2(localUV.x, 1.0 - localUV.y);
+    float2 aoUV = localUV;
     float2 aoCoord = aoUV * aoSize - 0.5;
     float2 aoBase = floor(aoCoord);
     float2 aoFrac = fract(aoCoord);
@@ -371,8 +407,7 @@ kernel void ao_upsample_fullres(
             float2 tap = float2((float)x, (float)y);
             float2 tapCoord = clamp(aoBase + tap, float2(0.0), aoSize - 1.0);
             float2 tapUV = (tapCoord + 0.5) / aoSize;
-            float2 tapLocalUV = float2(tapUV.x, 1.0 - tapUV.y);
-            float2 tapSceneUV = params.sceneOffset + tapLocalUV * params.sceneScale;
+            float2 tapSceneUV = params.sceneOffset + tapUV * params.sceneScale;
             float4 sampleAO = lowresAO.sample(nearestSampler, tapUV);
             if (sampleAO.y <= 1e-5) {
                 continue;
@@ -483,13 +518,20 @@ fragment float4 ssao_combine_fs(VSOut in [[stage_in]],
                                 texture2d<float, access::sample> aoTexture [[texture(0)]],
                                 texture2d<float, access::sample> fogTexture [[texture(1)]],
                                 texture2d<float, access::sample> normalTexture [[texture(2)]],
-                                texture2d<float, access::sample> depthTexture [[texture(3)]])
+                                texture2d<float, access::sample> depthTexture [[texture(3)]],
+                                texture2d<float, access::sample> sceneColorTexture [[texture(4)]])
 {
     constexpr sampler linearSampler(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
     constexpr sampler nearestSampler(mag_filter::nearest, min_filter::nearest, address::clamp_to_edge);
 
-    float2 aoUV = float2(in.uv.x, 1.0 - in.uv.y);
-    float2 fogUV = float2(params.offsetX, params.offsetY) + in.uv * float2(params.scaleX, params.scaleY);
+    // Metal's fullscreen-triangle UV is vertically opposite to the scene
+    // render textures. Flip every combine input together so AO remains aligned
+    // with fog, normals, and depth.
+    float2 sceneUV = float2(in.uv.x, 1.0 - in.uv.y);
+    float2 aoUV = sceneUV;
+    float2 fogUV = float2(params.offsetX, params.offsetY) + sceneUV * float2(params.scaleX, params.scaleY);
+    // Scene color alpha — sky dome renders with alpha=0, scene geometry with alpha=1
+    float sceneAlpha = sceneColorTexture.sample(nearestSampler, fogUV).a;
     float4 ssao = aoTexture.sample(linearSampler, aoUV);
     float4 fogSample = fogTexture.sample(nearestSampler, fogUV);
     float3 sceneNormal = normalTexture.sample(linearSampler, fogUV).xyz;
@@ -502,8 +544,24 @@ fragment float4 ssao_combine_fs(VSOut in [[stage_in]],
     float depthMask = saturate(depthSignal);
     float3 decodedNormal = sceneNormal * 2.0 - 1.0;
 
+    // Scene color alpha: 0 for sky, 1 for scene geometry — used as smooth
+    // weight to prevent hard AO transitions at sky dome boundaries.
+    float sceneAlpha = sceneColorTexture.sample(nearestSampler, fogUV).a;
+    // AO confidence from nearest-sampled depth — linear interpolation at
+    // boundaries would blend sky (ssao.y≈0) with scene, making aoConfidence
+    // incorrectly treat boundary pixels as valid scene. Nearest keeps the
+    // binary distinction: 0 for sky, non-zero for scene.
+    float aoConfidenceRaw = aoTexture.sample(nearestSampler, aoUV).y;
+    float aoConfidence = smoothstep(0.0, 1e-5, aoConfidenceRaw);
+    // Full-res nearest-sampled normal: sky dome pixels have cleared normals
+    // (0,0,0). Linear sampling at boundaries bleeds scene normals into sky,
+    // but nearest keeps the binary distinction.
+    float3 nearestNormal = normalTexture.sample(nearestSampler, fogUV).xyz * 2.0 - 1.0;
+    float normalConfidence = saturate(length(nearestNormal) * 10.0);
+    bool isFarPlane = (sceneDepth >= params.zFar * 0.99);
+
     if (params.debugMode == 0) {
-        if (rawSceneDepth <= 0.0001 || length(decodedNormal) <= 0.1) {
+        if (isFarPlane || length(decodedNormal) <= 0.1) {
             return float4(fogSample.rgb, 0.0);
         }
 
@@ -511,22 +569,24 @@ fragment float4 ssao_combine_fs(VSOut in [[stage_in]],
             float aoAlpha = (1.0 - ssao.x) * depthMask;
             // Less aggressive smoothstep to preserve subtle AO while still killing speckles
             aoAlpha *= smoothstep(0.002, 0.020, aoAlpha);
+            // AO confidence + normal confidence: smooth blend at sky boundaries
+            aoAlpha *= sceneAlpha * aoConfidence * normalConfidence;
             return float4(fogSample.rgb, aoAlpha);
         }
 
         float centerAlpha = (1.0 - attenuation) * saturate(1.0 - exp2(-ssao.y * 0.005));
         float2 aoTexel = 1.0 / float2((float)aoTexture.get_width(), (float)aoTexture.get_height());
-        float4 ssaoL = aoTexture.sample(linearSampler, aoUV + float2(-aoTexel.x, 0.0));
-        float4 ssaoR = aoTexture.sample(linearSampler, aoUV + float2( aoTexel.x, 0.0));
-        float4 ssaoU = aoTexture.sample(linearSampler, aoUV + float2(0.0, -aoTexel.y));
-        float4 ssaoD = aoTexture.sample(linearSampler, aoUV + float2(0.0,  aoTexel.y));
+        float4 ssaoL = aoTexture.sample(nearestSampler, aoUV + float2(-aoTexel.x, 0.0));
+        float4 ssaoR = aoTexture.sample(nearestSampler, aoUV + float2( aoTexel.x, 0.0));
+        float4 ssaoU = aoTexture.sample(nearestSampler, aoUV + float2(0.0, -aoTexel.y));
+        float4 ssaoD = aoTexture.sample(nearestSampler, aoUV + float2(0.0,  aoTexel.y));
         float centerDepth = max(ssao.y, 1e-5);
         float blurSharpness = max(params.blurSharpness * 4.0, 0.02);
         float4 taps[4] = { ssaoL, ssaoR, ssaoU, ssaoD };
         float alphaSum = centerAlpha;
         float weightSum = 1.0;
         for (int i = 0; i < 4; i++) {
-            if (taps[i].y <= 1e-5) {
+            if (taps[i].y < 2.0) {
                 continue;
             }
             float tapAlpha = (1.0 - taps[i].x) * saturate(1.0 - exp2(-taps[i].y * 0.005));
@@ -541,7 +601,7 @@ fragment float4 ssao_combine_fs(VSOut in [[stage_in]],
         float neighborWeight = 0.0;
         float4 neighborVals[4] = { ssaoL, ssaoR, ssaoU, ssaoD };
         for (int n = 0; n < 4; n++) {
-            if (neighborVals[n].y <= 1e-5) continue;
+            if (neighborVals[n].y < 2.0) continue;
             float nAlpha = (1.0 - neighborVals[n].x) * saturate(1.0 - exp2(-neighborVals[n].y * 0.005));
             float nDepthDelta = abs(neighborVals[n].y - centerDepth) * blurSharpness;
             float nWeight = exp2(-0.35 - nDepthDelta * nDepthDelta);
@@ -567,7 +627,15 @@ fragment float4 ssao_combine_fs(VSOut in [[stage_in]],
         float3 multiBounce = max(aoAlpha, ((a * aoAlpha + b) * aoAlpha + c) * aoAlpha);
         aoAlpha = multiBounce.x;
 
-        aoAlpha *= smoothstep(0.001, 0.015, aoAlpha);
+        // When a pixel is isolated (no valid depth neighbors), suppress AO
+        // more aggressively to prevent white speckles from bright fog
+        // blending over dark scene color at depth discontinuities.
+        float neighborConfidence = saturate(neighborWeight * 2.0);
+        float speckleThreshold = mix(0.005, 0.001, neighborConfidence);
+        float speckleEdge      = mix(0.030, 0.015, neighborConfidence);
+        aoAlpha *= smoothstep(speckleThreshold, speckleEdge, aoAlpha);
+        // AO confidence + normal confidence: smooth blend at sky boundaries
+        aoAlpha *= sceneAlpha * aoConfidence * normalConfidence;
         return float4(fogSample.rgb, aoAlpha);
     }
     else if (params.debugMode < 3)
@@ -584,6 +652,10 @@ fragment float4 ssao_combine_fs(VSOut in [[stage_in]],
         return float4(float3(step(1e-5, ssao.y)), 1.0);
     else if (params.debugMode == 8)
         return float4(float3(depthMask), 1.0);
+    else if (params.debugMode == 9)
+        return float4(float3(sceneAlpha), 1.0);
+    else if (params.debugMode == 10)
+        return float4(float3(aoConfidence), 1.0);
     else
         return float4(ssao.xyz, 1.0);
 }
@@ -632,6 +704,26 @@ kernel void ssao_combine(
         sceneTexture.write(scene, gid);
         return;
     }
+}
+)";
+
+static const char* COVERAGE_MASK_SOURCE = R"(
+#include <metal_stdlib>
+using namespace metal;
+
+struct CoverageVSOut {
+    float4 position [[position]];
+};
+
+vertex CoverageVSOut coverage_mask_vs(uint vid [[vertex_id]]) {
+    CoverageVSOut out;
+    float2 pos[3] = { float2(-1.0, -1.0), float2(3.0, -1.0), float2(-1.0, 3.0) };
+    out.position = float4(pos[vid], 0.0, 1.0);
+    return out;
+}
+
+fragment float4 coverage_mask_fs(CoverageVSOut in [[stage_in]]) {
+    return float4(1.0, 0.0, 0.0, 1.0);
 }
 )";
 
@@ -700,6 +792,7 @@ MtAOModule::MtAOModule(MetalRenderDevice* device) : fb(device) {
     }
 
     CreateDitherTexture();
+    CreateCoverageMaskPipeline();
 }
 
 MtAOModule::~MtAOModule() {
@@ -709,11 +802,13 @@ MtAOModule::~MtAOModule() {
     if (atrousPSO) atrousPSO->release();
     if (combinePSO) combinePSO->release();
     if (combineRenderPSO) combineRenderPSO->release();
+    if (coverageMaskPSO) coverageMaskPSO->release();
     if (mAOTexture) mAOTexture->release();
     if (mBlurTexture) mBlurTexture->release();
     if (mFullresAOTexture) mFullresAOTexture->release();
     if (mFullresTempTexture) mFullresTempTexture->release();
     if (mDitherTexture) mDitherTexture->release();
+    if (mCoverageMask) mCoverageMask->release();
 }
 
 void MtAOModule::CreateDitherTexture() {
@@ -771,6 +866,17 @@ void MtAOModule::EnsureTextures(int width, int height) {
                                         usage, MTL::StorageModePrivate);
     mBlurTexture = compute->CreateTexture(width, height, MTL::PixelFormatRG16Float,
                                           usage, MTL::StorageModePrivate);
+
+    // Stencil coverage mask: R8Unorm at AO resolution, render target for stencil-tested quad
+    if (mCoverageMask) { mCoverageMask->release(); mCoverageMask = nullptr; }
+    auto covDesc = MTL::TextureDescriptor::alloc()->init();
+    covDesc->setWidth(width);
+    covDesc->setHeight(height);
+    covDesc->setPixelFormat(MTL::PixelFormatR8Unorm);
+    covDesc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
+    covDesc->setStorageMode(MTL::StorageModePrivate);
+    mCoverageMask = fb->device->device->newTexture(covDesc);
+    covDesc->release();
 
     mAOWidth = width;
     mAOHeight = height;
@@ -900,6 +1006,15 @@ bool MtAOModule::Render(float m5, int sceneWidth, int sceneHeight) {
     // 1.5-2.0 units is usually a good balance for GZDoom scale.
     params.maxThickness = 1.25f;
 
+    // Distance fade: see the comment at its use site in ssao_compute.
+    // Defaults (100/500) sit just outside typical room scale (player
+    // height is 56 units, gl_ssao_radius defaults to 80) — sky-camera
+    // rooms are compact content, not distant, so the fade needs to kick
+    // in close. Exposed as cvars since appropriate distance is inherently
+    // map/content-scale dependent.
+    params.fadeStartDistance = std::max((float)mt_compute_ao_fade_start, 0.0f);
+    params.fadeEndDistance = std::max((float)mt_compute_ao_fade_end, params.fadeStartDistance + 1.0f);
+
     auto cmdBuf = fb->GetCommands()->GetRenderCommandBuffer();
     if (!cmdBuf)
         return false;
@@ -907,10 +1022,15 @@ bool MtAOModule::Render(float m5, int sceneWidth, int sceneHeight) {
     fb->GetRenderState()->EndRenderPass();
     const bool blurAO = gl_ssao_debug < 2;
     auto aoStart = std::chrono::high_resolution_clock::now();
+
+    // Render stencil coverage mask: white where stencil == screen->stencilValue
+    // Used by compute kernel to reject samples crossing portal boundaries
+    RenderCoverageMask(buffers->SceneDepthStencil->GetTexture(), screen->stencilValue);
+
     Execute(cmdBuf, buffers->SceneDepthStencil->GetTexture(),
             buffers->SceneNormal->GetTexture(), buffers->SceneColor->GetTexture(),
             mAOTexture, mDitherTexture,
-            buffers->SceneFog->GetTexture(), nullptr, params, blurAO,
+            buffers->SceneFog->GetTexture(), nullptr, mCoverageMask, params, blurAO,
             useFullresCleanup);
     MTL::Texture *combineAO = (useFullresCleanup && mFullresResultTexture) ? mFullresResultTexture :
         (mLowresResultTexture ? mLowresResultTexture : mAOTexture);
@@ -989,11 +1109,12 @@ void MtAOModule::Combine(MTL::Texture* aoTex, int sceneWidth, int sceneHeight, b
     encoder->setFragmentTexture(buffers->SceneFog->GetTexture(), 1);
     encoder->setFragmentTexture(buffers->SceneNormal->GetTexture(), 2);
     encoder->setFragmentTexture(buffers->SceneDepthStencil->GetTexture(), 3);
+    encoder->setFragmentTexture(buffers->SceneColor->GetTexture(), 4);
     encoder->drawPrimitives(MTL::PrimitiveTypeTriangle, (NS::UInteger)0,
                             (NS::UInteger)3);
 }
 
-void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL::Texture* normalTex, MTL::Texture* sceneColorTex, MTL::Texture* aoTex, MTL::Texture* ditherTex, MTL::Texture* fogTex, MTL::Texture* combineTex, const SSAOParams& params, bool blurAO, bool useFullresCleanup) {
+void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL::Texture* normalTex, MTL::Texture* sceneColorTex, MTL::Texture* aoTex, MTL::Texture* ditherTex, MTL::Texture* fogTex, MTL::Texture* combineTex, MTL::Texture* coverageTex, const SSAOParams& params, bool blurAO, bool useFullresCleanup) {
     if (!ssaoPSO || (blurAO && (!blurPSO || !mBlurTexture)) || !depthTex || !normalTex || !sceneColorTex || !ditherTex || !aoTex) return;
     mFullresResultTexture = nullptr;
     mLowresResultTexture = aoTex;
@@ -1009,10 +1130,14 @@ void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL
     encoder->setTexture(aoTex, 2);
     encoder->setTexture(normalTex, 3);
     encoder->setTexture(sceneColorTex, 4);
+    if (coverageTex) encoder->setTexture(coverageTex, 5);
 
     struct AOFlags { int flipY; float invBackingScale; } aoFlags;
-    aoFlags.flipY = fb->RenderTextureIsFlipped() ? 1 : 0;
-    aoFlags.invBackingScale = aoFlags.flipY ? params.screenResY / (float)aoTex->height() : 1.0f;
+    // Keep AO in the same texture coordinate space as scene depth, normals,
+    // fog, and the fullscreen combine pass. An AO-only Y flip misaligns the
+    // fog contribution and appears as a bright, vertically inverted layer.
+    aoFlags.flipY = 0;
+    aoFlags.invBackingScale = params.screenResY / (float)aoTex->height();
     encoder->setBytes(&aoFlags, sizeof(aoFlags), 1);
 
     MTL::Size gridSize = { (NS::UInteger)aoTex->width(), (NS::UInteger)aoTex->height(), 1 };
@@ -1108,5 +1233,85 @@ void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL
         }
     }
 
+    encoder->endEncoding();
+}
+
+void MtAOModule::CreateCoverageMaskPipeline() {
+    if (coverageMaskPSO)
+        return;
+
+    auto sourceString = NS::String::string(COVERAGE_MASK_SOURCE, NS::UTF8StringEncoding);
+    auto compileOptions = MTL::CompileOptions::alloc()->init();
+    compileOptions->setLanguageVersion(MTL::LanguageVersion2_0);
+    NS::Error* error = nullptr;
+    auto library = fb->device->device->newLibrary(sourceString, compileOptions, &error);
+    compileOptions->release();
+    if (!library) {
+        if (error) {
+            Printf(PRINT_LOG, "Metal: Failed to compile coverage mask library: %s\n",
+                   error->localizedDescription()->utf8String());
+            error->release();
+        }
+        return;
+    }
+
+    auto vert = library->newFunction(NS::String::string("coverage_mask_vs", NS::UTF8StringEncoding));
+    auto frag = library->newFunction(NS::String::string("coverage_mask_fs", NS::UTF8StringEncoding));
+    library->release();
+    if (!vert || !frag) {
+        if (vert) vert->release();
+        if (frag) frag->release();
+        return;
+    }
+
+    auto desc = MTL::RenderPipelineDescriptor::alloc()->init();
+    desc->setVertexFunction(vert);
+    desc->setFragmentFunction(frag);
+    desc->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormatR8Unorm);
+    desc->setDepthAttachmentPixelFormat(MTL::PixelFormatDepth32Float_Stencil8);
+    desc->setStencilAttachmentPixelFormat(MTL::PixelFormatDepth32Float_Stencil8);
+
+    NS::Error* psoError = nullptr;
+    coverageMaskPSO = fb->device->device->newRenderPipelineState(desc, &psoError);
+    if (!coverageMaskPSO && psoError) {
+        Printf(PRINT_LOG, "Metal: Failed to create coverage mask pipeline: %s\n",
+               psoError->localizedDescription()->utf8String());
+        psoError->release();
+    }
+    desc->release();
+    vert->release();
+    frag->release();
+}
+
+void MtAOModule::RenderCoverageMask(MTL::Texture* depthStencilTex, int stencilValue) {
+    if (!coverageMaskPSO || !mCoverageMask || !depthStencilTex)
+        return;
+
+    auto cmdBuf = fb->GetCommands()->GetRenderCommandBuffer();
+    if (!cmdBuf)
+        return;
+
+    auto desc = MTL::RenderPassDescriptor::alloc()->init();
+    desc->colorAttachments()->object(0)->setTexture(mCoverageMask);
+    desc->colorAttachments()->object(0)->setLoadAction(MTL::LoadActionClear);
+    desc->colorAttachments()->object(0)->setClearColor(MTL::ClearColor(0.0, 0.0, 0.0, 0.0));
+    desc->colorAttachments()->object(0)->setStoreAction(MTL::StoreActionStore);
+    desc->depthAttachment()->setTexture(depthStencilTex);
+    desc->depthAttachment()->setLoadAction(MTL::LoadActionLoad);
+    desc->depthAttachment()->setStoreAction(MTL::StoreActionDontCare);
+    desc->stencilAttachment()->setTexture(depthStencilTex);
+    desc->stencilAttachment()->setLoadAction(MTL::LoadActionLoad);
+    desc->stencilAttachment()->setStoreAction(MTL::StoreActionDontCare);
+
+    auto encoder = cmdBuf->renderCommandEncoder(desc);
+    desc->release();
+    if (!encoder)
+        return;
+
+    encoder->setRenderPipelineState(coverageMaskPSO);
+    encoder->setDepthStencilState(fb->GetPipelineStateManager()->GetPPStencilState());
+    encoder->setStencilReferenceValue((uint32_t)stencilValue);
+    encoder->setCullMode(MTL::CullModeNone);
+    encoder->drawPrimitives(MTL::PrimitiveTypeTriangle, (NS::UInteger)0, (NS::UInteger)3);
     encoder->endEncoding();
 }

@@ -739,11 +739,37 @@ static void PatchVertexShader(std::string &source,
       source = std::regex_replace(source, glPosRegex, patch);
   }
 
-  // Normalize normals if assigned to stabilize lighting
-  std::regex normalRegex(R"((vNormal|vWorldNormal|vEyeNormal)\s*=\s*([^;]+);)");
+  // Guard against normalize(vec3(0)) which is undefined on Metal 2.0 (Intel HD 6000).
+  // When bones.Normal is zero (sky dome missing normal attribute), the matrix
+  // transform with w=1 picks up the translation column, producing a non-zero
+  // direction instead of zero. Must guard the entire normal assignment chain
+  // BEFORE the normalize stabilization patch below, which would otherwise
+  // rewrite the lines before this guard can match the original patterns.
+  {
+    std::regex worldNormRegex(
+      R"(vWorldNormal\s*=\s*vec4\(normalize\(\(NormalModelMatrix\s*\*\s*vec4\(normalize\(bones\.Normal\),\s*1\.0\)\)\.xyz\),\s*1\.0\);)");
+    if (std::regex_search(source, worldNormRegex)) {
+      source = std::regex_replace(source, worldNormRegex,
+        "vWorldNormal = length(bones.Normal) > 0.0001 ? vec4(normalize((NormalModelMatrix * vec4(normalize(bones.Normal), 1.0)).xyz), 1.0) : vec4(0.0);");
+      Printf(PRINT_LOG, "Metal: zero-world-normal guard applied in %s\n",
+             shadername.c_str());
+    }
+  }
+  {
+    std::regex eyeNormRegex(
+      R"(vEyeNormal\s*=\s*vec4\(normalize\(\(NormalViewMatrix\s*\*\s*vec4\(normalize\(vWorldNormal\.xyz\),\s*1\.0\)\)\.xyz\),\s*1\.0\);)");
+    if (std::regex_search(source, eyeNormRegex)) {
+      source = std::regex_replace(source, eyeNormRegex,
+        "vEyeNormal = length(vWorldNormal.xyz) > 0.0001 ? vec4(normalize((NormalViewMatrix * vec4(normalize(vWorldNormal.xyz), 1.0)).xyz), 1.0) : vec4(0.0);");
+    }
+  }
+
+  // Normalize normals if assigned to stabilize lighting (vNormal only —
+  // vWorldNormal / vEyeNormal are handled by the zero-guards above)
+  std::regex normalRegex(R"(vNormal\s*=\s*([^;]+);)");
   if (std::regex_search(source, normalRegex)) {
     source = std::regex_replace(source, normalRegex,
-                                "$1 = vec4(normalize($2.xyz + 1e-10), $2.w);");
+                                "vNormal = vec4(normalize($1.xyz + 1e-10), $1.w);");
   }
 }
 
@@ -818,6 +844,25 @@ static void PatchFragmentShader(std::string &source,
 
 static void PatchPostprocessFragmentShader(std::string &source,
                                            const std::string &shadername) {
+  // Fix Metal Reverse-Z: lineardepth.fp forces sky pixels (alpha=0) to depth 1.0,
+  // but with Metal's Reverse-Z params, that maps to zNear instead of zFar.
+  // Change forced depth to 0.0 (Reverse-Z far plane) so sky pixels get zFar.
+  if (shadername.find("lineardepth") != std::string::npos) {
+    std::regex skyRegex(R"(: 1\.0\);)");
+    source = std::regex_replace(source, skyRegex, ": 0.0);");
+  }
+
+  // Sky-dome guard: Metal may produce non-zero normals for the sky dome's
+  // missing vertex attribute (GPU-dependent behavior of normalize(vec3(0))).
+  // Skip AO computation on far-plane pixels by checking linear depth > 50000.
+  if (shadername.find("ssao.fp") != std::string::npos &&
+      shadername.find("ssaocombine") == std::string::npos) {
+    std::regex occlusionRegex(
+      R"(float occlusion = viewNormal != vec3\(0\.0\) \? ComputeAO\(viewPosition, viewNormal\) \* AOStrength \+ \(1\.0 - AOStrength\) : 1\.0;)");
+    source = std::regex_replace(source, occlusionRegex,
+      "float occlusion = (viewPosition.z > 0.0001 && viewNormal != vec3(0.0)) ? ComputeAO(viewPosition, viewNormal) * AOStrength + (1.0 - AOStrength) : 1.0;");
+  }
+
   if (shadername.find("ssaocombine") != std::string::npos) {
     size_t pos = source.find("vec4 ssao = texture(AODepthTexture, TexCoord);");
     if (pos != std::string::npos) {

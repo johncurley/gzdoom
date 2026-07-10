@@ -53,6 +53,14 @@ void HWSkyPortal::DrawContents(HWDrawInfo *di, FRenderState &state)
 
 
 	state.ResetColor();
+	// The sky dome vertex format has no normal attribute. On GL/Vulkan an
+	// unbound attribute reads the API's zero default, which is what lets
+	// SSAO's zero-normal check exclude the sky for free. Metal has no such
+	// default: when a vertex format lacks VATTR_NORMAL its shaders fall
+	// back to the uVertexNormal uniform, which otherwise still holds
+	// whatever the last wall/flat/model draw left in it. Reset it
+	// explicitly so the sky's G-buffer normal is zero on every backend.
+	state.SetNormal(0.f, 0.f, 0.f);
 	state.EnableFog(false);
 	state.AlphaFunc(Alpha_GEqual, 0.f);
 	state.SetRenderStyle(STYLE_Translucent);

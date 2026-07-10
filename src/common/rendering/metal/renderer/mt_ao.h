@@ -31,14 +31,18 @@ public:
         int numDirections;
         int numSteps;
         float maxThickness;
+        float fadeStartDistance;
+        float fadeEndDistance;
     };
     bool Render(float m5, int sceneWidth, int sceneHeight);
-    void Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL::Texture* normalTex, MTL::Texture* sceneColorTex, MTL::Texture* aoTex, MTL::Texture* ditherTex, MTL::Texture* fogTex, MTL::Texture* combineTex, const SSAOParams& params, bool blurAO, bool useFullresCleanup);
+    void Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL::Texture* normalTex, MTL::Texture* sceneColorTex, MTL::Texture* aoTex, MTL::Texture* ditherTex, MTL::Texture* fogTex, MTL::Texture* combineTex, MTL::Texture* coverageTex, const SSAOParams& params, bool blurAO, bool useFullresCleanup);
 
 private:
     void EnsureTextures(int width, int height);
     void EnsureFullresTextures(int width, int height);
     void CreateDitherTexture();
+    void CreateCoverageMaskPipeline();
+    void RenderCoverageMask(MTL::Texture* depthStencilTex, int stencilValue);
     void Combine(MTL::Texture* aoTex, int sceneWidth, int sceneHeight, bool fullresAO);
 
     MetalRenderDevice* fb;
@@ -48,6 +52,7 @@ private:
     MTL::ComputePipelineState* atrousPSO = nullptr;
     MTL::ComputePipelineState* combinePSO = nullptr;
     MTL::RenderPipelineState* combineRenderPSO = nullptr;
+    MTL::RenderPipelineState* coverageMaskPSO = nullptr;
     MTL::Texture* mAOTexture = nullptr;
     MTL::Texture* mBlurTexture = nullptr;
     MTL::Texture* mLowresResultTexture = nullptr;
@@ -55,6 +60,7 @@ private:
     MTL::Texture* mFullresTempTexture = nullptr;
     MTL::Texture* mFullresResultTexture = nullptr;
     MTL::Texture* mDitherTexture = nullptr;
+    MTL::Texture* mCoverageMask = nullptr;
     int mAOWidth = 0;
     int mAOHeight = 0;
     int mFullresWidth = 0;

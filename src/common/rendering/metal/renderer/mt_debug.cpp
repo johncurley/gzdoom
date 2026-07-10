@@ -297,8 +297,8 @@ void MtDebugManager::StartLogging(const char *filepath) {
     // Write header
     fprintf(mLogFile,
             "Frame,FPS,DrawCalls,FrameTimeMS,GPUMemoryMB,StateChanges,"
-            "TextureAllocs,BufferAllocs,ComputeAOMS,ComputeBloomMS,"
-            "PPAOMS,PPBloomMS\n");
+            "TextureAllocs,BufferAllocs,ComputeAOCPUms,ComputeBloomCPUms,"
+            "PPAOCPUms,PPBloomCPUms\n");
     mLogFrameCount = 0;
     mLoggingStartTime = std::chrono::high_resolution_clock::now();
     Printf(PRINT_HIGH, "Metal Debug: Logging started to %s\n", filename.c_str());

@@ -31,8 +31,13 @@
 #include "v_video.h"
 
 EXTERN_CVAR(Int, gl_dither_bpc)
-CVAR(Bool, mt_compute_ao, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
-CVAR(Bool, mt_compute_bloom, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Bool, mt_compute_ao, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Bool, mt_compute_bloom, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CUSTOM_CVAR(Int, mt_compute_bloom_composite, 0, 0)
+{
+  if (self < 0) self = 0;
+  if (self > 2) self = 2;
+}
 CUSTOM_CVAR(Int, mt_compute_ao_scale, 2, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
   if (self < 2) self = 2;
@@ -58,6 +63,8 @@ CUSTOM_CVAR(Int, mt_compute_ao_steps, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
   if (self < 0) self = 0;
   if (self > 16) self = 16;
 }
+CVAR(Float, mt_compute_ao_fade_start, 100.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Float, mt_compute_ao_fade_end, 500.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CUSTOM_CVAR(Int, mt_compute_ao_directions, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
   if (self < 0) self = 0;

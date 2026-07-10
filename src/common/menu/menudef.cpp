@@ -250,6 +250,24 @@ static bool CheckSkipOptionBlock(FScanner &sc)
 				filter = true;
 			#endif
 		}
+		else if (sc.Compare("Vulkan"))
+		{
+	#ifdef HAVE_VULKAN
+			filter = true;
+	#endif
+		}
+		else if (sc.Compare("Metal"))
+		{
+	#ifdef HAVE_METAL
+			filter = true;
+	#endif
+		}
+		else if (sc.Compare("GLES"))
+		{
+	#ifdef HAVE_GLES2
+			filter = true;
+	#endif
+		}
 		else if (sc.Compare("SWRender"))
 		{
 #ifndef NO_SWRENDERER

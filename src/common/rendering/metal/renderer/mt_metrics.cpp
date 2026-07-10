@@ -4,10 +4,10 @@
 
 namespace {
 constexpr std::array<MtMetricInfo, (size_t)MtMetric::Count> MetricInfos = {{
-    {"AO", "ComputeAOMS", "Compute"},
-    {"Bloom", "ComputeBloomMS", "Compute"},
-    {"AO", "PPAOMS", "PP"},
-    {"Bloom", "PPBloomMS", "PP"},
+    {"AO", "ComputeAOCPUms", "ComputeCPU"},
+    {"Bloom", "ComputeBloomCPUms", "ComputeCPU"},
+    {"AO", "PPAOCPUms", "PPCPU"},
+    {"Bloom", "PPBloomCPUms", "PPCPU"},
 }};
 
 size_t MetricIndex(MtMetric metric) {

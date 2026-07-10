@@ -86,6 +86,12 @@ float ComputeSampleHorizon(vec3 viewPosition, vec3 viewNormal, vec2 sampleUV, in
 {
 	vec3 samplePos = FetchViewPos(clamp(sampleUV, InvFullResolution * 0.5, vec2(1.0) - InvFullResolution * 0.5));
 	vec3 viewDelta = samplePos - viewPosition;
+
+	// Skybox/portal guard: reject samples from incompatible camera views
+	// (different cameras write incompatible depth ranges, creating seams)
+	float depthRatio = max(viewPosition.z, samplePos.z) / max(min(viewPosition.z, samplePos.z), 1e-5);
+	if (depthRatio > 100.0) return 0.0;
+
 	float distanceSquare = max(dot(viewDelta, viewDelta), 1e-6);
 	float invDistance = inversesqrt(distanceSquare);
 	float normalAngle = dot(viewNormal, viewDelta) * invDistance;
@@ -130,7 +136,19 @@ void main()
 {
     vec3 viewPosition = FetchViewPos(TexCoord);
 	vec3 viewNormal = FetchNormal(TexCoord);
-	float occlusion = viewNormal != vec3(0.0) ? ComputeAO(viewPosition, viewNormal) * AOStrength + (1.0 - AOStrength) : 1.0;
+
+	// Distance fade: screen-space AO is both numerically unreliable and
+	// perceptually unwanted at long range. In particular a sky camera room
+	// (real physical geometry portaled in to stand in for the sky) is
+	// genuine geometry with genuine normals and will otherwise pick up real
+	// occlusion from its own creases, even though it's meant to read as
+	// open, unoccluded sky. Fade strength back to 0 between FadeStart and
+	// FadeEnd (view-space Z, world units) using the same blend-toward-no-AO
+	// idiom already used for AOStrength itself.
+	float distanceFade = 1.0 - smoothstep(FadeStart, FadeEnd, viewPosition.z);
+	float effectiveStrength = AOStrength * distanceFade;
+
+	float occlusion = viewNormal != vec3(0.0) ? ComputeAO(viewPosition, viewNormal) * effectiveStrength + (1.0 - effectiveStrength) : 1.0;
 
 	FragColor = vec4(occlusion, viewPosition.z, 0.0, 1.0);
 }
