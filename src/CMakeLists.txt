@@ -832,6 +832,18 @@ if (HAVE_METAL AND APPLE)
 		COMMENT "Linking native Metal shader library"
 		VERBATIM)
 	add_custom_target(metal_native_shaders DEPENDS ${METAL_NATIVE_LIBRARY})
+
+	# Non-blocking, not part of the default build or zdoom's deps -- catches
+	# canonical-.metal-vs-inline-fallback-string drift (see
+	# tools/check_shader_parity.py). Run manually: cmake --build build --target check_shader_parity
+	find_program(PYTHON3_EXECUTABLE python3)
+	if (PYTHON3_EXECUTABLE)
+		add_custom_target(check_shader_parity
+			COMMAND ${PYTHON3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_shader_parity.py
+			WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+			COMMENT "Checking Metal native shader source parity (non-blocking, run manually)"
+			VERBATIM)
+	endif()
 endif()
 
 if (HAVE_GLES2)

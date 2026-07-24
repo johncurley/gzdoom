@@ -559,8 +559,9 @@ FRenderState* VulkanRenderDevice::RenderState()
 	return mRenderState.get();
 }
 
-void VulkanRenderDevice::AmbientOccludeScene(float m5)
+void VulkanRenderDevice::AmbientOccludeScene(float m5, const HWViewpointUniforms* currentViewpoint)
 {
+	// currentViewpoint unused: Vulkan's SSAO has no world-space reconstruction to feed.
 	mPostprocess->AmbientOccludeScene(m5);
 }
 

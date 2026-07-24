@@ -123,7 +123,7 @@ public:
   void PostProcessScene(
       bool swscene, int fixedcm, float flash,
       const std::function<void()> &afterBloomDrawEndScene2D) override;
-  void AmbientOccludeScene(float m5) override;
+  void AmbientOccludeScene(float m5, const HWViewpointUniforms* currentViewpoint) override;
   void SetSceneRenderTarget(bool useSSAO) override;
   void SetLevelMesh(hwrenderer::LevelMesh *mesh) override;
   void UpdateShadowMap() override;

@@ -1,9 +1,16 @@
 #include <metal_stdlib>
 using namespace metal;
 
-// NOTE: The authoritative Metal Bloom shader source is the inline string in
-// src/common/rendering/metal/renderer/mt_bloom.cpp (BLOOM_COMPUTE_SOURCE).
-// This file is kept in sync as a reference copy.
+// NOTE: This file is the authoritative Metal Bloom shader source. It is
+// compiled into native_shaders.metallib (CMake target metal_native_shaders)
+// and loaded by MtShaderManager::LoadNativeLibrary() before any inline
+// string. The matching BLOOM_COMPUTE_SOURCE inline string in
+// src/common/rendering/metal/renderer/mt_bloom.cpp is only a fallback used
+// if the metallib can't be found -- keep it in sync with this file, not the
+// other way around. (Same fix already applied to mt_ao.metal 2026-07-10;
+// verified 2026-07-14 via tools/check_shader_parity.py that this pair's
+// kernel bodies were never actually drifted, only this comment's authority
+// direction was wrong.)
 
 struct BloomParams {
     float threshold;

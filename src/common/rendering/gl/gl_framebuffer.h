@@ -27,7 +27,7 @@ public:
 	void InitializeState() override;
 	void Update() override;
 
-	void AmbientOccludeScene(float m5) override;
+	void AmbientOccludeScene(float m5, const HWViewpointUniforms* currentViewpoint) override;
 	void FirstEye() override;
 	void NextEye(int eyecount) override;
 	void SetSceneRenderTarget(bool useSSAO) override;

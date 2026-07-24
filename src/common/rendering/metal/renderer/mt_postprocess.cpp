@@ -70,6 +70,45 @@ CUSTOM_CVAR(Int, mt_compute_ao_directions, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
   if (self < 0) self = 0;
   if (self > 16) self = 16;
 }
+// 0 = GTAO (current, unchanged default), 1 = AlchemyAO/SAO, 2 = GTAO + depth-mip sampling
+CUSTOM_CVAR(Int, mt_compute_ao_algorithm, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+  if (self < 0) self = 0;
+  if (self > 2) self = 2;
+}
+// 0 = use gl_ssao-tier default (8/8/12), same convention as mt_compute_ao_steps
+CUSTOM_CVAR(Int, mt_compute_ao_alchemy_samples, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+  if (self < 0) self = 0;
+  if (self > 16) self = 16;
+}
+// Visual debug for the world-locked AO noise fix (see AGENTS.md). Renders
+// full-screen, not a single spot-checked point, via the existing
+// gl_ssao_debug 2 raw-AO grayscale display (NOT 1 -- gl_ssao_debug < 2
+// still runs the bilateral blur pass on top of whatever the sample kernel
+// wrote, which would smear this diagnostic; 2 skips it, showing the
+// kernel's raw per-pixel output) -- each sample kernel writes a diagnostic
+// value straight to aoOutput instead of running real AO math. 0 = normal
+// (off). 1/2/3 = fract(worldPos.xy / cellSize), fract(worldPos.xz /
+// cellSize), fract(worldPos.yz / cellSize) -- a correct world-locked
+// pattern looks like a stable grid painted onto geometry: it must not
+// slide when panning past a wall, and must not rotate/shift when turning
+// in place near it.
+CUSTOM_CVAR(Int, mt_compute_ao_worldpos_debug, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+  if (self < 0) self = 0;
+  if (self > 3) self = 3;
+}
+// World-space grid cell size (map units) the noise hash quantizes to --
+// analogous to the old dither texture's implicit tiling frequency. Smaller
+// = finer-grained dithering (closer to the old look) but coarser aliasing
+// at distance; larger = coarser dithering but less distance aliasing.
+// Default is a starting point for empirical tuning against the old look,
+// not a measured value -- see AGENTS.md.
+CUSTOM_CVAR(Float, mt_compute_ao_noise_cellsize, 12.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+  if (self < 1.0f) self = 1.0f;
+}
 
 class MtPPRenderState : public PPRenderState {
 public:
@@ -304,7 +343,7 @@ void MtPostprocess::BlurScene(float amount) {
   hw_postprocess.bloom.RenderBlur(&renderstate, sceneWidth, sceneHeight, amount);
 }
 
-void MtPostprocess::AmbientOccludeScene(float m5) {
+void MtPostprocess::AmbientOccludeScene(float m5, const HWViewpointUniforms* currentViewpoint) {
   if (!fb->mAOModule) return;
 
   auto depthTex = fb->GetBuffers()->SceneDepthStencil.get();
@@ -322,7 +361,7 @@ void MtPostprocess::AmbientOccludeScene(float m5) {
   if (fb->mZNear < 0.1f) fb->mZNear = 5.0f;
   if (fb->mZFar < fb->mZNear) fb->mZFar = 65536.0f;
 
-  if (mt_compute_ao && fb->mAOModule->Render(m5, sceneWidth, sceneHeight)) {
+  if (mt_compute_ao && fb->mAOModule->Render(m5, sceneWidth, sceneHeight, currentViewpoint)) {
     return;
   }
 

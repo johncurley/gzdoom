@@ -104,7 +104,6 @@ protected:
   bool mDepthClamp = true;
   MTL::RenderCommandEncoder *mEncoder = nullptr;
   MtPipelineKey mPipelineKey = {};
-  MTL::RenderPassDescriptor *mPassDescriptor = nullptr;
   int mClearTargets = 0;
   bool mNeedApply = true;
   bool mStreamDirty = true;

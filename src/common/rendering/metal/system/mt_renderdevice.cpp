@@ -861,9 +861,9 @@ void MetalRenderDevice::PostProcessScene(
                                    afterBloomDrawEndScene2D);
   }
 }
-void MetalRenderDevice::AmbientOccludeScene(float m5) {
+void MetalRenderDevice::AmbientOccludeScene(float m5, const HWViewpointUniforms* currentViewpoint) {
   if (mPostprocess)
-    mPostprocess->AmbientOccludeScene(m5);
+    mPostprocess->AmbientOccludeScene(m5, currentViewpoint);
 }
 void MetalRenderDevice::SetSceneRenderTarget(bool useSSAO) {
   if (mPostprocess)

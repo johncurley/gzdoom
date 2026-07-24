@@ -69,6 +69,7 @@ public:
   // Vertex format identifier (for pipeline state selection)
   int VertexFormat = -1;
   bool HasColor() const { return mHasColor; }
+  bool HasNormal() const { return mHasNormal; }
 
 protected:
   void PrepareForWrite();
@@ -91,6 +92,7 @@ private:
   int mNumBindingPoints = 0;
   std::vector<FVertexBufferAttribute> mAttributes;
   bool mHasColor = false;
+  bool mHasNormal = false;
   BufferUsageType mUsage = BufferUsageType::Static;
   MetalRenderDevice *fb = nullptr;
   void *mMappedMemory = nullptr;

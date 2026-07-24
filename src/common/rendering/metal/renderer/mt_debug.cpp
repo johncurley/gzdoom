@@ -33,12 +33,16 @@
 EXTERN_CVAR(Bool, mt_debug)
 
 namespace {
-MtDebugManager *GetActiveMetalDebugManager() {
+MetalRenderDevice *GetActiveMetalRenderDevice() {
   if (!screen || !screen->IsMetal())
     return nullptr;
 
-  auto fb = static_cast<MetalRenderDevice *>(screen);
-  return fb->GetDebugManager();
+  return static_cast<MetalRenderDevice *>(screen);
+}
+
+MtDebugManager *GetActiveMetalDebugManager() {
+  auto fb = GetActiveMetalRenderDevice();
+  return fb ? fb->GetDebugManager() : nullptr;
 }
 
 void PrintMetricSummary(MtDebugManager *debug, MtMetric metric) {
@@ -88,6 +92,17 @@ void MtDebugManager::EndFrame() {
           .count();
 
   mCurrentFrameStats.frameTimeMs = frameTimeMs;
+
+  // Drain any real GPU frame time reported asynchronously by a just-
+  // completed command buffer's completion handler. Due to pipelining
+  // (maxDrawableCount) this value typically corresponds to a frame 1-2
+  // iterations behind the current one -- tagging it onto "now" is fine for
+  // a rolling-average display, same tradeoff every async GPU timer makes.
+  float gpuFrameTimeMs =
+      mPendingGPUFrameTimeMs.exchange(-1.0f, std::memory_order_relaxed);
+  if (gpuFrameTimeMs >= 0.0f) {
+    RecordMetric(MtMetric::FrameGPU, gpuFrameTimeMs);
+  }
 
   // Store in history
   mFrameTimeHistory.push_back(frameTimeMs);
@@ -191,11 +206,24 @@ void MtDebugManager::RecordBloomTiming(float durationMs) {
   RecordMetric(MtMetric::ComputeBloom, durationMs);
 }
 
+void MtDebugManager::RecordGPUFrameTimeAsync(float durationMs) {
+  mPendingGPUFrameTimeMs.store(durationMs, std::memory_order_relaxed);
+}
+
 void MtDebugManager::RecordStall(const char *type, float durationMs) {
   mCurrentFrameStats.stallCount++;
   mCurrentFrameStats.stallTotalMs += durationMs;
   if (durationMs > mCurrentFrameStats.stallMaxMs)
     mCurrentFrameStats.stallMaxMs = durationMs;
+}
+
+void MtDebugManager::RecordTextureUpload(float durationMs) {
+  mCurrentFrameStats.textureUploads++;
+  RecordMetric(MtMetric::TextureUploadCPU, durationMs);
+}
+
+void MtDebugManager::RecordExtraCommandBuffer() {
+  mCurrentFrameStats.extraCommandBuffers++;
 }
 
 void MtDebugManager::PrintDebugStats() {
@@ -216,6 +244,13 @@ void MtDebugManager::PrintDebugStats() {
            mCurrentFrameStats.stallTotalMs,
            mCurrentFrameStats.stallMaxMs);
 
+  const float textureUploadMs = mCurrentFrameStats.GetMetric(MtMetric::TextureUploadCPU);
+  if (mCurrentFrameStats.extraCommandBuffers > 0 || textureUploadMs > 0.0f)
+    Printf(PRINT_HIGH, " | TexUpload: %d (%.2fms, extra CBs: %d)",
+           mCurrentFrameStats.textureUploads,
+           textureUploadMs,
+           mCurrentFrameStats.extraCommandBuffers);
+
   const float computeAO = mCurrentFrameStats.GetMetric(MtMetric::ComputeAO);
   const float computeBloom = mCurrentFrameStats.GetMetric(MtMetric::ComputeBloom);
   if (computeAO > 0.0f || computeBloom > 0.0f) {
@@ -235,6 +270,10 @@ void MtDebugManager::PrintDebugStats() {
     if (ppBloom > 0.0f)
       Printf(PRINT_HIGH, " Bloom=%.2fms", ppBloom);
   }
+
+  const float gpuFrame = mCurrentFrameStats.GetMetric(MtMetric::FrameGPU);
+  if (gpuFrame > 0.0f)
+    Printf(PRINT_HIGH, " | GPU: %.2fms", gpuFrame);
 
   Printf(PRINT_HIGH, "\n");
   
@@ -296,9 +335,9 @@ void MtDebugManager::StartLogging(const char *filepath) {
   if (mLogFile) {
     // Write header
     fprintf(mLogFile,
-            "Frame,FPS,DrawCalls,FrameTimeMS,GPUMemoryMB,StateChanges,"
+            "Frame,FPS,DrawCalls,FrameTimeMS,FrameGPUms,GPUMemoryMB,StateChanges,"
             "TextureAllocs,BufferAllocs,ComputeAOCPUms,ComputeBloomCPUms,"
-            "PPAOCPUms,PPBloomCPUms\n");
+            "PPAOCPUms,PPBloomCPUms,TextureUploads,TextureUploadCPUms,ExtraCommandBuffers\n");
     mLogFrameCount = 0;
     mLoggingStartTime = std::chrono::high_resolution_clock::now();
     Printf(PRINT_HIGH, "Metal Debug: Logging started to %s\n", filename.c_str());
@@ -324,8 +363,9 @@ void MtDebugManager::WriteLogEntry() {
   float avgFrameTime = GetAverageFrameTime();
   float fps = (avgFrameTime > 0) ? 1000.0f / avgFrameTime : 0.0f;
 
-  fprintf(mLogFile, "%d,%.1f,%d,%.2f,%.1f,%d,%d,%d,%.3f,%.3f,%.3f,%.3f\n", mLogFrameCount, fps,
+  fprintf(mLogFile, "%d,%.1f,%d,%.2f,%.3f,%.1f,%d,%d,%d,%.3f,%.3f,%.3f,%.3f,%d,%.3f,%d\n", mLogFrameCount, fps,
           mCurrentFrameStats.drawCallCount, mCurrentFrameStats.frameTimeMs,
+          mCurrentFrameStats.GetMetric(MtMetric::FrameGPU),
           mCurrentFrameStats.gpuMemoryCurrent / (1024.0f * 1024.0f),
           mCurrentFrameStats.stateChanges,
           mCurrentFrameStats.textureAllocations,
@@ -333,7 +373,10 @@ void MtDebugManager::WriteLogEntry() {
           mCurrentFrameStats.GetMetric(MtMetric::ComputeAO),
           mCurrentFrameStats.GetMetric(MtMetric::ComputeBloom),
           mCurrentFrameStats.GetMetric(MtMetric::PPAO),
-          mCurrentFrameStats.GetMetric(MtMetric::PPBloom));
+          mCurrentFrameStats.GetMetric(MtMetric::PPBloom),
+          mCurrentFrameStats.textureUploads,
+          mCurrentFrameStats.GetMetric(MtMetric::TextureUploadCPU),
+          mCurrentFrameStats.extraCommandBuffers);
 
   mLogFrameCount++;
 
@@ -383,10 +426,18 @@ CCMD(mt_metrics)
 
   Printf(PRINT_HIGH, "Metal metrics over the rolling debug window:\n");
   PrintFrameSummary(debug);
+  PrintMetricSummary(debug, MtMetric::FrameGPU);
+  if (auto fb = GetActiveMetalRenderDevice()) {
+    Printf(PRINT_HIGH, "  Per-pass GPU timing capability (stage boundary counter sampling): %s\n",
+           fb->mVersionManager.supportsStageCounterSampling ? "supported" : "NOT supported on this GPU/driver");
+  }
   PrintMetricSummary(debug, MtMetric::ComputeAO);
   PrintMetricSummary(debug, MtMetric::ComputeBloom);
   PrintMetricSummary(debug, MtMetric::PPAO);
   PrintMetricSummary(debug, MtMetric::PPBloom);
+  PrintMetricSummary(debug, MtMetric::TextureUploadCPU);
+  Printf(PRINT_HIGH, "  Extra command buffers (last frame, world/lightmap texture uploads + mipmap regen): %d\n",
+         debug->GetLastFrameStats().extraCommandBuffers);
 }
 
 CCMD(mt_metrics_reset)

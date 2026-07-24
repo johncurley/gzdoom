@@ -32,11 +32,19 @@ struct MtVersionManager {
 
   // Feature flags for workarounds
   bool useManagedStorage = false;
-  bool explicitFlushing = false;
   bool needsVertexNormalization = false;
   bool presentsWithTransaction = false; // Synchronize with Cocoa UI
   bool supportsBinaryArchives = false;
   int maxDrawableCount = 2;
+  // MTLCommandBuffer::GPUStartTime()/GPUEndTime() require macOS 10.15+.
+  bool supportsGPUTimestamps = false;
+  // Whether this GPU can place a counter-sampling point at a render/compute
+  // encoder's stage boundary (MTLCounterSampleBuffer). Needed for real
+  // per-pass GPU timing (opaque geo / sky / AO / bloom / composite);
+  // whole-frame timing above doesn't need this. Queried via
+  // supportsCounterSampling(), which is safe to call on any OS/GPU (uses a
+  // respondsToSelector-guarded message send, not a raw one).
+  bool supportsStageCounterSampling = false;
 
 #ifdef __APPLE__
   void Initialize(MTL::Device *device) {
@@ -49,9 +57,11 @@ struct MtVersionManager {
     osMinor = (int)version.minorVersion;
     osPatch = (int)version.patchVersion;
 
-    // macOS 10.15 (Catalina) and later support presentsWithTransaction
+    // macOS 10.15 (Catalina) and later support presentsWithTransaction and
+    // MTLCommandBuffer GPU timestamp queries.
     if (osMajor > 10 || (osMajor == 10 && osMinor >= 15)) {
       presentsWithTransaction = true;
+      supportsGPUTimestamps = true;
     }
 
     // Binary archives require macOS 11.0 (Big Sur)
@@ -73,7 +83,6 @@ struct MtVersionManager {
           true; // Intel/AMD/NVIDIA on macOS prefer Managed for CPU-GPU sync
       if (name.find("Intel") != std::string::npos) {
         architecture = MtGPUArchitecture::Intel;
-        explicitFlushing = true; // Intel Broadwell+ needs careful flushing
       } else if (name.find("NVIDIA") != std::string::npos) {
         architecture = MtGPUArchitecture::NVIDIA;
       } else if (name.find("AMD") != std::string::npos ||
@@ -92,6 +101,11 @@ struct MtVersionManager {
       // Most modern Metal GPUs support RGB10A2
       supportsRGB10A2 = true;
     }
+
+    // Per-pass GPU timing capability probe -- safe to call unconditionally,
+    // supportsCounterSampling() guards its own message send.
+    supportsStageCounterSampling =
+        device->supportsCounterSampling(MTL::CounterSamplingPointAtStageBoundary);
 
     // Metal Version (rough estimation based on GPU family)
     if (device->supportsFamily(MTL::GPUFamilyMac2))

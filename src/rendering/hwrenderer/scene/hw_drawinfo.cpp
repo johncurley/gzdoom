@@ -1070,7 +1070,11 @@ void HWDrawInfo::DrawScene(int drawmode)
 
 	if (applySSAO && RenderState.GetPassType() == GBUFFER_PASS)
 	{
-		screen->AmbientOccludeScene(VPUniforms.mProjectionMatrix.get()[5]);
+		// Pass VPUniforms directly rather than relying on the backend
+		// re-reading a shared "last set viewpoint" -- see v_video.h's
+		// AmbientOccludeScene doc comment for why that's unreliable by this
+		// point in the frame.
+		screen->AmbientOccludeScene(VPUniforms.mProjectionMatrix.get()[5], &VPUniforms);
 		screen->mViewpoints->Bind(RenderState, vpIndex);
 	}
 

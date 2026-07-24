@@ -1,16 +1,24 @@
 #include <metal_stdlib>
 using namespace metal;
 
-// NOTE: The authoritative Metal SSAO shader source is the inline string in
-// src/common/rendering/metal/renderer/mt_ao.cpp (SSAO_COMPUTE_SOURCE).
-// This file is a reference copy; the combine vertex/fragment shaders are
-// used as a fallback for the combine render pipeline, but compute kernels
-// (ssao_compute, bilateral_blur, etc.) are compiled from the inline source.
-//
-// Keep this file in sync with mt_ao.cpp to avoid divergent behavior.
+// NOTE: This file is the authoritative Metal SSAO shader source. It is
+// compiled into native_shaders.metallib (CMake target metal_native_shaders)
+// and loaded by MtShaderManager::LoadNativeLibrary() before any inline
+// string. The matching SSAO_COMPUTE_SOURCE inline string in
+// src/common/rendering/metal/renderer/mt_ao.cpp is only a fallback used if
+// the metallib can't be found — keep it in sync with this file, not the
+// other way around.
 
 struct SSAOParams {
-    float4x4 invProj;
+    // Affine view-space -> world-space transform for this frame's camera
+    // (rotation-transpose in the upper-left 3x3, camera world position in
+    // the translation column, (0,0,0,1) bottom row) -- built CPU-side in
+    // MtAOModule::Render(). Used to world-lock the per-pixel jitter noise
+    // (see AGENTS.md). Repurposes the field that used to hold an
+    // inverse-projection matrix for the now-deleted ReconstructViewPos
+    // helper (confirmed dead: zero live call sites, all sample kernels use
+    // FetchViewPos instead).
+    float4x4 viewToWorld;
     float radius;
     float bias;
     float intensity;
@@ -35,6 +43,15 @@ struct SSAOParams {
     float maxThickness;
     float fadeStartDistance;
     float fadeEndDistance;
+    // World-space grid cell size (map units) the noise hash quantizes to --
+    // analogous to the old dither texture's implicit tiling frequency. See
+    // mt_compute_ao_noise_cellsize's doc comment (mt_postprocess.cpp).
+    float noiseCellSize;
+    // 0 = normal AO. Nonzero renders a world-locked-noise diagnostic
+    // straight to aoOutput (viewable via the existing gl_ssao_debug 2
+    // raw-AO display) instead of running real AO math -- see
+    // mt_compute_ao_worldpos_debug's doc comment (mt_postprocess.cpp).
+    int debugMode;
 };
 
 struct AOFlags {
@@ -69,18 +86,56 @@ struct AOFullresParams {
 #define GOLDEN_ANGLE 2.39996323
 #define NUM_SAMPLES 16
 
-float3 ReconstructViewPos(float2 uv, float depth, float4x4 invProj, float2 screenRes) {
-    // Map depth from [0,1] to NDC z in [-1,1]
-    float zNDC = depth * 2.0 - 1.0;
-    float4 ndc = float4(uv.x * 2.0 - 1.0, (1.0 - uv.y) * 2.0 - 1.0, zNDC, 1.0);
-    float4 viewPos = invProj * ndc;
-    return viewPos.xyz / viewPos.w;
-}
-
 float3 FetchViewPos(float2 uv, float linearDepth, constant SSAOParams &params) {
     float2 uvToViewA = float2(params.uvToViewAX, params.uvToViewAY);
     float2 uvToViewB = float2(params.uvToViewBX, params.uvToViewBY);
     return float3((uvToViewA * uv + uvToViewB) * linearDepth, linearDepth);
+}
+
+// Reconstructs world-space position from a view-space one, undoing
+// FetchViewPos's "+Z = distance in front of camera" convention (always
+// positive) back to the real view matrix's standard OpenGL "-Z in front"
+// convention -- this exact negation was already empirically verified during
+// the temporal-AO investigation's "Z-sign" bug fix (see AGENTS.md), reused
+// here rather than re-derived. params.viewToWorld is an ordinary affine
+// transform (rotation + translation, no projection), so no perspective
+// divide is needed.
+float3 WorldPosFromViewPos(float3 centerViewPos, constant SSAOParams &params) {
+    float3 realViewPos = float3(centerViewPos.xy, -centerViewPos.z);
+    return (params.viewToWorld * float4(realViewPos, 1.0)).xyz;
+}
+
+// PCG3D integer hash (Jarzynski & Olano, "Hash Functions for GPU
+// Rendering") -- pure bit-mixing, no sin()/cos() on large arguments. A
+// classic frac(sin(dot(p,K))*C)-style hash loses precision and bands at
+// large input magnitudes; Doom/UDMF world coordinates comfortably fit
+// int32 but can still be in the tens of thousands, so an integer hash is
+// used instead of a sine-based one.
+uint3 Pcg3d(uint3 v) {
+    v = v * 1664525u + 1013904223u;
+    v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
+    v ^= v >> 16u;
+    v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
+    return v;
+}
+
+// World-locked replacement for the old screen-space dither-texture lookup
+// (pixelCenter / 64.0). Quantizes worldPos to an integer grid cell --
+// cellSize controls the dither's spatial frequency, analogous to the old
+// texture's implicit tiling scale -- and hashes the cell coordinate. A
+// static world point always lands in the same cell and gets the same
+// jitter regardless of camera position/orientation, which is what actually
+// fixes the "AO pattern slides near geometry while moving" bug (see
+// AGENTS.md): the old pixelCenter-based noise changed every frame as the
+// camera moved, even for a perfectly static surface point. Returns
+// (rotation in radians, stepJitter, directionJitter) -- directly usable,
+// no atan2 round-trip needed since there's no texture-storage requirement
+// forcing the old cos/sin encoding.
+float3 WorldNoise(float3 worldPos, float cellSize) {
+    int3 cell = int3(floor(worldPos / max(cellSize, 1.0)));
+    uint3 h = Pcg3d(uint3(cell));
+    float3 unorm = float3(h) * (1.0 / 4294967295.0);
+    return float3(unorm.x * 6.28318530718, unorm.y, unorm.z);
 }
 
 float LinearizeSceneDepth(float depth, constant SSAOParams &params) {
@@ -116,10 +171,6 @@ float NormalWeight(float3 centerNormal, float3 sampleNormal) {
     return pow(saturate(dot(centerNormal, sampleNormal)), 8.0);
 }
 
-float InterleavedGradientNoise(float2 p) {
-    return fract(52.9829189 * fract(dot(p, float2(0.06711056, 0.00583715))));
-}
-
 kernel void ssao_compute(
     uint2 gid [[thread_position_in_grid]],
     constant SSAOParams &params [[buffer(0)]],
@@ -134,7 +185,12 @@ kernel void ssao_compute(
     float2 outSize = float2((float)aoOutput.get_width(), (float)aoOutput.get_height());
     if (gid.x >= outSize.x || gid.y >= outSize.y) return;
 
-    sampler nearestSampler(mag_filter::nearest, min_filter::nearest, address::repeat);
+    // ditherTexture is intentionally unused now (world-locked noise
+    // replaced it -- see WorldNoise) but its parameter/binding is left in
+    // place; removing it means renumbering every subsequent texture index
+    // in this kernel, mt_ao.cpp's Execute(), and the other two sample
+    // kernels -- deferred to its own isolated cleanup once the new noise is
+    // confirmed correct in-game (see AGENTS.md).
     sampler nearestClampSampler(mag_filter::nearest, min_filter::nearest, address::clamp_to_edge);
 
     float2 pixelCenter = float2(gid) + 0.5;
@@ -152,7 +208,7 @@ kernel void ssao_compute(
 
     if (centerDepth <= 0.0001) {
         aoOutput.write(float4(1.0, 0.0, 0.0, 1.0), gid);
-        return; 
+        return;
     }
 
     float centerLinearDepth = LinearizeSceneDepth(centerDepth, params);
@@ -164,22 +220,46 @@ kernel void ssao_compute(
         return;
     }
 
+    float3 worldPos = WorldPosFromViewPos(centerViewPos, params);
+
+    // Visual debug for the world-locked noise fix itself -- see
+    // mt_compute_ao_worldpos_debug's doc comment (mt_postprocess.cpp).
+    // Deliberately bypasses the rest of the AO computation entirely.
+    if (params.debugMode != 0) {
+        float cellSize = max(params.noiseCellSize, 1.0);
+        float2 dbg = params.debugMode == 1 ? fract(worldPos.xy / cellSize) :
+                     params.debugMode == 2 ? fract(worldPos.xz / cellSize) :
+                                              fract(worldPos.yz / cellSize);
+        aoOutput.write(float4(dbg.x, dbg.y, 0.0, 1.0), gid);
+        return;
+    }
+
     float3 centerNormal = DecodeSceneNormal(normalTexture.sample(nearestClampSampler, sceneUV).xyz);
     if (all(centerNormal == float3(0.0))) {
         aoOutput.write(float4(1.0, 0.0, 0.0, 1.0), gid);
         return;
     }
 
-    float2 noiseUV = pixelCenter / 64.0; // Assuming 64x64 noise texture
-    float4 noise = ditherTexture.sample(nearestSampler, noiseUV);
-    float ign = InterleavedGradientNoise(pixelCenter);
-    float rotation = atan2(noise.y, noise.x);
-    float stepJitter = fract(noise.z + ign * 0.754877666);
-    float directionJitter = fract(noise.w + ign * 0.569840296);
+    float3 worldNoise = WorldNoise(worldPos, params.noiseCellSize);
+    float rotation = worldNoise.x;
+    float stepJitter = worldNoise.y;
+    float directionJitter = worldNoise.z;
 
     float radiusPixels = params.radiusToScreen / max(centerViewPos.z, 1e-5);
-    const int numSteps = 4;
-    const int numDirections = clamp(params.numDirections, 4, 5);
+    // Cap the screen-space sample radius. Uncapped, standing close to any
+    // surface (centerViewPos.z small -- completely ordinary at typical
+    // player-to-wall distances, not just extreme clipping) sends
+    // radiusPixels past the AO texture's own dimensions: every sample's UV
+    // then hard-clamps to the texture edge (see the sampleUV clamp below),
+    // collapsing the sample disk into a handful of edge pixels unrelated to
+    // local geometry -- and which edge pixel gets hit is hypersensitive to
+    // tiny position/angle changes, producing a visibly rotating/stretching
+    // AO pattern up close. Reported 2026-07-19. Bounding to a fraction of
+    // the shorter texture dimension keeps the sample disk within a
+    // meaningful local neighborhood at any distance.
+    radiusPixels = min(radiusPixels, min(outSize.x, outSize.y) * 0.5);
+    const int numSteps = clamp(params.numSteps, 2, 8); // Capped for Intel
+    const int numDirections = clamp(params.numDirections, 2, 6); // Capped for Intel
     float stepSizePixels = radiusPixels / (float(numSteps) + 1.0);
     float minStepPixels = max(stepSizePixels, 1.0);
 
@@ -216,6 +296,380 @@ kernel void ssao_compute(
             }
 
             float sampleLinearDepth = LinearizeSceneDepth(sampleRawDepth, params);
+            float3 sampleViewPos = FetchViewPos(sampleUV, sampleLinearDepth, params);
+            float3 sampleVector = sampleViewPos - centerViewPos;
+
+            float depthDiff = sampleViewPos.z - centerViewPos.z;
+            float thicknessThreshold = params.maxThickness * (1.0 + centerViewPos.z * 0.05);
+            float frontThickness = params.maxThickness * (0.5 + centerViewPos.z * 0.02);
+            if (depthDiff > thicknessThreshold || depthDiff < -frontThickness) continue;
+            // Skybox/portal guard: reject samples from incompatible camera views
+            float depthRatio = max(centerViewPos.z, sampleViewPos.z) / max(min(centerViewPos.z, sampleViewPos.z), 1e-5f);
+            if (depthRatio > 100.0) continue;
+
+            float distanceSquare = max(dot(sampleVector, sampleVector), 1e-6);
+            float invDistance = rsqrt(distanceSquare);
+            float normalAngle = dot(centerNormal, sampleVector) * invDistance;
+            float sampleHorizon = max(normalAngle - params.bias, 0.0);
+            float falloff = saturate(distanceSquare * params.negInvR2 + 1.0);
+            occlusion += max(sampleHorizon - horizon, 0.0) * falloff;
+            horizon = max(horizon, sampleHorizon);
+        }
+    }
+
+    occlusion *= params.aoMultiplier / float(numDirections * numSteps);
+    float visibility = clamp(1.0 - occlusion * params.visibilityStrength, 0.0, 1.0);
+
+    // Distance fade: see mt_ao.cpp SSAO_COMPUTE_SOURCE (authoritative) for
+    // the full rationale. Fades occlusion strength to 0 past fadeStartDistance
+    // so distant real geometry (e.g. sky-camera rooms) doesn't self-occlude.
+    float distanceFade = 1.0 - smoothstep(params.fadeStartDistance, params.fadeEndDistance, centerViewPos.z);
+    float effectiveStrength = params.intensity * distanceFade;
+    visibility = visibility * effectiveStrength + (1.0 - effectiveStrength);
+
+    aoOutput.write(float4(saturate(visibility), centerLinearDepth, 0.0, 1.0), gid);
+}
+
+// AlchemyAO/SAO: a fixed, flat, Vogel-disk-distributed sample set instead of
+// ssao_compute's numDirections x numSteps horizon-marching loop -- one
+// dependent texture-fetch chain per sample (coverage -> depth -> normal),
+// no per-direction horizon-max tracking. Targets the "fewer total samples"
+// cost axis, complementary to ssao_compute_mip's "cheaper per-sample at
+// distance" axis below. numSteps is repurposed as the flat sample count
+// (see mt_ao.cpp Render(): the existing Intel numSteps clamp then also caps
+// this algorithm's sample count for free); numDirections is unused.
+kernel void ssao_compute_alchemy(
+    uint2 gid [[thread_position_in_grid]],
+    constant SSAOParams &params [[buffer(0)]],
+    constant AOFlags &flags [[buffer(1)]],
+    texture2d<float, access::sample> ditherTexture [[texture(0)]],
+    texture2d<float, access::sample> depthTexture [[texture(1)]],
+    texture2d<float, access::write> aoOutput [[texture(2)]],
+    texture2d<float, access::sample> normalTexture [[texture(3)]],
+    texture2d<float, access::sample> sceneColorTexture [[texture(4)]],
+    texture2d<float, access::sample> coverageMask [[texture(5)]])
+{
+    float2 outSize = float2((float)aoOutput.get_width(), (float)aoOutput.get_height());
+    if (gid.x >= outSize.x || gid.y >= outSize.y) return;
+
+    // ditherTexture is intentionally unused now (world-locked noise
+    // replaced it -- see WorldNoise) but its parameter/binding is left in
+    // place; removal is deferred to its own isolated cleanup once the new
+    // noise is confirmed correct in-game (see AGENTS.md).
+    sampler nearestClampSampler(mag_filter::nearest, min_filter::nearest, address::clamp_to_edge);
+
+    float2 pixelCenter = float2(gid) + 0.5;
+    float2 halfTexel = 0.5 / outSize;
+    float2 uv = pixelCenter / outSize;
+    if (flags.flipY == 1) uv.y = 1.0 - uv.y;
+    float2 sceneUV = float2(params.offsetX, params.offsetY) + uv * float2(params.scaleX, params.scaleY);
+    float centerCoverage = sceneColorTexture.sample(nearestClampSampler, sceneUV).a;
+    if (centerCoverage <= 0.0001) {
+        aoOutput.write(float4(1.0, 0.0, 0.0, 1.0), gid);
+        return;
+    }
+
+    float centerDepth = depthTexture.sample(nearestClampSampler, sceneUV).r;
+    if (centerDepth <= 0.0001) {
+        aoOutput.write(float4(1.0, 0.0, 0.0, 1.0), gid);
+        return;
+    }
+
+    float centerLinearDepth = LinearizeSceneDepth(centerDepth, params);
+    float3 centerViewPos = FetchViewPos(uv, centerLinearDepth, params);
+
+    // Sky-dome guard: depth-clamped sky geometry sits at far plane
+    if (centerLinearDepth >= params.zFar * 0.99) {
+        aoOutput.write(float4(1.0, 0.0, 0.0, 1.0), gid);
+        return;
+    }
+
+    float3 worldPos = WorldPosFromViewPos(centerViewPos, params);
+
+    // Visual debug for the world-locked noise fix itself -- see
+    // mt_compute_ao_worldpos_debug's doc comment (mt_postprocess.cpp).
+    if (params.debugMode != 0) {
+        float cellSize = max(params.noiseCellSize, 1.0);
+        float2 dbg = params.debugMode == 1 ? fract(worldPos.xy / cellSize) :
+                     params.debugMode == 2 ? fract(worldPos.xz / cellSize) :
+                                              fract(worldPos.yz / cellSize);
+        aoOutput.write(float4(dbg.x, dbg.y, 0.0, 1.0), gid);
+        return;
+    }
+
+    float3 centerNormal = DecodeSceneNormal(normalTexture.sample(nearestClampSampler, sceneUV).xyz);
+    if (all(centerNormal == float3(0.0))) {
+        aoOutput.write(float4(1.0, 0.0, 0.0, 1.0), gid);
+        return;
+    }
+
+    float3 worldNoise = WorldNoise(worldPos, params.noiseCellSize);
+    float rotation = worldNoise.x;
+    // Per-pixel radius jitter breaks the deterministic Vogel/Fibonacci
+    // spiral coherence between neighboring pixels. Without it, every pixel
+    // places its i-th sample at exactly the same fractional ring radius, so
+    // the golden-angle spiral becomes visible as a rotating pinwheel once
+    // radiusPixels (which grows as centerViewPos.z shrinks, i.e. up close)
+    // spreads the rings far enough apart on-screen to resolve individually.
+    // Reported 2026-07-17: "AO coordinates seem to rotate... when close to
+    // something" -- this is the fix, same jitter role ssao_compute's own
+    // stepJitter plays to avoid the equivalent artifact in its own grid.
+    float radiusJitter = worldNoise.y;
+
+    float radiusPixels = params.radiusToScreen / max(centerViewPos.z, 1e-5);
+    // Cap the screen-space sample radius. Uncapped, standing close to any
+    // surface (centerViewPos.z small -- completely ordinary at typical
+    // player-to-wall distances, not just extreme clipping) sends
+    // radiusPixels past the AO texture's own dimensions: every sample's UV
+    // then hard-clamps to the texture edge (see the sampleUV clamp below),
+    // collapsing the sample disk into a handful of edge pixels unrelated to
+    // local geometry -- and which edge pixel gets hit is hypersensitive to
+    // tiny position/angle changes, producing a visibly rotating/stretching
+    // AO pattern up close. Reported 2026-07-19. Bounding to a fraction of
+    // the shorter texture dimension keeps the sample disk within a
+    // meaningful local neighborhood at any distance.
+    radiusPixels = min(radiusPixels, min(outSize.x, outSize.y) * 0.5);
+    int sampleCount = clamp(params.numSteps, 1, NUM_SAMPLES);
+    float occlusion = 0.0;
+
+    for (int i = 0; i < sampleCount; i++) {
+        float ang = GOLDEN_ANGLE * float(i) + rotation;
+        // Vogel/Fibonacci disk: sqrt spacing gives uniform sample density
+        // across the disk area, not just around its circumference.
+        float radiusFrac = sqrt((float(i) + 0.5 + radiusJitter) / float(sampleCount));
+        float2 dir = float2(cos(ang), sin(ang));
+        float rayPixels = radiusFrac * radiusPixels;
+        float2 sampleUV = uv + dir * rayPixels / outSize;
+        sampleUV = clamp(sampleUV, halfTexel, float2(1.0) - halfTexel);
+        float2 sampleSceneUV = float2(params.offsetX, params.offsetY) + sampleUV * float2(params.scaleX, params.scaleY);
+
+        float sampleCoverage = sceneColorTexture.sample(nearestClampSampler, sampleSceneUV).a;
+        if (sampleCoverage <= 0.0001) {
+            continue;
+        }
+
+        // Stencil coverage guard: skip samples from different portal layers
+        float sampleCov = coverageMask.sample(nearestClampSampler, sampleUV).r;
+        if (sampleCov < 0.5) continue;
+
+        float sampleRawDepth = depthTexture.sample(nearestClampSampler, sampleSceneUV).r;
+        if (sampleRawDepth <= 0.0001) {
+            continue;
+        }
+
+        float3 sampleNormal = DecodeSceneNormal(normalTexture.sample(nearestClampSampler, sampleSceneUV).xyz);
+        if (all(sampleNormal == float3(0.0))) {
+            continue;
+        }
+
+        float sampleLinearDepth = LinearizeSceneDepth(sampleRawDepth, params);
+        float3 sampleViewPos = FetchViewPos(sampleUV, sampleLinearDepth, params);
+        float3 sampleVector = sampleViewPos - centerViewPos;
+
+        float depthDiff = sampleViewPos.z - centerViewPos.z;
+        float thicknessThreshold = params.maxThickness * (1.0 + centerViewPos.z * 0.05);
+        float frontThickness = params.maxThickness * (0.5 + centerViewPos.z * 0.02);
+        if (depthDiff > thicknessThreshold || depthDiff < -frontThickness) continue;
+        // Skybox/portal guard: reject samples from incompatible camera views
+        float depthRatio = max(centerViewPos.z, sampleViewPos.z) / max(min(centerViewPos.z, sampleViewPos.z), 1e-5f);
+        if (depthRatio > 100.0) continue;
+
+        // Same per-sample math as ssao_compute (proven correct there),
+        // applied to a flat sample set instead of nested direction/step
+        // loops with horizon-max tracking -- deliberately NOT adding any
+        // extra distance-weighting term (a previous version multiplied by
+        // 1/|v| to mimic the classic AlchemyAO paper's falloff shape; that
+        // was never visually validated and is the prime suspect for a
+        // reported "coordinate system off / not responding to normals"
+        // artifact, so it's removed rather than debugged further -- keep
+        // this kernel's only difference from ssao_compute being the sample
+        // pattern, not the occlusion math itself).
+        float distanceSquare = max(dot(sampleVector, sampleVector), 1e-6);
+        float invDistance = rsqrt(distanceSquare);
+        float normalAngle = dot(centerNormal, sampleVector) * invDistance;
+        float falloff = saturate(distanceSquare * params.negInvR2 + 1.0);
+        occlusion += max(normalAngle - params.bias, 0.0) * falloff;
+    }
+
+    occlusion *= params.aoMultiplier / float(sampleCount);
+    float visibility = clamp(1.0 - occlusion * params.visibilityStrength, 0.0, 1.0);
+
+    // Distance fade: see mt_ao.cpp SSAO_COMPUTE_SOURCE (authoritative) for
+    // the full rationale. Fades occlusion strength to 0 past fadeStartDistance
+    // so distant real geometry (e.g. sky-camera rooms) doesn't self-occlude.
+    float distanceFade = 1.0 - smoothstep(params.fadeStartDistance, params.fadeEndDistance, centerViewPos.z);
+    float effectiveStrength = params.intensity * distanceFade;
+    visibility = visibility * effectiveStrength + (1.0 - effectiveStrength);
+
+    aoOutput.write(float4(saturate(visibility), centerLinearDepth, 0.0, 1.0), gid);
+}
+
+// Depth mip pyramid seed: writes linearized view-space depth from the raw
+// SceneDepthStencil into mip 0 of a dedicated R16Float pyramid texture.
+// Mips 1+ are generated afterward via MTLBlitCommandEncoder::generateMipmaps
+// (mt_ao.cpp Execute()) -- box-filtered, which is fine here since a distant
+// horizon-search tap only needs an approximately-right coarse depth, not a
+// conservative Hi-Z-style bound.
+kernel void linearize_depth_mip0(
+    uint2 gid [[thread_position_in_grid]],
+    constant SSAOParams &params [[buffer(0)]],
+    texture2d<float, access::sample> depthTexture [[texture(0)]],
+    texture2d<float, access::write> pyramidOut [[texture(1)]])
+{
+    if (gid.x >= pyramidOut.get_width() || gid.y >= pyramidOut.get_height()) return;
+
+    constexpr sampler nearestClampSampler(mag_filter::nearest, min_filter::nearest, address::clamp_to_edge);
+    float2 uv = (float2(gid) + 0.5) / float2((float)pyramidOut.get_width(), (float)pyramidOut.get_height());
+    float raw = depthTexture.sample(nearestClampSampler, uv).r;
+    // Preserve the invalid-texel sentinel explicitly: box-filtering an
+    // unconditionally-linearized value across a sky/geometry edge into
+    // coarser mips would blend a real depth into this pixel and lose the
+    // "invalid" signal ssao_compute_mip's sampleLinearDepth <= 0.0001 guard
+    // relies on downstream. Known, accepted limitation: this can still blend
+    // a stale 0.0 into a bogus mid-value at such an edge in coarser mips --
+    // not fixed here, since the thickness/depth-ratio rejection in
+    // ssao_compute_mip already discards samples too far from centerViewPos.z,
+    // and only distant, already-falloff-discounted taps ever reach coarse
+    // mips.
+    float linear = (raw <= 0.0001) ? 0.0 : LinearizeSceneDepth(raw, params);
+    pyramidOut.write(float4(linear, 0.0, 0.0, 1.0), gid);
+}
+
+// Depth-mip-pyramid horizon sampling: identical GTAO horizon-marching
+// structure/loop count to ssao_compute, but distant steps in the loop read a
+// coarser mip of the pyramid seeded above instead of always sampling
+// full-res depth. Targets the "cheaper per-sample cost at distance" axis --
+// same sample count as ssao_compute, cheaper texture-cache behavior for far
+// taps. Coverage and normal fetches stay full-res; there is no normal
+// pyramid (not worth the extra texture/blit cost for uncertain benefit).
+kernel void ssao_compute_mip(
+    uint2 gid [[thread_position_in_grid]],
+    constant SSAOParams &params [[buffer(0)]],
+    constant AOFlags &flags [[buffer(1)]],
+    texture2d<float, access::sample> ditherTexture [[texture(0)]],
+    texture2d<float, access::sample> depthTexture [[texture(1)]],
+    texture2d<float, access::write> aoOutput [[texture(2)]],
+    texture2d<float, access::sample> normalTexture [[texture(3)]],
+    texture2d<float, access::sample> sceneColorTexture [[texture(4)]],
+    texture2d<float, access::sample> coverageMask [[texture(5)]],
+    texture2d<float, access::sample> depthPyramid [[texture(6)]])
+{
+    float2 outSize = float2((float)aoOutput.get_width(), (float)aoOutput.get_height());
+    if (gid.x >= outSize.x || gid.y >= outSize.y) return;
+
+    // ditherTexture is intentionally unused now (world-locked noise
+    // replaced it -- see WorldNoise) but its parameter/binding is left in
+    // place; removal is deferred to its own isolated cleanup once the new
+    // noise is confirmed correct in-game (see AGENTS.md).
+    sampler nearestClampSampler(mag_filter::nearest, min_filter::nearest, address::clamp_to_edge);
+
+    float2 pixelCenter = float2(gid) + 0.5;
+    float2 halfTexel = 0.5 / outSize;
+    float2 uv = pixelCenter / outSize;
+    if (flags.flipY == 1) uv.y = 1.0 - uv.y;
+    float2 sceneUV = float2(params.offsetX, params.offsetY) + uv * float2(params.scaleX, params.scaleY);
+    float centerCoverage = sceneColorTexture.sample(nearestClampSampler, sceneUV).a;
+    if (centerCoverage <= 0.0001) {
+        aoOutput.write(float4(1.0, 0.0, 0.0, 1.0), gid);
+        return;
+    }
+
+    float centerDepth = depthTexture.sample(nearestClampSampler, sceneUV).r;
+    if (centerDepth <= 0.0001) {
+        aoOutput.write(float4(1.0, 0.0, 0.0, 1.0), gid);
+        return;
+    }
+
+    float centerLinearDepth = LinearizeSceneDepth(centerDepth, params);
+    float3 centerViewPos = FetchViewPos(uv, centerLinearDepth, params);
+
+    // Sky-dome guard: depth-clamped sky geometry sits at far plane
+    if (centerLinearDepth >= params.zFar * 0.99) {
+        aoOutput.write(float4(1.0, 0.0, 0.0, 1.0), gid);
+        return;
+    }
+
+    float3 worldPos = WorldPosFromViewPos(centerViewPos, params);
+
+    // Visual debug for the world-locked noise fix itself -- see
+    // mt_compute_ao_worldpos_debug's doc comment (mt_postprocess.cpp).
+    if (params.debugMode != 0) {
+        float cellSize = max(params.noiseCellSize, 1.0);
+        float2 dbg = params.debugMode == 1 ? fract(worldPos.xy / cellSize) :
+                     params.debugMode == 2 ? fract(worldPos.xz / cellSize) :
+                                              fract(worldPos.yz / cellSize);
+        aoOutput.write(float4(dbg.x, dbg.y, 0.0, 1.0), gid);
+        return;
+    }
+
+    float3 centerNormal = DecodeSceneNormal(normalTexture.sample(nearestClampSampler, sceneUV).xyz);
+    if (all(centerNormal == float3(0.0))) {
+        aoOutput.write(float4(1.0, 0.0, 0.0, 1.0), gid);
+        return;
+    }
+
+    float3 worldNoise = WorldNoise(worldPos, params.noiseCellSize);
+    float rotation = worldNoise.x;
+    float stepJitter = worldNoise.y;
+    float directionJitter = worldNoise.z;
+
+    float radiusPixels = params.radiusToScreen / max(centerViewPos.z, 1e-5);
+    // Cap the screen-space sample radius. Uncapped, standing close to any
+    // surface (centerViewPos.z small -- completely ordinary at typical
+    // player-to-wall distances, not just extreme clipping) sends
+    // radiusPixels past the AO texture's own dimensions: every sample's UV
+    // then hard-clamps to the texture edge (see the sampleUV clamp below),
+    // collapsing the sample disk into a handful of edge pixels unrelated to
+    // local geometry -- and which edge pixel gets hit is hypersensitive to
+    // tiny position/angle changes, producing a visibly rotating/stretching
+    // AO pattern up close. Reported 2026-07-19. Bounding to a fraction of
+    // the shorter texture dimension keeps the sample disk within a
+    // meaningful local neighborhood at any distance.
+    radiusPixels = min(radiusPixels, min(outSize.x, outSize.y) * 0.5);
+    const int numSteps = clamp(params.numSteps, 2, 8); // Capped for Intel
+    const int numDirections = clamp(params.numDirections, 2, 6); // Capped for Intel
+    float stepSizePixels = radiusPixels / (float(numSteps) + 1.0);
+    float minStepPixels = max(stepSizePixels, 1.0);
+    float maxLod = float(depthPyramid.get_num_mip_levels() - 1);
+
+    float occlusion = 0.0;
+
+    for(int directionIndex = 0; directionIndex < numDirections; directionIndex++) {
+        float theta = (6.28318530718 / float(numDirections)) * (float(directionIndex) + directionJitter * 0.25) + rotation;
+        float2 dir = float2(cos(theta), sin(theta));
+        float horizon = 0.0;
+
+        for (int stepIndex = 0; stepIndex < numSteps; stepIndex++) {
+            float rayPixels = (float(stepIndex) + stepJitter + 1.0) * minStepPixels;
+            float2 sampleUV = uv + dir * rayPixels / outSize;
+            sampleUV = clamp(sampleUV, halfTexel, float2(1.0) - halfTexel);
+            float2 sampleSceneUV = float2(params.offsetX, params.offsetY) + sampleUV * float2(params.scaleX, params.scaleY);
+
+            float sampleCoverage = sceneColorTexture.sample(nearestClampSampler, sampleSceneUV).a;
+            if (sampleCoverage <= 0.0001) {
+                continue;
+            }
+
+            // Stencil coverage guard: skip samples from different portal layers
+            float sampleCov = coverageMask.sample(nearestClampSampler, sampleUV).r;
+            if (sampleCov < 0.5) continue;
+
+            // Mip-selected depth fetch: distant steps read a coarser,
+            // cache-friendlier level of the pre-linearized depth pyramid
+            // instead of always sampling full-res depth (the actual cost
+            // driver this algorithm targets). 8px near-field threshold keeps
+            // typical near taps (minStepPixels ~1-4px) at lod 0.
+            float lod = clamp(log2(max(rayPixels / 8.0, 1.0)), 0.0, maxLod);
+            float sampleLinearDepth = depthPyramid.sample(nearestClampSampler, sampleSceneUV, level(lod)).r;
+            if (sampleLinearDepth <= 0.0001) {
+                continue;
+            }
+
+            float3 sampleNormal = DecodeSceneNormal(normalTexture.sample(nearestClampSampler, sampleSceneUV).xyz);
+            if (all(sampleNormal == float3(0.0))) {
+                continue;
+            }
+
             float3 sampleViewPos = FetchViewPos(sampleUV, sampleLinearDepth, params);
             float3 sampleVector = sampleViewPos - centerViewPos;
 
@@ -294,6 +748,18 @@ kernel void bilateral_blur(
             float val = sampleValue.r;
             float sampleDepth = sampleValue.g;
             if (sampleDepth <= 1e-5) {
+                continue;
+            }
+            // Hard-reject background bleeding onto foreground: the smooth
+            // exp2 falloff below is calibrated against typical in-scene
+            // depth deltas (gl_ssao_blur), not maxThickness's much finer
+            // scale (~1.25 units) -- at that scale the falloff alone barely
+            // attenuates (weight stays ~0.996 right at this threshold), so
+            // without an explicit cutoff a foreground pixel next to a
+            // distant background (e.g. a doorway silhouette) blends in
+            // background AO as a halo. Restores a guard that was present
+            // before this kernel's weight formula was reworked to 8 taps.
+            if (sampleDepth - depth > params.maxThickness) {
                 continue;
             }
             float r = (i >= 4) ? 1.41421356 : 1.0;

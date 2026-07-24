@@ -217,11 +217,20 @@ void MtVertexBuffer::SetFormat(int numBindingPoints, int numAttributes,
   mNumBindingPoints = numBindingPoints;
   mAttributes.assign(attrs, attrs + numAttributes);
   mHasColor = false;
+  mHasNormal = false;
 
+  // Mirrors Vulkan's VkRenderPassManager::GetVertexFormat (vk_renderpass.cpp),
+  // which sets UseVertexData bit 0 for VATTR_COLOR and bit 1 for VATTR_NORMAL
+  // -- the shared main.vp vertex shader branches on both bits independently
+  // ("useVertexData & 1", "useVertexData & 2"). This code previously only
+  // tracked VATTR_COLOR, so ApplyStreamData() never set bit 1 and Metal
+  // always took the fallback-normal branch even when the vertex buffer had
+  // real per-vertex normals.
   for (int i = 0; i < numAttributes; ++i) {
     if (attrs[i].location == VATTR_COLOR) {
       mHasColor = true;
-      break;
+    } else if (attrs[i].location == VATTR_NORMAL) {
+      mHasNormal = true;
     }
   }
 

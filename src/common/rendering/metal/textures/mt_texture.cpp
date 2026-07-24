@@ -7,6 +7,7 @@
 #include "gamestate.h"
 #include "hwrenderer/postprocessing/hw_postprocess.h"
 #include "image.h"
+#include "metal/renderer/mt_debug.h"
 #include "metal/renderer/mt_postprocess.h"
 #include "metal/renderer/mt_renderstate.h"
 #include "metal/system/mt_commandbuffer.h"
@@ -16,6 +17,7 @@
 #include "printf.h"
 
 #include "textures.h"
+#include <chrono>
 #include <cmath>
 
 EXTERN_CVAR(Bool, mt_debug)
@@ -442,11 +444,18 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
       }
 
       if (texbuffer.mBuffer) {
-        // Blit update for Private texture
+        // Blit update for Private texture. Timed separately from stalls --
+        // this doesn't block (the command buffer commits async, no
+        // waitUntilCompleted), but it's real render-thread CPU cost
+        // (staging memcpy + blit encode + commit of its own separate
+        // command buffer) worth tracking on its own. See
+        // MtDebugManager::RecordTextureUpload.
+        auto uploadStart = std::chrono::high_resolution_clock::now();
+
         size_t alignedPitch = (pitch + 1023) & ~1023;
         size_t totalSize = alignedPitch * expectedH;
         MTL::Buffer *staging = fb->GetStagingBuffer(totalSize);
-        
+
         if (staging) {
             uint8_t *dst = (uint8_t *)staging->contents();
             uint8_t *src = (uint8_t *)texbuffer.mBuffer;
@@ -468,6 +477,12 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
                 cmdBuf->release();
             }
             fb->RecycleBuffer(staging);
+        }
+
+        if (fb->GetDebugManager()) {
+            auto uploadEnd = std::chrono::high_resolution_clock::now();
+            float uploadMs = std::chrono::duration<float, std::milli>(uploadEnd - uploadStart).count();
+            fb->GetDebugManager()->RecordTextureUpload(uploadMs);
         }
       }
     }

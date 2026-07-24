@@ -10,6 +10,17 @@ enum class MtMetric : uint8_t {
   ComputeBloom,
   PPAO,
   PPBloom,
+  FrameGPU, // Real GPU execution time for the whole frame's command buffer,
+            // via MTLCommandBuffer::GPUStartTime()/GPUEndTime(). Reported
+            // asynchronously from a completion handler, typically 1-2
+            // frames behind due to pipelining -- see
+            // MtDebugManager::RecordGPUFrameTimeAsync.
+  TextureUploadCPU, // CPU-side cost (staging memcpy + blit encode + commit)
+            // of the "world texture" upload path in mt_texture.cpp -- the
+            // one that submits its own separate command buffer via
+            // GetBlitCommandBuffer(), competing with the main per-frame
+            // render command buffer for render-thread CPU time and GPU
+            // queue submission overhead. See MtDebugManager::RecordTextureUpload.
   Count
 };
 

@@ -63,12 +63,7 @@ MtRenderState::MtRenderState(MetalRenderDevice *fb)
   Reset();
 }
 
-MtRenderState::~MtRenderState() {
-  if (mPassDescriptor) {
-    mPassDescriptor->release();
-    mPassDescriptor = nullptr;
-  }
-}
+MtRenderState::~MtRenderState() {}
 
 void MtRenderState::ClearScreen() {
   if (mt_debug) {
@@ -871,12 +866,18 @@ void MtRenderState::ApplyViewport() {
 void MtRenderState::ApplyStreamData() {
   auto passManager = fb->GetPipelineStateManager();
 
-  // Set useVertexData from vertex format
-  mStreamData.useVertexData =
-      (mVertexBuffer &&
-       static_cast<MtVertexBuffer *>(mVertexBuffer)->HasColor())
-          ? 1
-          : 0;
+  // Set useVertexData from vertex format. Bit values mirror Vulkan's
+  // VkRenderPassManager::GetVertexFormat (VATTR_COLOR -> 1, VATTR_NORMAL ->
+  // 2), which the shared main.vp vertex shader branches on independently --
+  // this previously only ever set bit 1 (color), so Metal always took the
+  // fallback-normal branch regardless of whether the vertex buffer actually
+  // had per-vertex normal data.
+  auto *mtVB = static_cast<MtVertexBuffer *>(mVertexBuffer);
+  mStreamData.useVertexData = 0;
+  if (mtVB) {
+    if (mtVB->HasColor()) mStreamData.useVertexData |= 1;
+    if (mtVB->HasNormal()) mStreamData.useVertexData |= 2;
+  }
 
   if (mMaterial.mMaterial && mMaterial.mMaterial->Source())
   {
@@ -1430,7 +1431,14 @@ void MtRenderState::BeginRenderPass() {
     if (clear) {
       MTL::ClearColor cc;
       if (i == 0) {
-        if (targetTex == fb->GetBuffers()->ShadowMap->GetTexture()) {
+        // Defensive null guard, matching the pattern already used for this
+        // same member a bit further down (depth-attachment isShadowPass
+        // check) -- ShadowMap is currently always allocated synchronously
+        // before any BeginRenderPass can run, so this isn't a live crash,
+        // but this call site was the one place still dereferencing it
+        // unguarded.
+        auto shadowMap = fb->GetBuffers()->ShadowMap.get();
+        if (shadowMap && targetTex == shadowMap->GetTexture()) {
           cc = MTL::ClearColor::Make(1e6, 0.0, 0.0, 1.0);
         } else {
           cc = MTL::ClearColor::Make(

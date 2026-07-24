@@ -4,6 +4,8 @@
 
 #include "mt_commandbuffer.h"
 #include "mt_renderdevice.h"
+#include "mt_version.h"
+#include "metal/renderer/mt_debug.h"
 #include "metal/renderer/mt_renderstate.h"
 #include "c_cvars.h"
 #include "printf.h"
@@ -42,6 +44,12 @@ MTL::CommandBuffer *MtCommandBufferManager::CreateNewCommandBuffer() {
 }
 
 MTL::CommandBuffer *MtCommandBufferManager::GetBlitCommandBuffer() {
+  // Every call here is a separate command buffer submitted outside the main
+  // per-frame render command buffer (world texture uploads, lightmap
+  // uploads, mipmap regeneration) -- centralized counting here catches all
+  // of them uniformly without touching each call site.
+  if (fb->GetDebugManager())
+    fb->GetDebugManager()->RecordExtraCommandBuffer();
   return CreateNewCommandBuffer();
 }
 
@@ -93,6 +101,22 @@ void MtCommandBufferManager::EndFrame() {
           dispatch_semaphore_signal(sem);
       }
   });
+
+  // Real GPU execution time for the whole frame (this is normally the only
+  // command buffer per frame -- see GetBlitCommandBuffer, unused by the
+  // frame path). Runs on Metal's internal completion-handler thread, not
+  // the render thread, so it only does a thread-safe atomic handoff; the
+  // render thread drains it once per frame in MtDebugManager::EndFrame.
+  if (fb->mVersionManager.supportsGPUTimestamps) {
+    MtDebugManager *debugManager = fb->GetDebugManager();
+    cb->addCompletedHandler([debugManager](MTL::CommandBuffer *buffer) {
+      if (!debugManager || buffer->status() != MTL::CommandBufferStatusCompleted)
+        return;
+      double gpuSeconds = buffer->GPUEndTime() - buffer->GPUStartTime();
+      if (gpuSeconds > 0.0)
+        debugManager->RecordGPUFrameTimeAsync((float)(gpuSeconds * 1000.0));
+    });
+  }
 
   cb->commit();
   cb->release();

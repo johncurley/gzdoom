@@ -8,6 +8,8 @@ constexpr std::array<MtMetricInfo, (size_t)MtMetric::Count> MetricInfos = {{
     {"Bloom", "ComputeBloomCPUms", "ComputeCPU"},
     {"AO", "PPAOCPUms", "PPCPU"},
     {"Bloom", "PPBloomCPUms", "PPCPU"},
+    {"Frame", "FrameGPUms", "GPU"},
+    {"TexUp", "TextureUploadCPUms", "Upload"},
 }};
 
 size_t MetricIndex(MtMetric metric) {

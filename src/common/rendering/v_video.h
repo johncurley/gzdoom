@@ -57,6 +57,7 @@ class FFlatVertexBuffer;
 class HWViewpointBuffer;
 class FLightBuffer;
 struct HWDrawInfo;
+struct HWViewpointUniforms;
 class FMaterial;
 class FGameTexture;
 class FRenderState;
@@ -263,7 +264,15 @@ public:
 	void SetClearColor(int color);
 	virtual int Backend() { return 0; }
 	virtual const char* DeviceName() const { return "Unknown"; }
-	virtual void AmbientOccludeScene(float m5) {}
+	// currentViewpoint: the caller's own HWViewpointUniforms (VPUniforms),
+	// passed directly rather than relying on a shared "last set viewpoint"
+	// value on the render device -- that shared value is NOT reliably the
+	// current view's by the time AmbientOccludeScene runs (sky/skybox
+	// rendering, which happens earlier in the same DrawScene() call, sets
+	// its own viewpoint and does not restore the caller's afterward). Only
+	// Metal's world-locked AO noise currently uses this -- GL/Vulkan ignore
+	// it, since neither backend's SSAO needs world-space reconstruction.
+	virtual void AmbientOccludeScene(float m5, const HWViewpointUniforms* currentViewpoint) {}
 	virtual void FirstEye() {}
 	virtual void NextEye(int eyecount) {}
 	virtual void SetSceneRenderTarget(bool useSSAO) {}

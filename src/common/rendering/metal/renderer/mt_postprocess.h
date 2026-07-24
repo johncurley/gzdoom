@@ -6,6 +6,7 @@
 
 class MetalRenderDevice;
 class MtTextureImage;
+struct HWViewpointUniforms;
 
 namespace MTL {
 class Texture;
@@ -19,7 +20,7 @@ public:
 
   // Post-processing operations
   void BlurScene(float amount);
-  void AmbientOccludeScene(float m5);
+  void AmbientOccludeScene(float m5, const HWViewpointUniforms* currentViewpoint);
   void UpdateShadowMap();
   void ImageTransitionScene(bool undefinedSrcLayout);
   void BlitSceneToPostprocess();

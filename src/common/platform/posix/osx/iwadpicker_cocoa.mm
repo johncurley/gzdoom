@@ -53,9 +53,6 @@
 
 #include <wordexp.h>
 
-CVAR(String, osx_additional_parameters, "",
-     CVAR_ARCHIVE | CVAR_NOSET | CVAR_GLOBALCONFIG);
-
 EXTERN_CVAR(Bool, mt_debug)
 
 enum {
@@ -330,10 +327,14 @@ static NSArray *GetKnownExtensions() { return [GetKnownFileTypes() allKeys]; }
   [self makeLabel:additionalParametersLabel
        withString:"Additional Parameters:"];
   [[window contentView] addSubview:additionalParametersLabel];
+  // Always starts empty: extra parameters are a per-launch, per-dialog-
+  // session thing only (typed or Browse'd in right here), never persisted
+  // or carried forward from a previous launch or a previous IWAD pick.
+  // Simpler and more predictable than trying to auto-detect which leftover
+  // content still applies to whatever IWAD you're about to pick this time.
   parametersTextField =
       [[NSTextField alloc] initWithFrame:NSMakeRect(20, 48, 402, 54)];
-  [parametersTextField
-      setStringValue:[NSString stringWithUTF8String:osx_additional_parameters]];
+  [parametersTextField setStringValue:@""];
   [[window contentView] addSubview:parametersTextField];
 
   // Doesn't look like the SDL version implements this so lets not show it.
@@ -461,6 +462,14 @@ static NSString *GetArchitectureString() {
 #endif
 }
 
+// Deliberately simple: this relaunch carries only the freshly picked IWAD
+// and whatever was typed into "Additional Parameters" during *this* dialog
+// session (see the field's setup above -- it never starts pre-populated).
+// It does NOT forward this process's own argv. That means a custom flag
+// you originally launched with (e.g. via a third-party launcher script)
+// won't survive picking a different IWAD through this dialog -- on macOS
+// that's an accepted tradeoff for a much simpler, more predictable relaunch
+// path with no risk of stale or duplicated content from a previous pick.
 static void RestartWithParameters(const WadStuff &wad, NSString *parameters) {
   assert(nil != parameters);
 
@@ -469,12 +478,6 @@ static void RestartWithParameters(const WadStuff &wad, NSString *parameters) {
     @try {
       NSString *executablePath =
           [NSString stringWithUTF8String:Args->GetArg(0)];
-      NSString *escapedParameters =
-          [parameters stringByReplacingOccurrencesOfString:@"\""
-                                                withString:@"\\\""];
-      NSString *cvarArgument =
-          [NSString stringWithFormat:@"+osx_additional_parameters \"%@\"",
-                                     escapedParameters];
 
       NSMutableArray *const arguments = [[NSMutableArray alloc] init];
       [arguments addObject:@"-arch"];
@@ -484,13 +487,6 @@ static void RestartWithParameters(const WadStuff &wad, NSString *parameters) {
       [arguments addObject:[NSString stringWithUTF8String:wad.Path.GetChars()]];
       [arguments addObject:@"+defaultiwad"];
       [arguments addObject:[NSString stringWithUTF8String:wad.Name.GetChars()]];
-      [arguments addObject:cvarArgument];
-
-      for (int i = 1, count = Args->NumArgs(); i < count; ++i) {
-        NSString *currentParameter =
-            [NSString stringWithUTF8String:Args->GetArg(i)];
-        [arguments addObject:currentParameter];
-      }
 
       wordexp_t expansion = {};
 
