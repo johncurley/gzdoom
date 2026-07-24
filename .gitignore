@@ -51,3 +51,4 @@ fmodapi*linux/
 /*.jpeg
 /FINDINGS*.md
 /GEMINI_AUDIT_HANDOFF*.md
+/.antigravitycli/
