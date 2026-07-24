@@ -43,3 +43,11 @@ fmodapi*linux/
 /src/gl/unused
 /mapfiles_release/*.map
 .cache/
+
+# ad-hoc session artifacts (debug screenshots, one-off audit notes) --
+# don't belong in the repo; keep them local
+/*.png
+/*.jpg
+/*.jpeg
+/FINDINGS*.md
+/GEMINI_AUDIT_HANDOFF*.md
