@@ -893,7 +893,11 @@ InputKey X11DisplayWindow::GetInputKey(XEvent* event)
 		case XK_minus: return InputKey::Minus;
 		case XK_period: return InputKey::Period;
 		case XK_slash: return InputKey::Slash;
-		case XK_dead_tilde: return InputKey::Tilde;
+		// XK_dead_tilde is the composing dead key found on international
+		// layouts, not the key left of "1". On a US layout that key produces
+		// XK_grave, so the console toggle never resolved. Keep dead_tilde for
+		// layouts that do emit it.
+		case XK_grave: case XK_asciitilde: case XK_dead_tilde: return InputKey::Tilde;
 		case XK_bracketleft: return InputKey::LeftBracket;
 		case XK_backslash: return InputKey::Backslash;
 		case XK_bracketright: return InputKey::RightBracket;

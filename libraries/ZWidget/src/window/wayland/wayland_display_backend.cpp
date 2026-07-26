@@ -803,6 +803,36 @@ InputKey WaylandDisplayBackend::XKBKeySymToInputKey(xkb_keysym_t keySym)
 	case XKB_KEY_7: return InputKey::_7;
 	case XKB_KEY_8: return InputKey::_8;
 	case XKB_KEY_9: return InputKey::_9;
+
+	// Shifted digits. The keysym is resolved once, at press time, so a digit
+	// pressed while Shift is held arrives as its shifted symbol; without these
+	// the key is simply dead.
+	case XKB_KEY_exclam: return InputKey::_1;
+	case XKB_KEY_at: return InputKey::_2;
+	case XKB_KEY_numbersign: return InputKey::_3;
+	case XKB_KEY_dollar: return InputKey::_4;
+	case XKB_KEY_percent: return InputKey::_5;
+	case XKB_KEY_asciicircum: return InputKey::_6;
+	case XKB_KEY_ampersand: return InputKey::_7;
+	case XKB_KEY_asterisk: return InputKey::_8;
+	case XKB_KEY_parenleft: return InputKey::_9;
+	case XKB_KEY_parenright: return InputKey::_0;
+
+	// OEM punctuation. None of these were mapped, which left every punctuation
+	// key dead on Wayland -- including grave, which is the console toggle.
+	// Both the plain and shifted keysym map to the same physical key.
+	case XKB_KEY_grave: case XKB_KEY_asciitilde: case XKB_KEY_dead_tilde: return InputKey::Tilde;
+	case XKB_KEY_semicolon: case XKB_KEY_colon: return InputKey::Semicolon;
+	case XKB_KEY_equal: case XKB_KEY_plus: return InputKey::Equals;
+	case XKB_KEY_comma: case XKB_KEY_less: return InputKey::Comma;
+	case XKB_KEY_minus: case XKB_KEY_underscore: return InputKey::Minus;
+	case XKB_KEY_period: case XKB_KEY_greater: return InputKey::Period;
+	case XKB_KEY_slash: case XKB_KEY_question: return InputKey::Slash;
+	case XKB_KEY_bracketleft: case XKB_KEY_braceleft: return InputKey::LeftBracket;
+	case XKB_KEY_backslash: case XKB_KEY_bar: return InputKey::Backslash;
+	case XKB_KEY_bracketright: case XKB_KEY_braceright: return InputKey::RightBracket;
+	case XKB_KEY_apostrophe: case XKB_KEY_quotedbl: return InputKey::SingleQuote;
+
 	case XKB_KEY_a: case XKB_KEY_A: return InputKey::A;
 	case XKB_KEY_b: case XKB_KEY_B: return InputKey::B;
 	case XKB_KEY_c: case XKB_KEY_C: return InputKey::C;
