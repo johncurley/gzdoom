@@ -2139,3 +2139,65 @@ gating is correct. Do not "fix" it.**
   frame-graph or compute work should treat Tier 2 RW textures, argument
   buffers tier 2, and SIMD-group ops as unavailable on the primary dev
   machine.
+
+## Bloom Tier 1 vs reference: first Intel measurement (2026-07-26)
+
+Roadmap item #2 ("record stable Intel baseline measurements"), taken on the
+Intel dev machine profiled above. Ashes: Afterglow, dark corridor with a
+bright lamp in frame, fixed camera and window size, `0 -> 2 -> 0`.
+
+On this hardware Tier 2 is unreachable, so `composite 0` and `1` are the
+same Tier 1 path and `composite 2` falls back to upstream
+`hw_postprocess` bloom -- which makes `2` a ground-truth reference rather
+than merely a third variant.
+
+| Run | Config | GPU Frame active_avg | Bloom encode active_avg |
+|---|---|---|---|
+| 1 | `composite 0` Tier 1 compute | 21.206ms | 0.266ms (ComputeBloom) |
+| 2 | `composite 2` reference       | 20.589ms | 1.101ms (PPBloom)      |
+| 3 | `composite 0` Tier 1 compute | 20.523ms | 0.278ms (ComputeBloom) |
+
+**Conclusions:**
+
+- **CPU encoding: Tier 1 compute is ~4x cheaper** (0.27ms vs 1.08ms,
+  ~0.8ms/frame saved). Repeatable across runs. This is the first hard
+  justification for the compute postprocess path on low-end hardware.
+- **GPU cost: no detectable difference.** Runs 1 and 3 are the *same*
+  config and differ by 0.68ms -- as large as the apparent between-config
+  gap -- and run 3 (compute) landed *below* run 2 (reference), so the
+  ordering isn't monotonic. An earlier pair of runs suggested a ~2ms GPU
+  regression for compute; that was a confound (the reference run had been
+  taken at a smaller window, and fewer pixels alone lowers GPU frame time)
+  plus this noise. **The third run existed specifically to catch that, and
+  did.** Always take a same-config control run before believing a
+  between-config delta on this machine.
+- The reference path shows occasional large spikes (`PPBloom max 9.051ms`
+  vs compute's `0.459ms`), likely first-use pipeline compilation.
+
+**Measurement caveat:** the metrics window is 120 frames and straddles each
+switch, so runs 2 and 3 report both counters (105/15 and 66/54 samples).
+Run 1 is the only pure sample. Since the control already shows variance
+exceeds the effect, tighter isolation would not change the conclusion.
+
+### Still open
+
+- **Visual A/B not yet done.** No fixed-camera screenshot pair exists for
+  Tier 1 vs reference. Needed because the two extracts are **not**
+  equivalent by construction:
+
+  ```
+  reference (bloomextract.fp):  max((color.rgb + 0.001) * exposureAdjustment - 1, 0)
+  compute   (mt_bloom.metal):   max( color.rgb - threshold + 0.001,             0)
+  ```
+
+  The compute extract has **no exposure term**, and `mt_bloom.cpp` hard-codes
+  `params.threshold = 1.0f` while `Execute(cmdBuf, srcTex, gl_bloom_amount)`
+  never receives the exposure texture. They agree only when
+  `exposureAdjustment == 1`; exposure is live by default
+  (`gl_exposure_base` / `gl_exposure_min` 0.35, `gl_exposure_scale` 1.3).
+  Predicted symptom: compute bloom dimmer than reference in dark scenes,
+  and not adapting to scene luminance. Fix is to plumb the exposure texture
+  into `MtBloomModule::Execute` and multiply before the threshold -- but
+  confirm the visible difference first.
+- Remaining matrix on `composite 0` only: resize, fullscreen toggle,
+  portals, camera textures.
