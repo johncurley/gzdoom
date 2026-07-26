@@ -461,6 +461,20 @@ public:
 		if (!gui)
 			return;
         for (unsigned char c : chars) {
+			// Text-input callbacks deliver the UTF-8 encoding of the keysym,
+			// which for BackSpace/Return/Escape/Tab is the corresponding
+			// control character (0x08, 0x0D, 0x1B, 0x09). Those keys already
+			// arrive as EV_GUI_KeyDown with their GK_* code, so posting the
+			// control character as well makes the consumer act twice: the
+			// console both deletes a character and then inserts a literal
+			// 0x08, which looks like backspace not working at all.
+			//
+			// Only genuine printable text belongs here. UTF-8 lead and
+			// continuation bytes are all >= 0x80, so this cannot split a
+			// multi-byte sequence.
+			if (c < 0x20 || c == 0x7F)
+				continue;
+
             event_t ev = {EV_GUI_Event, EV_GUI_Char};
             ev.data1 = c;
 			ev.data3 = ModMask();
