@@ -31,6 +31,16 @@
 #include <cstring>
 
 EXTERN_CVAR(Bool, mt_debug)
+EXTERN_CVAR(Bool, mt_compute_ao)
+EXTERN_CVAR(Bool, mt_compute_bloom)
+EXTERN_CVAR(Int, mt_compute_bloom_composite)
+EXTERN_CVAR(Int, mt_compute_ao_worldpos_debug)
+EXTERN_CVAR(Int, mt_compute_ao_directions)
+EXTERN_CVAR(Int, mt_compute_ao_steps)
+EXTERN_CVAR(Bool, gl_bloom)
+EXTERN_CVAR(Int, gl_ssao)
+EXTERN_CVAR(Int, gl_ssao_debug)
+
 
 namespace {
 MetalRenderDevice *GetActiveMetalRenderDevice() {
@@ -477,6 +487,39 @@ CCMD(mt_caps)
     Printf(PRINT_HIGH, TEXTCOLOR_YELLOW
            "  NOTE: Intel detected -- AO is force-clamped to quarter-res "
            "(mt_ao.cpp aoScale>=4) regardless of mt_compute_ao_scale.\n");
+  }
+
+  // Effective postprocess configuration. Every one of these is CVAR_ARCHIVE,
+  // so a value set during one debugging session silently persists into the
+  // next -- which has now invalidated three separate in-game A/B tests
+  // (mt_compute_ao_worldpos_debug left on, AO directions/steps left at
+  // experiment values, and mt_compute_bloom left off, which made the bloom
+  // composite modes inert because the compute path never ran at all).
+  // Printing the resolved path removes the guesswork.
+  {
+    const bool computeBloomOn = mt_compute_bloom && fb->mBloomModule != nullptr;
+    const bool tier2 = v.supportsReadWriteBGRA8;
+    Printf(PRINT_HIGH, "Effective postprocess configuration:\n");
+    Printf(PRINT_HIGH, "  gl_bloom:                %s\n", gl_bloom ? "on" : "OFF (no bloom at all)");
+    Printf(PRINT_HIGH, "  mt_compute_bloom:        %s\n",
+           computeBloomOn ? "on" : "OFF -> falls back to hw_postprocess bloom");
+    if (computeBloomOn) {
+      const int mode = mt_compute_bloom_composite;
+      const char *path = (mode == 2 && !tier2) ? "hw_postprocess fallback (Tier 2 required but unsupported)"
+                       : (tier2 && mode != 1)  ? "Tier 2 direct read-write composite"
+                                               : "Tier 1 compute + raster composite";
+      Printf(PRINT_HIGH, "  bloom composite path:    %s\n", path);
+    }
+    Printf(PRINT_HIGH, "  mt_compute_ao:           %s\n", mt_compute_ao ? "on" : "OFF");
+    Printf(PRINT_HIGH, "  gl_ssao / debug:         %d / %d%s\n", (int)gl_ssao, (int)gl_ssao_debug,
+           gl_ssao_debug != 0 ? "  <- debug view active, not the shaded result" : "");
+    if (mt_compute_ao_worldpos_debug != 0)
+      Printf(PRINT_HIGH, TEXTCOLOR_YELLOW "  mt_compute_ao_worldpos_debug = %d -- AO buffer shows a "
+             "world-position grid, NOT occlusion.\n", (int)mt_compute_ao_worldpos_debug);
+    if (mt_compute_ao_directions != 0 || mt_compute_ao_steps != 0)
+      Printf(PRINT_HIGH, TEXTCOLOR_YELLOW "  AO sample counts overridden: directions=%d steps=%d "
+             "(0 = use gl_ssao tier default)\n",
+             (int)mt_compute_ao_directions, (int)mt_compute_ao_steps);
   }
 
   // Raw GPU family probes. MtVersionManager derives four separate flags
