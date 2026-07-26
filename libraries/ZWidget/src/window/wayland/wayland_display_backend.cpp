@@ -307,6 +307,22 @@ void WaylandDisplayBackend::OnWindowDestroyed(WaylandDisplayWindow* window)
 {
 	auto it = std::find(s_Windows.begin(), s_Windows.end(), window);
 	if (it != s_Windows.end()) s_Windows.erase(it);
+
+	// The backend caches raw pointers to the focused/hovered windows, and input
+	// events keep arriving after a window is gone -- notably the key release
+	// that follows the key press which closed it (Enter on the launcher). If
+	// these are not cleared, the next event dereferences freed memory.
+	if (m_ActiveWindow == window)
+	{
+		m_ActiveWindow = nullptr;
+		// Held-key bookkeeping belonged to that window; nothing can release
+		// these now, so drop them rather than replay them at the next window.
+		m_PressedScancodes.clear();
+		inputKeyStates.clear();
+	}
+	if (m_FocusWindow == window) m_FocusWindow = nullptr;
+	if (m_MouseFocusWindow == window) m_MouseFocusWindow = nullptr;
+	if (m_HoverWindow == window) m_HoverWindow = nullptr;
 }
 
 void WaylandDisplayBackend::SetCursor(StandardCursor cursor)
@@ -482,15 +498,25 @@ void keyboard_handle_leave(void* data, struct wl_keyboard* wl_keyboard, uint32_t
 		// Per protocol, focus loss releases every held key -- the compositor
 		// will not send the individual key-up events. Synthesize them, or the
 		// client keeps keys latched down until something else resets state.
-		for (const auto& held : backend->m_PressedScancodes)
+		//
+		// Snapshot and clear before dispatching: a key-up handler is free to
+		// destroy the window, which clears m_PressedScancodes and nulls
+		// m_ActiveWindow underneath us. Re-check the window each iteration.
+		std::map<uint32_t, InputKey> held;
+		held.swap(backend->m_PressedScancodes);
+		for (const auto& entry : held)
 		{
-			backend->inputKeyStates[held.second] = false;
-			backend->m_ActiveWindow->windowHost->OnWindowKeyUp(held.second);
+			backend->inputKeyStates[entry.second] = false;
+			if (!backend->m_ActiveWindow)
+				break;
+			backend->m_ActiveWindow->windowHost->OnWindowKeyUp(entry.second);
 		}
-		backend->m_PressedScancodes.clear();
 
-		backend->m_ActiveWindow->windowHost->OnWindowDeactivated();
-		backend->m_ActiveWindow = NULL;
+		if (backend->m_ActiveWindow)
+		{
+			backend->m_ActiveWindow->windowHost->OnWindowDeactivated();
+			backend->m_ActiveWindow = nullptr;
+		}
 	}
 }
 
