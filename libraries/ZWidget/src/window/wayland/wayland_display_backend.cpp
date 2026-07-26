@@ -444,14 +444,32 @@ void keyboard_handle_keymap(void* data, struct wl_keyboard* wl_keyboard, uint32_
 void keyboard_handle_enter(void* data, struct wl_keyboard* wl_keyboard, uint32_t serial, struct wl_surface* surface, struct wl_array* keys)
 {
 	WaylandDisplayBackend* backend = (WaylandDisplayBackend*)data;
-    fprintf(stderr, "DEBUG: Wayland keyboard_handle_enter, surface: %p\\n", (void*)surface);
 	for (auto window : backend->s_Windows)
 	{
 		if (window->m_AppSurface == surface)
 		{
 			backend->m_ActiveWindow = window;
 			window->windowHost->OnWindowActivated();
-            fprintf(stderr, "DEBUG: Wayland active window set: %p\\n", (void*)window);
+
+			// The compositor reports which keys are already held at focus-in.
+			// Register them so their eventual release has a matching press to
+			// resolve against, and so GetKeyState() agrees with reality.
+			if (keys)
+			{
+				// wl_array_for_each() relies on an implicit void* conversion
+				// that is not valid in C++, so walk the array by hand.
+				uint32_t* first = (uint32_t*)keys->data;
+				uint32_t* last = (uint32_t*)((const char*)keys->data + keys->size);
+				for (uint32_t* key = first; key < last; key++)
+				{
+					uint32_t scancode = *key + 8;
+					xkb_keysym_t sym = WAYLAND->p_xkb_state_key_get_one_sym(backend->m_KeyboardState, scancode);
+					InputKey ik = backend->XKBKeySymToInputKey(sym);
+					backend->m_PressedScancodes[scancode] = ik;
+					backend->inputKeyStates[ik] = true;
+					window->windowHost->OnWindowKeyDown(ik);
+				}
+			}
 			break;
 		}
 	}
@@ -460,8 +478,17 @@ void keyboard_handle_enter(void* data, struct wl_keyboard* wl_keyboard, uint32_t
 void keyboard_handle_leave(void* data, struct wl_keyboard* wl_keyboard, uint32_t serial, struct wl_surface* surface)
 {
 	WaylandDisplayBackend* backend = (WaylandDisplayBackend*)data;
-    fprintf(stderr, "DEBUG: Wayland keyboard_handle_leave: activeWindow=%p\n", (void*)backend->m_ActiveWindow);
 	if (backend->m_ActiveWindow && backend->m_ActiveWindow->m_AppSurface == surface) {
+		// Per protocol, focus loss releases every held key -- the compositor
+		// will not send the individual key-up events. Synthesize them, or the
+		// client keeps keys latched down until something else resets state.
+		for (const auto& held : backend->m_PressedScancodes)
+		{
+			backend->inputKeyStates[held.second] = false;
+			backend->m_ActiveWindow->windowHost->OnWindowKeyUp(held.second);
+		}
+		backend->m_PressedScancodes.clear();
+
 		backend->m_ActiveWindow->windowHost->OnWindowDeactivated();
 		backend->m_ActiveWindow = NULL;
 	}
@@ -470,18 +497,57 @@ void keyboard_handle_leave(void* data, struct wl_keyboard* wl_keyboard, uint32_t
 void keyboard_handle_key(void* data, struct wl_keyboard* wl_keyboard, uint32_t serial, uint32_t time, uint32_t key, uint32_t state)
 {
 	WaylandDisplayBackend* backend = (WaylandDisplayBackend*)data;
-    fprintf(stderr, "DEBUG: Wayland keyboard_handle_key: key=%d, state=%d, activeWindow=%p\n", key, state, (void*)backend->m_ActiveWindow);
 	backend->m_KeyboardSerial = serial;
 	uint32_t scancode = key + 8;
-	xkb_keysym_t sym = WAYLAND->p_xkb_state_key_get_one_sym(backend->m_KeyboardState, scancode);
-	InputKey ik = backend->XKBKeySymToInputKey(sym);
-	backend->inputKeyStates[ik] = (state == WL_KEYBOARD_KEY_STATE_PRESSED);
+
+	// wl_keyboard v10 adds a third state, "repeated". Treat it as a press for
+	// event delivery, but never as a state transition -- the key was already
+	// down and is still down.
+	const bool pressed = (state == WL_KEYBOARD_KEY_STATE_PRESSED);
+	const bool repeated = (state == WL_KEYBOARD_KEY_STATE_REPEATED);
+
+	InputKey ik;
+	if (pressed || repeated)
+	{
+		auto it = backend->m_PressedScancodes.find(scancode);
+		if (it != backend->m_PressedScancodes.end())
+		{
+			// Repeat, or a press we never saw released. Reuse the original
+			// mapping so the eventual release matches.
+			ik = it->second;
+		}
+		else
+		{
+			xkb_keysym_t sym = WAYLAND->p_xkb_state_key_get_one_sym(backend->m_KeyboardState, scancode);
+			ik = backend->XKBKeySymToInputKey(sym);
+			backend->m_PressedScancodes[scancode] = ik;
+		}
+		backend->inputKeyStates[ik] = true;
+	}
+	else
+	{
+		auto it = backend->m_PressedScancodes.find(scancode);
+		if (it != backend->m_PressedScancodes.end())
+		{
+			ik = it->second;
+			backend->m_PressedScancodes.erase(it);
+		}
+		else
+		{
+			// Release without a matching press (focus was gained while the key
+			// was already held, and enter did not report it). Fall back to
+			// resolving now; better an approximate key-up than none.
+			xkb_keysym_t sym = WAYLAND->p_xkb_state_key_get_one_sym(backend->m_KeyboardState, scancode);
+			ik = backend->XKBKeySymToInputKey(sym);
+		}
+		backend->inputKeyStates[ik] = false;
+	}
 
 	if (backend->m_ActiveWindow) {
-		if (state == WL_KEYBOARD_KEY_STATE_PRESSED || state == 2) {
-    fprintf(stderr, "DEBUG: Wayland key press: %d\n", (int)ik);
-    fprintf(stderr, "DEBUG: Wayland active window: %p, windowHost: %p\n", (void*)backend->m_ActiveWindow, (void*)backend->m_ActiveWindow->windowHost);
+		if (pressed || repeated) {
 			backend->m_ActiveWindow->windowHost->OnWindowKeyDown(ik);
+			// Text input is intentionally modifier- and layout-dependent, so
+			// this stays on the live xkb state.
 			char buffer[32];
 			if (WAYLAND->p_xkb_state_key_get_utf8(backend->m_KeyboardState, scancode, buffer, sizeof(buffer)) > 0) {
 				backend->m_ActiveWindow->windowHost->OnWindowKeyChar(buffer);

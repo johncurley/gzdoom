@@ -177,6 +177,18 @@ public:
 
 	std::map<InputKey, bool> inputKeyStates; // True when the key is pressed, false when isn't
 
+	// Scancode -> InputKey latched at key-press time.
+	//
+	// The keysym for a physical key depends on the active modifier and layout
+	// state, so resolving it again at release time can yield a different
+	// InputKey than the press did (press '1' -> XKB_KEY_1, hold Shift, release
+	// -> XKB_KEY_exclam). That delivers the key-up for the wrong key and leaves
+	// the original stuck down. Latching the press-time mapping and replaying it
+	// on release keeps press/release symmetric across modifier and layout
+	// changes. It also gives us the set of currently-held keys, which is what
+	// keyboard enter/leave need in order to stay in sync with the compositor.
+	std::map<uint32_t, InputKey> m_PressedScancodes;
+
 	bool IsMouseLocked() { return hasMouseLock; }
 	void SetMouseLocked(bool val) { hasMouseLock = val; }
 
