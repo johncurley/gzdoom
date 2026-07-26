@@ -626,7 +626,6 @@ void pointer_handle_motion(void* data, struct wl_pointer* wl_pointer, uint32_t t
 void pointer_handle_button(void* data, struct wl_pointer* wl_pointer, uint32_t serial, uint32_t time, uint32_t button, uint32_t state)
 {
 	WaylandDisplayBackend* backend = (WaylandDisplayBackend*)data;
-    fprintf(stderr, "DEBUG: Wayland pointer_handle_button: button=%d, state=%d, hoverWindow=%p\n", button, state, (void*)backend->m_HoverWindow);
 	backend->m_PointerSerial = serial;
 	InputKey ik = InputKey::None;
 	if (button == 0x110) ik = InputKey::LeftMouse;
@@ -635,11 +634,9 @@ void pointer_handle_button(void* data, struct wl_pointer* wl_pointer, uint32_t s
 
 	if (backend->m_HoverWindow && ik != InputKey::None) {
 		if (state == WL_POINTER_BUTTON_STATE_PRESSED) {
-            fprintf(stderr, "DEBUG: Wayland mouse down: %d\n", (int)ik);
             backend->m_HoverWindow->windowHost->OnWindowMouseDown(backend->m_HoverWindow->m_SurfaceMousePos, ik);
         }
 		else {
-            fprintf(stderr, "DEBUG: Wayland mouse up: %d\n", (int)ik);
             backend->m_HoverWindow->windowHost->OnWindowMouseUp(backend->m_HoverWindow->m_SurfaceMousePos, ik);
         }
 	}

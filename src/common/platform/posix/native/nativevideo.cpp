@@ -448,7 +448,6 @@ public:
         }
     }
     void OnWindowKeyDown(InputKey key) override {
-        fprintf(stderr, "DEBUG: nativevideo OnWindowKeyDown this: %p, key: %d\n", (void*)this, (int)key);
         UpdateModifierKey(key, true);
 
 		auto it = keyRoutes.find(key);
@@ -480,7 +479,6 @@ public:
 		}
     }
     void OnWindowKeyUp(InputKey key) override {
-        fprintf(stderr, "DEBUG: nativevideo OnWindowKeyUp: %d\n", (int)key);
 		UpdateModifierKey(key, false);
 
 		auto it = keyRoutes.find(key);
@@ -516,11 +514,9 @@ public:
         throw CExitEvent(0);
     }
     void OnWindowActivated() override {
-        fprintf(stderr, "[INPUT] OnWindowActivated: Window gained focus\n");
 		I_SetWindowFocus(true);
     }
     void OnWindowDeactivated() override {
-        fprintf(stderr, "[INPUT] OnWindowDeactivated: Window lost focus\n");
 		I_SetWindowFocus(false);
     }
     void OnWindowDpiScaleChanged() override {

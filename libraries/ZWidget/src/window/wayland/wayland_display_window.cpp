@@ -104,9 +104,7 @@ static const struct zwp_locked_pointer_v1_listener locked_pointer_listener = { l
 WaylandDisplayWindow::WaylandDisplayWindow(WaylandDisplayBackend* backend, DisplayWindowHost* windowHost, bool popupWindow, WaylandDisplayWindow* owner, RenderAPI renderAPI)
 	: backend(backend), m_owner(owner), windowHost(windowHost), m_PopupWindow(popupWindow), m_renderAPI(renderAPI), m_WindowSize(0, 0), m_LogicalSize(0, 0)
 {
-	fprintf(stderr, "DEBUG: WaylandDisplayWindow constructor\\n");
 	m_AppSurface = wl_compositor_create_surface(backend->m_waylandCompositor);
-    fprintf(stderr, "DEBUG: Wayland surface created\\n");
 
 	m_NativeHandle.display = backend->s_waylandDisplay;
 	m_NativeHandle.surface = m_AppSurface;
@@ -156,7 +154,6 @@ void WaylandDisplayWindow::InitializeToplevel()
 		zxdg_toplevel_decoration_v1_set_mode(m_XDGToplevelDecoration, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
 	}
 
-    fprintf(stderr, "DEBUG: Wayland wl_surface_commit called\n");
 	wl_surface_commit(m_AppSurface);
 	wl_display_roundtrip(backend->s_waylandDisplay);
 
@@ -180,7 +177,6 @@ void WaylandDisplayWindow::InitializePopup()
 	xdg_popup_add_listener(m_XDGPopup, &xdg_popup_listener, this);
 	xdg_positioner_destroy(popupPositioner);
 
-    fprintf(stderr, "DEBUG: Wayland wl_surface_commit called\n");
 	wl_surface_commit(m_AppSurface);
 	wl_display_roundtrip(backend->s_waylandDisplay);
 }
@@ -226,7 +222,6 @@ void WaylandDisplayWindow::SetWindowFrame(const Rect& box)
 		wl_region_add(region, 0, 0, (int32_t)m_LogicalSize.width, (int32_t)m_LogicalSize.height);
 		wl_surface_set_opaque_region(m_AppSurface, region);
 		wl_region_destroy(region);
-    fprintf(stderr, "DEBUG: Wayland wl_surface_commit called\n");
 		wl_surface_commit(m_AppSurface);
 	}
 }
@@ -235,13 +230,11 @@ void WaylandDisplayWindow::SetClientFrame(const Rect& box) { SetWindowFrame(box)
 
 void WaylandDisplayWindow::Show()
 {
-    fprintf(stderr, "DEBUG: Wayland Show called\n");
 	if (m_renderAPI == RenderAPI::OpenGL || m_renderAPI == RenderAPI::Vulkan)
 	{
 		// EGL mode: the compositor receives content via eglSwapBuffers.
 		// Just commit to satisfy the xdg_surface configure handshake;
 		// do NOT attach the (null) SHM buffer.
-    fprintf(stderr, "DEBUG: Wayland wl_surface_commit called\n");
 		wl_surface_commit(m_AppSurface);
 		return;
 	}
@@ -253,7 +246,6 @@ void WaylandDisplayWindow::Show()
 
 	wl_surface_attach(m_AppSurface, m_AppSurfaceBuffer, 0, 0);
 	wl_surface_damage(m_AppSurface, 0, 0, m_WindowSize.width, m_WindowSize.height);
-    fprintf(stderr, "DEBUG: Wayland wl_surface_commit called\n");
 	wl_surface_commit(m_AppSurface);
 }
 
@@ -274,7 +266,6 @@ bool WaylandDisplayWindow::IsWindowFullscreen() { return isFullscreen; }
 void WaylandDisplayWindow::Hide()
 {
 	wl_surface_attach(m_AppSurface, nullptr, 0, 0);
-    fprintf(stderr, "DEBUG: Wayland wl_surface_commit called\n");
 	wl_surface_commit(m_AppSurface);
 }
 
@@ -337,28 +328,22 @@ double WaylandDisplayWindow::GetDpiScale() const { return m_ScaleFactor; }
 
 void WaylandDisplayWindow::PresentBitmap(int width, int height, const uint32_t* pixels)
 {
-	fprintf(stderr, "DEBUG: Wayland PresentBitmap: w=%d, h=%d, scale=%f, m_WindowSize=(%f,%f), m_AppSurfaceBuffer=%p\\n", 
-		width, height, m_ScaleFactor, m_WindowSize.width, m_WindowSize.height, (void*)m_AppSurfaceBuffer);
 
 	// width/height here are physical (pixel) dimensions from the renderer.
 	if (!m_AppSurfaceBuffer || width != m_WindowSize.width || height != m_WindowSize.height)
 	{
-		fprintf(stderr, "DEBUG: Wayland calling CreateBuffers\\n");
 		CreateBuffers((int32_t)(width / m_ScaleFactor + 0.5), (int32_t)(height / m_ScaleFactor + 0.5));
 	}
 	
 	if (m_AppSurfaceBuffer)
 	{
-		fprintf(stderr, "DEBUG: Wayland committing buffer\\n");
 		std::memcpy(shared_mem->get_mem(), (void*)pixels, width * height * 4);
 		wl_surface_attach(m_AppSurface, m_AppSurfaceBuffer, 0, 0);
 		wl_surface_damage_buffer(m_AppSurface, 0, 0, width, height);
-    fprintf(stderr, "DEBUG: Wayland wl_surface_commit called\n");
 		wl_surface_commit(m_AppSurface);
 	}
 	else
 	{
-		fprintf(stderr, "DEBUG: Wayland skipping commit: buffer null\\n");
 	}
 }
 
@@ -378,7 +363,6 @@ Point WaylandDisplayWindow::MapToGlobal(const Point& pos) const { return (m_Wind
 
 void WaylandDisplayWindow::OnXDGToplevelConfigureEvent(int32_t width, int32_t height)
 {
-	fprintf(stderr, "DEBUG: Wayland OnXDGToplevelConfigureEvent: w=%d, h=%d\\n", width, height);
 	// The compositor sends logical (unscaled) dimensions in the configure event.
 	// Store them as logical so CreateBuffers can correctly scale to physical pixels.
 	if (width > 0 && height > 0)
@@ -427,7 +411,6 @@ void WaylandDisplayWindow::DrawSurface(uint32_t serial)
 
 		wl_surface_attach(m_AppSurface, m_AppSurfaceBuffer, 0, 0);
 		wl_surface_damage_buffer(m_AppSurface, 0, 0, m_WindowSize.width, m_WindowSize.height);
-    fprintf(stderr, "DEBUG: Wayland wl_surface_commit called\n");
 		wl_surface_commit(m_AppSurface);
 	}
 }
@@ -442,7 +425,6 @@ void WaylandDisplayWindow::CreateBuffers(int32_t width, int32_t height)
 	{
 		// Still track logical/physical size so GetPixelWidth/Height are correct.
 		int phys_width  = (int)(width  * m_ScaleFactor + 0.5);
-    fprintf(stderr, "DEBUG: Wayland CreateBuffers: w=%d, h=%d, scale=%f, phys_width=%d, phys_height=%d\n", width, height, m_ScaleFactor, (int)(width * m_ScaleFactor + 0.5), (int)(height * m_ScaleFactor + 0.5));
 		int phys_height = (int)(height * m_ScaleFactor + 0.5);
 		if (phys_width <= 0 || phys_height <= 0) return;
 		m_WindowSize = Size(phys_width, phys_height);
@@ -452,7 +434,6 @@ void WaylandDisplayWindow::CreateBuffers(int32_t width, int32_t height)
 
 	// width/height are logical pixels — scale up to physical buffer dimensions.
 	int phys_width  = (int)(width  * m_ScaleFactor + 0.5);
-    fprintf(stderr, "DEBUG: Wayland CreateBuffers: w=%d, h=%d, scale=%f, phys_width=%d, phys_height=%d\n", width, height, m_ScaleFactor, (int)(width * m_ScaleFactor + 0.5), (int)(height * m_ScaleFactor + 0.5));
 	int phys_height = (int)(height * m_ScaleFactor + 0.5);
 	if (phys_width <= 0 || phys_height <= 0) return;
 	// Skip if size hasn't actually changed.
