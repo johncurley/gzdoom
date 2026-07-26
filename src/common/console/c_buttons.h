@@ -69,6 +69,11 @@ public:
 		return Buttons[x].bDown;
 	}
 
+	const char* GetButtonName(int x) const
+	{
+		return NumToName[x].GetChars();
+	}
+
 	bool ButtonDownDigital(int x) const
 	{
 		// Like ButtonDown, but only for digital buttons.

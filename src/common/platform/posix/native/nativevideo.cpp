@@ -7,6 +7,7 @@
 #include "gles/gles_framebuffer.h"
 #include "x11_compat.h"
 #include "c_cvars.h"
+#include "printf.h"
 
 #include <algorithm>
 #include "native_display.h"
@@ -183,6 +184,25 @@ extern bool GUICapture;
 static bool WantGuiCaptureNow()
 {
 	return sysCallbacks.WantGuiCapture && sysCallbacks.WantGuiCapture();
+}
+
+// Temporary diagnostic for stuck keys. Enable with `in_keytrace 1` in the
+// console. Prints one line per key event as it is handed to the engine, so the
+// route decision and the posted/dropped outcome are visible; i_input.cpp prints
+// the resulting set of held buttons whenever it changes. A key-up that shows
+// "posted route=Game" but leaves its button in the held set is the failure we
+// are looking for.
+CVAR(Bool, in_keytrace, false, 0)
+
+void I_TraceKeyEvent(const char* dir, int inputkey, int gzkey, const char* route, bool posted)
+{
+	if (!in_keytrace)
+		return;
+	// stderr rather than Printf: Printf goes to the in-game console once video
+	// is up, and this needs to be capturable from a piped run.
+	fprintf(stderr, "[keytrace] %-4s ik=%-3d gz=%-3d route=%-4s %-7s gui=%d\n",
+		dir, inputkey, gzkey, route, posted ? "posted" : "DROPPED", (int)GUICapture);
+	fflush(stderr);
 }
 
 static int16_t GetModifierMask(bool shiftDown, bool ctrlDown, bool altDown)
@@ -465,8 +485,10 @@ public:
 			event_t guiev = {EV_GUI_Event, EV_GUI_KeyDown};
 			guiev.data1 = InputKeyToGUIKey(key);
 			guiev.data3 = ModMask();
-			if (guiev.data1 < 128) // match SDL behavior: uppercase ASCII range only
+			const bool post = guiev.data1 < 128; // match SDL behavior: uppercase ASCII range only
+			if (post)
 				D_PostEvent(&guiev);
+			I_TraceKeyEvent("down", (int)key, gzkey, "GUI", post);
 		}
 		else
 		{
@@ -474,8 +496,10 @@ public:
 			ev.data1 = gzkey;
 			ev.data2 = 0;
 			ev.data3 = ModMask();
-			if (ev.data1 != 0)
+			const bool post = ev.data1 != 0;
+			if (post)
 				D_PostEvent(&ev);
+			I_TraceKeyEvent("down", (int)key, gzkey, "Game", post);
 		}
     }
     void OnWindowKeyUp(InputKey key) override {
@@ -493,8 +517,10 @@ public:
 			event_t guiev = {EV_GUI_Event, EV_GUI_KeyUp};
 			guiev.data1 = InputKeyToGUIKey(key);
 			guiev.data3 = ModMask();
-			if (guiev.data1 < 128)
+			const bool post = guiev.data1 < 128;
+			if (post)
 				D_PostEvent(&guiev);
+			I_TraceKeyEvent("up", (int)key, gzkey, "GUI", post);
 		}
 		else
 		{
@@ -502,8 +528,10 @@ public:
 			ev.data1 = gzkey;
 			ev.data2 = 0;
 			ev.data3 = ModMask();
-			if (ev.data1 != 0)
+			const bool post = ev.data1 != 0;
+			if (post)
 				D_PostEvent(&ev);
+			I_TraceKeyEvent("up", (int)key, gzkey, "Game", post);
 		}
     }
     void OnWindowGeometryChanged() override {
