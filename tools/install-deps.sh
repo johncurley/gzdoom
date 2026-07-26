@@ -9,19 +9,33 @@ case "$OS" in
     "Linux")
         if [ -f /etc/debian_version ]; then
             echo "Detected Debian/Ubuntu-based system"
-            sudo apt update && sudo apt install -y libx11-dev libxext-dev libxinerama-dev libxrandr-dev libgl1-mesa-dev libdispatch-dev pkg-config cmake ninja-build g++
+            sudo apt update && sudo apt install -y \
+                libx11-dev libxext-dev libxinerama-dev libxrandr-dev libxi-dev \
+                libgl1-mesa-dev libegl-dev \
+                libwayland-dev libxkbcommon-dev \
+                libinput-dev libudev-dev \
+                libdispatch-dev pkg-config cmake ninja-build g++
         elif [ -f /etc/fedora-release ]; then
             echo "Detected Fedora-based system"
-            sudo dnf install -y libX11-devel libXext-devel libXinerama-devel libXrandr-devel mesa-libGL-devel libdispatch-devel pkgconf-pkg-config cmake ninja-build gcc-c++
+            sudo dnf install -y \
+                libX11-devel libXext-devel libXinerama-devel libXrandr-devel libXi-devel \
+                mesa-libGL-devel mesa-libEGL-devel \
+                wayland-devel libxkbcommon-devel \
+                libinput-devel systemd-devel \
+                libdispatch-devel pkgconf-pkg-config cmake ninja-build gcc-c++
         elif [ -f /etc/arch-release ]; then
             echo "Detected Arch-based system"
-            # Waylandpp + xkbcommon are required for ZWidget's native Wayland backend.
+            # The native backend links libinput/libudev, and dlopens wayland-client,
+            # libX11, libXi and libxkbcommon at runtime -- their headers are still
+            # needed to build. wayland-protocols supplies the XML that
+            # generate_protocols.sh runs wayland-scanner over.
             sudo pacman -Sy --needed \
-                libx11 libxext libxinerama libxrandr mesa \
-                wayland wayland-protocols waylandpp libxkbcommon \
+                libx11 libxext libxinerama libxrandr libxi mesa \
+                wayland wayland-protocols libxkbcommon \
+                libinput systemd-libs \
                 libdispatch pkgconf cmake ninja gcc
         else
-            echo "Unknown Linux distribution. Please install X11, OpenGL, and libdispatch development packages manually."
+            echo "Unknown Linux distribution. Please install the X11, Wayland, xkbcommon, libinput, libudev, OpenGL/EGL and libdispatch development packages manually."
         fi
         ;;
     "FreeBSD")
