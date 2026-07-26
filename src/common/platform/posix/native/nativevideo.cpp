@@ -484,8 +484,13 @@ public:
     void OnWindowKeyDown(InputKey key) override {
         UpdateModifierKey(key, true);
 
+		// A key-down for a key we already have a route for is an auto-repeat:
+		// routes are erased on key-up, so a live entry means the key is still
+		// held. The GUI expects those as EV_GUI_KeyRepeat, which is what drives
+		// held-key behaviour in the console and menus.
 		auto it = keyRoutes.find(key);
-		if (it == keyRoutes.end())
+		const bool isRepeat = (it != keyRoutes.end());
+		if (!isRepeat)
 		{
 			const bool guiNow = WantGuiCaptureNow();
 			keyRoutes[key] = guiNow ? EventRoute::GUI : EventRoute::Game;
@@ -493,19 +498,21 @@ public:
 		}
 
         int gzkey = ZWidgetKeyToGZDoom(key);
-        
+
 		if (it->second == EventRoute::GUI)
 		{
-			event_t guiev = {EV_GUI_Event, EV_GUI_KeyDown};
+			event_t guiev = {EV_GUI_Event, isRepeat ? EV_GUI_KeyRepeat : EV_GUI_KeyDown};
 			guiev.data1 = InputKeyToGUIKey(key);
 			guiev.data3 = ModMask();
 			const bool post = guiev.data1 < 128; // match SDL behavior: uppercase ASCII range only
 			if (post)
 				D_PostEvent(&guiev);
-			I_TraceKeyEvent("down", (int)key, gzkey, "GUI", post);
+			I_TraceKeyEvent(isRepeat ? "rep" : "down", (int)key, gzkey, "GUI", post);
 		}
-		else
+		else if (!isRepeat)
 		{
+			// Gameplay bindings are level-triggered: ButtonMap ignores a repeat
+			// of a key already held, so there is nothing to post.
 			event_t ev = {EV_KeyDown};
 			ev.data1 = gzkey;
 			ev.data2 = 0;

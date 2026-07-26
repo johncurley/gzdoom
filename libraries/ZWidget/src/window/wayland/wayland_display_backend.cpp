@@ -186,8 +186,84 @@ std::unique_ptr<DisplayWindow> WaylandDisplayBackend::Create(DisplayWindowHost* 
 	return std::make_unique<WaylandDisplayWindow>(this, windowHost, popupWindow, (WaylandDisplayWindow*)owner, renderAPI);
 }
 
+// Modifiers and lock keys must never repeat. xkb_keymap_key_repeats() would
+// answer this per-key from the keymap, but it is not among the symbols resolved
+// in wayland_dynamic.h, so exclude the known non-repeating keys directly.
+static bool IsRepeatableKey(InputKey key)
+{
+	switch (key)
+	{
+	case InputKey::Shift: case InputKey::LShift: case InputKey::RShift:
+	case InputKey::Ctrl: case InputKey::LControl: case InputKey::RControl:
+	case InputKey::Alt:
+	case InputKey::CapsLock: case InputKey::NumLock: case InputKey::ScrollLock:
+	case InputKey::None:
+		return false;
+	default:
+		return true;
+	}
+}
+
+static int64_t NowMilliseconds()
+{
+	return std::chrono::duration_cast<std::chrono::milliseconds>(
+		std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+void WaylandDisplayBackend::StartKeyRepeat(uint32_t scancode, InputKey key)
+{
+	if (m_CompositorSendsRepeat || m_RepeatRate <= 0 || !IsRepeatableKey(key))
+	{
+		StopKeyRepeat();
+		return;
+	}
+	m_RepeatScancode = scancode;
+	m_RepeatKey = key;
+	m_RepeatNextMs = NowMilliseconds() + m_RepeatDelay;
+}
+
+void WaylandDisplayBackend::UpdateKeyRepeat()
+{
+	if (m_RepeatScancode == 0 || !m_ActiveWindow || m_RepeatRate <= 0)
+		return;
+
+	const int64_t now = NowMilliseconds();
+	if (now < m_RepeatNextMs)
+		return;
+
+	const int64_t interval = 1000 / m_RepeatRate;
+
+	// Emit at most a handful per pump. If the process was stalled (a level
+	// load, say) we must not replay the whole backlog as a burst of keys.
+	int emitted = 0;
+	while (now >= m_RepeatNextMs && emitted < 4)
+	{
+		m_ActiveWindow->windowHost->OnWindowKeyDown(m_RepeatKey);
+
+		char buffer[32];
+		if (WAYLAND->p_xkb_state_key_get_utf8(m_KeyboardState, m_RepeatScancode, buffer, sizeof(buffer)) > 0)
+		{
+			// The window may have been destroyed by the key handler above.
+			if (!m_ActiveWindow)
+				return;
+			m_ActiveWindow->windowHost->OnWindowKeyChar(buffer);
+		}
+
+		m_RepeatNextMs += interval > 0 ? interval : 40;
+		emitted++;
+
+		if (!m_ActiveWindow || m_RepeatScancode == 0)
+			return;
+	}
+
+	if (now > m_RepeatNextMs)
+		m_RepeatNextMs = now + (interval > 0 ? interval : 40);
+}
+
 void WaylandDisplayBackend::ProcessEvents()
 {
+	UpdateKeyRepeat();
+
 	while (wl_display_prepare_read(s_waylandDisplay) != 0)
 	{
 		wl_display_dispatch_pending(s_waylandDisplay);
@@ -315,6 +391,7 @@ void WaylandDisplayBackend::OnWindowDestroyed(WaylandDisplayWindow* window)
 	if (m_ActiveWindow == window)
 	{
 		m_ActiveWindow = nullptr;
+		StopKeyRepeat();
 		// Held-key bookkeeping belonged to that window; nothing can release
 		// these now, so drop them rather than replay them at the next window.
 		m_PressedScancodes.clear();
@@ -502,6 +579,8 @@ void keyboard_handle_leave(void* data, struct wl_keyboard* wl_keyboard, uint32_t
 		// Snapshot and clear before dispatching: a key-up handler is free to
 		// destroy the window, which clears m_PressedScancodes and nulls
 		// m_ActiveWindow underneath us. Re-check the window each iteration.
+		backend->StopKeyRepeat();
+
 		std::map<uint32_t, InputKey> held;
 		held.swap(backend->m_PressedScancodes);
 		for (const auto& entry : held)
@@ -549,6 +628,18 @@ void keyboard_handle_key(void* data, struct wl_keyboard* wl_keyboard, uint32_t s
 			backend->m_PressedScancodes[scancode] = ik;
 		}
 		backend->inputKeyStates[ik] = true;
+
+		if (repeated)
+		{
+			// The compositor is generating repeats itself, so stand down.
+			backend->m_CompositorSendsRepeat = true;
+			backend->StopKeyRepeat();
+		}
+		else
+		{
+			// Wayland repeats only the most recently pressed key.
+			backend->StartKeyRepeat(scancode, ik);
+		}
 	}
 	else
 	{
@@ -567,6 +658,9 @@ void keyboard_handle_key(void* data, struct wl_keyboard* wl_keyboard, uint32_t s
 			ik = backend->XKBKeySymToInputKey(sym);
 		}
 		backend->inputKeyStates[ik] = false;
+
+		if (backend->m_RepeatScancode == scancode)
+			backend->StopKeyRepeat();
 	}
 
 	if (backend->m_ActiveWindow) {
@@ -591,7 +685,16 @@ void keyboard_handle_modifiers(void* data, struct wl_keyboard* wl_keyboard, uint
 	WAYLAND->p_xkb_state_update_mask(backend->m_KeyboardState, mods_depressed, mods_latched, mods_locked, 0, 0, group);
 }
 
-void keyboard_handle_repeat_info(void* data, struct wl_keyboard* wl_keyboard, int32_t rate, int32_t delay) {}
+void keyboard_handle_repeat_info(void* data, struct wl_keyboard* wl_keyboard, int32_t rate, int32_t delay)
+{
+	// rate is repeats per second, delay the milliseconds before the first one.
+	// A rate of zero means the compositor wants repeat disabled entirely.
+	WaylandDisplayBackend* backend = (WaylandDisplayBackend*)data;
+	backend->m_RepeatRate = rate;
+	backend->m_RepeatDelay = delay;
+	if (rate <= 0)
+		backend->StopKeyRepeat();
+}
 
 void pointer_handle_enter(void* data, struct wl_pointer* wl_pointer, uint32_t serial, struct wl_surface* surface, wl_fixed_t surface_x, wl_fixed_t surface_y)
 {

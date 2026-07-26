@@ -189,6 +189,27 @@ public:
 	// keyboard enter/leave need in order to stay in sync with the compositor.
 	std::map<uint32_t, InputKey> m_PressedScancodes;
 
+	// Client-side key repeat.
+	//
+	// wl_keyboard only tells us the rate and delay via repeat_info; generating
+	// the repeats is the client's job. (wl_keyboard v10 can send a REPEATED key
+	// state, but few compositors do, so we only defer to it if we actually see
+	// one.) Without this, held keys never repeat in menus or the console.
+	//
+	// The repeat is driven from ProcessEvents() rather than a WaylandTimer,
+	// because an embedding application may pump ProcessEvents() itself instead
+	// of calling RunLoop(), in which case UpdateTimers() never runs.
+	int32_t m_RepeatRate = 25;      // repeats per second; 0 disables repeat
+	int32_t m_RepeatDelay = 600;    // milliseconds before the first repeat
+	uint32_t m_RepeatScancode = 0;  // 0 when no key is repeating
+	InputKey m_RepeatKey = InputKey::None;
+	int64_t m_RepeatNextMs = 0;
+	bool m_CompositorSendsRepeat = false;
+
+	void UpdateKeyRepeat();
+	void StartKeyRepeat(uint32_t scancode, InputKey key);
+	void StopKeyRepeat() { m_RepeatScancode = 0; m_RepeatKey = InputKey::None; }
+
 	bool IsMouseLocked() { return hasMouseLock; }
 	void SetMouseLocked(bool val) { hasMouseLock = val; }
 
