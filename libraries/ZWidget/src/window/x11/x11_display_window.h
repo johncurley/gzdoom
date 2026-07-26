@@ -62,6 +62,9 @@ public:
 	std::vector<std::string> GetVulkanInstanceExtensions() override;
 	VkSurfaceKHR CreateVulkanSurface(VkInstance instance) override;
 
+	void* GetEGLNativeDisplay() override;
+	void* GetEGLNativeWindow() override;
+
 private:
 	void UpdateCursor();
 
@@ -117,8 +120,8 @@ private:
 		bool Focused = false;
 	} RawInput;
 
-	Pixmap cursor_bitmap = None;
-	Cursor hidden_cursor = None;
+	Pixmap cursor_bitmap = 0L;
+	Cursor hidden_cursor = 0L;
 
 	std::map<InputKey, bool> keyState;
 
@@ -128,7 +131,7 @@ private:
 
 	struct
 	{
-		Pixmap pixmap = None;
+		Pixmap pixmap = 0L;
 		XImage* image = nullptr;
 		void* pixels = nullptr;
 		int width = 0;

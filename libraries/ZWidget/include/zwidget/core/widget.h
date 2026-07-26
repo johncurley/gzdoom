@@ -5,6 +5,7 @@
 #include <variant>
 #include <unordered_map>
 #include <unordered_set>
+#include <optional>
 #include "canvas.h"
 #include "rect.h"
 #include "colorf.h"
@@ -13,6 +14,7 @@
 class Canvas;
 class Timer;
 class Dropdown;
+class Layout;
 
 enum class WidgetType
 {
@@ -47,6 +49,13 @@ public:
 	Size GetSize() const;
 	double GetWidth() const { return GetSize().width; }
 	double GetHeight() const { return GetSize().height; }
+	virtual double GetPreferredWidth() const { return GetWidth(); }
+	virtual double GetPreferredHeight() const { return GetHeight(); }
+	std::optional<double> GetFixedWidth() const { return {}; }
+	std::optional<double> GetFixedHeight() const { return {}; }
+	bool GetStretching() const { return Stretching; }
+	void SetStretching(bool enable) { Stretching = enable; }
+	void SetLayout(Layout* layout) { currentLayout = layout; }
 
 	// Widget noncontent area
 	void SetNoncontentSizes(double left, double top, double right, double bottom);
@@ -242,6 +251,8 @@ private:
 	bool HiddenFlag = false;
 
 	StandardCursor CurrentCursor = StandardCursor::arrow;
+	bool Stretching = false;
+	Layout* currentLayout = nullptr;
 
 	std::string StyleClass = "widget";
 	std::string StyleState;

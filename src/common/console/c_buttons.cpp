@@ -42,10 +42,6 @@
 #include "m_joy.h"
 #include "c_bind.h"
 
-#ifdef __GLIBC__
-#include <execinfo.h>
-#endif
-
 ButtonMap buttonMap;
 
 
@@ -140,24 +136,6 @@ void ButtonMap::ResetButtonTriggers ()
 
 void ButtonMap::ResetButtonStates ()
 {
-	static int call_count = 0;
-	call_count++;
-	
-	if (call_count <= 10 || call_count % 100 == 0) {
-		fprintf(stderr, "\n*** ResetButtonStates() call #%d ***\n", call_count);
-		
-		#ifdef __GLIBC__
-		void* addrlist[8];
-		int addrlen = backtrace(addrlist, 8);
-		char** symbollist = backtrace_symbols(addrlist, addrlen);
-		for (int i = 0; i < addrlen; i++) {
-			fprintf(stderr, "  [%d] %s\n", i, symbollist[i]);
-		}
-		free(symbollist);
-		#endif
-		fflush(stderr);
-	}
-	
 	for (auto &btn : Buttons)
 	{
 		if (!btn.bReleaseLock) 

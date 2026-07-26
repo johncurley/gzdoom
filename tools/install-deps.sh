@@ -15,7 +15,11 @@ case "$OS" in
             sudo dnf install -y libX11-devel libXext-devel libXinerama-devel libXrandr-devel mesa-libGL-devel libdispatch-devel pkgconf-pkg-config cmake ninja-build gcc-c++
         elif [ -f /etc/arch-release ]; then
             echo "Detected Arch-based system"
-            sudo pacman -Sy --needed libx11 libxext libxinerama libxrandr mesa libdispatch pkgconf cmake ninja gcc
+            # Waylandpp + xkbcommon are required for ZWidget's native Wayland backend.
+            sudo pacman -Sy --needed \
+                libx11 libxext libxinerama libxrandr mesa \
+                wayland wayland-protocols waylandpp libxkbcommon \
+                libdispatch pkgconf cmake ninja gcc
         else
             echo "Unknown Linux distribution. Please install X11, OpenGL, and libdispatch development packages manually."
         fi

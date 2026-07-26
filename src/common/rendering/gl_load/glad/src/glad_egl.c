@@ -24,9 +24,7 @@
 #include <string.h>
 #include <glad/glad_egl.h>
 
-int gladLoadEGL(void) {
-    return gladLoadEGLLoader((GLADloadproc)eglGetProcAddress);
-}
+// Removed gladLoadEGL() to prevent linking error
 
 static int find_extensionsEGL(void) {
 	return 1;

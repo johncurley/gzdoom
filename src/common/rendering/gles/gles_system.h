@@ -23,49 +23,63 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
-#define USE_GLAD_LOADER 0 // Set to 1 to use the GLAD loader, otherwise use noramal GZDoom loader for PC
+#define USE_GLAD_LOADER 1 // Set to 1 to use the GLAD loader, otherwise use noramal GZDoom loader for PC
 
 #if (USE_GLAD_LOADER)
-	#include "glad/glad.h"
+	#include <glad/glad.h>
 
-	// Below are used extensions for GLES
-	typedef void* (APIENTRYP PFNGLMAPBUFFERRANGEEXTPROC)(GLenum target, GLintptr offset, GLsizeiptr length, GLbitfield access);
-	GLAPI PFNGLMAPBUFFERRANGEEXTPROC glMapBufferRange;
-
-	typedef GLboolean(APIENTRYP PFNGLUNMAPBUFFEROESPROC)(GLenum target);
-	GLAPI PFNGLUNMAPBUFFEROESPROC glUnmapBuffer;
-
-	typedef void (APIENTRYP PFNGLVERTEXATTRIBIPOINTERPROC) (GLuint index, GLint size, GLenum type, GLsizei stride, const void* pointer);
-	GLAPI PFNGLVERTEXATTRIBIPOINTERPROC glVertexAttribIPointer;
-
-	typedef GLsync(APIENTRYP PFNGLFENCESYNCPROC)(GLenum condition, GLbitfield flags);
-	GLAPI PFNGLFENCESYNCPROC glFenceSync;
-	
-	typedef GLenum(APIENTRYP PFNGLCLIENTWAITSYNCPROC)(GLsync sync, GLbitfield flags, GLuint64 timeout);
-	GLAPI PFNGLCLIENTWAITSYNCPROC glClientWaitSync;
-
-	typedef void (APIENTRYP PFNGLDELETESYNCPROC)(GLsync sync);
-	GLAPI PFNGLDELETESYNCPROC glDeleteSync;
-
+	// GL constants that may be absent from stripped GLES headers
+	#ifndef GL_DEPTH24_STENCIL8
 	#define GL_DEPTH24_STENCIL8               0x88F0
+	#endif
+	#ifndef GL_MAP_PERSISTENT_BIT
 	#define GL_MAP_PERSISTENT_BIT             0x0040
+	#endif
+	#ifndef GL_MAP_READ_BIT
 	#define GL_MAP_READ_BIT                   0x0001
+	#endif
+	#ifndef GL_MAP_WRITE_BIT
 	#define GL_MAP_WRITE_BIT                  0x0002
+	#endif
+	#ifndef GL_MAP_UNSYNCHRONIZED_BIT
 	#define GL_MAP_UNSYNCHRONIZED_BIT         0x0020
+	#endif
+	#ifndef GL_MAP_INVALIDATE_BUFFER_BIT
 	#define GL_MAP_INVALIDATE_BUFFER_BIT      0x0008
+	#endif
+	#ifndef GL_BGRA
 	#define GL_BGRA                           0x80E1
+	#endif
+	#ifndef GL_DEPTH_CLAMP
 	#define GL_DEPTH_CLAMP                    0x864F
+	#endif
+	#ifndef GL_TEXTURE_MAX_ANISOTROPY_EXT
 	#define GL_TEXTURE_MAX_ANISOTROPY_EXT     0x84FE
+	#endif
+	#ifndef GL_INT_2_10_10_10_REV
 	#define GL_INT_2_10_10_10_REV             0x8D9F
+	#endif
+	#ifndef GL_RED
 	#define GL_RED                            0x1903
+	#endif
+	#ifndef GL_TEXTURE_SWIZZLE_RGBA
 	#define GL_TEXTURE_SWIZZLE_RGBA           0x8E46
+	#endif
+	#ifndef GL_SYNC_GPU_COMMANDS_COMPLETE
 	#define GL_SYNC_GPU_COMMANDS_COMPLETE     0x9117
+	#endif
+	#ifndef GL_SYNC_FLUSH_COMMANDS_BIT
 	#define GL_SYNC_FLUSH_COMMANDS_BIT        0x00000001
+	#endif
+	#ifndef GL_ALREADY_SIGNALED
 	#define GL_ALREADY_SIGNALED               0x911A
+	#endif
+	#ifndef GL_CONDITION_SATISFIED
 	#define GL_CONDITION_SATISFIED            0x911C
+	#endif
 
 #else
-	#include "gl_load/gl_load.h"
+	#include <glad/glad.h>
 #endif
 
 #if defined(__APPLE__)

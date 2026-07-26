@@ -261,7 +261,7 @@ if( APPLE )
 	option (HAVE_GLES2 "Enable GLES2 support" OFF)
 	option (HAVE_METAL "Enable Metal support" ON) # Enable Metal by default
 else()
-	option (HAVE_GLES2 "Enable GLES2 support" ON)
+	option (HAVE_GLES2 "Enable GLES2 support" OFF)
 endif()
 
 
@@ -383,7 +383,7 @@ option(FORCE_INTERNAL_BZIP2 "Use internal bzip2")
 option(FORCE_INTERNAL_ZMUSIC "Use internal zmusic")
 option(FORCE_INTERNAL_ASMJIT "Use internal asmjit" ON)
 option(FORCE_INTERNAL_CPPDAP "Use internal cppdap" ON)
-option(GZDOOM_NATIVE_LINUX "Use native windowing/input on Linux and BSD" OFF)
+option(GZDOOM_NATIVE_LINUX "Use native windowing/input on Linux and BSD" ON)
 
 mark_as_advanced( FORCE_INTERNAL_ASMJIT )
 

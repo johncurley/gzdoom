@@ -14,6 +14,7 @@
 #include "i_system.h"
 #include "m_argv.h"
 #include "i_video.h"
+#include "m_misc.h"
 
 extern IVideo *Video;
 extern IVideo *gl_CreateVideo();
@@ -60,12 +61,15 @@ int main(int argc, char **argv)
         }
     }
 #else // Linux
-    if (readlink("/proc/self/exe", program, sizeof(program)) != -1) {
+	ssize_t exeLen = readlink("/proc/self/exe", program, sizeof(program) - 1);
+    if (exeLen != -1) {
+		program[exeLen] = '\0';
         found = true;
     }
 #endif
 
     if (found) {
+		fprintf(stderr, "[NATIVE] Executable: %s\n", program);
         char* slash = strrchr(program, '/');
         if (slash != NULL) {
             *(slash + 1) = '\0';
@@ -89,6 +93,10 @@ int main(int argc, char **argv)
     }
 
     printf("Native Linux backend initialized.\n");
+	fprintf(stderr, "[NATIVE] PROGDIR: %s\n", progdir.GetChars());
+
+	// Helpful for diagnosing config persistence issues when multiple builds/binaries exist.
+	// GameConfig is created early in D_DoomInit() (M_LoadDefaults()) and it will print once available.
     
     extern void I_StartupJoysticks();
     I_StartupJoysticks();

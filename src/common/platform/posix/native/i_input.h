@@ -8,5 +8,6 @@ void I_StartFrame();
 void I_SetMouseCapture();
 void I_ReleaseMouseCapture();
 void I_SetNativeMouse(bool wantNative);
+void I_SetWindowFocus(bool focused);
 
 #endif

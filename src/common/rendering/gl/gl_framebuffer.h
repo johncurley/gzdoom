@@ -21,6 +21,9 @@ class OpenGLFrameBuffer : public SystemGLFrameBuffer
 public:
 
 	OpenGLFrameBuffer(void *hMonitor, bool fullscreen) ;
+#ifdef GZDOOM_NATIVE_LINUX
+	OpenGLFrameBuffer(void* display, void* surface, bool wayland);
+#endif
 	~OpenGLFrameBuffer();
 	int Backend() override { return 2; }
 	bool CompileNextShader() override;

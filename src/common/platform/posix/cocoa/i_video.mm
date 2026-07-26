@@ -39,7 +39,7 @@
 #define GL_SILENCE_DEPRECATION
 #endif
 
-#include "gl_load.h"
+#include <glad/glad.h>
 
 #ifdef HAVE_VULKAN
 #include <zvulkan/vulkanbuilders.h>
@@ -1032,7 +1032,7 @@ int polyVSync = -1;
 }
 
 void I_PolyPresentInit() {
-  ogl_LoadFunctions();
+  gladLoadGL();
 
   glGenTextures(1, &polyTexture);
   assert(polyTexture != 0);

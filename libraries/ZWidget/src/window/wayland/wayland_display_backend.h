@@ -2,24 +2,44 @@
 
 #include "window/window.h"
 #include "window/ztimer/ztimer.h"
+#include "wayland_dynamic.h"
 
-#include <wayland-client.h>
-#include <wayland-client.hpp>
-#include <wayland-client-protocol-extra.hpp>
-#include <wayland-client-protocol-unstable.hpp>
-#include <wayland-cursor.hpp>
-#include "wl_fractional_scaling_protocol.hpp"
-#include "wl_xdg_toplevel_icon.hpp"
 #include <linux/input.h>
 #include <poll.h>
 #include <map>
 #include <set>
 #include <xkbcommon/xkbcommon.h>
 
-#include "wl_cursor_shape.hpp"
-
-inline auto hash_proxy = [](wayland::proxy_t const& proxy) { return reinterpret_cast<size_t>(proxy.c_ptr()); };
-using hash_proxy_t = decltype(hash_proxy);
+// Forward declarations for Wayland C types (proxies)
+struct wl_display;
+struct wl_registry;
+struct wl_compositor;
+struct wl_shm;
+struct wl_seat;
+struct wl_output;
+struct wl_data_device_manager;
+struct wl_data_device;
+struct wl_data_offer;
+struct xdg_wm_base;
+struct zwp_pointer_constraints_v1;
+struct xdg_activation_v1;
+struct zxdg_decoration_manager_v1;
+struct wp_fractional_scale_manager_v1;
+struct zxdg_output_manager_v1;
+struct zxdg_output_v1;
+struct zxdg_exporter_v2;
+struct wl_keyboard;
+struct wl_pointer;
+struct zwp_relative_pointer_manager_v1;
+struct zwp_relative_pointer_v1;
+struct xdg_toplevel_icon_manager_v1;
+struct wp_cursor_shape_manager_v1;
+struct wp_cursor_shape_device_v1;
+struct wl_surface;
+struct wl_buffer;
+struct wl_cursor_theme;
+struct wl_cursor;
+struct wl_cursor_image;
 
 static short poll_single(int fd, short events, int timeout)
 {
@@ -52,7 +72,7 @@ struct WaylandPointerEvent
 	double surfaceX, surfaceY;
 	double dx, dy, dx_unaccel, dy_unaccel;
 	uint32_t button;
-	wayland::pointer_button_state state;
+	uint32_t state; // wl_pointer_button_state
 	uint32_t time;
 	uint32_t serial;
 	struct {
@@ -61,7 +81,7 @@ struct WaylandPointerEvent
 		int32_t discrete;
 		int32_t value120;
 	} axes[2];
-	wayland::pointer_axis_source axis_source;
+	uint32_t axis_source; // wl_pointer_axis_source
 };
 
 class WaylandTimer
@@ -101,8 +121,10 @@ public:
 	void ShowCursor(bool enable);
 	bool GetKeyState(InputKey key);
 
-	std::string GetClipboardText() { return m_ClipboardContents; }
-	wayland::data_device_t& GetDataDevice() { return m_DataDevice; }
+	std::string GetClipboardText();
+	void SetClipboardText(const std::string& text);
+
+	struct wl_data_device* GetDataDevice() { return m_DataDevice; }
 	uint32_t GetKeyboardSerial() const { return m_KeyboardSerial; }
 
 #ifdef USE_DBUS
@@ -113,54 +135,53 @@ public:
 
 	bool exitRunLoop = false;
 	Size s_ScreenSize = Size(0, 0);
-	wayland::display_t s_waylandDisplay = wayland::display_t();
-	wayland::registry_t s_waylandRegistry;
+	double s_DpiScale = 1.0;
+	struct wl_display* s_waylandDisplay = nullptr;
+	struct wl_registry* s_waylandRegistry = nullptr;
 	std::vector<WaylandDisplayWindow*> s_Windows;
 	WaylandDisplayWindow* m_FocusWindow = nullptr;
 	WaylandDisplayWindow* m_MouseFocusWindow = nullptr; // Mouse focus should be tracked separately.
+	WaylandDisplayWindow* m_ActiveWindow = nullptr;
+	WaylandDisplayWindow* m_HoverWindow = nullptr;
 
-	wayland::compositor_t m_waylandCompositor;
-	wayland::shm_t m_waylandSHM;
-	wayland::seat_t m_waylandSeat;
-	wayland::output_t m_waylandOutput;
-	wayland::data_device_manager_t m_DataDeviceManager;
-	wayland::xdg_wm_base_t m_XDGWMBase;
-	wayland::zwp_pointer_constraints_v1_t m_PointerConstraints;
-	wayland::xdg_activation_v1_t m_XDGActivation;
-	wayland::zxdg_decoration_manager_v1_t m_XDGDecorationManager;
-	wayland::fractional_scale_manager_v1_t m_FractionalScaleManager;
-	wayland::zxdg_output_manager_v1_t m_XDGOutputManager;
-	wayland::zxdg_output_v1_t m_XDGOutput;
-	wayland::zxdg_exporter_v2_t m_XDGExporter;
+	struct wl_compositor* m_waylandCompositor = nullptr;
+	struct wl_shm* m_waylandSHM = nullptr;
+	struct wl_seat* m_waylandSeat = nullptr;
+	struct wl_output* m_waylandOutput = nullptr;
+	struct wl_data_device_manager* m_DataDeviceManager = nullptr;
+	struct xdg_wm_base* m_XDGWMBase = nullptr;
+	struct zwp_pointer_constraints_v1* m_PointerConstraints = nullptr;
+	struct xdg_activation_v1* m_XDGActivation = nullptr;
+	struct zxdg_decoration_manager_v1* m_XDGDecorationManager = nullptr;
+	struct wp_fractional_scale_manager_v1* m_FractionalScaleManager = nullptr;
+	struct zxdg_output_manager_v1* m_XDGOutputManager = nullptr;
+	struct zxdg_output_v1* m_XDGOutput = nullptr;
+	struct zxdg_exporter_v2* m_XDGExporter = nullptr;
 
-	wayland::keyboard_t m_waylandKeyboard;
-	wayland::pointer_t m_waylandPointer;
+	struct wl_keyboard* m_waylandKeyboard = nullptr;
+	struct wl_pointer* m_waylandPointer = nullptr;
 
-	wayland::zwp_relative_pointer_manager_v1_t m_RelativePointerManager;
-	wayland::zwp_relative_pointer_v1_t m_RelativePointer;
+	struct zwp_relative_pointer_manager_v1* m_RelativePointerManager = nullptr;
+	struct zwp_relative_pointer_v1* m_RelativePointer = nullptr;
 
-	wayland::xdg_toplevel_icon_manager_v1_t m_XDGToplevelIconManager;
+	struct xdg_toplevel_icon_manager_v1* m_XDGToplevelIconManager = nullptr;
 
-	wayland::cursor_shape_manager_v1_t m_CursorShapeManager;
-	wayland::cursor_shape_device_v1_t m_CursorShapeDevice;
+	struct wp_cursor_shape_manager_v1* m_CursorShapeManager = nullptr;
+	struct wp_cursor_shape_device_v1* m_CursorShapeDevice = nullptr;
 
-	wayland::cursor_image_t m_cursorImage;
-	wayland::surface_t m_cursorSurface;
-	wayland::buffer_t m_cursorBuffer;
+	struct wl_cursor_theme* m_cursorTheme = nullptr;
+	struct wl_cursor* m_obtainedCursor = nullptr;
+	struct wl_cursor_image* m_cursorImage = nullptr;
+	struct wl_surface* m_cursorSurface = nullptr;
+	struct wl_buffer* m_cursorBuffer = nullptr;
 
 	std::map<InputKey, bool> inputKeyStates; // True when the key is pressed, false when isn't
 
 	bool IsMouseLocked() { return hasMouseLock; }
 	void SetMouseLocked(bool val) { hasMouseLock = val; }
 
-private:
-	void CheckNeedsUpdate();
-	void UpdateTimers();
-	void WaitForEvents(int timeout);
-	int GetTimerTimeout();
-	void ConnectDeviceEvents();
-	void OnKeyboardKeyEvent(xkb_keysym_t xkbKeySym, wayland::keyboard_key_state state);
-	void OnKeyboardCharEvent(const char* ch, wayland::keyboard_key_state state);
+	void OnKeyboardKeyEvent(xkb_keysym_t xkbKeySym, uint32_t state);
+	void OnKeyboardCharEvent(const char* ch, uint32_t state);
 	void OnKeyboardDelayEnd();
 	void OnKeyboardRepeat();
 	void OnMouseEnterEvent(uint32_t serial);
@@ -174,12 +195,32 @@ private:
 	InputKey XKBKeySymToInputKey(xkb_keysym_t keySym);
 	InputKey LinuxInputEventCodeToInputKey(uint32_t inputCode);
 
-	wayland::cursor_shape_device_v1_shape GetWaylandCursorShape(StandardCursor cursor);
+	uint32_t GetWaylandCursorShape(StandardCursor cursor);
 	std::string GetWaylandCursorName(StandardCursor cursor);
 
 	bool hasKeyboard = false;
 	bool hasPointer = false;
 	bool hasMouseLock = false;
+
+	uint32_t m_KeyboardSerial = 0;
+	uint32_t m_MouseSerial = 0;
+	uint32_t m_PointerSerial = 0;
+
+	xkb_context* m_KeymapContext = nullptr;
+	xkb_keymap* m_Keymap = nullptr;
+	xkb_state* m_KeyboardState = nullptr;
+
+	WaylandPointerEvent currentPointerEvent = {0};
+
+	struct wl_data_device* m_DataDevice = nullptr;
+	std::unordered_map<struct wl_data_offer*, std::set<std::string>> m_DataOfferMimeTypes;
+
+	struct wl_data_source* m_DataSource = nullptr;
+	std::string m_ClipboardText;
+	std::string m_ClipboardContents;
+	std::string m_ClipboardMimeType;
+
+	std::vector<std::shared_ptr<WaylandTimer>> m_timers;
 
 	ZTimer::TimePoint m_previousTime;
 	ZTimer::TimePoint m_currentTime;
@@ -190,19 +231,10 @@ private:
 	InputKey previousKey = {};
 	std::string previousChars;
 
-	uint32_t m_KeyboardSerial = 0;
-	uint32_t m_MouseSerial = 0;
-
-	xkb_context* m_KeymapContext = nullptr;
-	xkb_keymap* m_Keymap = nullptr;
-	xkb_state* m_KeyboardState = nullptr;
-
-	WaylandPointerEvent currentPointerEvent = {0};
-
-	wayland::data_device_t m_DataDevice;
-	std::unordered_map<wayland::data_offer_t, std::set<std::string>, hash_proxy_t> m_DataOfferMimeTypes;
-
-	std::string m_ClipboardContents;
-
-	std::vector<std::shared_ptr<WaylandTimer>> m_timers;
+private:
+	void CheckNeedsUpdate();
+	void UpdateTimers();
+	void WaitForEvents(int timeout);
+	int GetTimerTimeout();
+	void ConnectDeviceEvents();
 };

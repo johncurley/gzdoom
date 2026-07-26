@@ -184,8 +184,10 @@ void gl_LoadExtensions()
 	glGetIntegerv(GL_MAX_FRAGMENT_UNIFORM_COMPONENTS, &v);
 	gl.maxuniforms = v;
 	glGetIntegerv(GL_MAX_UNIFORM_BLOCK_SIZE, &v);
+	if (v == 0) v = 65536;
 	gl.maxuniformblock = min(65536, v);
 	glGetIntegerv(GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT, &v);
+	if (v == 0) v = 256;
 	gl.uniformblockalignment = v;
 
 	glGetIntegerv(GL_MAX_TEXTURE_SIZE, &gl.max_texturesize);

@@ -53,6 +53,7 @@ FLightBuffer::FLightBuffer(int pipelineNbr):
 		mBufferType = false;
 		mBlockSize = screen->maxuniformblock / ELEMENT_SIZE;
 		mBlockAlign = screen->uniformblockalignment / ELEMENT_SIZE;
+		if (mBlockAlign == 0) mBlockAlign = 1;
 		mMaxUploadSize = (mBlockSize - mBlockAlign);
 
 		//mByteSize += screen->maxuniformblock;	// to avoid mapping beyond the end of the buffer. REMOVED this...This can try to allocate 100's of MB..

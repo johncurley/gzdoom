@@ -124,6 +124,7 @@ enum class RenderAPI
 	Bitmap,
 	Vulkan,
 	OpenGL,
+	EGL,
 	D3D11,
 	D3D12,
 	Metal
@@ -215,6 +216,9 @@ public:
 
 	virtual std::vector<std::string> GetVulkanInstanceExtensions() = 0;
 	virtual VkSurfaceKHR CreateVulkanSurface(VkInstance instance) = 0;
+
+	virtual void* GetEGLNativeDisplay() { return nullptr; }
+	virtual void* GetEGLNativeWindow() { return nullptr; }
 };
 
 class DisplayBackend

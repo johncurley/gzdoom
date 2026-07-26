@@ -14,13 +14,6 @@ void setGlVersion(double glv);
 
 #if USE_GLAD_LOADER
 
-PFNGLMAPBUFFERRANGEEXTPROC glMapBufferRange = NULL;
-PFNGLUNMAPBUFFEROESPROC glUnmapBuffer = NULL;
-PFNGLVERTEXATTRIBIPOINTERPROC glVertexAttribIPointer = NULL;
-PFNGLFENCESYNCPROC glFenceSync = NULL;
-PFNGLCLIENTWAITSYNCPROC glClientWaitSync = NULL;
-PFNGLDELETESYNCPROC glDeleteSync = NULL;
-
 #if defined _WIN32
 
 #include <windows.h>
@@ -58,21 +51,26 @@ static void* LoadGLES2Proc(const char* name)
 	{
 		int flags = RTLD_LOCAL | RTLD_NOW;
 
-		glesLib = dlopen("libGLESv2_CM.so", flags);
-		if (!glesLib)
-		{
-			glesLib = dlopen("libGLESv2.so", flags);
-		}
-		if (!glesLib)
-		{
-			glesLib = dlopen("libGLESv2.so.2", flags);
-		}
+		glesLib = dlopen("libGLESv2.so.2", flags);
+		if (!glesLib) glesLib = dlopen("libGLESv2.so", flags);
 	}
 
-	void* ret = NULL;
-	ret = dlsym(glesLib, name);
+	void* addr = NULL;
+    if (glesLib) addr = dlsym(glesLib, name);
+    
+    static void* (*zd_eglGetProcAddress)(const char*) = nullptr;
+    static bool tried_egl = false;
+    if (!zd_eglGetProcAddress && !tried_egl) {
+        tried_egl = true;
+        void* egl_lib = dlopen("libEGL.so.1", RTLD_NOW | RTLD_LOCAL);
+        if (!egl_lib) egl_lib = dlopen("libEGL.so", RTLD_NOW | RTLD_LOCAL);
+        if (egl_lib) {
+            zd_eglGetProcAddress = (void*(*)(const char*))dlsym(egl_lib, "eglGetProcAddress");
+        }
+    }
+    if (!addr && zd_eglGetProcAddress) addr = (void*)zd_eglGetProcAddress(name);
 
-	return ret;
+	return addr;
 }
 
 #endif
@@ -127,20 +125,12 @@ namespace OpenGLESRenderer
 		{
 			exit(-1);
 		}
-
-		glMapBufferRange = (PFNGLMAPBUFFERRANGEEXTPROC)LoadGLES2Proc("glMapBufferRange");
-		glUnmapBuffer = (PFNGLUNMAPBUFFEROESPROC)LoadGLES2Proc("glUnmapBuffer");
-		glVertexAttribIPointer = (PFNGLVERTEXATTRIBIPOINTERPROC)LoadGLES2Proc("glVertexAttribIPointer");
-
-		glFenceSync = (PFNGLFENCESYNCPROC)LoadGLES2Proc("glFenceSync");
-		glClientWaitSync = (PFNGLCLIENTWAITSYNCPROC)LoadGLES2Proc("glClientWaitSync");
-		glDeleteSync = (PFNGLDELETESYNCPROC)LoadGLES2Proc("glDeleteSync");
 #else
 		static bool first = true;
 
 		if (first)
 		{
-			if (ogl_LoadFunctions() == ogl_LOAD_FAILED)
+			if (!gladLoadGL())
 			{
 				//I_FatalError("Failed to load OpenGL functions.");
 			}
@@ -184,54 +174,16 @@ namespace OpenGLESRenderer
 
 		Printf("GL_MAX_TEXTURE_SIZE: %d\n", gles.max_texturesize);
 
-
-		// Check if running on a GLES device, version string will start with 'OpenGL ES'
-		if (!strncmp(glVersionStr, "OpenGL ES", strlen("OpenGL ES")))
-		{
-			gles.glesMode = GLES_MODE_GLES;
-		}
-		else // Else runnning on Desktop, check OpenGL version is 3 or above
-		{
-			if (glVersion > 3.29)
-				gles.glesMode = GLES_MODE_OGL3; // 3.3 or above
-			else
-				gles.glesMode = GLES_MODE_OGL2; // Below 3.3
-		}
-
-
-		if (gles.glesMode == GLES_MODE_GLES)
-		{
-			Printf("GLES choosing mode: GLES_MODE_GLES\n");
-
-			gles.shaderVersionString = "100";
-			gles.depthStencilAvailable = CheckExtension("GL_OES_packed_depth_stencil");
-			gles.npotAvailable = CheckExtension("GL_OES_texture_npot");
-			gles.depthClampAvailable = CheckExtension("GL_EXT_depth_clamp");
-			gles.anistropicFilterAvailable = CheckExtension("GL_EXT_texture_filter_anisotropic");
-		}
-		else if (gles.glesMode == GLES_MODE_OGL2)
-		{
-			Printf("GLES choosing mode: GLES_MODE_OGL2\n");
-
-			gles.shaderVersionString = "100";
-			gles.depthStencilAvailable = true;
-			gles.npotAvailable = true;
-			gles.useMappedBuffers = true;
-			gles.depthClampAvailable = true;
-			gles.anistropicFilterAvailable = true;
-		}
-		else if (gles.glesMode == GLES_MODE_OGL3)
-		{
-			Printf("GLES choosing mode: GLES_MODE_OGL3\n");
-
-			gles.shaderVersionString = "330";
-			gles.depthStencilAvailable = true;
-			gles.npotAvailable = true;
-			gles.useMappedBuffers = true;
-			gles.depthClampAvailable = true;
-			gles.anistropicFilterAvailable = true;
-		}
+        gles.glesMode = GLES_MODE_OGL3;
+		Printf("GLES forced mode: GLES_MODE_OGL3\n");
+        
+        gles.shaderVersionString = "330";
+        gles.depthStencilAvailable = true;
+        gles.npotAvailable = true;
+        gles.useMappedBuffers = true;
+        gles.depthClampAvailable = true;
+        gles.anistropicFilterAvailable = true;
 		
-		setGlVersion(glVersion);
+		setGlVersion(4.3);
 	}
 }

@@ -93,6 +93,17 @@ OpenGLFrameBuffer::OpenGLFrameBuffer(void *hMonitor, bool fullscreen) :
 	GLRenderer = nullptr;
 }
 
+OpenGLFrameBuffer::OpenGLFrameBuffer(void* display, void* surface, bool wayland)
+	: Super(display, surface, wayland)
+{
+	// Keep behavior consistent with the other constructor.
+	Super::SetVSync(vid_vsync);
+	FHardwareTexture::InitGlobalState();
+
+	gl_RenderState.Reset();
+	GLRenderer = nullptr;
+}
+
 OpenGLFrameBuffer::~OpenGLFrameBuffer()
 {
 	PPResource::ResetAll();

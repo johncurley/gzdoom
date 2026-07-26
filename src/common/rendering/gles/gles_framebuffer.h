@@ -21,6 +21,7 @@ public:
 
 	explicit OpenGLFrameBuffer() {}
 	OpenGLFrameBuffer(void *hMonitor, bool fullscreen) ;
+	OpenGLFrameBuffer(void* display, void* surface, bool wayland);
 	~OpenGLFrameBuffer();
 	int Backend() override { return 0; }
 

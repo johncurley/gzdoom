@@ -6,24 +6,37 @@
 
 class SystemBaseFrameBuffer : public DFrameBuffer {
 public:
-  SystemBaseFrameBuffer(void *hMonitor, bool fullscreen) : DFrameBuffer(0, 0) {}
+  SystemBaseFrameBuffer(void *hMonitor, bool fullscreen);
   bool IsFullscreen() override { return false; }
   int GetClientWidth() override { return 640; }
   int GetClientHeight() override { return 480; }
-  void ToggleFullscreen(bool yes) override {}
-  void SetWindowSize(int client_w, int client_h) override {}
+  void ToggleFullscreen(bool yes) override;
+  void SetWindowSize(int client_w, int client_h) override;
   virtual NativeHandle GetNativeHandle() const { return {}; }
 protected:
-  SystemBaseFrameBuffer() : DFrameBuffer(0, 0) {}
+  SystemBaseFrameBuffer();
 };
 
 class SystemGLFrameBuffer : public SystemBaseFrameBuffer {
-    void* WindowHandle;
+    void* WindowHandle = nullptr;
+    bool mIsWayland = false;
+
+#ifdef HAVE_WAYLAND_EGL
+    void* mEglDisplay = nullptr;
+    void* mEglConfig = nullptr;
+    void* mEglContext = nullptr;
+    void* mEglSurface = nullptr;
+    void* mEglWindow = nullptr; // wl_egl_window
+    bool InitEGL(void* native_display, void* native_window);
+#endif
+
 public:
   void InitializeState() override;
   IIndexBuffer* CreateIndexBuffer() override;
   IVertexBuffer* CreateVertexBuffer() override;
+  IDataBuffer* CreateDataBuffer(int bindingpoint, bool ssbo, bool needsresize) override;
   SystemGLFrameBuffer(void *hMonitor, bool fullscreen);
+  SystemGLFrameBuffer(void* display, void* surface, bool wayland);
   SystemGLFrameBuffer();
   ~SystemGLFrameBuffer();
   int GetClientWidth() override;

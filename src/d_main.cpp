@@ -3941,27 +3941,10 @@ int GameMain()
 {
 	if (!DisplayBackend::Get())
 	{
-		// On Windows, prefer the native win32 backend.
-		// On macOS, prefer the native Cocoa backend.
-		// On other platforms, use SDL until the other backends are more mature.
-		auto zwidget = DisplayBackend::TryCreateWin32();
-		if (!zwidget)
-			zwidget = DisplayBackend::TryCreateCocoa();
-		if (!zwidget)
-			zwidget = DisplayBackend::TryCreateSDL2();
-
+		auto zwidget = DisplayBackend::TryCreateBackend();
 		if (!zwidget)
 		{
-			zwidget = DisplayBackend::TryCreateWayland();
-		}
-		if (!zwidget)
-		{
-			zwidget = DisplayBackend::TryCreateX11();
-		}
-
-		if (!zwidget)
-		{
-			fprintf(stderr, "Unable to create init zwidget\n");
+			fprintf(stderr, "Unable to create any ZWidget display backend.\n");
 			return -1;
 		}
 		DisplayBackend::Set(std::move(zwidget));

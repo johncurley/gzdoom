@@ -21,6 +21,20 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+struct wl_surface;
+struct wl_buffer;
+struct wl_callback;
+struct xdg_surface;
+struct xdg_toplevel;
+struct xdg_popup;
+struct wp_fractional_scale_v1;
+struct zxdg_toplevel_decoration_v1;
+struct zxdg_exported_v2;
+struct zwp_locked_pointer_v1;
+struct zwp_confined_pointer_v1;
+struct xdg_toplevel_icon_v1;
+struct wl_data_source;
+
 template <typename R, typename T, typename... Args>
 std::function<R(Args...)> bind_mem_fn(R(T::* func)(Args...), T *t)
 {
@@ -131,15 +145,18 @@ public:
 	std::vector<std::string> GetVulkanInstanceExtensions() override;
 	VkSurfaceKHR CreateVulkanSurface(VkInstance instance) override;
 
-	wayland::surface_t GetWindowSurface() { return m_AppSurface; }
+	void* GetEGLNativeDisplay() override;
+	void* GetEGLNativeWindow() override;
+
+	struct wl_surface* GetWindowSurface() { return m_AppSurface; }
 
 	bool IsWindowFullscreen() override;
 
-private:
 	// Event handlers as otherwise linking DisplayWindowHost On...() functions with Wayland events directly crashes the app
 	// Alternatively to avoid crashes one can capture by value ([=]) instead of reference ([&])
 	void OnXDGToplevelConfigureEvent(int32_t width, int32_t height);
-	void OnExportHandleEvent(std::string exportedHandle);
+	void OnXDGToplevelStateEvent(struct wl_array* states);
+	void OnExportHandleEvent(const char* handle);
 	void OnExitEvent();
 
 	void DrawSurface(uint32_t serial = 0);
@@ -151,11 +168,13 @@ private:
 	WaylandDisplayWindow* m_owner = nullptr;
 	DisplayWindowHost* windowHost = nullptr;
 	bool m_PopupWindow = false;
+	bool m_IsActivated = false;
 
 	bool m_NeedsUpdate = true;
 
 	Point m_WindowGlobalPos = Point(0, 0);
-	Size m_WindowSize = Size(0, 0);
+    Size m_WindowSize = Size(0, 0);
+	Size m_LogicalSize = Size(640, 480); // Logical pixel size as sent by the compositor
 	double m_ScaleFactor = 1.0;
 
 	Point m_SurfaceMousePos = Point(0, 0);
@@ -163,37 +182,30 @@ private:
 	WaylandNativeHandle m_NativeHandle;
 	RenderAPI m_renderAPI;
 
-	wayland::data_source_t m_DataSource;
-
-	wayland::zxdg_toplevel_decoration_v1_t m_XDGToplevelDecoration;
-
-	wayland::fractional_scale_v1_t m_FractionalScale;
-
-	wayland::surface_t m_AppSurface;
-	wayland::buffer_t m_AppSurfaceBuffer;
-
-	wayland::xdg_surface_t m_XDGSurface;
-	wayland::xdg_toplevel_t m_XDGToplevel;
-	wayland::xdg_popup_t m_XDGPopup;
-
-	wayland::zxdg_exported_v2_t m_XDGExported;
-
-	wayland::zwp_locked_pointer_v1_t m_LockedPointer;
-	wayland::zwp_confined_pointer_v1_t m_ConfinedPointer;
-
-	wayland::xdg_toplevel_icon_v1_t m_XDGToplevelIcon;
-
-	wayland::callback_t m_FrameCallback;
+	struct wl_data_source* m_DataSource = nullptr;
+	struct zxdg_toplevel_decoration_v1* m_XDGToplevelDecoration = nullptr;
+	struct wp_fractional_scale_v1* m_FractionalScale = nullptr;
+	struct wl_surface* m_AppSurface = nullptr;
+	struct wl_buffer* m_AppSurfaceBuffer = nullptr;
+	struct xdg_surface* m_XDGSurface = nullptr;
+	struct xdg_toplevel* m_XDGToplevel = nullptr;
+	struct xdg_popup* m_XDGPopup = nullptr;
+	struct zxdg_exported_v2* m_XDGExported = nullptr;
+	struct zwp_locked_pointer_v1* m_LockedPointer = nullptr;
+	struct zwp_confined_pointer_v1* m_ConfinedPointer = nullptr;
+	struct xdg_toplevel_icon_v1* m_XDGToplevelIcon = nullptr;
+	struct wl_callback* m_FrameCallback = nullptr;
 
 	std::string m_windowID;
 
 	std::shared_ptr<SharedMemHelper> shared_mem;
 
 	std::vector<std::shared_ptr<SharedMemHelper>> appIconSharedMems;
-	std::vector<wayland::buffer_t> appIconBuffers;
+	std::vector<struct wl_buffer*> appIconBuffers;
 
 	bool isFullscreen = false;
 
+private:
 	// Helper functions
 	void CreateBuffers(int32_t width, int32_t height);
 

@@ -327,6 +327,7 @@ void M_LoadDefaults ()
 {
 	GameConfig = new FGameConfigFile;
 	GameConfig->DoGlobalSetup ();
+	Printf("Config: %s\n", GameConfig->GetPathName());
 }
 
 
@@ -702,4 +703,3 @@ DEFINE_ACTION_FUNCTION_NATIVE(_CVar, SaveConfig, SaveConfig)
 	PARAM_PROLOGUE;
 	ACTION_RETURN_INT(M_SaveDefaults(nullptr));
 }
-

@@ -1,183 +1,701 @@
 #include "i_video.h"
+#include "i_input.h"
+#include "engineerrors.h"
 #include "v_video.h"
+#include "gl_framebuffer.h"
 #include "gl_sysfb.h"
+#include "gles/gles_framebuffer.h"
 #include "x11_compat.h"
+#include "c_cvars.h"
+
+#include <algorithm>
 #include "native_display.h"
 #include "d_eventbase.h"
 #include "common/console/keydef.h"
+#include "common/platform/posix/dikeys.h"
+#include "common/engine/d_gui.h"
+#include "i_interface.h"
 
 #undef None
 #include <zwidget/window/window.h>
 #include <zwidget/window/x11nativehandle.h>
 #include <zwidget/window/waylandnativehandle.h>
+#include <zwidget/core/image.h>
 
 #include <cstdio>
 #include <cstdint>
 #include <map>
+#include <cstdlib>
+
+// Forward declarations for X11 types to avoid header dependency
+typedef struct _XDisplay Display;
+typedef unsigned long XID;
+typedef XID Window;
+
+EXTERN_CVAR(Int, vid_defwidth)
+EXTERN_CVAR(Int, vid_defheight)
+EXTERN_CVAR(Bool, vid_fullscreen)
+EXTERN_CVAR(Bool, vk_debug)
 
 // External global Display pointer needed by gl_sysfb.cpp
+// Note: In a future "Pure Native" update, we could also dlopen libX11.so.6
+// and resolve all Xlib symbols dynamically to remove the link-time dependency.
 Display *X11NativeDisplay = nullptr;
+
+#ifdef HAVE_VULKAN
+#include "vulkan/system/vk_renderdevice.h"
+#include <zvulkan/vulkanbuilders.h>
+#include <zvulkan/vulkandevice.h>
+#include <zvulkan/vulkaninstance.h>
+#include <zvulkan/vulkansurface.h>
+
+static std::shared_ptr<VulkanSurface> m_vulkanSurface;
+#endif
+
+static void ApplyNativeWindowClientBounds(DisplayWindow *win)
+{
+	Size scr = DisplayWindow::GetScreenSize();
+	double default_width = vid_defwidth;
+	double default_height = vid_defheight;
+
+	double cx = std::max(0.0, (scr.width - default_width) * 0.5);
+	double cy = std::max(0.0, (scr.height - default_height) * 0.5);
+	win->SetClientFrame(Rect(cx, cy, default_width, default_height));
+}
 
 int ZWidgetKeyToGZDoom(InputKey key)
 {
-    static const std::map<InputKey, int> mapping = {
-        {InputKey::Escape, KEY_ESCAPE},
-        {InputKey::Enter, KEY_ENTER},
-        {InputKey::Space, KEY_SPACE},
-        {InputKey::Tab, KEY_TAB},
-        {InputKey::Backspace, KEY_BACKSPACE},
-        {InputKey::Left, KEY_LEFTARROW},
-        {InputKey::Right, KEY_RIGHTARROW},
-        {InputKey::Up, KEY_UPARROW},
-        {InputKey::Down, KEY_DOWNARROW},
-        {InputKey::PageUp, KEY_PGUP},
-        {InputKey::PageDown, KEY_PGDN},
-        {InputKey::Home, KEY_HOME},
-        {InputKey::End, KEY_END},
-        {InputKey::Insert, KEY_INS},
-        {InputKey::Delete, KEY_DEL},
-        {InputKey::Shift, KEY_LSHIFT},
-        {InputKey::Ctrl, KEY_LCTRL},
-        {InputKey::Alt, KEY_LALT},
-        {InputKey::F1, KEY_F1}, {InputKey::F2, KEY_F2}, {InputKey::F3, KEY_F3}, {InputKey::F4, KEY_F4},
-        {InputKey::F5, KEY_F5}, {InputKey::F6, KEY_F6}, {InputKey::F7, KEY_F7}, {InputKey::F8, KEY_F8},
-        {InputKey::F9, KEY_F9}, {InputKey::F10, KEY_F10}, {InputKey::F11, KEY_F11}, {InputKey::F12, KEY_F12},
-        {InputKey::A, 'A'}, {InputKey::B, 'B'}, {InputKey::C, 'C'}, {InputKey::D, 'D'},
-        {InputKey::E, 'E'}, {InputKey::F, 'F'}, {InputKey::G, 'G'}, {InputKey::H, 'H'},
-        {InputKey::I, 'I'}, {InputKey::J, 'J'}, {InputKey::K, 'K'}, {InputKey::L, 'L'},
-        {InputKey::M, 'M'}, {InputKey::N, 'N'}, {InputKey::O, 'O'}, {InputKey::P, 'P'},
-        {InputKey::Q, 'Q'}, {InputKey::R, 'R'}, {InputKey::S, 'S'}, {InputKey::T, 'T'},
-        {InputKey::U, 'U'}, {InputKey::V, 'V'}, {InputKey::W, 'W'}, {InputKey::X, 'X'},
-        {InputKey::Y, 'Y'}, {InputKey::Z, 'Z'},
-        {InputKey::_0, '0'}, {InputKey::_1, '1'}, {InputKey::_2, '2'}, {InputKey::_3, '3'},
-        {InputKey::_4, '4'}, {InputKey::_5, '5'}, {InputKey::_6, '6'}, {InputKey::_7, '7'},
-        {InputKey::_8, '8'}, {InputKey::_9, '9'},
-    };
-    auto it = mapping.find(key);
-    if (it != mapping.end()) return it->second;
+    switch (key)
+    {
+        case InputKey::Escape: return KEY_ESCAPE;
+        case InputKey::Enter: return KEY_ENTER;
+        case InputKey::Space: return KEY_SPACE;
+        case InputKey::Tab: return KEY_TAB;
+        case InputKey::Backspace: return KEY_BACKSPACE;
+        case InputKey::Left: return KEY_LEFTARROW;
+        case InputKey::Right: return KEY_RIGHTARROW;
+        case InputKey::Up: return KEY_UPARROW;
+        case InputKey::Down: return KEY_DOWNARROW;
+        case InputKey::PageUp: return KEY_PGUP;
+        case InputKey::PageDown: return KEY_PGDN;
+        case InputKey::Home: return KEY_HOME;
+        case InputKey::End: return KEY_END;
+        case InputKey::Insert: return KEY_INS;
+        case InputKey::Delete: return KEY_DEL;
+        case InputKey::Shift:
+        case InputKey::LShift: return KEY_LSHIFT;
+        case InputKey::RShift: return KEY_RSHIFT;
+        case InputKey::Ctrl:
+        case InputKey::LControl: return KEY_LCTRL;
+        case InputKey::RControl: return KEY_RCTRL;
+        case InputKey::Alt: return KEY_LALT;
+        case InputKey::F1: return KEY_F1;
+        case InputKey::F2: return KEY_F2;
+        case InputKey::F3: return KEY_F3;
+        case InputKey::F4: return KEY_F4;
+        case InputKey::F5: return KEY_F5;
+        case InputKey::F6: return KEY_F6;
+        case InputKey::F7: return KEY_F7;
+        case InputKey::F8: return KEY_F8;
+        case InputKey::F9: return KEY_F9;
+        case InputKey::F10: return KEY_F10;
+        case InputKey::F11: return KEY_F11;
+        case InputKey::F12: return KEY_F12;
+        case InputKey::A: return DIK_A;
+        case InputKey::B: return DIK_B;
+        case InputKey::C: return DIK_C;
+        case InputKey::D: return DIK_D;
+        case InputKey::E: return DIK_E;
+        case InputKey::F: return DIK_F;
+        case InputKey::G: return DIK_G;
+        case InputKey::H: return DIK_H;
+        case InputKey::I: return DIK_I;
+        case InputKey::J: return DIK_J;
+        case InputKey::K: return DIK_K;
+        case InputKey::L: return DIK_L;
+        case InputKey::M: return DIK_M;
+        case InputKey::N: return DIK_N;
+        case InputKey::O: return DIK_O;
+        case InputKey::P: return DIK_P;
+        case InputKey::Q: return DIK_Q;
+        case InputKey::R: return DIK_R;
+        case InputKey::S: return DIK_S;
+        case InputKey::T: return DIK_T;
+        case InputKey::U: return DIK_U;
+        case InputKey::V: return DIK_V;
+        case InputKey::W: return DIK_W;
+        case InputKey::X: return DIK_X;
+        case InputKey::Y: return DIK_Y;
+        case InputKey::Z: return DIK_Z;
+        case InputKey::_0: return DIK_0;
+        case InputKey::_1: return DIK_1;
+        case InputKey::_2: return DIK_2;
+        case InputKey::_3: return DIK_3;
+        case InputKey::_4: return DIK_4;
+        case InputKey::_5: return DIK_5;
+        case InputKey::_6: return DIK_6;
+        case InputKey::_7: return DIK_7;
+        case InputKey::_8: return DIK_8;
+        case InputKey::_9: return DIK_9;
+        case InputKey::Tilde: return DIK_GRAVE;
+        case InputKey::Minus: return DIK_MINUS;
+        case InputKey::Equals: return DIK_EQUALS;
+        case InputKey::LeftBracket: return DIK_LBRACKET;
+        case InputKey::RightBracket: return DIK_RBRACKET;
+        case InputKey::Backslash: return DIK_BACKSLASH;
+        case InputKey::Semicolon: return DIK_SEMICOLON;
+        case InputKey::SingleQuote: return DIK_APOSTROPHE;
+        case InputKey::Comma: return DIK_COMMA;
+        case InputKey::Period: return DIK_PERIOD;
+        case InputKey::Slash: return DIK_SLASH;
+        case InputKey::NumPad0: return DIK_NUMPAD0;
+        case InputKey::NumPad1: return DIK_NUMPAD1;
+        case InputKey::NumPad2: return DIK_NUMPAD2;
+        case InputKey::NumPad3: return DIK_NUMPAD3;
+        case InputKey::NumPad4: return DIK_NUMPAD4;
+        case InputKey::NumPad5: return DIK_NUMPAD5;
+        case InputKey::NumPad6: return DIK_NUMPAD6;
+        case InputKey::NumPad7: return DIK_NUMPAD7;
+        case InputKey::NumPad8: return DIK_NUMPAD8;
+        case InputKey::NumPad9: return DIK_NUMPAD9;
+        case InputKey::GreySlash: return DIK_DIVIDE;
+        case InputKey::GreyStar: return DIK_MULTIPLY;
+        case InputKey::GreyMinus: return DIK_SUBTRACT;
+        case InputKey::GreyPlus: return DIK_ADD;
+        case InputKey::NumPadPeriod: return DIK_DECIMAL;
+        case InputKey::Pause: return DIK_PAUSE;
+        case InputKey::CapsLock: return DIK_CAPITAL;
+        case InputKey::ScrollLock: return DIK_SCROLL;
+        case InputKey::NumLock: return DIK_NUMLOCK;
+        case InputKey::PrintScrn: return DIK_SYSRQ;
+        default: break;
+    }
+    
+    // If it's a character, return it directly
+    if ((int)key >= 32 && (int)key < 127) return (int)key;
+    
     return 0;
+}
+
+extern bool NativeMouseCaptured;
+extern bool GUICapture;
+
+static bool WantGuiCaptureNow()
+{
+	return sysCallbacks.WantGuiCapture && sysCallbacks.WantGuiCapture();
+}
+
+static int16_t GetModifierMask(bool shiftDown, bool ctrlDown, bool altDown)
+{
+	return (shiftDown ? GKM_SHIFT : 0) | (ctrlDown ? GKM_CTRL : 0) | (altDown ? GKM_ALT : 0);
+}
+
+static int InputKeyToGUIKey(InputKey key)
+{
+	// Mirrors SDL's behavior: UI keys are ASCII (uppercased) or GK_* codes.
+	switch (key)
+	{
+	case InputKey::Enter: return GK_RETURN;
+	case InputKey::PageUp: return GK_PGUP;
+	case InputKey::PageDown: return GK_PGDN;
+	case InputKey::End: return GK_END;
+	case InputKey::Home: return GK_HOME;
+	case InputKey::Left: return GK_LEFT;
+	case InputKey::Right: return GK_RIGHT;
+	case InputKey::Up: return GK_UP;
+	case InputKey::Down: return GK_DOWN;
+	case InputKey::Delete: return GK_DEL;
+	case InputKey::Escape: return GK_ESCAPE;
+	case InputKey::F1: return GK_F1;
+	case InputKey::F2: return GK_F2;
+	case InputKey::F3: return GK_F3;
+	case InputKey::F4: return GK_F4;
+	case InputKey::F5: return GK_F5;
+	case InputKey::F6: return GK_F6;
+	case InputKey::F7: return GK_F7;
+	case InputKey::F8: return GK_F8;
+	case InputKey::F9: return GK_F9;
+	case InputKey::F10: return GK_F10;
+	case InputKey::F11: return GK_F11;
+	case InputKey::F12: return GK_F12;
+	default: break;
+	}
+
+	// Character-ish keys (uppercased).
+	switch (key)
+	{
+	case InputKey::_0: return '0';
+	case InputKey::_1: return '1';
+	case InputKey::_2: return '2';
+	case InputKey::_3: return '3';
+	case InputKey::_4: return '4';
+	case InputKey::_5: return '5';
+	case InputKey::_6: return '6';
+	case InputKey::_7: return '7';
+	case InputKey::_8: return '8';
+	case InputKey::_9: return '9';
+	case InputKey::A: return 'A';
+	case InputKey::B: return 'B';
+	case InputKey::C: return 'C';
+	case InputKey::D: return 'D';
+	case InputKey::E: return 'E';
+	case InputKey::F: return 'F';
+	case InputKey::G: return 'G';
+	case InputKey::H: return 'H';
+	case InputKey::I: return 'I';
+	case InputKey::J: return 'J';
+	case InputKey::K: return 'K';
+	case InputKey::L: return 'L';
+	case InputKey::M: return 'M';
+	case InputKey::N: return 'N';
+	case InputKey::O: return 'O';
+	case InputKey::P: return 'P';
+	case InputKey::Q: return 'Q';
+	case InputKey::R: return 'R';
+	case InputKey::S: return 'S';
+	case InputKey::T: return 'T';
+	case InputKey::U: return 'U';
+	case InputKey::V: return 'V';
+	case InputKey::W: return 'W';
+	case InputKey::X: return 'X';
+	case InputKey::Y: return 'Y';
+	case InputKey::Z: return 'Z';
+	case InputKey::Space: return ' ';
+	case InputKey::Tab: return GK_TAB;
+	case InputKey::Backspace: return GK_BACKSPACE;
+	case InputKey::Tilde: return '~';
+	case InputKey::Minus: return '-';
+	case InputKey::Equals: return '=';
+	case InputKey::LeftBracket: return '[';
+	case InputKey::RightBracket: return ']';
+	case InputKey::Backslash: return '\\';
+	case InputKey::Semicolon: return ';';
+	case InputKey::SingleQuote: return '\'';
+	case InputKey::Comma: return ',';
+	case InputKey::Period: return '.';
+	case InputKey::Slash: return '/';
+	default: break;
+	}
+	return 0;
+}
+
+static int16_t InputKeyToMouseKey(InputKey key)
+{
+	switch (key)
+	{
+	case InputKey::LeftMouse: return KEY_MOUSE1;
+	case InputKey::RightMouse: return KEY_MOUSE2;
+	case InputKey::MiddleMouse: return KEY_MOUSE3;
+	default: return 0;
+	}
+}
+
+static int16_t InputKeyToWheelKey(InputKey key)
+{
+	switch (key)
+	{
+	case InputKey::MouseWheelUp: return KEY_MWHEELUP;
+	case InputKey::MouseWheelDown: return KEY_MWHEELDOWN;
+	default: return 0;
+	}
 }
 
 class GZDoomWindowHost : public DisplayWindowHost
 {
+    double lastMouseX = -1, lastMouseY = -1;
+	bool shiftDown = false;
+	bool ctrlDown = false;
+	bool altDown = false;
+	enum class EventRoute : uint8_t { None, GUI, Game };
+	EventRoute leftRoute = EventRoute::None;
+	EventRoute rightRoute = EventRoute::None;
+	EventRoute middleRoute = EventRoute::None;
+	std::map<InputKey, EventRoute> keyRoutes;
+
+	int16_t ModMask() const { return GetModifierMask(shiftDown, ctrlDown, altDown); }
+
+	void UpdateModifierKey(InputKey key, bool down)
+	{
+		if (key == InputKey::Shift || key == InputKey::LShift || key == InputKey::RShift) shiftDown = down;
+		if (key == InputKey::Ctrl || key == InputKey::LControl || key == InputKey::RControl) ctrlDown = down;
+		if (key == InputKey::Alt) altDown = down;
+	}
 public:
     void OnWindowPaint() override {}
     void OnWindowMouseMove(const Point& pos) override {
-        PostMouseMove(pos.x, pos.y);
+		const bool gui = WantGuiCaptureNow();
+        if (!NativeMouseCaptured && gui) {
+            event_t ev = {EV_GUI_Event, EV_GUI_MouseMove};
+            ev.data1 = (int16_t)pos.x;
+            ev.data2 = (int16_t)pos.y;
+			ev.data3 = ModMask();
+            D_PostEvent(&ev);
+        }
     }
     void OnWindowMouseLeave() override {}
     void OnWindowMouseDown(const Point& pos, InputKey key) override {
-        event_t ev = {EV_KeyDown};
-        if (key == InputKey::LeftMouse) ev.data1 = KEY_MOUSE1;
-        else if (key == InputKey::RightMouse) ev.data1 = KEY_MOUSE2;
-        else if (key == InputKey::MiddleMouse) ev.data1 = KEY_MOUSE3;
-        else return;
-        D_PostEvent(&ev);
+		// Route press/release consistently. Capture state can change during the click
+		// (e.g. menu click causing capture transitions), and splitting routes can leave
+		// a game key stuck down.
+		EventRoute& route =
+			(key == InputKey::LeftMouse) ? leftRoute :
+			(key == InputKey::RightMouse) ? rightRoute :
+			(key == InputKey::MiddleMouse) ? middleRoute :
+			leftRoute; // unused
+
+		const bool guiNow = WantGuiCaptureNow();
+		route = guiNow ? EventRoute::GUI : EventRoute::Game;
+
+		if (route == EventRoute::GUI)
+		{
+			event_t ev = {EV_GUI_Event};
+			if (key == InputKey::LeftMouse) ev.subtype = EV_GUI_LButtonDown;
+			else if (key == InputKey::RightMouse) ev.subtype = EV_GUI_RButtonDown;
+			else if (key == InputKey::MiddleMouse) ev.subtype = EV_GUI_MButtonDown;
+			else return;
+			ev.data1 = (int16_t)pos.x;
+			ev.data2 = (int16_t)pos.y;
+			ev.data3 = ModMask();
+			D_PostEvent(&ev);
+		}
+		else
+		{
+			const int16_t mouseKey = InputKeyToMouseKey(key);
+			if (!mouseKey) return;
+			event_t ev = {EV_KeyDown};
+			ev.data1 = mouseKey;
+			ev.data3 = ModMask();
+			D_PostEvent(&ev);
+		}
+    }
+    void OnWindowMouseUp(const Point& pos, InputKey key) override {
+		EventRoute& route =
+			(key == InputKey::LeftMouse) ? leftRoute :
+			(key == InputKey::RightMouse) ? rightRoute :
+			(key == InputKey::MiddleMouse) ? middleRoute :
+			leftRoute; // unused
+
+		// If we don't have a recorded route (missed press), fall back to current state.
+		const EventRoute effectiveRoute =
+			(route == EventRoute::None) ? (WantGuiCaptureNow() ? EventRoute::GUI : EventRoute::Game) : route;
+
+		route = EventRoute::None;
+
+		if (effectiveRoute == EventRoute::GUI)
+		{
+			event_t ev = {EV_GUI_Event};
+			if (key == InputKey::LeftMouse) ev.subtype = EV_GUI_LButtonUp;
+			else if (key == InputKey::RightMouse) ev.subtype = EV_GUI_RButtonUp;
+			else if (key == InputKey::MiddleMouse) ev.subtype = EV_GUI_MButtonUp;
+			else return;
+			ev.data1 = (int16_t)pos.x;
+			ev.data2 = (int16_t)pos.y;
+			ev.data3 = ModMask();
+			D_PostEvent(&ev);
+		}
+		else
+		{
+			const int16_t mouseKey = InputKeyToMouseKey(key);
+			if (!mouseKey) return;
+			event_t ev = {EV_KeyUp};
+			ev.data1 = mouseKey;
+			ev.data3 = ModMask();
+			D_PostEvent(&ev);
+		}
     }
     void OnWindowMouseDoubleclick(const Point& pos, InputKey key) override {}
-    void OnWindowMouseUp(const Point& pos, InputKey key) override {
-        event_t ev = {EV_KeyUp};
-        if (key == InputKey::LeftMouse) ev.data1 = KEY_MOUSE1;
-        else if (key == InputKey::RightMouse) ev.data1 = KEY_MOUSE2;
-        else if (key == InputKey::MiddleMouse) ev.data1 = KEY_MOUSE3;
-        else return;
-        D_PostEvent(&ev);
-    }
     void OnWindowMouseWheel(const Point& pos, InputKey key) override {
-        event_t ev = {EV_KeyDown};
-        if (key == InputKey::MouseWheelUp) ev.data1 = KEY_MWHEELUP;
-        else if (key == InputKey::MouseWheelDown) ev.data1 = KEY_MWHEELDOWN;
-        else return;
-        D_PostEvent(&ev);
-        ev.type = EV_KeyUp;
-        D_PostEvent(&ev);
+		const bool gui = WantGuiCaptureNow();
+		if (gui)
+		{
+			event_t ev = {EV_GUI_Event};
+			if (key == InputKey::MouseWheelUp) ev.subtype = EV_GUI_WheelUp;
+			else if (key == InputKey::MouseWheelDown) ev.subtype = EV_GUI_WheelDown;
+			else return;
+			ev.data1 = (int16_t)pos.x;
+			ev.data2 = (int16_t)pos.y;
+			ev.data3 = ModMask();
+			D_PostEvent(&ev);
+		}
+		else
+		{
+			const int16_t wheelKey = InputKeyToWheelKey(key);
+			if (!wheelKey) return;
+			event_t ev = {EV_KeyDown};
+			ev.data1 = wheelKey;
+			ev.data3 = ModMask();
+			D_PostEvent(&ev);
+			ev.type = EV_KeyUp;
+			D_PostEvent(&ev);
+		}
     }
-    void OnWindowRawMouseMove(int dx, int dy) override {}
-    void OnWindowKeyChar(std::string chars) override {}
+    void OnWindowRawMouseMove(int dx, int dy) override {
+		const bool gui = WantGuiCaptureNow();
+        if (NativeMouseCaptured && !gui && (dx || dy)) {
+            // fprintf(stderr, "[INPUT] RawMouseMove: dx=%d, dy=%d\n", dx, dy);
+            PostMouseMove(dx, dy);
+        }
+    }
+    void OnWindowKeyChar(std::string chars) override {
+		const bool gui = WantGuiCaptureNow();
+		if (!gui)
+			return;
+        for (unsigned char c : chars) {
+            event_t ev = {EV_GUI_Event, EV_GUI_Char};
+            ev.data1 = c;
+			ev.data3 = ModMask();
+            D_PostEvent(&ev);
+        }
+    }
     void OnWindowKeyDown(InputKey key) override {
-        event_t ev = {EV_KeyDown};
-        ev.data1 = ZWidgetKeyToGZDoom(key);
-        if (ev.data1 != 0) D_PostEvent(&ev);
+        fprintf(stderr, "DEBUG: nativevideo OnWindowKeyDown this: %p, key: %d\n", (void*)this, (int)key);
+        UpdateModifierKey(key, true);
+
+		auto it = keyRoutes.find(key);
+		if (it == keyRoutes.end())
+		{
+			const bool guiNow = WantGuiCaptureNow();
+			keyRoutes[key] = guiNow ? EventRoute::GUI : EventRoute::Game;
+			it = keyRoutes.find(key);
+		}
+
+        int gzkey = ZWidgetKeyToGZDoom(key);
+        
+		if (it->second == EventRoute::GUI)
+		{
+			event_t guiev = {EV_GUI_Event, EV_GUI_KeyDown};
+			guiev.data1 = InputKeyToGUIKey(key);
+			guiev.data3 = ModMask();
+			if (guiev.data1 < 128) // match SDL behavior: uppercase ASCII range only
+				D_PostEvent(&guiev);
+		}
+		else
+		{
+			event_t ev = {EV_KeyDown};
+			ev.data1 = gzkey;
+			ev.data2 = 0;
+			ev.data3 = ModMask();
+			if (ev.data1 != 0)
+				D_PostEvent(&ev);
+		}
     }
     void OnWindowKeyUp(InputKey key) override {
-        event_t ev = {EV_KeyUp};
-        ev.data1 = ZWidgetKeyToGZDoom(key);
-        if (ev.data1 != 0) D_PostEvent(&ev);
+        fprintf(stderr, "DEBUG: nativevideo OnWindowKeyUp: %d\n", (int)key);
+		UpdateModifierKey(key, false);
+
+		auto it = keyRoutes.find(key);
+		const EventRoute route = (it != keyRoutes.end()) ? it->second : (WantGuiCaptureNow() ? EventRoute::GUI : EventRoute::Game);
+		if (it != keyRoutes.end())
+			keyRoutes.erase(it);
+
+        int gzkey = ZWidgetKeyToGZDoom(key);
+
+		if (route == EventRoute::GUI)
+		{
+			event_t guiev = {EV_GUI_Event, EV_GUI_KeyUp};
+			guiev.data1 = InputKeyToGUIKey(key);
+			guiev.data3 = ModMask();
+			if (guiev.data1 < 128)
+				D_PostEvent(&guiev);
+		}
+		else
+		{
+			event_t ev = {EV_KeyUp};
+			ev.data1 = gzkey;
+			ev.data2 = 0;
+			ev.data3 = ModMask();
+			if (ev.data1 != 0)
+				D_PostEvent(&ev);
+		}
     }
-    void OnWindowGeometryChanged() override {}
+    void OnWindowGeometryChanged() override {
+        if (sysCallbacks.OnScreenSizeChanged)
+            sysCallbacks.OnScreenSizeChanged();
+    }
     void OnWindowClose() override {
-        exit(0);
+        throw CExitEvent(0);
     }
-    void OnWindowActivated() override {}
-    void OnWindowDeactivated() override {}
-    void OnWindowDpiScaleChanged() override {}
+    void OnWindowActivated() override {
+        fprintf(stderr, "[INPUT] OnWindowActivated: Window gained focus\n");
+		I_SetWindowFocus(true);
+    }
+    void OnWindowDeactivated() override {
+        fprintf(stderr, "[INPUT] OnWindowDeactivated: Window lost focus\n");
+		I_SetWindowFocus(false);
+    }
+    void OnWindowDpiScaleChanged() override {
+        // Guard: this can fire during window construction (e.g. from the
+        // wp_fractional_scale protocol during InitializeToplevel's roundtrip)
+        // before NativeWindow has been assigned. Skip the callback safely.
+        if (!GetActiveZWidgetWindow()) return;
+        if (sysCallbacks.OnScreenSizeChanged)
+            sysCallbacks.OnScreenSizeChanged();
+    }
 };
 
-class NativeVideo : public IVideo {
-    GZDoomWindowHost host;
-    std::unique_ptr<DisplayWindow> window;
+static std::unique_ptr<GZDoomWindowHost> WindowHost;
+static std::unique_ptr<DisplayWindow> NativeWindow;
+
+void I_InitNativeWindow()
+{
+    WindowHost = std::make_unique<GZDoomWindowHost>();
+    
+    RenderAPI api = RenderAPI::OpenGL;
+    int backend = V_GetBackend();
+    if (backend == 1) api = RenderAPI::Vulkan;
+    else if (backend == 2) api = RenderAPI::OpenGL; // GLES
+    
+    NativeWindow = DisplayWindow::Create(WindowHost.get(), false, nullptr, api);
+    
+    static bool atexit_registered = false;
+    if (!atexit_registered) {
+        std::atexit([]() {
+            NativeWindow.reset();
+            WindowHost.reset();
+        });
+        atexit_registered = true;
+    }
+    
+    ApplyNativeWindowClientBounds(NativeWindow.get());
+    NativeWindow->SetWindowTitle("GZDoom (Native POSIX)");
+    NativeWindow->Show();
+    
+    // Set window icon (Simple GZ pattern)
+    uint32_t icon_pixels[32 * 32];
+    for (int y = 0; y < 32; y++) {
+        for (int x = 0; x < 32; x++) {
+            bool is_g = (x >= 8 && x <= 24 && y >= 8 && y <= 10) || (x >= 8 && x <= 10 && y >= 8 && y <= 24) || (x >= 8 && x <= 24 && y >= 22 && y <= 24) || (x >= 22 && x <= 24 && y >= 16 && y <= 24) || (x >= 16 && x <= 24 && y >= 16 && y <= 18);
+            icon_pixels[y * 32 + x] = is_g ? 0xFFFFFFFF : 0xFF333333; // White G on Dark Gray
+        }
+    }
+    auto icon_image = Image::Create(32, 32, ImageFormat::B8G8R8A8, icon_pixels);
+    NativeWindow->SetWindowIcon({ icon_image });
+
+    // Set global X11 display for gl_sysfb.cpp
+    if (DisplayBackend::Get()->IsX11()) {
+        X11NativeHandle* x11 = (X11NativeHandle*)NativeWindow->GetNativeHandle();
+        X11NativeDisplay = x11->display;
+    } else if (DisplayBackend::Get()->IsWayland()) {
+        // Wayland handles are retrieved differently in gl_sysfb.cpp
+    }
+
+#ifdef HAVE_VULKAN
+    if (V_GetBackend() == 1)
+    {
+        try {
+            unsigned int count = 0;
+            I_GetVulkanPlatformExtensions(&count, nullptr);
+            std::vector<const char*> names(count);
+            I_GetVulkanPlatformExtensions(&count, names.data());
+
+            VulkanInstanceBuilder builder;
+            builder.DebugLayer(vk_debug);
+            for (auto name : names) builder.RequireExtension(name);
+            auto instance = builder.Create();
+
+            VkSurfaceKHR surfacehandle = nullptr;
+            if (!I_CreateVulkanSurface(instance->Instance, &surfacehandle))
+                throw std::runtime_error("I_CreateVulkanSurface failed");
+
+            m_vulkanSurface = std::make_shared<VulkanSurface>(instance, surfacehandle);
+            fprintf(stderr, "[VULKAN] Native Vulkan surface created successfully\n");
+        } catch (const std::exception& e) {
+            fprintf(stderr, "[VULKAN] Initialization failed: %s\n", e.what());
+        }
+    }
+#endif
+}
+
+DisplayWindow* GetActiveZWidgetWindow()
+{
+    return NativeWindow.get();
+}
+
+class NativeVideo : public IVideo
+{
 public:
-    static DisplayWindow* ActiveWindow;
-
-    NativeVideo() {
-        auto backend = DisplayBackend::TryCreateBackend();
-        if (!backend) {
-            fprintf(stderr, "NativeVideo: Could not create any ZWidget display backend!\n");
-            return;
-        }
-        DisplayBackend::Set(std::move(backend));
-
-        window = DisplayWindow::Create(&host, false, nullptr, RenderAPI::OpenGL);
-        if (!window) {
-            fprintf(stderr, "NativeVideo: Could not create ZWidget window!\n");
-            return;
+    DFrameBuffer *CreateFrameBuffer() override {
+        if (V_GetBackend() == 1) {
+#ifdef HAVE_VULKAN
+            if (m_vulkanSurface)
+                return new VulkanRenderDevice(nullptr, vid_fullscreen, m_vulkanSurface);
+#endif
         }
 
-        window->SetWindowTitle("GZDoom (Native POSIX)");
-        window->Show();
-        ActiveWindow = window.get();
+        if (V_GetBackend() == 2) { // GLES
+            DisplayWindow* win = GetActiveZWidgetWindow();
+            if (win) {
+                void* display = win->GetEGLNativeDisplay();
+                void* surface = win->GetEGLNativeWindow();
+                bool isWayland = DisplayBackend::Get()->IsWayland();
+                return new OpenGLESRenderer::OpenGLFrameBuffer(display, surface, isWayland);
+            }
+        }
+
+        DisplayWindow* win = GetActiveZWidgetWindow();
+        if (win) {
+            void* display = nullptr;
+            void* surface = nullptr;
+            bool isWayland = false;
+            
+            void* handle = win->GetNativeHandle();
+            if (DisplayBackend::Get()->IsX11()) {
+                X11NativeHandle* x11 = (X11NativeHandle*)handle;
+                display = x11->display;
+                surface = (void*)x11->window;
+            } else if (DisplayBackend::Get()->IsWayland()) {
+                WaylandNativeHandle* wayland = (WaylandNativeHandle*)handle;
+                display = wayland->display;
+                surface = wayland->surface;
+                isWayland = true;
+            }
+            return new OpenGLRenderer::OpenGLFrameBuffer(display, surface, isWayland);
+        }
+        return new OpenGLRenderer::OpenGLFrameBuffer(0, false);
     }
-    ~NativeVideo() {
-        ActiveWindow = nullptr;
-    }
-    DFrameBuffer *CreateFrameBuffer() override { 
-        if (!window) {
-            fprintf(stderr, "NativeVideo: window is nullptr in CreateFrameBuffer!\n");
-            return new SystemGLFrameBuffer(nullptr, false);
-        }
-
-        fprintf(stderr, "NativeVideo: Retrieving native window handle from ZWidget.\n");
-        void* handle = window->GetNativeHandle();
-
-        if (handle == nullptr) {
-            fprintf(stderr, "NativeVideo: ZWidget returned nullptr handle!\n");
-            return new SystemGLFrameBuffer(nullptr, false);
-        }
-
-        if (DisplayBackend::Get()->IsX11()) {
-            X11NativeHandle* x11_handle = (X11NativeHandle*)handle;
-            X11NativeDisplay = x11_handle->display;
-            return new SystemGLFrameBuffer((void*)x11_handle->window, false);
-        } else if (DisplayBackend::Get()->IsWayland()) {
-            WaylandNativeHandle* wl_handle = (WaylandNativeHandle*)handle;
-            // For now GZDoom's SystemGLFrameBuffer is X11-only. 
-            // We need a Wayland implementation of SystemGLFrameBuffer.
-            fprintf(stderr, "NativeVideo: Wayland backend detected, but SystemGLFrameBuffer is X11-only.\n");
-            return new SystemGLFrameBuffer(nullptr, false);
-        }
-
-        return new SystemGLFrameBuffer(nullptr, false); 
-    }
-
-    void SetWindowTitle(const char *title) override {
-        if (window) window->SetWindowTitle(title);
+    void SetWindowTitle(const char* title) override {
+        if (NativeWindow) NativeWindow->SetWindowTitle(title);
     }
 };
 
-IVideo *gl_CreateVideo() { return new NativeVideo(); }
+IVideo *gl_CreateVideo()
+{
+	return new NativeVideo();
+}
 
-DisplayWindow* NativeVideo::ActiveWindow = nullptr;
+#include <zvulkan/vulkanobjects.h>
 
-DisplayWindow* GetActiveZWidgetWindow() {
-    return NativeVideo::ActiveWindow;
+bool I_CreateVulkanSurface(VkInstance instance, VkSurfaceKHR* surface)
+{
+    if (auto window = GetActiveZWidgetWindow())
+    {
+        try {
+            *surface = window->CreateVulkanSurface(instance);
+            return true;
+        } catch (const std::exception& e) {
+            fprintf(stderr, "[VULKAN] CreateVulkanSurface failed: %s\n", e.what());
+            return false;
+        }
+    }
+    return false;
+}
+
+bool I_GetVulkanPlatformExtensions(unsigned int *count, const char **names)
+{
+    if (auto window = GetActiveZWidgetWindow())
+    {
+        static std::vector<std::string> extensions;
+        static std::vector<const char*> extension_pointers;
+
+        extensions = window->GetVulkanInstanceExtensions();
+        extension_pointers.clear();
+        for (const auto& ext : extensions) extension_pointers.push_back(ext.c_str());
+
+        *count = (unsigned int)extension_pointers.size();
+        if (names) {
+            for (unsigned int i = 0; i < *count; i++) names[i] = extension_pointers[i];
+        }
+        return true;
+    }
+    return false;
 }

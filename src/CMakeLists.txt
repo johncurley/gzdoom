@@ -442,7 +442,8 @@ set( PLAT_NATIVE_SOURCES
 	common/platform/posix/native/gl_sysfb.cpp
 	common/platform/posix/native/st_start.cpp
 	common/platform/posix/native/native_display.cpp
-	common/platform/posix/native/i_joystick.cpp )
+	common/platform/posix/native/i_joystick.cpp
+	common/rendering/gl_load/glad/src/glad_egl.c )
 set( PLAT_UNIX_SOURCES
 	common/platform/posix/unix/i_specialpaths.cpp
 	common/platform/posix/unix/gtk_dialogs.cpp )
@@ -511,11 +512,23 @@ if( GZDOOM_NATIVE_LINUX )
     # ... (existing native source setup)
 		set( SYSTEM_SOURCES ${PLAT_POSIX_SOURCES} ${PLAT_NATIVE_SOURCES} ${PLAT_UNIX_SOURCES} )
 		set( OTHER_SYSTEM_SOURCES ${PLAT_WIN32_SOURCES} ${PLAT_OSX_SOURCES} ${PLAT_COCOA_SOURCES} ${PLAT_SDL_SOURCES} )
-        find_package( X11 REQUIRED )
+        find_package( X11 QUIET )
         find_package( OpenGL REQUIRED )
-        include_directories( SYSTEM "${X11_INCLUDE_DIR}" "${OPENGL_INCLUDE_DIR}" )
-        set( PROJECT_LIBRARIES ${PROJECT_LIBRARIES} "${X11_LIBRARIES}" "${OPENGL_LIBRARIES}" zwidget )
-        add_definitions( -DUSE_X11 -DUSE_WAYLAND )
+        pkg_check_modules( EGL egl )
+        pkg_check_modules( WAYLAND_EGL wayland-egl )
+        pkg_check_modules( LIBINPUT libinput REQUIRED )
+        # pkg_check_modules( XKBCOMMON xkbcommon REQUIRED )
+        pkg_check_modules( LIBUDEV libudev REQUIRED )
+        
+
+        if (EGL_FOUND AND WAYLAND_EGL_FOUND)
+            include_directories( SYSTEM "${EGL_INCLUDE_DIRS}" "${WAYLAND_EGL_INCLUDE_DIRS}" )
+            add_definitions( -DHAVE_WAYLAND_EGL )
+        endif()
+
+        include_directories( SYSTEM "${X11_INCLUDE_DIR}" "${OPENGL_INCLUDE_DIR}" ${LIBINPUT_INCLUDE_DIRS}  ${LIBUDEV_INCLUDE_DIRS} )
+        set( PROJECT_LIBRARIES ${PROJECT_LIBRARIES} ${LIBINPUT_LIBRARIES}  ${LIBUDEV_LIBRARIES} zwidget )
+        add_definitions( -DUSE_X11 -DUSE_WAYLAND -DGZDOOM_NATIVE_LINUX )
         if( HAVE_DISPATCH_APPLY AND NOT APPLE )
             find_library( DISPATCH_LIB dispatch )
             if( DISPATCH_LIB )
@@ -771,7 +784,7 @@ set( FASTMATH_SOURCES
 	common/textures/hires/hqnx/hq4x.cpp
 	common/textures/hires/xbr/xbrz.cpp
 	common/textures/hires/xbr/xbrz_old.cpp
-	common/rendering/gl_load/gl_load.c
+	common/rendering/gl_load/glad/src/glad.c
 	rendering/hwrenderer/hw_dynlightdata.cpp
 	rendering/hwrenderer/scene/hw_bsp.cpp
 	rendering/hwrenderer/scene/hw_fakeflat.cpp
@@ -835,26 +848,6 @@ set (METAL_SOURCES
 	common/rendering/metal/textures/mt_textureloader.cpp
 	common/rendering/metal/textures/mt_sampler.cpp
 )
-
-if (HAVE_GLES2)
-	set (GLES_SOURCES
-		common/rendering/gles/gles_system.cpp
-		common/rendering/gles/gles_renderer.cpp
-		common/rendering/gles/gles_framebuffer.cpp
-		common/rendering/gles/gles_renderstate.cpp
-		common/rendering/gles/gles_renderbuffers.cpp
-		common/rendering/gles/gles_postprocess.cpp
-		common/rendering/gles/gles_postprocessstate.cpp
-		common/rendering/gles/gles_buffers.cpp
-		common/rendering/gles/gles_hwtexture.cpp
-		common/rendering/gles/gles_shader.cpp
-		common/rendering/gles/gles_shaderprogram.cpp
-		common/rendering/gles/gles_samplers.cpp
-		common/rendering/gles/glad/src/glad.c
-	)
-
-	list (APPEND FASTMATH_SOURCES ${GLES_SOURCES})
-endif()
 
 if (HAVE_VULKAN)
 	list (APPEND FASTMATH_SOURCES ${VULKAN_SOURCES})
@@ -1051,6 +1044,18 @@ set (PCH_SOURCES
 	rendering/swrenderer/textures/r_swtexture.cpp
 	rendering/swrenderer/textures/warptexture.cpp
 	rendering/swrenderer/textures/swcanvastexture.cpp
+	common/rendering/gles/gles_buffers.cpp
+	common/rendering/gles/gles_framebuffer.cpp
+	common/rendering/gles/gles_hwtexture.cpp
+	common/rendering/gles/gles_postprocess.cpp
+	common/rendering/gles/gles_postprocessstate.cpp
+	common/rendering/gles/gles_renderbuffers.cpp
+	common/rendering/gles/gles_renderer.cpp
+	common/rendering/gles/gles_renderstate.cpp
+	common/rendering/gles/gles_samplers.cpp
+	common/rendering/gles/gles_shader.cpp
+	common/rendering/gles/gles_shaderprogram.cpp
+	common/rendering/gles/gles_system.cpp
 	events.cpp
 	launcher/launcherwindow.cpp
 	launcher/launcherbanner.cpp
@@ -1397,6 +1402,7 @@ target_link_libraries( zdoom ${PROJECT_LIBRARIES} lzma ${ZMUSIC_LIBRARIES} )
 include_directories(
 	BEFORE
 	.
+	common/rendering/gl_load/glad/include
 	common/audio/sound
 	common/audio/music
 	common/2d
@@ -1425,7 +1431,7 @@ include_directories(
 	common/rendering/gl_load
 	common/rendering/gl
 	common/rendering/gles
-	common/rendering/gles/glad/include
+	common/rendering/gl_load/glad/include
 	common/rendering/gles/Mali_OpenGL_ES_Emulator/include
 	common/scripting/vm
 	common/scripting/jit
@@ -1526,7 +1532,7 @@ if( NOT WIN32 AND NOT APPLE )
 	IF ("${INSTALL_RPATH}" STREQUAL "")
 		set_target_properties(zdoom PROPERTIES
 			#allow libzmusic.so.1 library in same folder as executable at runtime
-			INSTALL_RPATH "\$ORIGIN:\$ORIGIN/zmusic/build/source"
+			INSTALL_RPATH "\$ORIGIN:\$ORIGIN/libraries/ZMusic/source"
 			BUILD_WITH_INSTALL_RPATH ON
 		)
 	endif()

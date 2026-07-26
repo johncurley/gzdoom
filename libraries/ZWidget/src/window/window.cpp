@@ -89,6 +89,7 @@ std::unique_ptr<DisplayBackend> DisplayBackend::TryCreateBackend()
 	if (backendSelectionEnv)
 	{
 		std::string backendSelectionStr(backendSelectionEnv);
+		fprintf(stderr, "ZWidget: Requested backend via env: %s\n", backendSelectionStr.c_str());
 		if (backendSelectionStr == "Win32")
 		{
 			backend = TryCreateWin32();
@@ -109,16 +110,24 @@ std::unique_ptr<DisplayBackend> DisplayBackend::TryCreateBackend()
 		{
 			backend = TryCreateHaiku();
 		}
+		else if (backendSelectionStr == "Wayland")
+		{
+			backend = TryCreateWayland();
+		}
+		
+		if (backend) fprintf(stderr, "ZWidget: Successfully created requested backend: %s\n", backendSelectionStr.c_str());
+		else fprintf(stderr, "ZWidget: Failed to create requested backend: %s\n", backendSelectionStr.c_str());
 	}
 
 	if (!backend)
 	{
+		fprintf(stderr, "ZWidget: No backend requested or creation failed, trying defaults...\n");
 		backend = TryCreateWin32();
 		if (!backend) backend = TryCreateCocoa();
 		if (!backend) backend = TryCreateHaiku();
-		if (!backend) backend = TryCreateWayland();
-		if (!backend) backend = TryCreateX11();
-		if (!backend) backend = TryCreateSDL2();
+		if (!backend) { fprintf(stderr, "ZWidget: Trying Wayland...\n"); backend = TryCreateWayland(); }
+		if (!backend) { fprintf(stderr, "ZWidget: Trying X11...\n"); backend = TryCreateX11(); }
+		if (!backend) { fprintf(stderr, "ZWidget: Trying SDL2...\n"); backend = TryCreateSDL2(); }
 	}
 
 	return backend;
@@ -195,8 +204,14 @@ std::unique_ptr<DisplayBackend> DisplayBackend::TryCreateWayland()
 	{
 		return std::make_unique<WaylandDisplayBackend>();
 	}
+	catch (const std::exception& e)
+	{
+		fprintf(stderr, "TryCreateWayland failed: %s\n", e.what());
+		return nullptr;
+	}
 	catch (...)
 	{
+		fprintf(stderr, "TryCreateWayland failed: Unknown exception\n");
 		return nullptr;
 	}
 }

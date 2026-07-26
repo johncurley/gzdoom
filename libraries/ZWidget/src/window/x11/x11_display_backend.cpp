@@ -1,3 +1,4 @@
+#include "x11_remap.h"
 
 #include "x11_display_backend.h"
 #include "x11_display_window.h"
