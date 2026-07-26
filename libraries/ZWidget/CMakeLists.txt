@@ -51,7 +51,6 @@ set(ZWIDGET_WIN32_SOURCES
 	src/window/win32/win32_open_file_dialog.cpp
 	src/window/win32/win32_open_folder_dialog.cpp
 	src/window/win32/win32_save_file_dialog.cpp
-	src/core/resourcedata_win.cpp
 )
 
 set(ZWIDGET_COCOA_SOURCES
@@ -60,8 +59,11 @@ set(ZWIDGET_COCOA_SOURCES
 	src/window/cocoa/cocoa_open_file_dialog.mm
 	src/window/cocoa/cocoa_open_folder_dialog.mm
 	src/window/cocoa/cocoa_save_file_dialog.mm
-	src/core/resourcedata_mac.mm
 )
+
+# The cocoa sources use ARC constructs such as __weak and contain no manual
+# retain/release, so they must be compiled with ARC enabled. Matches upstream.
+set_source_files_properties(${ZWIDGET_COCOA_SOURCES} PROPERTIES COMPILE_FLAGS "-fobjc-arc")
 
 set(ZWIDGET_X11_SOURCES
 	src/window/x11/x11_display_backend.cpp

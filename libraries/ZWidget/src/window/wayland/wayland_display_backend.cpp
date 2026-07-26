@@ -609,7 +609,13 @@ void keyboard_handle_key(void* data, struct wl_keyboard* wl_keyboard, uint32_t s
 	// event delivery, but never as a state transition -- the key was already
 	// down and is still down.
 	const bool pressed = (state == WL_KEYBOARD_KEY_STATE_PRESSED);
-	const bool repeated = (state == WL_KEYBOARD_KEY_STATE_REPEATED);
+	// wl_keyboard v10 (wayland 1.23) added a "repeated" key state. Older
+	// libwayland headers -- Ubuntu 22.04's, for one -- predate it, so compare
+	// against the protocol value rather than the enum constant, which may not
+	// be declared. Defining the name ourselves is not an option: where the
+	// header does declare it, a macro of the same name would corrupt the enum.
+	constexpr uint32_t kKeyStateRepeated = 2;
+	const bool repeated = (state == kKeyStateRepeated);
 
 	InputKey ik;
 	if (pressed || repeated)
