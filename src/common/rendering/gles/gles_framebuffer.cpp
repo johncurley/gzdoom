@@ -93,6 +93,11 @@ OpenGLFrameBuffer::OpenGLFrameBuffer(void *hMonitor, bool fullscreen) :
 	GLRenderer = nullptr;
 }
 
+// Only the native POSIX backend declares this constructor; the win32 and cocoa
+// SystemGLFrameBuffer have no display/surface form. gl_framebuffer.cpp guards
+// its copy the same way -- this one was missed, so Windows and macOS failed to
+// compile it.
+#ifdef GZDOOM_NATIVE_LINUX
 OpenGLFrameBuffer::OpenGLFrameBuffer(void* display, void* surface, bool wayland)
 	: Super(display, surface, wayland)
 {
@@ -103,6 +108,7 @@ OpenGLFrameBuffer::OpenGLFrameBuffer(void* display, void* surface, bool wayland)
 	gl_RenderState.Reset();
 	GLRenderer = nullptr;
 }
+#endif
 
 OpenGLFrameBuffer::~OpenGLFrameBuffer()
 {

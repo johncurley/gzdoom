@@ -115,7 +115,32 @@ static void pointer_handle_axis_source(void* data, struct wl_pointer* wl_pointer
 static void pointer_handle_axis_stop(void* data, struct wl_pointer* wl_pointer, uint32_t time, uint32_t axis) {}
 static void pointer_handle_axis_discrete(void* data, struct wl_pointer* wl_pointer, uint32_t axis, int32_t discrete) {}
 static void pointer_handle_axis_value120(void* data, struct wl_pointer* wl_pointer, uint32_t axis, int32_t value120) {}
-static const struct wl_pointer_listener pointer_listener = { pointer_handle_enter, pointer_handle_leave, pointer_handle_motion, pointer_handle_button, pointer_handle_axis, pointer_handle_frame, pointer_handle_axis_source, pointer_handle_axis_stop, pointer_handle_axis_discrete, pointer_handle_axis_value120 };
+#ifdef WL_POINTER_AXIS_RELATIVE_DIRECTION_SINCE_VERSION
+static void pointer_handle_axis_relative_direction(void* data, struct wl_pointer* wl_pointer, uint32_t axis, uint32_t direction) {}
+#endif
+// wl_pointer_listener grew over time: axis_value120 arrived in wayland 1.21 and
+// axis_relative_direction in 1.22. This compiles against the system libwayland
+// headers, which on Ubuntu 22.04 are 1.20 and declare neither, so listing the
+// newer handlers unconditionally overflows the struct. Key off the SINCE_VERSION
+// macros the header defines for each request, so we supply exactly the handlers
+// the local wayland version knows about.
+static const struct wl_pointer_listener pointer_listener = {
+	pointer_handle_enter,
+	pointer_handle_leave,
+	pointer_handle_motion,
+	pointer_handle_button,
+	pointer_handle_axis,
+	pointer_handle_frame,
+	pointer_handle_axis_source,
+	pointer_handle_axis_stop,
+	pointer_handle_axis_discrete,
+#ifdef WL_POINTER_AXIS_VALUE120_SINCE_VERSION
+	pointer_handle_axis_value120,
+#endif
+#ifdef WL_POINTER_AXIS_RELATIVE_DIRECTION_SINCE_VERSION
+	pointer_handle_axis_relative_direction,
+#endif
+};
 
 static void relative_pointer_handle_relative_motion(void* data, struct zwp_relative_pointer_v1* zwp_relative_pointer_v1, uint32_t utime_hi, uint32_t utime_lo, wl_fixed_t dx, wl_fixed_t dy, wl_fixed_t dx_unaccel, wl_fixed_t dy_unaccel);
 static const struct zwp_relative_pointer_v1_listener relative_pointer_listener = { relative_pointer_handle_relative_motion };
