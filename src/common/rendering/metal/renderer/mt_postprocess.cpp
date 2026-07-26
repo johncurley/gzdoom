@@ -10,6 +10,7 @@
 #include <chrono>
 
 #include "c_cvars.h"
+#include "printf.h"
 #include "flatvertices.h"
 #include "hwrenderer/postprocessing/hw_postprocess.h"
 #include "hwrenderer/postprocessing/hw_postprocess_cvars.h"
@@ -98,6 +99,18 @@ CUSTOM_CVAR(Int, mt_compute_ao_worldpos_debug, 0, CVAR_ARCHIVE | CVAR_GLOBALCONF
 {
   if (self < 0) self = 0;
   if (self > 3) self = 3;
+  // Announce the state on every change. This is CVAR_ARCHIVE, so it
+  // survives across runs, and when it is on the AO buffer contains a
+  // fract() grid rather than occlusion -- which is easy to mistake for a
+  // broken AO pass, since it looks like severe banding/moire and responds
+  // to camera motion. Several rounds of AO debugging were spent on
+  // screenshots of this diagnostic before anyone noticed it was still
+  // enabled from a previous session.
+  if (self != 0)
+    Printf(TEXTCOLOR_YELLOW "mt_compute_ao_worldpos_debug = %d: the AO buffer now shows the "
+           "world-position grid, NOT ambient occlusion. Set it to 0 for real AO.\n", (int)self);
+  else
+    Printf("mt_compute_ao_worldpos_debug = 0: AO buffer shows real ambient occlusion.\n");
 }
 // World-space grid cell size (map units) the noise hash quantizes to --
 // analogous to the old dither texture's implicit tiling frequency. Smaller
@@ -108,6 +121,47 @@ CUSTOM_CVAR(Int, mt_compute_ao_worldpos_debug, 0, CVAR_ARCHIVE | CVAR_GLOBALCONF
 CUSTOM_CVAR(Float, mt_compute_ao_noise_cellsize, 12.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
   if (self < 1.0f) self = 1.0f;
+}
+// Target noise cell size in AO pixels. A fixed world-space cell size can't
+// serve both ends of the depth range -- one cell is one noise sample, so a
+// 12-unit cell is dozens of pixels wide up close (every pixel in it gets
+// the same jitter, giving the large correlated AO blotches that crawl
+// diagonally across surfaces as the player walks, since the cell grid is
+// world-anchored and the camera isn't) and sub-pixel at distance. This
+// scales the cell with view depth so it stays ~this many AO pixels wide
+// everywhere; see NoiseCellSize in mt_ao.metal. 1.0 is the natural value
+// (one noise sample per AO pixel, what the blur pass is tuned for); raise
+// it for chunkier/cheaper-looking dither. 0 disables the adaptive path and
+// restores the fixed mt_compute_ao_noise_cellsize behaviour.
+CUSTOM_CVAR(Float, mt_compute_ao_noise_pixels, 1.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+  if (self < 0.0f) self = 0.0f;
+  if (self > 16.0f) self = 16.0f;
+}
+// How much screen-space interleaved-gradient noise is mixed into the
+// world-cell jitter. Needed because world-cell noise cannot decorrelate
+// pixels on grazing surfaces at any cell size -- a world cube projects to
+// a long thin screen run there, and every pixel in it marches identically,
+// which is the dark-streak-near-close-geometry artifact. See AoNoise in
+// mt_ao.metal for the full geometry. The term is a pure function of pixel
+// coordinate (no frame counter), so it is static in screen space and
+// cannot shimmer or crawl. 0 = pure world-locked noise (restores the
+// streaks); 1 = full decorrelation.
+CUSTOM_CVAR(Float, mt_compute_ao_noise_screenmix, 1.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+  if (self < 0.0f) self = 0.0f;
+  if (self > 1.0f) self = 1.0f;
+}
+// Thickness reject threshold in map units, previously a hard-coded 1.25f
+// in MtAOModule::Render() with no way to sweep it. The shader scales this
+// linearly with view depth (mt_ao.metal:381-383); it is NOT tied to the
+// horizon step distance or to N.V surface slant the way Jimenez et al.
+// 2016 describes, which is why it is suspected in the grazing-angle
+// streaks. Set it to something huge (e.g. 1000) to effectively disable the
+// reject and see whether the artifact is thickness-related at all.
+CUSTOM_CVAR(Float, mt_compute_ao_thickness, 1.25f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+  if (self < 0.01f) self = 0.01f;
 }
 
 class MtPPRenderState : public PPRenderState {

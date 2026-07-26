@@ -53,6 +53,13 @@ public:
         // raw-AO display) instead of running real AO math -- see
         // mt_compute_ao_worldpos_debug's doc comment (mt_postprocess.cpp).
         int debugMode;
+        // World units per AO pixel at unit view depth, used to scale the
+        // noise cell size with distance (see NoiseCellSize). <= 0 disables
+        // the depth-adaptive path, falling back to the fixed noiseCellSize.
+        float pixelWorldScale;
+        // Weight of the screen-space decorrelation term mixed into the
+        // world-cell jitter (see AoNoise). 0 = pure world-locked noise.
+        float screenNoiseMix;
     };
     bool Render(float m5, int sceneWidth, int sceneHeight, const HWViewpointUniforms* currentViewpoint);
     void Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL::Texture* normalTex, MTL::Texture* sceneColorTex, MTL::Texture* aoTex, MTL::Texture* ditherTex, MTL::Texture* fogTex, MTL::Texture* combineTex, MTL::Texture* coverageTex, const SSAOParams& params, bool blurAO, bool useFullresCleanup, int algorithm);

@@ -1925,3 +1925,158 @@ Per-difference resolution:
    ARM64/AArch64 JIT backend as a real future track for Apple Silicon (and
    any other ARM64 target) performance, verify current ARM64 behavior
    (silent VM-interpreter fallback vs. broken build) before scoping the work.
+
+## Seventh AO pass: four distinct bugs behind the "moving/distorted AO" reports (2026-07-26) — fixed, verified in-game
+
+Follow-on from the sixth attempt (world-locked noise, above), which had
+shipped WIP and was still reported as "not right, moving around when the
+player walks." Four *separate* mechanisms turned out to be in play. They
+had been treated as one artifact across several prior sessions, which is
+why single fixes kept only partly helping.
+
+### 1. Wrong horizontal focal length in the view->world reconstruction
+
+`invFocalLenX/Y` were re-derived as `tanHalfFovy * (sceneWidth /
+sceneHeight)`, copying upstream's GLSL SSAO. But the projection is built as
+`perspective(fovy, ratio, ...)` in `hw_entrypoint.cpp:169`, where `ratio` is
+the *display* aspect (`r_visualAspect`/`vid_aspect`/letterboxing) and fovy
+is divided by `fovratio`. Neither equals the raw scene pixel aspect, so the
+two disagree off a plain widescreen setup.
+
+For plain occlusion this only skews the sample radius, which is why
+upstream never noticed. But the world-locked noise round-trips through
+`viewToWorld`: a wrong horizontal focal length scales reconstructed
+view-space X by a constant k, and `R^-1` applied to `(k*x, y, -z)` puts the
+error along a *camera-relative* axis — so it rotates when turning and
+slides when walking, worst at screen edges and near walls where |x| is
+largest. Now read straight off `mProjectionMatrix` ([0] and [5],
+column-major) in `MtAOModule::Render()`. No assumptions, and it inherits
+any future projection change for free.
+
+### 2. Fixed world-space noise cell size (the crawling blotches)
+
+One `WorldNoise` cell is one noise sample. At the fixed 12-unit default a
+cell spans dozens of AO pixels up close, so every pixel in it got identical
+jitter — correlated error the bilateral blur cannot average away, appearing
+as large AO blotches. Because the cell grid is world-anchored and the
+camera is not, they crawled diagonally across surfaces while walking. (The
+same fixed size goes sub-pixel at distance and aliases instead — the
+artifact cut both ways.)
+
+Added `NoiseCellSize()`: scales the cell with view depth so it stays ~1 AO
+pixel wide at any distance, power-of-two quantized so the size is constant
+across a depth band rather than drifting with every step. New cvar
+`mt_compute_ao_noise_pixels` (default 1.0; 0 restores the fixed size).
+Confirmed in-game — the floor checkerboard is gone and the raw AO buffer
+shows clean per-pixel grain.
+
+### 3. World-cell noise cannot decorrelate grazing surfaces (the mottling)
+
+`NoiseCellSize` picks a cell size from depth, which assumes a pixel's world
+footprint is isotropic — true only on surfaces facing the camera. On a
+grazing surface (standing close to any wall/floor/ledge) the footprint is
+stretched enormously along the grazing direction, so a world cube projects
+to a long thin run of screen pixels that all march identically. **No
+isotropic cell size fixes this**: sizing to the long axis just correlates
+across the short axis, trading the streaks for perpendicular ones of equal
+length.
+
+Per-pixel decorrelation can only come from screen space. `AoNoise()` keeps
+the world-cell hash as a per-cell offset and adds Jimenez interleaved
+gradient noise. The IGN term is a pure function of pixel coordinate with no
+frame counter, so it is static in screen space — it cannot shimmer when
+stationary. Cvar `mt_compute_ao_noise_screenmix` (default 1.0; 0 = pure
+world-locked). A/B'd in-game from a fixed camera: the mottling clearly
+responds, the dark bands did not — which is what split bug 3 from bug 4.
+
+Note this partly walks back the pure world-locking premise of the sixth
+attempt, and matches what production GTAO does (Activision's original,
+Intel's XeGTAO): screen-space noise plus a denoiser, no world anchoring.
+
+### 4. Off-screen samples were CLAMPED, not rejected (the dark bands) — the big one
+
+```
+sampleUV = clamp(sampleUV, halfTexel, float2(1.0) - halfTexel);   // was
+```
+
+Every march step leaving the screen was walked back onto the nearest border
+texel, so step after step and direction after direction landed on the *same*
+edge pixel and voted as an occluder repeatedly — fabricating an occluder out
+of nothing. For any pixel within `radiusPixels` of the viewport border that
+is most of its sample budget, and `radiusPixels` is largest exactly when the
+player is close to a surface.
+
+Signature, all confirmed on screenshots: a wide dark band hugging the
+viewport edge, spanning the full width, tracking no geometry, growing and
+shrinking with *proximity* rather than with the scene. It survived every
+earlier experiment (noise, thickness, step count) because it has nothing to
+do with any of them. Now rejected with a bounds test + `continue` in all
+three sample kernels; skipping merely lowers the effective sample count near
+the border. Standard SSAO border handling.
+
+### Also in this pass
+
+- `mt_compute_ao_thickness` cvar (default 1.25) — was a hard-coded `1.25f`
+  in `Render()` annotated with a comment claiming "1.5-2.0", untraceable and
+  unsweepable. Exposed purely so it can be swept.
+- `mt_compute_ao_worldpos_debug` now prints a yellow warning when nonzero.
+  It is `CVAR_ARCHIVE`, and *three* rounds of screenshots this session were
+  spent analysing its `fract()` grid before anyone noticed it was still
+  enabled from a previous session. The debug viz also now uses the fixed
+  cvar cell size, not the adaptive one — the adaptive size is ~1 pixel by
+  design, which puts `fract()` at Nyquist and renders the grid as moire.
+- Repaired `AOCombineParams` in the `SSAO_COMPUTE_SOURCE` fallback string:
+  a scripted edit had spliced `pixelWorldScale`/`screenNoiseMix` into it
+  (both `SSAOParams` and `AOCombineParams` begin with `int debugMode;`),
+  shifting every field after it. Latent — the fallback only runs if the
+  metallib is missing. `check_shader_parity.py` MATCHes all kernels.
+
+### Perf
+
+`ComputeCPU AO active_avg` 0.430-0.462ms vs the 2026-07-15 GTAO baseline of
+~0.56ms. No regression; marginally cheaper, consistent with the off-screen
+reject skipping texture fetches the clamp used to perform.
+
+### Corrections worth keeping (these each cost a round trip)
+
+- **The "Y sign" theory was wrong.** A negation was added to
+  `WorldPosFromViewPos` on the theory that `FetchViewPos`'s Y disagreed with
+  `mViewMatrix`. Tracing the Metal Y-flip properly: the patched vertex
+  shader emits `clip.y' = -clip.y` and Metal maps NDC y=+1 to row 0, so
+  scene textures are stored bottom-up and `uv.y=0` is the image *bottom* —
+  the original formula was already correct. Corroborated by the fact that
+  the kernels compare `FetchViewPos` positions against G-buffer view-space
+  normals, and a global Y mirror between those two would invert occlusion on
+  every floor and ceiling. Reverted.
+- **The thickness hypothesis was empirically killed, by sign.** Gemini
+  proposed that a too-tight thickness threshold causes over-darkening at
+  grazing angles. Both branches at the reject `continue`, i.e. *discard* the
+  sample, so a tighter threshold must *brighten*. Confirmed in-game:
+  `mt_compute_ao_thickness 1000` (reject effectively disabled) made the
+  scene dramatically **darker**. The mechanism as stated predicts the wrong
+  sign.
+- **Gemini's "disk collapse" instinct was right, mis-sited.** It was
+  dismissed here because the radius clamp it pointed at
+  (`min(outSize.x, outSize.y) * 0.5`) was already present and demonstrably
+  did not fix the crawl. But hard-clamping UVs collapsing the sample disk
+  onto repeated edge texels was exactly right — it just happens at the
+  *viewport border* (bug 4), not from an unbounded radius. Dismiss the site,
+  not the mechanism.
+- Screenshots proved decisive repeatedly and code reading did not. Several
+  confident mechanisms derived from reading needed correcting against what
+  was actually on screen. Two shots from a *fixed* camera with one variable
+  changed beat any amount of reasoning; when the camera moved between
+  shots, the comparison was worthless.
+
+### Open / next
+
+- Residual soft darkening low in the frame after the bug-4 fix is
+  unclassified: strafe to see whether it moves with the scene (real AO) or
+  stays glued to the viewport (border residue).
+- A `mt_compute_ao_temporal*` cvar family still exists (`temporal`,
+  `temporal_blend`, `temporal_depth_reject`, `temporal_teleport_angle`,
+  `temporal_teleport_dist`). Flagged during this session as a possible
+  denoiser that would reopen bug 3's design; **user confirmed 2026-07-26
+  that this whole section is superseded by the current refactor**. Treat it
+  as dead scaffolding, not as an input to the noise design. Removal not
+  attempted here — it is its own isolated cleanup.

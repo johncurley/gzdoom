@@ -37,6 +37,9 @@ EXTERN_CVAR(Int, mt_compute_ao_algorithm)
 EXTERN_CVAR(Int, mt_compute_ao_alchemy_samples)
 EXTERN_CVAR(Int, mt_compute_ao_worldpos_debug)
 EXTERN_CVAR(Float, mt_compute_ao_noise_cellsize)
+EXTERN_CVAR(Float, mt_compute_ao_noise_pixels)
+EXTERN_CVAR(Float, mt_compute_ao_noise_screenmix)
+EXTERN_CVAR(Float, mt_compute_ao_thickness)
 
 // NOTE: Kept in sync with the authoritative
 // src/common/rendering/metal/shaders/native/mt_ao.metal — this string is only
@@ -84,6 +87,13 @@ struct SSAOParams {
     // raw-AO display) instead of running real AO math -- see
     // mt_compute_ao_worldpos_debug's doc comment (mt_postprocess.cpp).
     int debugMode;
+    // World units per AO pixel at unit view depth, used to scale the
+    // noise cell size with distance (see NoiseCellSize). <= 0 disables
+    // the depth-adaptive path, falling back to the fixed noiseCellSize.
+    float pixelWorldScale;
+    // Weight of the screen-space decorrelation term mixed into the
+    // world-cell jitter (see AoNoise). 0 = pure world-locked noise.
+    float screenNoiseMix;
 };
 
 struct AOFlags {
@@ -164,10 +174,74 @@ uint3 Pcg3d(uint3 v) {
 // no atan2 round-trip needed since there's no texture-storage requirement
 // forcing the old cos/sin encoding.
 float3 WorldNoise(float3 worldPos, float cellSize) {
-    int3 cell = int3(floor(worldPos / max(cellSize, 1.0)));
+    int3 cell = int3(floor(worldPos / max(cellSize, 1e-4)));
     uint3 h = Pcg3d(uint3(cell));
     float3 unorm = float3(h) * (1.0 / 4294967295.0);
     return float3(unorm.x * 6.28318530718, unorm.y, unorm.z);
+}
+
+// Depth-adaptive cell size for WorldNoise. A *fixed* world-space cell size
+// (params.noiseCellSize) cannot work at both ends of the depth range: one
+// cell is one noise sample, so at close range a 12-unit cell spans dozens
+// of AO pixels and every pixel inside it gets the identical jitter --
+// which is what produces the large correlated AO blotches, and, because
+// the cell grid is nailed to the world while the camera is not, makes them
+// crawl diagonally across surfaces as the player walks. (The same fixed
+// size goes sub-pixel at distance and aliases instead.) Scaling the cell
+// with view depth keeps each cell roughly one AO pixel wide at every
+// distance, restoring the per-pixel decorrelation the blur pass expects
+// while keeping the noise world-anchored rather than screen-anchored.
+// Quantizing to a power of two means the size is constant across a whole
+// depth range instead of changing continuously with every step, so a
+// surface's noise stays put except at the (blur-hidden, ~1px scale) ring
+// boundaries where it doubles. params.pixelWorldScale <= 0 disables this
+// and restores the old fixed-size behaviour.
+float NoiseCellSize(float viewZ, constant SSAOParams &params) {
+    if (params.pixelWorldScale <= 0.0)
+        return max(params.noiseCellSize, 1e-4);
+    float target = params.pixelWorldScale * max(viewZ, 1e-4);
+    return exp2(ceil(log2(max(target, 1e-4))));
+}
+
+// Screen-space interleaved gradient noise (Jimenez, "Next Generation Post
+// Processing in Call of Duty: Advanced Warfare"). A pure function of the
+// pixel coordinate -- no frame counter -- so it is *static in screen
+// space*: it cannot shimmer when the player stands still and cannot crawl
+// when they move, because it does not move at all.
+float InterleavedGradientNoise(float2 pixel) {
+    return fract(52.9829189 * fract(dot(pixel, float2(0.06711056, 0.00583715))));
+}
+
+// Final per-pixel jitter: the world cell hash decorrelated by a
+// screen-space term.
+//
+// WorldNoise alone cannot decorrelate every pixel, and the failure is
+// geometric rather than a tuning problem. NoiseCellSize picks a cell size
+// from view depth, which assumes a pixel's world footprint is isotropic --
+// true only on surfaces facing the camera. On a surface at a grazing angle
+// (which is exactly what you get standing close to a wall, floor or ledge)
+// the footprint is stretched enormously along the grazing direction, so a
+// world-space cube projects to a long thin run of screen pixels that all
+// fall in the same cell and therefore march the same directions with the
+// same jitter. That coherent run is the dark streak reported 2026-07-26,
+// and no isotropic cell size can remove it: shrinking cells to fit the
+// long axis makes them correlate across the short axis instead, trading
+// the streaks for equally long perpendicular ones.
+//
+// Breaking it requires decorrelation that is per *pixel* rather than per
+// world point, which by definition can only come from screen space. This
+// is also what production GTAO implementations do (Activision's original,
+// Intel's XeGTAO): screen-space blue/gradient noise plus a denoiser, no
+// world anchoring. The world term is kept as a per-cell offset so the
+// low-frequency structure still has some world anchoring, but the
+// screen-space term is what guarantees neighbouring pixels differ.
+// params.screenNoiseMix = 0 restores the pure world-locked behaviour.
+float3 AoNoise(float3 worldPos, float viewZ, float2 pixel, constant SSAOParams &params) {
+    float3 h = WorldNoise(worldPos, NoiseCellSize(viewZ, params));
+    float3 unorm = float3(h.x * (1.0 / 6.28318530718), h.y, h.z);
+    float ign = InterleavedGradientNoise(pixel) * params.screenNoiseMix;
+    float3 mixed = fract(unorm + ign * float3(1.0, 0.6180339887, 0.3819660113));
+    return float3(mixed.x * 6.28318530718, mixed.y, mixed.z);
 }
 
 float LinearizeSceneDepth(float depth, constant SSAOParams &params) {
@@ -258,6 +332,13 @@ kernel void ssao_compute(
     // mt_compute_ao_worldpos_debug's doc comment (mt_postprocess.cpp).
     // Deliberately bypasses the rest of the AO computation entirely.
     if (params.debugMode != 0) {
+        // Deliberately the *fixed* cvar cell size, not NoiseCellSize's
+        // depth-adaptive one: this grid exists to be read by a human
+        // eye, and the adaptive size is ~1 AO pixel by design, which
+        // puts fract() right at Nyquist and turns the whole screen into
+        // moire instead of a legible grid. A fixed size is also the
+        // correct thing to test world-locking with -- it isolates the
+        // worldPos reconstruction from the depth-dependent cell sizing.
         float cellSize = max(params.noiseCellSize, 1.0);
         float2 dbg = params.debugMode == 1 ? fract(worldPos.xy / cellSize) :
                      params.debugMode == 2 ? fract(worldPos.xz / cellSize) :
@@ -272,7 +353,7 @@ kernel void ssao_compute(
         return;
     }
 
-    float3 worldNoise = WorldNoise(worldPos, params.noiseCellSize);
+    float3 worldNoise = AoNoise(worldPos, centerViewPos.z, pixelCenter, params);
     float rotation = worldNoise.x;
     float stepJitter = worldNoise.y;
     float directionJitter = worldNoise.z;
@@ -305,7 +386,19 @@ kernel void ssao_compute(
         for (int stepIndex = 0; stepIndex < numSteps; stepIndex++) {
             float rayPixels = (float(stepIndex) + stepJitter + 1.0) * minStepPixels;
             float2 sampleUV = uv + dir * rayPixels / outSize;
-            sampleUV = clamp(sampleUV, halfTexel, float2(1.0) - halfTexel);
+            // Off-screen samples are REJECTED, not clamped. Clamping walked the
+            // sample back to the nearest border texel, so every step of every
+            // direction that left the screen landed on the *same* edge pixel and
+            // voted as an occluder over and over. For a pixel within radiusPixels
+            // of the viewport border that is most of its sample budget, and
+            // radiusPixels is largest exactly when the player is close to a
+            // surface -- which is why it showed up as a wide dark band hugging the
+            // screen edge, spanning the full width, tracking no geometry, and
+            // growing/shrinking with proximity rather than with the scene
+            // (reported 2026-07-26). Skipping instead just lowers the effective
+            // sample count near the border: less occlusion there, no fabricated
+            // occluder. This is the standard SSAO border handling.
+            if (any(sampleUV < halfTexel) || any(sampleUV > float2(1.0) - halfTexel)) continue;
             float2 sampleSceneUV = float2(params.offsetX, params.offsetY) + sampleUV * float2(params.scaleX, params.scaleY);
 
             float sampleCoverage = sceneColorTexture.sample(nearestClampSampler, sampleSceneUV).a;
@@ -422,6 +515,13 @@ kernel void ssao_compute_alchemy(
     // Visual debug for the world-locked noise fix itself -- see
     // mt_compute_ao_worldpos_debug's doc comment (mt_postprocess.cpp).
     if (params.debugMode != 0) {
+        // Deliberately the *fixed* cvar cell size, not NoiseCellSize's
+        // depth-adaptive one: this grid exists to be read by a human
+        // eye, and the adaptive size is ~1 AO pixel by design, which
+        // puts fract() right at Nyquist and turns the whole screen into
+        // moire instead of a legible grid. A fixed size is also the
+        // correct thing to test world-locking with -- it isolates the
+        // worldPos reconstruction from the depth-dependent cell sizing.
         float cellSize = max(params.noiseCellSize, 1.0);
         float2 dbg = params.debugMode == 1 ? fract(worldPos.xy / cellSize) :
                      params.debugMode == 2 ? fract(worldPos.xz / cellSize) :
@@ -436,7 +536,7 @@ kernel void ssao_compute_alchemy(
         return;
     }
 
-    float3 worldNoise = WorldNoise(worldPos, params.noiseCellSize);
+    float3 worldNoise = AoNoise(worldPos, centerViewPos.z, pixelCenter, params);
     float rotation = worldNoise.x;
     // Per-pixel radius jitter breaks the deterministic Vogel/Fibonacci
     // spiral coherence between neighboring pixels. Without it, every pixel
@@ -473,7 +573,19 @@ kernel void ssao_compute_alchemy(
         float2 dir = float2(cos(ang), sin(ang));
         float rayPixels = radiusFrac * radiusPixels;
         float2 sampleUV = uv + dir * rayPixels / outSize;
-        sampleUV = clamp(sampleUV, halfTexel, float2(1.0) - halfTexel);
+        // Off-screen samples are REJECTED, not clamped. Clamping walked the
+        // sample back to the nearest border texel, so every step of every
+        // direction that left the screen landed on the *same* edge pixel and
+        // voted as an occluder over and over. For a pixel within radiusPixels
+        // of the viewport border that is most of its sample budget, and
+        // radiusPixels is largest exactly when the player is close to a
+        // surface -- which is why it showed up as a wide dark band hugging the
+        // screen edge, spanning the full width, tracking no geometry, and
+        // growing/shrinking with proximity rather than with the scene
+        // (reported 2026-07-26). Skipping instead just lowers the effective
+        // sample count near the border: less occlusion there, no fabricated
+        // occluder. This is the standard SSAO border handling.
+        if (any(sampleUV < halfTexel) || any(sampleUV > float2(1.0) - halfTexel)) continue;
         float2 sampleSceneUV = float2(params.offsetX, params.offsetY) + sampleUV * float2(params.scaleX, params.scaleY);
 
         float sampleCoverage = sceneColorTexture.sample(nearestClampSampler, sampleSceneUV).a;
@@ -628,6 +740,13 @@ kernel void ssao_compute_mip(
     // Visual debug for the world-locked noise fix itself -- see
     // mt_compute_ao_worldpos_debug's doc comment (mt_postprocess.cpp).
     if (params.debugMode != 0) {
+        // Deliberately the *fixed* cvar cell size, not NoiseCellSize's
+        // depth-adaptive one: this grid exists to be read by a human
+        // eye, and the adaptive size is ~1 AO pixel by design, which
+        // puts fract() right at Nyquist and turns the whole screen into
+        // moire instead of a legible grid. A fixed size is also the
+        // correct thing to test world-locking with -- it isolates the
+        // worldPos reconstruction from the depth-dependent cell sizing.
         float cellSize = max(params.noiseCellSize, 1.0);
         float2 dbg = params.debugMode == 1 ? fract(worldPos.xy / cellSize) :
                      params.debugMode == 2 ? fract(worldPos.xz / cellSize) :
@@ -642,7 +761,7 @@ kernel void ssao_compute_mip(
         return;
     }
 
-    float3 worldNoise = WorldNoise(worldPos, params.noiseCellSize);
+    float3 worldNoise = AoNoise(worldPos, centerViewPos.z, pixelCenter, params);
     float rotation = worldNoise.x;
     float stepJitter = worldNoise.y;
     float directionJitter = worldNoise.z;
@@ -676,7 +795,19 @@ kernel void ssao_compute_mip(
         for (int stepIndex = 0; stepIndex < numSteps; stepIndex++) {
             float rayPixels = (float(stepIndex) + stepJitter + 1.0) * minStepPixels;
             float2 sampleUV = uv + dir * rayPixels / outSize;
-            sampleUV = clamp(sampleUV, halfTexel, float2(1.0) - halfTexel);
+            // Off-screen samples are REJECTED, not clamped. Clamping walked the
+            // sample back to the nearest border texel, so every step of every
+            // direction that left the screen landed on the *same* edge pixel and
+            // voted as an occluder over and over. For a pixel within radiusPixels
+            // of the viewport border that is most of its sample budget, and
+            // radiusPixels is largest exactly when the player is close to a
+            // surface -- which is why it showed up as a wide dark band hugging the
+            // screen edge, spanning the full width, tracking no geometry, and
+            // growing/shrinking with proximity rather than with the scene
+            // (reported 2026-07-26). Skipping instead just lowers the effective
+            // sample count near the border: less occlusion there, no fabricated
+            // occluder. This is the standard SSAO border handling.
+            if (any(sampleUV < halfTexel) || any(sampleUV > float2(1.0) - halfTexel)) continue;
             float2 sampleSceneUV = float2(params.offsetX, params.offsetY) + sampleUV * float2(params.scaleX, params.scaleY);
 
             float sampleCoverage = sceneColorTexture.sample(nearestClampSampler, sampleSceneUV).a;
@@ -1498,8 +1629,33 @@ bool MtAOModule::Render(float m5, int sceneWidth, int sceneHeight, const HWViewp
     params.offsetY = sceneOffset.Y;
 
     float tanHalfFovy = 1.0f / m5;
+    // invFocalLenX/Y are read straight off this frame's actual projection
+    // matrix rather than re-derived from the viewport dimensions.
+    // Upstream's GLSL SSAO assumes invFocalLenX == tanHalfFovy *
+    // (sceneWidth / sceneHeight), but the projection is actually built as
+    // perspective(fovy, ratio, ...) in hw_entrypoint.cpp, where `ratio` is
+    // the *display* aspect (r_visualAspect / vid_aspect / letterboxing) and
+    // fovy is divided by fovratio -- neither is the raw scene pixel aspect,
+    // so the two disagree whenever the player isn't on a plain widescreen
+    // setup. For plain occlusion that only costs a slightly wrong sample
+    // radius, which is why upstream never noticed, but the world-locked
+    // noise round-trips these through viewToWorld: a wrong horizontal
+    // focal length scales reconstructed view-space X by a constant k, and
+    // R^-1 applied to (k*x, y, -z) puts the resulting world-space error
+    // along a camera-relative axis. That error therefore rotates with the
+    // camera and slides with the camera position -- exactly the reported
+    // "noise pattern rotates when turning and drifts when walking", worst
+    // near screen edges and close walls where |x| is largest.
+    // mProjectionMatrix is column-major: [0] = f/aspect, [5] = f.
     float invFocalLenX = tanHalfFovy * (sceneWidth / (float)sceneHeight);
     float invFocalLenY = tanHalfFovy;
+    if (currentViewpoint) {
+        const auto *proj = currentViewpoint->mProjectionMatrix.get();
+        if (proj[0] != 0.0f && proj[5] != 0.0f) {
+            invFocalLenX = 1.0f / (float)proj[0];
+            invFocalLenY = 1.0f / (float)proj[5];
+        }
+    }
     float r2 = std::max(gl_ssao_radius * gl_ssao_radius, 1.0f);
     params.uvToViewAX = 2.0f * invFocalLenX;
     params.uvToViewAY = 2.0f * invFocalLenY;
@@ -1564,7 +1720,14 @@ bool MtAOModule::Render(float m5, int sceneWidth, int sceneHeight, const HWViewp
 
     // Thickness heuristic: prevent background from occluding foreground.
     // 1.5-2.0 units is usually a good balance for GZDoom scale.
-    params.maxThickness = 1.25f;
+    // Exposed as a cvar purely so it can be swept in-game: the base value
+    // is an untraced magic number, and the shader's use of it (a linear
+    // depth ramp at mt_ao.metal:381-383, not a step-distance or N.V slant
+    // term as in Jimenez et al. 2016) is a candidate cause of the
+    // grazing-angle streaks reported 2026-07-26. Setting it very large
+    // effectively disables the reject, which is the cheap way to test
+    // whether it is implicated at all before rewriting the heuristic.
+    params.maxThickness = std::max((float)mt_compute_ao_thickness, 0.01f);
 
     // Distance fade: see the comment at its use site in ssao_compute.
     // Defaults (100/500) sit just outside typical room scale (player
@@ -1576,6 +1739,15 @@ bool MtAOModule::Render(float m5, int sceneWidth, int sceneHeight, const HWViewp
     params.fadeEndDistance = std::max((float)mt_compute_ao_fade_end, params.fadeStartDistance + 1.0f);
     params.debugMode = clamp((int)mt_compute_ao_worldpos_debug, 0, 3);
     params.noiseCellSize = std::max((float)mt_compute_ao_noise_cellsize, 1.0f);
+    // World units spanned by one AO pixel at unit view depth. The AO
+    // texture is mAOHeight tall and covers the full vertical FOV, so one
+    // pixel subtends 2*tanHalfFovy/mAOHeight radians' worth of world at
+    // depth 1; NoiseCellSize multiplies this by the pixel's actual depth.
+    // See mt_compute_ao_noise_pixels (mt_postprocess.cpp).
+    params.pixelWorldScale = mt_compute_ao_noise_pixels > 0.0f && mAOHeight > 0
+        ? (float)mt_compute_ao_noise_pixels * 2.0f * invFocalLenY / (float)mAOHeight
+        : 0.0f;
+    params.screenNoiseMix = clamp((float)mt_compute_ao_noise_screenmix, 0.0f, 1.0f);
 
     auto cmdBuf = fb->GetCommands()->GetRenderCommandBuffer();
     if (!cmdBuf)
