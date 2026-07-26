@@ -2080,3 +2080,62 @@ reject skipping texture fetches the clamp used to perform.
   that this whole section is superseded by the current refactor**. Treat it
   as dead scaffolding, not as an input to the noise design. Removal not
   attempted here — it is its own isolated cleanup.
+
+## Development machine capability profile (Intel Mac, recorded 2026-07-26)
+
+Added `mt_caps` (CCMD, `mt_debug.cpp`) to dump `MtVersionManager`'s probed
+capabilities plus the raw `supportsFamily()` answers. None of this was
+reachable in-game before, and its absence caused a whole planning round to
+be built on the assumption that this was an Apple Silicon machine. **It is
+not.** Verified output:
+
+```
+Architecture:            Intel (IMR)
+Metal version (approx):  2.0          macOS: 12.7.6
+TBDR / memoryless:       no / no
+ReadWrite BGRA8 (Tier2): NO           <- bloom Tier 2 gate
+Argument buffers:        no (tier 0)
+RGB10A2:                 no
+SIMD-group / non-uniform threadgroups: no / no
+Binary archives:         yes          GPU timestamps: yes
+Stage counter sampling:  no           <- per-pass GPU timing gate
+Managed storage:         yes          Max drawables: 3
+Raw supportsFamily(): Common1 yes, Common2 yes, Common3 no,
+                      Mac2 no, MacCatalyst2 no, Apple1/4/7 no
+```
+
+`supportsRGB10A2`, `metalVersion`, `supportsSIMDGroup` and
+`supportsNonUniformThreadgroups` are all derived from the single
+`supportsFamily(GPUFamilyMac2)` probe, so all four go false together. That
+looked like a broken probe; the raw dump disproves it — Common1/Common2 yes
+with Common3/Mac2 no is a coherent profile for an older Intel iGPU, not the
+incoherent pattern an enum/ABI mismatch would produce. **The capability
+gating is correct. Do not "fix" it.**
+
+### Consequences
+
+- **Bloom Tier 2 is unreachable here.** `composite 0` and `1` both take the
+  Tier 1 path (identical behaviour); `composite 2` hits
+  `if (composite == 2 && !directCompositeSupported) return false` and falls
+  back to upstream `hw_postprocess` bloom. Tier 2 validation is blocked on
+  acquiring Apple Silicon or discrete-AMD hardware. Usefully, this makes
+  `composite 2` a **ground-truth oracle**: Tier 1 compute bloom can be
+  A/B'd against the reference postprocess implementation, which is a better
+  test than comparing two compute paths that might share a bug.
+- **Per-pass GPU timings are hardware-blocked**, not unimplemented
+  (`docs/engine-modernization.md:96-98`). Stage-boundary counter sampling is
+  unsupported. Whole-frame GPU timing works (GPU timestamps yes).
+- **All AO work of 2026-07-26 was validated at quarter-res only** —
+  `mt_ao.cpp:1553` forces `aoScale >= 4` on Intel. The projection fix, the
+  off-screen sample reject, and the `AoNoise` screen mix are
+  resolution-independent by construction. `NoiseCellSize` is **not**: it
+  scales by `mAOHeight`, so at half-res cells are half the world size and
+  the power-of-two ring boundaries fall at different depths. Re-verify that
+  one specifically on Apple Silicon before calling it universally validated.
+- Binary archives are enabled here, so the PSO cache is live — the
+  stale-kernel trap applies to every shader change on this machine.
+- No SIMD-group ops and no non-uniform threadgroups: kernels must keep
+  bounds-checking their grid (they do) and cannot use wave intrinsics. Any
+  frame-graph or compute work should treat Tier 2 RW textures, argument
+  buffers tier 2, and SIMD-group ops as unavailable on the primary dev
+  machine.

@@ -440,6 +440,69 @@ CCMD(mt_metrics)
          debug->GetLastFrameStats().extraCommandBuffers);
 }
 
+// Dumps the capabilities MtVersionManager probed at device creation. None of
+// these were reachable from in-game before, which made it impossible to tell
+// which of several capability-gated code paths a given machine actually
+// takes -- the bloom composite tier and the AO resolution gate both branch on
+// values printed here, and both were being reasoned about from assumptions
+// about the hardware rather than from the detected values.
+CCMD(mt_caps)
+{
+  auto fb = GetActiveMetalRenderDevice();
+  if (!fb) {
+    Printf(PRINT_HIGH, "Metal capabilities are not available.\n");
+    return;
+  }
+  const auto &v = fb->mVersionManager;
+  Printf(PRINT_HIGH, "Metal device capabilities:\n");
+  Printf(PRINT_HIGH, "  Architecture:            %s\n", v.GetArchName());
+  Printf(PRINT_HIGH, "  Metal version (approx):  %d.%d\n", v.metalVersion / 10, v.metalVersion % 10);
+  Printf(PRINT_HIGH, "  macOS:                   %d.%d.%d\n", v.osMajor, v.osMinor, v.osPatch);
+  Printf(PRINT_HIGH, "  TBDR / memoryless:       %s / %s\n",
+         v.isTBDR ? "yes" : "no", v.supportsMemoryless ? "yes" : "no");
+  Printf(PRINT_HIGH, "  ReadWrite BGRA8 (Tier2): %s   <- bloom Tier 2 direct-composite gate\n",
+         v.supportsReadWriteBGRA8 ? "yes" : "NO (Tier 1 path)");
+  Printf(PRINT_HIGH, "  Argument buffers:        %s (tier %d)\n",
+         v.supportsArgumentBuffers ? "yes" : "no", v.argumentBufferTier);
+  Printf(PRINT_HIGH, "  RGB10A2:                 %s\n", v.supportsRGB10A2 ? "yes" : "no");
+  Printf(PRINT_HIGH, "  SIMD-group / non-uniform threadgroups: %s / %s\n",
+         v.supportsSIMDGroup ? "yes" : "no", v.supportsNonUniformThreadgroups ? "yes" : "no");
+  Printf(PRINT_HIGH, "  Binary archives:         %s\n", v.supportsBinaryArchives ? "yes" : "no");
+  Printf(PRINT_HIGH, "  GPU timestamps:          %s\n", v.supportsGPUTimestamps ? "yes" : "no");
+  Printf(PRINT_HIGH, "  Stage counter sampling:  %s   <- per-pass GPU timing gate\n",
+         v.supportsStageCounterSampling ? "yes" : "no");
+  Printf(PRINT_HIGH, "  Managed storage:         %s\n", v.useManagedStorage ? "yes" : "no");
+  Printf(PRINT_HIGH, "  Max drawables:           %d\n", v.maxDrawableCount);
+  if (v.architecture == MtGPUArchitecture::Intel) {
+    Printf(PRINT_HIGH, TEXTCOLOR_YELLOW
+           "  NOTE: Intel detected -- AO is force-clamped to quarter-res "
+           "(mt_ao.cpp aoScale>=4) regardless of mt_compute_ao_scale.\n");
+  }
+
+  // Raw GPU family probes. MtVersionManager derives four separate flags
+  // (supportsRGB10A2, metalVersion, supportsSIMDGroup,
+  // supportsNonUniformThreadgroups) from supportsFamily(GPUFamilyMac2)
+  // alone, so a single wrong probe silently disables all four. Printing the
+  // raw answers distinguishes "this GPU genuinely lacks the family" from
+  // "the probe is broken" -- worth knowing before trusting any of the
+  // derived flags above.
+  if (auto *dev = fb->device ? fb->device->device : nullptr) {
+    struct { const char *name; MTL::GPUFamily fam; } families[] = {
+      {"Common1",       MTL::GPUFamilyCommon1},
+      {"Common2",       MTL::GPUFamilyCommon2},
+      {"Common3",       MTL::GPUFamilyCommon3},
+      {"Mac2",          MTL::GPUFamilyMac2},
+      {"MacCatalyst2",  MTL::GPUFamilyMacCatalyst2},
+      {"Apple1",        MTL::GPUFamilyApple1},
+      {"Apple4",        MTL::GPUFamilyApple4},
+      {"Apple7",        MTL::GPUFamilyApple7},
+    };
+    Printf(PRINT_HIGH, "  Raw supportsFamily() probes:\n");
+    for (const auto &f : families)
+      Printf(PRINT_HIGH, "    %-14s %s\n", f.name, dev->supportsFamily(f.fam) ? "yes" : "no");
+  }
+}
+
 CCMD(mt_metrics_reset)
 {
   auto debug = GetActiveMetalDebugManager();
