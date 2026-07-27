@@ -501,7 +501,11 @@ public:
 
 		if (it->second == EventRoute::GUI)
 		{
-			event_t guiev = {EV_GUI_Event, isRepeat ? EV_GUI_KeyRepeat : EV_GUI_KeyDown};
+			// Assigned rather than brace-initialised: subtype is uint8_t, and
+			// narrowing a non-constant EGUIEvent inside an initializer list is
+			// ill-formed. GCC only warns; Clang rejects it.
+			event_t guiev = {EV_GUI_Event};
+			guiev.subtype = isRepeat ? EV_GUI_KeyRepeat : EV_GUI_KeyDown;
 			guiev.data1 = InputKeyToGUIKey(key);
 			guiev.data3 = ModMask();
 			const bool post = guiev.data1 < 128; // match SDL behavior: uppercase ASCII range only
