@@ -3,13 +3,15 @@
 #include "window/stub/stub_open_folder_dialog.h"
 #include "window/stub/stub_open_file_dialog.h"
 #include "window/stub/stub_save_file_dialog.h"
-#include "window/sdl2nativehandle.h"
+#include "window/sdlnativehandle.h"
 #include "core/widget.h"
 #include <stdexcept>
 
-std::unique_ptr<DisplayWindow> DisplayWindow::Create(DisplayWindowHost* windowHost, bool popupWindow, DisplayWindow* owner, RenderAPI renderAPI)
+std::unique_ptr<DisplayWindow> DisplayWindow::Create(DisplayWindowHost* windowHost, WidgetType type, DisplayWindow* owner, RenderAPI renderAPI)
 {
-	return DisplayBackend::Get()->Create(windowHost, popupWindow, owner, renderAPI);
+	if (type == WidgetType::Child)
+		throw std::runtime_error("WidgetType.Child not allowed for DisplayWindow");
+	return DisplayBackend::Get()->Create(windowHost, type, owner, renderAPI);
 }
 
 void DisplayWindow::ProcessEvents()
@@ -89,45 +91,41 @@ std::unique_ptr<DisplayBackend> DisplayBackend::TryCreateBackend()
 	if (backendSelectionEnv)
 	{
 		std::string backendSelectionStr(backendSelectionEnv);
-		fprintf(stderr, "ZWidget: Requested backend via env: %s\n", backendSelectionStr.c_str());
 		if (backendSelectionStr == "Win32")
 		{
 			backend = TryCreateWin32();
-		}
-		else if (backendSelectionStr == "X11")
-		{
-			backend = TryCreateX11();
-		}
-		else if (backendSelectionStr == "SDL2")
-		{
-			backend = TryCreateSDL2();
 		}
 		else if (backendSelectionStr == "Cocoa")
 		{
 			backend = TryCreateCocoa();
 		}
+		else if (backendSelectionStr == "X11")
+		{
+			backend = TryCreateX11();
+		}
+		else if (backendSelectionStr == "SDL3")
+		{
+			backend = TryCreateSDL3();
+		}
+		else if (backendSelectionStr == "SDL2")
+		{
+			backend = TryCreateSDL2();
+		}
 		else if (backendSelectionStr == "Haiku")
 		{
 			backend = TryCreateHaiku();
 		}
-		else if (backendSelectionStr == "Wayland")
-		{
-			backend = TryCreateWayland();
-		}
-		
-		if (backend) fprintf(stderr, "ZWidget: Successfully created requested backend: %s\n", backendSelectionStr.c_str());
-		else fprintf(stderr, "ZWidget: Failed to create requested backend: %s\n", backendSelectionStr.c_str());
 	}
 
 	if (!backend)
 	{
-		fprintf(stderr, "ZWidget: No backend requested or creation failed, trying defaults...\n");
-		backend = TryCreateWin32();
-		if (!backend) backend = TryCreateCocoa();
-		if (!backend) backend = TryCreateHaiku();
-		if (!backend) { fprintf(stderr, "ZWidget: Trying Wayland...\n"); backend = TryCreateWayland(); }
-		if (!backend) { fprintf(stderr, "ZWidget: Trying X11...\n"); backend = TryCreateX11(); }
-		if (!backend) { fprintf(stderr, "ZWidget: Trying SDL2...\n"); backend = TryCreateSDL2(); }
+		if (!backend) { backend = TryCreateWin32(); }
+		if (!backend) { backend = TryCreateCocoa(); }
+		if (!backend) { backend = TryCreateHaiku(); }
+		if (!backend) { backend = TryCreateWayland(); }
+		if (!backend) { backend = TryCreateX11(); }
+		if (!backend) { backend = TryCreateSDL3(); }
+		if (!backend) { backend = TryCreateSDL2(); }
 	}
 
 	return backend;
@@ -169,6 +167,24 @@ std::unique_ptr<DisplayBackend> DisplayBackend::TryCreateSDL2()
 
 #endif
 
+#ifdef USE_SDL3
+
+#include "sdl3/sdl3_display_backend.h"
+
+std::unique_ptr<DisplayBackend> DisplayBackend::TryCreateSDL3()
+{
+	return std::make_unique<SDL3DisplayBackend>();
+}
+
+#else
+
+std::unique_ptr<DisplayBackend> DisplayBackend::TryCreateSDL3()
+{
+	return nullptr;
+}
+
+#endif
+
 #ifdef USE_X11
 
 #include "x11/x11_display_backend.h"
@@ -204,14 +220,8 @@ std::unique_ptr<DisplayBackend> DisplayBackend::TryCreateWayland()
 	{
 		return std::make_unique<WaylandDisplayBackend>();
 	}
-	catch (const std::exception& e)
-	{
-		fprintf(stderr, "TryCreateWayland failed: %s\n", e.what());
-		return nullptr;
-	}
 	catch (...)
 	{
-		fprintf(stderr, "TryCreateWayland failed: Unknown exception\n");
 		return nullptr;
 	}
 }
@@ -229,10 +239,7 @@ std::unique_ptr<DisplayBackend> DisplayBackend::TryCreateWayland()
 
 #include "cocoa/cocoa_display_backend.h"
 
-std::unique_ptr<DisplayBackend> DisplayBackend::TryCreateCocoa()
-{
-	return std::make_unique<CocoaDisplayBackend>();
-}
+// DisplayBackend::TryCreateCocoa() is defined in cocoa_display_backend.mm
 
 #else
 
@@ -243,7 +250,27 @@ std::unique_ptr<DisplayBackend> DisplayBackend::TryCreateCocoa()
 
 #endif
 
+#ifdef __HAIKU__
+
+#include "haiku/haiku_display_backend.h"
+
+std::unique_ptr<DisplayBackend> DisplayBackend::TryCreateHaiku()
+{
+	try
+	{
+		return std::make_unique<HaikuDisplayBackend>();
+	}
+	catch (...)
+	{
+		return nullptr;
+	}
+}
+
+#else
+
 std::unique_ptr<DisplayBackend> DisplayBackend::TryCreateHaiku()
 {
 	return nullptr;
 }
+
+#endif

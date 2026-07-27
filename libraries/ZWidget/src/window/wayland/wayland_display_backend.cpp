@@ -11,6 +11,7 @@
 #include "relative-pointer-unstable-v1-client-protocol.h"
 #include "xdg-toplevel-icon-v1-client-protocol.h"
 #include "cursor-shape-v1-client-protocol.h"
+#include "xdg-dialog-v1-client-protocol.h"
 #include <chrono>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -206,9 +207,38 @@ WaylandDisplayBackend::~WaylandDisplayBackend()
 	if (m_KeymapContext) WAYLAND->p_xkb_context_unref(m_KeymapContext);
 }
 
-std::unique_ptr<DisplayWindow> WaylandDisplayBackend::Create(DisplayWindowHost* windowHost, bool popupWindow, DisplayWindow* owner, RenderAPI renderAPI)
+
+#ifdef USE_DBUS
+// Portal dialogs identify their parent window by an exported handle. On Wayland
+// that comes from xdg-foreign, which is why the backend exports the surface.
+std::unique_ptr<OpenFileDialog> WaylandDisplayBackend::CreateOpenFileDialog(DisplayWindow* owner)
 {
-	return std::make_unique<WaylandDisplayWindow>(this, windowHost, popupWindow, (WaylandDisplayWindow*)owner, renderAPI);
+	std::string ownerHandle;
+	if (owner)
+		ownerHandle = "wayland:" + static_cast<WaylandDisplayWindow*>(owner)->GetWaylandWindowID();
+	return std::make_unique<DBusOpenFileDialog>(ownerHandle);
+}
+
+std::unique_ptr<SaveFileDialog> WaylandDisplayBackend::CreateSaveFileDialog(DisplayWindow* owner)
+{
+	std::string ownerHandle;
+	if (owner)
+		ownerHandle = "wayland:" + static_cast<WaylandDisplayWindow*>(owner)->GetWaylandWindowID();
+	return std::make_unique<DBusSaveFileDialog>(ownerHandle);
+}
+
+std::unique_ptr<OpenFolderDialog> WaylandDisplayBackend::CreateOpenFolderDialog(DisplayWindow* owner)
+{
+	std::string ownerHandle;
+	if (owner)
+		ownerHandle = "wayland:" + static_cast<WaylandDisplayWindow*>(owner)->GetWaylandWindowID();
+	return std::make_unique<DBusOpenFolderDialog>(ownerHandle);
+}
+#endif
+
+std::unique_ptr<DisplayWindow> WaylandDisplayBackend::Create(DisplayWindowHost* windowHost, WidgetType type, DisplayWindow* owner, RenderAPI renderAPI)
+{
+	return std::make_unique<WaylandDisplayWindow>(this, windowHost, type, (WaylandDisplayWindow*)owner, renderAPI);
 }
 
 // Modifiers and lock keys must never repeat. xkb_keymap_key_repeats() would
@@ -495,6 +525,7 @@ void registry_handle_global(void* data, struct wl_registry* registry, uint32_t n
 	else if (strcmp(interface, "wp_cursor_shape_manager_v1") == 0) {
 		backend->m_CursorShapeManager = (struct wp_cursor_shape_manager_v1*)wl_registry_bind(registry, name, &wp_cursor_shape_manager_v1_interface, 1);
 	}
+	else if (strcmp(interface, "xdg_wm_dialog_v1") == 0) backend->m_XDGWMDialog = (struct xdg_wm_dialog_v1*)wl_registry_bind(registry, name, &xdg_wm_dialog_v1_interface, 1);
 }
 
 

@@ -398,6 +398,12 @@ if (HAVE_METAL AND APPLE)
 endif()
 
 set(ZWIDGET_BUILD_EXAMPLE OFF CACHE INTERNAL "" FORCE)
+# ZWidget picks its SDL backends with ENABLE_SDL2/ENABLE_SDL3, which default ON
+# for non-Windows. The native backend supersedes them, and leaving them on would
+# quietly link SDL back into the build. These must be set before the
+# add_subdirectory below, or ZWidget is already configured by the time they land.
+set(ENABLE_SDL2 OFF CACHE INTERNAL "" FORCE)
+set(ENABLE_SDL3 OFF CACHE INTERNAL "" FORCE)
 add_subdirectory( libraries/ZWidget )
 
 add_subdirectory( libraries/webp )

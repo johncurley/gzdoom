@@ -102,7 +102,7 @@ public:
 	WaylandDisplayBackend();
 	~WaylandDisplayBackend();
 
-	std::unique_ptr<DisplayWindow> Create(DisplayWindowHost* windowHost, bool popupWindow, DisplayWindow* owner, RenderAPI renderAPI) override;
+	std::unique_ptr<DisplayWindow> Create(DisplayWindowHost* windowHost, WidgetType type, DisplayWindow* owner, RenderAPI renderAPI) override;
 	void ProcessEvents() override;
 	void RunLoop() override;
 	void ExitLoop() override;
@@ -166,6 +166,7 @@ public:
 
 	struct xdg_toplevel_icon_manager_v1* m_XDGToplevelIconManager = nullptr;
 
+	struct xdg_wm_dialog_v1* m_XDGWMDialog = nullptr;
 	struct wp_cursor_shape_manager_v1* m_CursorShapeManager = nullptr;
 	struct wp_cursor_shape_device_v1* m_CursorShapeDevice = nullptr;
 

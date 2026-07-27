@@ -1,4 +1,5 @@
 #include "wayland_display_window.h"
+#include "xdg-dialog-v1-client-protocol.h"
 #include "wayland_display_backend.h"
 #include "wayland_dynamic.h"
 #include "xdg-shell-client-protocol.h"
@@ -101,8 +102,8 @@ static void locked_pointer_handle_unlocked(void* data, struct zwp_locked_pointer
 }
 static const struct zwp_locked_pointer_v1_listener locked_pointer_listener = { locked_pointer_handle_locked, locked_pointer_handle_unlocked };
 
-WaylandDisplayWindow::WaylandDisplayWindow(WaylandDisplayBackend* backend, DisplayWindowHost* windowHost, bool popupWindow, WaylandDisplayWindow* owner, RenderAPI renderAPI)
-	: backend(backend), m_owner(owner), windowHost(windowHost), m_PopupWindow(popupWindow), m_renderAPI(renderAPI), m_WindowSize(0, 0), m_LogicalSize(0, 0)
+WaylandDisplayWindow::WaylandDisplayWindow(WaylandDisplayBackend* backend, DisplayWindowHost* windowHost, WidgetType type, WaylandDisplayWindow* owner, RenderAPI renderAPI)
+	: backend(backend), m_owner(owner), windowHost(windowHost), m_WidgetType(type), m_PopupWindow(type == WidgetType::Popup), m_renderAPI(renderAPI), m_WindowSize(0, 0), m_LogicalSize(0, 0)
 {
 	m_AppSurface = wl_compositor_create_surface(backend->m_waylandCompositor);
 
@@ -118,7 +119,7 @@ WaylandDisplayWindow::WaylandDisplayWindow(WaylandDisplayBackend* backend, Displ
 	m_XDGSurface = xdg_wm_base_get_xdg_surface(backend->m_XDGWMBase, m_AppSurface);
 	xdg_surface_add_listener(m_XDGSurface, &xdg_surface_listener, this);
 
-	if (popupWindow) InitializePopup();
+	if (m_PopupWindow) InitializePopup();
 	else InitializeToplevel();
 
 	backend->OnWindowCreated(this);
@@ -131,6 +132,7 @@ WaylandDisplayWindow::~WaylandDisplayWindow()
 	if (m_FrameCallback) wl_callback_destroy(m_FrameCallback);
 	if (m_XDGToplevelIcon) xdg_toplevel_icon_v1_destroy(m_XDGToplevelIcon);
 	if (m_XDGToplevelDecoration) zxdg_toplevel_decoration_v1_destroy(m_XDGToplevelDecoration);
+	if (m_XDGDialog) xdg_dialog_v1_destroy(m_XDGDialog);
 	if (m_XDGToplevel) xdg_toplevel_destroy(m_XDGToplevel);
 	if (m_XDGPopup) xdg_popup_destroy(m_XDGPopup);
 	if (m_XDGExported) zxdg_exported_v2_destroy(m_XDGExported);
@@ -145,6 +147,9 @@ void WaylandDisplayWindow::InitializeToplevel()
 	m_XDGToplevel = xdg_surface_get_toplevel(m_XDGSurface);
 	xdg_toplevel_add_listener(m_XDGToplevel, &xdg_toplevel_listener, this);
 	xdg_toplevel_set_title(m_XDGToplevel, "ZWidget Window");
+
+	if (m_WidgetType == WidgetType::Dialog && backend->m_XDGWMDialog)
+		m_XDGDialog = xdg_wm_dialog_v1_get_xdg_dialog(backend->m_XDGWMDialog, m_XDGToplevel);
 
 	if (m_owner) xdg_toplevel_set_parent(m_XDGToplevel, m_owner->m_XDGToplevel);
 
@@ -208,25 +213,14 @@ void WaylandDisplayWindow::SetWindowIcon(const std::vector<std::shared_ptr<Image
 	}
 }
 
-void WaylandDisplayWindow::SetWindowFrame(const Rect& box)
+
+void WaylandDisplayWindow::SetClientFrame(const Rect& box)
 {
-	// box is in logical pixels (unscaled). Allocate physical buffer and notify geometry.
-	CreateBuffers((int32_t)box.width, (int32_t)box.height);
-	m_LogicalSize = Size(box.width, box.height);
-	windowHost->OnWindowGeometryChanged();
-	m_NeedsUpdate = true;
-
-	if (m_renderAPI != RenderAPI::OpenGL && m_renderAPI != RenderAPI::Vulkan)
-	{
-		struct wl_region* region = wl_compositor_create_region(backend->m_waylandCompositor);
-		wl_region_add(region, 0, 0, (int32_t)m_LogicalSize.width, (int32_t)m_LogicalSize.height);
-		wl_surface_set_opaque_region(m_AppSurface, region);
-		wl_region_destroy(region);
-		wl_surface_commit(m_AppSurface);
-	}
+	// Wayland has no way for a client to position itself; only the size
+	// is actionable, and the compositor owns placement.
+	m_WindowSize = Size(box.width, box.height);
+	if (m_AppSurface) CreateBuffers(box.width, box.height);
 }
-
-void WaylandDisplayWindow::SetClientFrame(const Rect& box) { SetWindowFrame(box); }
 
 void WaylandDisplayWindow::Show()
 {
@@ -286,6 +280,15 @@ void WaylandDisplayWindow::Activate()
 
 void WaylandDisplayWindow::ShowCursor(bool enable) { backend->ShowCursor(enable); }
 
+void WaylandDisplayWindow::LockKeyboard()
+{
+	// Raw scancode events are not implemented for this backend yet.
+}
+
+void WaylandDisplayWindow::UnlockKeyboard()
+{
+}
+
 void WaylandDisplayWindow::LockCursor()
 {
 	if (backend->m_PointerConstraints)
@@ -319,8 +322,8 @@ void WaylandDisplayWindow::ReleaseMouseCapture()
 
 void WaylandDisplayWindow::Update() { m_NeedsUpdate = true; }
 bool WaylandDisplayWindow::GetKeyState(InputKey key) { return backend->GetKeyState(key); }
-void WaylandDisplayWindow::SetCursor(StandardCursor cursor) { backend->SetCursor(cursor); }
-Rect WaylandDisplayWindow::GetWindowFrame() const { return Rect(m_WindowGlobalPos.x, m_WindowGlobalPos.y, m_LogicalSize.width, m_LogicalSize.height); }
+void WaylandDisplayWindow::SetCursor(StandardCursor cursor, std::shared_ptr<CustomCursor> custom) { backend->SetCursor(cursor); }
+Rect WaylandDisplayWindow::GetClientFrame() const { return Rect(m_WindowGlobalPos.x, m_WindowGlobalPos.y, m_LogicalSize.width, m_LogicalSize.height); }
 Size WaylandDisplayWindow::GetClientSize() const { return m_LogicalSize; }
 int WaylandDisplayWindow::GetPixelWidth() const { return m_WindowSize.width; }
 int WaylandDisplayWindow::GetPixelHeight() const { return m_WindowSize.height; }

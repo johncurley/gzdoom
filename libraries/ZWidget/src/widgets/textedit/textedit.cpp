@@ -337,7 +337,11 @@ bool TextEdit::OnMouseUp(const Point& pos, InputKey key)
 
 void TextEdit::OnKeyChar(std::string chars)
 {
-	if (!chars.empty() && !(chars[0] >= 0 && chars[0] < 32))
+#ifdef __HAIKU__
+	if (!readonly && !chars.empty())
+#else
+	if (!readonly && !chars.empty() && !(chars[0] >= 0 && chars[0] < 32))
+#endif
 	{
 		if (FuncBeforeEditChanged)
 			FuncBeforeEditChanged();
@@ -549,6 +553,19 @@ void TextEdit::OnKeyDown(InputKey key)
 
 void TextEdit::OnKeyUp(InputKey key)
 {
+}
+
+bool TextEdit::OnMouseWheel(const Point& pos, InputKey key)
+{
+	if (key == InputKey::MouseWheelUp)
+	{
+		vert_scrollbar->SetPosition(vert_scrollbar->GetPosition() - 1);
+	}
+	else if (key == InputKey::MouseWheelDown)
+	{
+		vert_scrollbar->SetPosition(vert_scrollbar->GetPosition() + 1);
+	}
+	return true;
 }
 
 void TextEdit::OnSetFocus()
@@ -875,7 +892,7 @@ void TextEdit::OnGeometryChanged()
 		line.invalidated = true;
 	}
 
-	vertical_text_align = canvas->verticalTextAlign();
+	vertical_text_align = canvas->verticalTextAlign(GetFont());
 
 	clip_start_offset = 0;
 	UpdateVerticalScroll();
@@ -957,6 +974,8 @@ double TextEdit::GetTotalHeight()
 
 void TextEdit::LayoutLines(Canvas* canvas)
 {
+	auto font = GetFont();
+
 	ivec2 sel_start;
 	ivec2 sel_end;
 	if (selection_length > 0)

@@ -125,7 +125,7 @@ void SystemBaseFrameBuffer::SetWindowSize(int client_w, int client_h) {
   vid_defheight = client_h;
 
   if (auto *win = GetActiveZWidgetWindow()) {
-    Rect rect = win->GetWindowFrame();
+    Rect rect = win->GetClientFrame();
     rect.width = client_w;
     rect.height = client_h;
     win->SetClientFrame(rect);

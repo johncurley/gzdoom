@@ -3,9 +3,8 @@
 class BWindow;
 class BView;
 
-class HaikuNativeHandle
+struct HaikuNativeHandle
 {
-public:
 	BWindow* window = nullptr;
 	BView* view = nullptr;
 };

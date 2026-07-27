@@ -559,6 +559,10 @@ public:
 			I_TraceKeyEvent("up", (int)key, gzkey, "Game", post);
 		}
     }
+    void OnWindowRawKey(RawKeycode keycode, bool down) override {
+        // Raw scancode input is not used: the engine consumes the translated
+        // key events above, and nothing calls LockKeyboard() to enable this.
+    }
     void OnWindowGeometryChanged() override {
         if (sysCallbacks.OnScreenSizeChanged)
             sysCallbacks.OnScreenSizeChanged();
@@ -594,7 +598,7 @@ void I_InitNativeWindow()
     if (backend == 1) api = RenderAPI::Vulkan;
     else if (backend == 2) api = RenderAPI::OpenGL; // GLES
     
-    NativeWindow = DisplayWindow::Create(WindowHost.get(), false, nullptr, api);
+    NativeWindow = DisplayWindow::Create(WindowHost.get(), WidgetType::Window, nullptr, api);
     
     static bool atexit_registered = false;
     if (!atexit_registered) {

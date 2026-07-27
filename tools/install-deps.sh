@@ -14,6 +14,7 @@ case "$OS" in
                 libgl1-mesa-dev libegl-dev \
                 libwayland-dev libxkbcommon-dev \
                 libinput-dev libudev-dev \
+                libdbus-1-dev libfontconfig1-dev \
                 libdispatch-dev pkg-config cmake ninja-build g++
         elif [ -f /etc/fedora-release ]; then
             echo "Detected Fedora-based system"
@@ -22,6 +23,7 @@ case "$OS" in
                 mesa-libGL-devel mesa-libEGL-devel \
                 wayland-devel libxkbcommon-devel \
                 libinput-devel systemd-devel \
+                dbus-devel fontconfig-devel \
                 libdispatch-devel pkgconf-pkg-config cmake ninja-build gcc-c++
         elif [ -f /etc/arch-release ]; then
             echo "Detected Arch-based system"
@@ -33,6 +35,7 @@ case "$OS" in
                 libx11 libxext libxinerama libxrandr libxi mesa \
                 wayland wayland-protocols libxkbcommon \
                 libinput systemd-libs \
+                dbus fontconfig \
                 libdispatch pkgconf cmake ninja gcc
         else
             echo "Unknown Linux distribution. Please install the X11, Wayland, xkbcommon, libinput, libudev, OpenGL/EGL and libdispatch development packages manually."

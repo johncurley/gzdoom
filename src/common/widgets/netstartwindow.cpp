@@ -1,5 +1,6 @@
 
 #include "netstartwindow.h"
+#include <iterator>
 #include "version.h"
 #include "engineerrors.h"
 #include "gstrings.h"
@@ -77,7 +78,7 @@ void NetStartWindow::NetDisconnect(int client)
 {
 	if (Instance)
 	{
-		for (size_t i = 1u; i < Instance->LobbyWindow->GetColumnAmount(); ++i)
+		for (size_t i = 1u; i < Instance->LobbyWindow->GetColumnCount(); ++i)
 			Instance->LobbyWindow->UpdateItem("", client, int(i));
 	}
 }
@@ -89,7 +90,7 @@ void NetStartWindow::NetProgress(int cur, int limit)
 
 	Instance->maxpos = limit;
 	Instance->SetProgress(cur);
-	for (size_t start = Instance->LobbyWindow->GetItemAmount(); start < (size_t)Instance->maxpos; ++start)
+	for (size_t start = Instance->LobbyWindow->GetItemCount(); start < (size_t)Instance->maxpos; ++start)
 		Instance->LobbyWindow->AddItem(std::to_string(start));
 }
 
@@ -190,7 +191,9 @@ NetStartWindow::NetStartWindow(bool host) : Widget(nullptr, WidgetType::Window)
 	}
 
 	// Client number, flags, name, status.
-	LobbyWindow->SetColumnWidths({ 30.0, 30.0, 200.0, 50.0 });
+	const double lobbyColumnWidths[] = { 30.0, 30.0, 200.0, 50.0 };
+	for (int i = 0; i < (int)std::size(lobbyColumnWidths); ++i)
+		LobbyWindow->SetColumn(i, "", lobbyColumnWidths[i]);
 
 	CallbackTimer = new Timer(this);
 	CallbackTimer->FuncExpired = [=]() { OnCallbackTimerExpired(); };

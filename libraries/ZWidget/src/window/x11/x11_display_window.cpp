@@ -13,9 +13,8 @@
 #include <unistd.h>
 #include <iostream>
 
-X11DisplayWindow::X11DisplayWindow(DisplayWindowHost* windowHost, bool popupWindow, X11DisplayWindow* owner, RenderAPI renderAPI) : windowHost(windowHost), owner(owner)
+X11DisplayWindow::X11DisplayWindow(DisplayWindowHost* windowHost, WidgetType windowType, X11DisplayWindow* owner, RenderAPI renderAPI) : windowHost(windowHost), owner(owner)
 {
-	fprintf(stderr, "DEBUG: X11DisplayWindow constructor called.\\n");
 	auto connection = GetX11Connection();
 	display = connection->display;
 
@@ -35,8 +34,8 @@ X11DisplayWindow::X11DisplayWindow(DisplayWindowHost* windowHost, bool popupWind
 
 	XSetWindowAttributes attributes = {};
 	attributes.backing_store = 2;
-	attributes.override_redirect = popupWindow ? True : False;
-	attributes.save_under = popupWindow ? True : False;
+	attributes.override_redirect = (windowType == WidgetType::Popup) ? True : False;
+	attributes.save_under = (windowType == WidgetType::Popup) ? True : False;
 	attributes.colormap = colormap;
 	attributes.event_mask =
 		KeyPressMask | KeyReleaseMask | 
@@ -118,7 +117,7 @@ X11DisplayWindow::X11DisplayWindow(DisplayWindowHost* windowHost, bool popupWind
 	if (connection->GetAtom("_NET_WM_WINDOW_TYPE") != 0L)
 	{
 		Atom type = 0L;
-		if (popupWindow)
+		if (windowType == WidgetType::Popup)
 		{
 			type = connection->GetAtom("_NET_WM_WINDOW_TYPE_DROPDOWN_MENU");
 			if (type == 0L)
@@ -247,30 +246,6 @@ void X11DisplayWindow::SetWindowIcon(const std::vector<std::shared_ptr<Image>>& 
 	XChangeProperty(display, window, property, XA_CARDINAL, 32, PropModeReplace, (unsigned char*)data, size);
 }
 
-void X11DisplayWindow::SetWindowFrame(const Rect& box)
-{
-	// To do: this requires cooperation with the window manager
-
-	SetClientFrame(box);
-}	
-
-void X11DisplayWindow::SetClientFrame(const Rect& box)
-{
-	double dpiscale = GetDpiScale();
-	int x = (int)std::round(box.x * dpiscale);
-	int y = (int)std::round(box.y * dpiscale);
-	int width = (int)std::round(box.width * dpiscale);
-	int height = (int)std::round(box.height * dpiscale);
-
-	XWindowChanges changes = {};
-	changes.x = x;
-	changes.y = y;
-	changes.width = width;
-	changes.height = height;
-	unsigned int mask = CWX | CWY | CWWidth | CWHeight;
-
-	XConfigureWindow(display, window, mask, &changes);
-}
 
 void X11DisplayWindow::Show()
 {
@@ -362,6 +337,15 @@ void X11DisplayWindow::ShowCursor(bool enable)
 	}
 }
 
+void X11DisplayWindow::LockKeyboard()
+{
+	// Enables raw keyboard scancode events (OnRawKeyboard should be called for keyboard input)
+}
+
+void X11DisplayWindow::UnlockKeyboard()
+{
+}
+
 void X11DisplayWindow::LockCursor()
 {
 	ShowCursor(false);
@@ -397,7 +381,7 @@ bool X11DisplayWindow::GetKeyState(InputKey key)
 	return it != keyState.end() ? it->second : false;
 }
 
-void X11DisplayWindow::SetCursor(StandardCursor newcursor)
+void X11DisplayWindow::SetCursor(StandardCursor newcursor, std::shared_ptr<CustomCursor> custom)
 {
 	if (cursor != newcursor)
 	{
@@ -448,7 +432,25 @@ void X11DisplayWindow::UpdateCursor()
 	}
 }
 
-Rect X11DisplayWindow::GetWindowFrame() const
+void X11DisplayWindow::SetClientFrame(const Rect& box)
+{
+	double dpiscale = GetDpiScale();
+	int x = (int)std::round(box.x * dpiscale);
+	int y = (int)std::round(box.y * dpiscale);
+	int width = (int)std::round(box.width * dpiscale);
+	int height = (int)std::round(box.height * dpiscale);
+
+	XWindowChanges changes = {};
+	changes.x = x;
+	changes.y = y;
+	changes.width = width;
+	changes.height = height;
+	unsigned int mask = CWX | CWY | CWWidth | CWHeight;
+
+	XConfigureWindow(display, window, mask, &changes);
+}
+
+Rect X11DisplayWindow::GetClientFrame() const
 {
 	// To do: this needs to include the window manager frame
 
@@ -549,7 +551,6 @@ void X11DisplayWindow::PresentBitmap(int width, int height, const uint32_t* pixe
 	{
 		memcpy(backbuffer.pixels, pixels, width * height * sizeof(uint32_t));
 		GC gc = XDefaultGC(display, screen);
-        fprintf(stderr, "DEBUG: XPutImage called with width=%d height=%d\n", width, height);
 		XPutImage(display, backbuffer.pixmap, gc, backbuffer.image, 0, 0, 0, 0, width, height);
 		XCopyArea(display, backbuffer.pixmap, window, gc, 0, 0, width, height, 0, 0);
 	}

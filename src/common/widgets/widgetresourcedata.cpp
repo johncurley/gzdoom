@@ -1,5 +1,6 @@
 
 #include <zwidget/core/resourcedata.h>
+#include <memory>
 #include <zwidget/core/theme.h>
 #include "c_cvars.h"
 #include "filesystem.h"
@@ -25,11 +26,25 @@ bool IsZWidgetAvailable()
 	return WidgetResources;
 }
 
+static std::vector<SingleFontData> LoadWidgetFontData(const std::string& name);
+static std::vector<uint8_t> LoadWidgetData(const std::string& name);
+// ZWidget resolves fonts and resources through an installed ResourceLoader
+// rather than free functions, so the engine supplies one backed by its own
+// filesystem -- widget assets live in the pk3, not on disk.
+class GZDoomResourceLoader : public ResourceLoader
+{
+public:
+	std::vector<SingleFontData> LoadFont(const std::string& name) override { return LoadWidgetFontData(name); }
+	std::vector<uint8_t> ReadAllBytes(const std::string& filename) override { return LoadWidgetData(filename); }
+};
+
 void InitWidgetResources(const char* filename)
 {
 	WidgetResources = FResourceFile::OpenResourceFile(filename);
 	if (!WidgetResources)
 		I_FatalError("Unable to open %s", filename);
+
+	ResourceLoader::Set(std::make_unique<GZDoomResourceLoader>());
 
 #if defined(__unix__) && !defined(__APPLE__)
 	if (ui_theme == 0)
@@ -43,7 +58,7 @@ void InitWidgetResources(const char* filename)
 
 	if (use_dark)
 	{
-		WidgetTheme::SetTheme(std::unique_ptr<WidgetTheme>(new WidgetTheme{{
+		WidgetTheme::SetTheme(std::unique_ptr<WidgetTheme>(new SimpleTheme{{
 			Colorf::fromRgb(0x2A2A2A), // background
 			Colorf::fromRgb(0xE2DFDB), //
 			Colorf::fromRgb(0x212121), // headers / inputs
@@ -60,7 +75,7 @@ void InitWidgetResources(const char* filename)
 	}
 	else
 	{
-		WidgetTheme::SetTheme(std::unique_ptr<WidgetTheme>(new WidgetTheme{{
+		WidgetTheme::SetTheme(std::unique_ptr<WidgetTheme>(new SimpleTheme{{
 			Colorf::fromRgb(0xeee8d5), // background
 			Colorf::fromRgb(0x000000), // text
 			Colorf::fromRgb(0xfdf6e3), // headers / inputs
@@ -111,8 +126,7 @@ static std::vector<uint8_t> LoadDiskFile(const char* name)
 	return buffer;
 }
 
-// This interface will later require some significant redesign.
-std::vector<SingleFontData> LoadWidgetFontData(const std::string& name)
+static std::vector<SingleFontData> LoadWidgetFontData(const std::string& name)
 {
 	std::vector<SingleFontData> returnv;
 	if (!stricmp(name.c_str(), "notosans"))
@@ -145,7 +159,8 @@ std::vector<SingleFontData> LoadWidgetFontData(const std::string& name)
 	return returnv;
 }
 
-std::vector<uint8_t> LoadWidgetData(const std::string& name)
+static std::vector<uint8_t> LoadWidgetData(const std::string& name)
 {
 	return LoadFile(name.c_str());
 }
+

@@ -211,7 +211,7 @@ bool I_SetCursor(FGameTexture* cursor)
 		// If it's a game texture, the engine handles drawing it in the 2D pass,
 		// so we should ideally hide the hardware cursor.
 		if (cursor == nullptr)
-			window->SetCursor(StandardCursor::arrow);
+			window->SetCursor(StandardCursor::arrow, nullptr);
 		else
 			window->ShowCursor(false);
 		return true;

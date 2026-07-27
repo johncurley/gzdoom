@@ -507,7 +507,6 @@ if (NOT GZDOOM_NATIVE_LINUX)
 endif()
 
 if( GZDOOM_NATIVE_LINUX )
-    set(ZWIDGET_NO_SDL ON CACHE INTERNAL "" FORCE)
     set( SYSTEM_SOURCES_DIR common/platform/posix common/platform/posix/native )
 
     # ... (existing native source setup)
