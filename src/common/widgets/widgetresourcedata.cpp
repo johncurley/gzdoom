@@ -34,7 +34,17 @@ static std::vector<uint8_t> LoadWidgetData(const std::string& name);
 class GZDoomResourceLoader : public ResourceLoader
 {
 public:
-	std::vector<SingleFontData> LoadFont(const std::string& name) override { return LoadWidgetFontData(name); }
+	std::vector<SingleFontData> LoadFont(const std::string& name) override
+	{
+		// ZWidget's themes ask for the abstract families "system" and
+		// "monospace". The stock loaders resolve those against the desktop's
+		// fonts, but the engine ships its own so the launcher looks the same
+		// everywhere and works on a machine with no fonts installed at all.
+		if (name == "system" || name == "monospace")
+			return LoadWidgetFontData("notosans");
+		return LoadWidgetFontData(name);
+	}
+
 	std::vector<uint8_t> ReadAllBytes(const std::string& filename) override { return LoadWidgetData(filename); }
 };
 
