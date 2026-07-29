@@ -99,6 +99,17 @@ static void I_TraceHeldButtons()
 }
 
 void I_StartTic() {
+	// Clear the per-tic edge flags before pumping new input, as the win32 and
+	// cocoa backends do. bWentDown/bWentUp are set by PressKey/ReleaseKey and
+	// are only ever cleared here, and G_BuildTiccmd reads them:
+	//
+	//   if (ButtonDown(Button_Jump) || ButtonPressed(Button_Jump)) buttons |= BT_JUMP;
+	//
+	// ButtonPressed() is bWentDown, so without this a single tap latches the
+	// button on for every subsequent tic -- one press produces continuous
+	// jumping or firing until something else happens to reset button state.
+	buttonMap.ResetButtonTriggers();
+
 	// Mirror SDL/cocoa behavior: GUI capture and mouse capture policy is evaluated per-tic,
 	// not just on input events.
 	I_CheckGUICapture();
