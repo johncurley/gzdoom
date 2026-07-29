@@ -180,6 +180,7 @@ int ZWidgetKeyToGZDoom(InputKey key)
 
 extern bool NativeMouseCaptured;
 extern bool GUICapture;
+extern bool RawKeyboardActive;
 
 static bool WantGuiCaptureNow()
 {
@@ -386,6 +387,7 @@ public:
 			ev.data1 = mouseKey;
 			ev.data3 = ModMask();
 			D_PostEvent(&ev);
+			I_TraceKeyEvent("mdn", (int)key, mouseKey, "Game", true);
 		}
     }
     void OnWindowMouseUp(const Point& pos, InputKey key) override {
@@ -421,6 +423,7 @@ public:
 			ev.data1 = mouseKey;
 			ev.data3 = ModMask();
 			D_PostEvent(&ev);
+			I_TraceKeyEvent("mup", (int)key, mouseKey, "Game", true);
 		}
     }
     void OnWindowMouseDoubleclick(const Point& pos, InputKey key) override {}
@@ -440,6 +443,7 @@ public:
 		else
 		{
 			const int16_t wheelKey = InputKeyToWheelKey(key);
+			I_TraceKeyEvent("wheel", (int)key, wheelKey, "Game", wheelKey != 0);
 			if (!wheelKey) return;
 			event_t ev = {EV_KeyDown};
 			ev.data1 = wheelKey;
@@ -490,6 +494,15 @@ public:
 		// held-key behaviour in the console and menus.
 		auto it = keyRoutes.find(key);
 		const bool isRepeat = (it != keyRoutes.end());
+
+		// A repeat is generated on a timer, so the capture state can change
+		// under a key that is still held -- pressing Enter to close a menu, for
+		// instance. Feeding repeats to the route latched at press time then
+		// sends them somewhere that is no longer listening. Drop them instead;
+		// the release still follows the latched route, which is what keeps the
+		// press/release pair symmetric.
+		if (isRepeat && ((it->second == EventRoute::GUI) != WantGuiCaptureNow()))
+			return;
 		if (!isRepeat)
 		{
 			const bool guiNow = WantGuiCaptureNow();
@@ -513,10 +526,11 @@ public:
 				D_PostEvent(&guiev);
 			I_TraceKeyEvent(isRepeat ? "rep" : "down", (int)key, gzkey, "GUI", post);
 		}
-		else if (!isRepeat)
+		else if (!isRepeat && !RawKeyboardActive)
 		{
 			// Gameplay bindings are level-triggered: ButtonMap ignores a repeat
-			// of a key already held, so there is nothing to post.
+			// of a key already held, so there is nothing to post. When raw input
+			// is driving, OnWindowRawKey posts these instead.
 			event_t ev = {EV_KeyDown};
 			ev.data1 = gzkey;
 			ev.data2 = 0;
@@ -547,7 +561,7 @@ public:
 				D_PostEvent(&guiev);
 			I_TraceKeyEvent("up", (int)key, gzkey, "GUI", post);
 		}
-		else
+		else if (!RawKeyboardActive)
 		{
 			event_t ev = {EV_KeyUp};
 			ev.data1 = gzkey;
@@ -560,8 +574,21 @@ public:
 		}
     }
     void OnWindowRawKey(RawKeycode keycode, bool down) override {
-        // Raw scancode input is not used: the engine consumes the translated
-        // key events above, and nothing calls LockKeyboard() to enable this.
+        // Only acted on while raw input is driving gameplay; the backend
+        // reports these alongside the translated events regardless.
+        if (!RawKeyboardActive)
+            return;
+
+        // RawKeycode is the PC scancode set, which is exactly what the engine
+        // uses for keyboard bindings, so the value passes through unchanged.
+        event_t ev = {};
+        ev.type = down ? EV_KeyDown : EV_KeyUp;
+        ev.data1 = (int)keycode;
+        ev.data3 = ModMask();
+        const bool post = ev.data1 != 0;
+        if (post)
+            D_PostEvent(&ev);
+        I_TraceKeyEvent(down ? "rawdn" : "rawup", 0, (int)keycode, "Raw", post);
     }
     void OnWindowGeometryChanged() override {
         if (sysCallbacks.OnScreenSizeChanged)

@@ -26,6 +26,7 @@ static bool deferred_event_pump = false;
 static constexpr int kMaxDeferredPumps = 1024;
 
 static void I_CheckGUICapture();
+static void I_CheckRawKeyboard();
 static void I_CheckNativeMouse();
 static void I_ReconcileMouseButtons();
 
@@ -113,6 +114,7 @@ void I_StartTic() {
 	// Mirror SDL/cocoa behavior: GUI capture and mouse capture policy is evaluated per-tic,
 	// not just on input events.
 	I_CheckGUICapture();
+	I_CheckRawKeyboard();
 	I_CheckNativeMouse();
 	I_ReconcileMouseButtons();
 	I_GetEvent();
@@ -127,6 +129,39 @@ static bool NativeMouse = true;
 static bool HasFocus = true;
 
 CVAR (Bool, use_mouse, true, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
+
+// Physical key positions instead of translated symbols for gameplay input.
+// Scancodes are layout- and modifier-independent, so W is the same physical key
+// on QWERTY, AZERTY and QWERTZ, and none of the keysym translation that the
+// cooked path depends on is involved.
+//
+// GUI input deliberately stays on the translated path: menus and the console
+// need symbols and text, which a scancode cannot provide.
+CVAR (Bool, in_rawkeyboard, false, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
+
+// Read by nativevideo.cpp to suppress the cooked gameplay events while raw is
+// driving, since the backend reports both.
+bool RawKeyboardActive = false;
+
+static void I_CheckRawKeyboard()
+{
+	const bool want = in_rawkeyboard && !GUICapture;
+	if (want == RawKeyboardActive)
+		return;
+
+	RawKeyboardActive = want;
+	if (auto* window = GetActiveZWidgetWindow())
+	{
+		if (want)
+			window->LockKeyboard();
+		else
+			window->UnlockKeyboard();
+	}
+
+	// Switching paths mid-keypress would strand whatever is held: the press
+	// arrived on one path and the release will arrive on the other.
+	buttonMap.ResetButtonStates();
+}
 
 static void I_CheckGUICapture()
 {
@@ -198,6 +233,10 @@ void I_SetMouseCapture() {
     NativeMouseCaptured = true;
     if (auto window = GetActiveZWidgetWindow()) {
         window->LockCursor();
+        // Locking confines the pointer but still draws it. In windowed mode
+        // that leaves a cursor sitting in the middle of the view during
+        // mouse-look, so hide it for the duration of the capture.
+        window->ShowCursor(false);
     }
 }
 
@@ -205,6 +244,7 @@ void I_ReleaseMouseCapture() {
     NativeMouseCaptured = false;
     if (auto window = GetActiveZWidgetWindow()) {
         window->UnlockCursor();
+        window->ShowCursor(true);
     }
 }
 
