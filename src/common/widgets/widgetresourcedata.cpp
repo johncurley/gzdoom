@@ -13,10 +13,18 @@
 #include <windows.h>
 #endif
 
-CUSTOM_CVARD(Int, ui_theme, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG, "launcher theme. 0: auto, 1: dark, 2: light")
+// 0 is deliberately the most integrated option the platform offers rather than
+// a plain dark/light guess: on Unix it takes the desktop's own colours, which is
+// what makes the launcher look like a native application instead of a game menu.
+// 3 exists because that extraction is partly inferred -- desktops only report a
+// background and foreground, so the remaining shades are derived -- and a user
+// on a desktop where the inference looks wrong still wants to follow the system
+// light/dark preference. Values are not renumbered: ui_theme is archived, so
+// changing what 0 means would silently alter the appearance for existing users.
+CUSTOM_CVARD(Int, ui_theme, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG, "launcher theme. 0: auto (native where available), 1: dark, 2: light, 3: follow system light/dark")
 {
 	if (self < 0) self = 0;
-	if (self > 2) self = 2;
+	if (self > 3) self = 3;
 }
 
 FResourceFile* WidgetResources;
@@ -64,7 +72,9 @@ void InitWidgetResources(const char* filename)
 	}
 #endif
 
-	bool use_dark = ui_theme == 1 || (ui_theme == 0 && I_IsDarkMode());
+	// 3 asks for the system's light/dark preference with the built-in palette,
+	// which is also what 0 falls back to on platforms with no native theme.
+	bool use_dark = ui_theme == 1 || ((ui_theme == 0 || ui_theme == 3) && I_IsDarkMode());
 
 	if (use_dark)
 	{
