@@ -7,134 +7,181 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A **fork of GZDoom** (C++17, CMake 3.16+, GPLv3) that diverges from upstream ZDoom/gzdoom in two major ways:
 
 1. **Native POSIX backend** (`GZDOOM_NATIVE_LINUX`, default **ON**) — replaces SDL2 for windowing and input on Linux/BSD, using ZWidget + Wayland/X11 + libinput/libudev directly. **This is what the current branch works on.**
-2. **Native Metal renderer** (`HAVE_METAL`, default **ON** on Apple) — a direct Metal 2 backend for macOS instead of MoltenVK. **The live version of this work is on `origin/metal-audit`, not here** — see below.
+2. **Native Metal renderer** (`HAVE_METAL`, default **ON** on Apple) — a direct Metal 2 backend for macOS instead of MoltenVK. **The live version is on `origin/metal-audit`, not here.**
 
-Upstream architecture (renderer abstraction, ZScript VM, playsim, PK3 assets) is otherwise intact, so upstream docs (https://zdoom.org/wiki/, "Programmer's Corner") still apply for engine-level questions.
+Upstream architecture (renderer abstraction, ZScript VM, playsim, PK3 assets) is intact, so upstream docs (https://zdoom.org/wiki/, "Programmer's Corner") still apply for engine-level questions.
 
-## Branch topology — read before touching Metal or postprocess code
+Note upstream ZDoom/GZDoom is effectively frozen; active community development moved to UZDoom. This fork is independent of both.
+
+## Branch topology
 
 | Branch | Contains |
 |---|---|
-| `master` | Upstream-tracking. |
-| `native-platform-expansion` (current) | Native Linux/BSD windowing + input. Branched off `metal-final`. |
-| `origin/metal-audit` | **The authoritative Metal renderer, macOS, and compute-shader-conversion work.** |
-| `origin/metal-final` | The shared ancestor (`9bfaf4780`) both lines branched from. |
+| `master` | Upstream-tracking mirror. Not an integration branch — commits are coelckers, dpjudas et al. |
+| `native-platform-expansion` (current) | Native Linux/BSD windowing + input, raw keyboard input, ZWidget subtree. |
+| `origin/metal-audit` | **Metal renderer, macOS, and compute-shader-conversion work.** |
+| `origin/metal-final` | Shared ancestor (`9bfaf4780`). |
 
-The two lines diverged at `9bfaf4780`: this branch is 3 commits ahead, `origin/metal-audit` is 22 commits ahead. **The `src/common/rendering/metal/` tree in this checkout is a stale snapshot** — it is missing `mt_compute.*`, `mt_ao.*`, `mt_bloom.*`, `mt_metrics.*`, `mt_system_wrapper.h`, and the native MSL shaders (`shaders/native/mt_ao.metal`, `mt_bloom.metal`, `ssao_simple.compute.glsl`). Do not "fix" or extend Metal code here; check `origin/metal-audit` first, or the work will be thrown away at merge.
+Both lines branched from `9bfaf4780`. As of this writing `native-platform-expansion` is 26 commits ahead, `origin/metal-audit` 22.
 
-The compute-shader conversion is **not confined to macOS files**. On `metal-audit` it also changes backend-neutral code that this branch touches:
+**The `src/common/rendering/metal/` tree here is a stale snapshot.** It lacks `mt_compute.*`, `mt_ao.*`, `mt_bloom.*`, `mt_metrics.*`, `mt_system_wrapper.h` and the native MSL shaders. Do not extend Metal code on this branch — check `origin/metal-audit` first.
 
-- `src/common/rendering/v_video.h` — `DFrameBuffer::AmbientOccludeScene()` **changed signature** to `AmbientOccludeScene(float m5, const HWViewpointUniforms* currentViewpoint)`, plus a new `UseBottomLeft2DProjection()` virtual.
-- `src/common/rendering/hwrenderer/postprocessing/hw_compute.h` — new, defines the backend-neutral `HWComputeEffect` enum (`AmbientOcclusion`, `Bloom`). Reuse these identities rather than adding backend-specific effect enums.
-- `hw_postprocess.{cpp,h}`, `hw_postprocess_cvars.*`, `hw_drawinfo.cpp`, `hw_skyportal.cpp`, `hw_draw2d.cpp`, `hw_viewpointbuffer.cpp`, `i_time.*`.
-- Shared GLSL: `wadsrc/static/shaders/pp/ssao.fp`, `ssaocombine.fp`; also `wadsrc/static/menudef.txt` and a new `tools/check_shader_parity.py`.
+### The pending merge
 
-Expect real merge conflicts in those shared files. **`CLAUDE.md` itself conflicts** — `origin/metal-audit` has its own, written from the macOS/Metal perspective (it documents `AGENTS.md` and `docs/engine-modernization.md`, which exist only on that branch). Reconcile the two rather than clobbering either.
+Files changed on **both** lines (excluding the ZWidget subtree):
+
+```
+CLAUDE.md   .gitignore   src/CMakeLists.txt   src/d_main.cpp
+src/common/rendering/gl/gl_framebuffer.{cpp,h}   wadsrc/static/menudef.txt
+```
+
+Beyond textual conflicts, `metal-audit` changes shared interfaces this branch consumes:
+
+- `DFrameBuffer::AmbientOccludeScene()` gains a `const HWViewpointUniforms*` parameter, plus a new `UseBottomLeft2DProjection()` virtual (`src/common/rendering/v_video.h`)
+- new `hwrenderer/postprocessing/hw_compute.h` defining `HWComputeEffect`
+- changes across `hw_postprocess.*`, `hw_drawinfo.cpp`, `hw_skyportal.cpp`, `i_time.*`
+- shared GLSL: `wadsrc/static/shaders/pp/ssao.fp`, `ssaocombine.fp`
+- new `tools/check_shader_parity.py`
+
+`metal-audit` also carries `AGENTS.md` and `docs/engine-modernization.md`, which exist only there and are the source of truth for the Metal/compute work. Read via `git show origin/metal-audit:<path>`.
 
 ## Build & run
 
 ```bash
-# Configure (build/ already exists here as a Debug Unix Makefiles tree)
 cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DPK3_QUIET_ZIPDIR=ON .
 cmake --build build --parallel $(nproc)
-
-# Run — binary and its .pk3s land side by side in build/
-./build/gzdoom
-./build/gzdoom -iwad doom.wad +map e1m1
+./build/gzdoom -iwad /path/to/doom2.wad
 ```
 
-After editing anything under `wadsrc/` (shaders, `menudef.txt`, other baked-in resources), the change will **not** appear at runtime until the pk3 is repacked. A full build does this, but to skip straight to it:
+After editing anything under `wadsrc/`, repack the pk3 or the change won't appear:
 
 ```bash
 build/tools/zipdir/zipdir -udf build/gzdoom.pk3 wadsrc/static
 ```
 
-The CMake target is named `zdoom`; the output binary is `gzdoom` (`ZDOOM_EXE_NAME`). It is placed in `ZDOOM_OUTPUT_DIR`, which defaults to the build root — **the executable will not run unless `gzdoom.pk3`, `lights.pk3`, `brightmaps.pk3`, `game_support.pk3`, and `game_widescreen_gfx.pk3` sit next to it**, which the build handles automatically.
+The CMake target is `zdoom`; the binary is `gzdoom`. It needs `gzdoom.pk3`, `lights.pk3`, `brightmaps.pk3`, `game_support.pk3` and `game_widescreen_gfx.pk3` beside it — the build handles this.
 
-Notable options (all in the top-level `CMakeLists.txt`):
+Backend override at runtime: `ZWIDGET_DISPLAY_BACKEND=Wayland|X11|SDL2`. Default probe order is Wayland → X11 → SDL2.
 
 | Option | Default | Effect |
 |---|---|---|
-| `GZDOOM_NATIVE_LINUX` | ON | Native Wayland/X11 backend instead of SDL2. Forces `ZWIDGET_NO_SDL`, requires `libinput` + `libudev`, defines `USE_X11 USE_WAYLAND GZDOOM_NATIVE_LINUX`. |
-| `HAVE_VULKAN` | OFF | Builds the Vulkan backend (pulls in `libraries/ZVulkan`). |
-| `HAVE_METAL` | ON (Apple only) | Metal backend + `libraries/ShaderTranslator`. |
-| `HAVE_GLES2` | OFF | GLES2 backend. |
-| `NO_OPENAL` | OFF | Disable OpenAL sound. |
-| `PK3_QUIET_ZIPDIR` | OFF | Silence the zipdir asset packing spam; use it, the output is huge. |
+| `GZDOOM_NATIVE_LINUX` | ON | Native Wayland/X11 instead of SDL2. Requires `libinput`, `libudev`. |
+| `HAVE_VULKAN` | OFF | Vulkan backend (pulls in `libraries/ZVulkan`). |
+| `HAVE_METAL` | ON (Apple) | Metal backend + `libraries/ShaderTranslator`. |
+| `ENABLE_SDL2` / `ENABLE_SDL3` | forced OFF | See the trap below. |
 
-Build types: `Debug`, `Release`, `RelWithDebInfo` (best for development), `MinSizeRel`.
+## Traps that have already cost time
 
-Runtime backend override for the native path: `ZWIDGET_DISPLAY_BACKEND=Wayland|X11|SDL2` (see `libraries/ZWidget/src/window/window.cpp`; default probe order is Wayland → X11 → SDL2).
+**`ZWIDGET_NO_SDL` is dead.** ZWidget selects SDL backends with `ENABLE_SDL2`/`ENABLE_SDL3`, which default **ON** for non-Windows. They are forced OFF in the **root** `CMakeLists.txt` immediately before `add_subdirectory(libraries/ZWidget)` — setting them from `src/CMakeLists.txt` is too late, because ZWidget is configured at root line ~401 and `src` at ~503. Get this wrong and SDL silently relinks with no error.
 
-## Testing
+**Generated Wayland protocol bindings versus system headers.** The tree vendors wayland-scanner output but compiles against the system `libwayland` headers, so the two can disagree. This has bitten twice: `WL_KEYBOARD_KEY_STATE_REPEATED` (wl_keyboard v10, absent on Ubuntu 22.04) and `wl_pointer_listener` gaining members. Guard version-dependent entries with the `*_SINCE_VERSION` macros the header defines; don't rely on newer enum constants existing.
 
-There is no unit test suite. "Testing" means: (1) the build succeeds, (2) the binary launches a WAD and renders, (3) the CI matrix in `.github/workflows/continuous_integration.yml` stays green (Windows MSVC 2022, macOS 14, Linux GCC 9/12/latest, Clang 11/15/latest). CI installs `libsdl2-dev libvpx-dev libwebp-dev` — it does *not* install libinput/libudev, so native-backend dependency changes are a real CI break risk.
+**X11 macro pollution.** Include `x11_compat.h` (renames `GC`) and `#undef None` before ZWidget headers. `x11_remap.h` undefines more, which is why some X11 code compares against `0L` rather than `None` and uses `2` rather than `Always`.
 
-Since there is nothing to assert against, verify renderer/input changes by actually running the game and watching console output.
+**CVars, not config structs.** Runtime settings are `CVAR`/`EXTERN_CVAR` globals. Note that `CUSTOM_CVAR` clamp callbacks do **not** appear to run for command-line `+set` — `ui_theme` and others can hold out-of-range values, so selection logic needs a safe fallback rather than trusting the clamp.
+
+**Savegame compatibility:** changing serialized level state means bumping `SAVEVER` (and `MINSAVEVER`) in `src/version.h`.
 
 ## Architecture
 
 ### Source layout
 
-- **`src/common/`** — engine-agnostic subsystems shared with other Raze-family ports: rendering backends, platform layers, filesystem, scripting VM, fonts, textures, audio, menus, console.
-- **`src/`** (top level, `playsim/`, `gamedata/`, `maploader/`, `rendering/`, `scripting/`) — Doom-specific game logic: actors, physics, map loading, DECORATE/ZScript definitions, software renderer, hardware scene renderer.
-- **`libraries/`** — vendored deps. `ZWidget` (windowing/UI toolkit — heavily modified in this fork), `ZVulkan`, `ShaderTranslator` (glslang + SPIRV-Cross, git *subtree* not submodule), `ZMusic`, `metal-cpp`, `asmjit` (VM JIT), `cppdap` (ZScript debug adapter).
-- **`wadsrc*/`** — game assets and all ZScript source (`wadsrc/static/zscript/`), packed into `.pk3` archives by the `zipdir` tool at build time. `wadsrc` → `gzdoom.pk3`, `wadsrc_bm` → `brightmaps.pk3`, etc.
+- **`src/common/`** — engine-agnostic subsystems: rendering backends, platform layers, filesystem, scripting VM, fonts, textures, audio, menus, console.
+- **`src/`** (`playsim/`, `gamedata/`, `maploader/`, `rendering/`, `scripting/`) — Doom-specific logic.
+- **`libraries/`** — `ZWidget` (**git subtree**, see below), `ZVulkan`, `ShaderTranslator` (subtree; glslang + SPIRV-Cross), `ZMusic`, `metal-cpp`, `asmjit`, `cppdap`.
+- **`wadsrc*/`** — assets and all ZScript, packed to `.pk3` by `zipdir` at build time.
 
 ### Rendering
 
-Everything renders through the abstract `DFrameBuffer` (`src/common/rendering/v_video.h`), reachable via the global `screen`. Platform code supplies a `SystemBaseFrameBuffer`; each backend subclasses it:
+Everything renders through `DFrameBuffer` (`src/common/rendering/v_video.h`), reachable via the global `screen`. Platform code supplies a `SystemBaseFrameBuffer`; backends subclass it:
 
 ```
-DFrameBuffer → SystemBaseFrameBuffer (platform-specific)
-  ├── VulkanRenderDevice   src/common/rendering/vulkan/system/
-  ├── OpenGLFrameBuffer    src/common/rendering/gl/   (+ gl_load/glad for GL loading)
-  ├── OpenGLESFrameBuffer  src/common/rendering/gles/
-  └── MetalRenderDevice    src/common/rendering/metal/system/  (macOS only; stale here — see Branch topology)
+DFrameBuffer → SystemBaseFrameBuffer
+  ├── VulkanRenderDevice   vulkan/system/
+  ├── OpenGLFrameBuffer    gl/        (+ gl_load/glad)
+  ├── OpenGLESFrameBuffer  gles/
+  └── MetalRenderDevice    metal/system/   (macOS; stale here)
 ```
 
-Vulkan and Metal both use a **manager pattern** — the render device owns one manager per GPU resource class (`Vk*`/`Mt*`: CommandBuffer, Shader, Buffer, Texture, Sampler, PipelineState/RenderPass, RenderBuffers, Postprocess, DescriptorSet/ResourceBinding). Metal was deliberately built to mirror the Vulkan structure file-for-file, so **when adding a Metal feature, read the Vulkan equivalent first**.
+Vulkan and Metal use a **manager pattern** — one manager per GPU resource class (`Vk*`/`Mt*`). Metal deliberately mirrors Vulkan file-for-file, so **read the Vulkan equivalent first** when adding a Metal feature. Both defer state: `SetX()` mutates the render state object; nothing reaches the GPU until `Apply()`.
 
-Both defer state: `SetX()` calls only mutate the render state object; nothing hits the GPU until `Apply()`.
+Shaders are GLSL in `wadsrc/static/shaders/`. GL consumes them directly; Vulkan and Metal go GLSL → SPIR-V (glslang) → MSL/GLSL (SPIRV-Cross) via `libraries/ShaderTranslator`, which also has an unused HLSL→SPIR-V path (`SHADER_TRANSLATOR_ENABLE_HLSL_INPUT`, default OFF, needs DXC).
 
-Shaders live as GLSL in `wadsrc/static/shaders/`. GL consumes them directly; Vulkan and Metal go GLSL → SPIR-V (glslang) → SPIR-V → MSL/GLSL (SPIRV-Cross), via `libraries/ShaderTranslator`.
+The GL backend requires GL 3.3 and already version-gates features (`gl_version >= 4.3f`). glad loads `glDispatchCompute`, but **no GL compute path exists yet**.
 
 ### Platform layer
 
-- `src/common/platform/posix/native/` — **the active Linux/BSD backend.** `nativevideo.cpp` (frame buffer creation, ZWidget window, key mapping), `i_input.cpp` (libinput/ZWidget event pump), `gl_sysfb.cpp` (GLX/EGL context), `native_display.cpp`, `st_start.cpp`.
-- `src/common/platform/posix/sdl/` — legacy SDL2 path, only compiled with `-DGZDOOM_NATIVE_LINUX=OFF`.
-- `src/common/platform/posix/cocoa/` — macOS.
-- `src/common/platform/win32/` — Windows.
+`src/common/platform/posix/native/` is the active Linux/BSD backend: `nativevideo.cpp` (framebuffer, ZWidget window, key routing), `i_input.cpp` (event pump, capture policy), `gl_sysfb.cpp` (GLX/EGL), `native_display.cpp`, `st_start.cpp`. The `sdl/` directory is the legacy path, only built with `-DGZDOOM_NATIVE_LINUX=OFF`.
 
-ZWidget is not just a widget toolkit here; it is the windowing/input abstraction the native backend routes all events through, and it also drives the launcher (`src/launcher/`) and error/net dialogs (`src/common/widgets/`).
+Only `libinput`, `libudev` and `libgudev` are linked. **Wayland, xkbcommon, X11 and Xi are `dlopen`'d** via `wayland_dynamic.h` / `x11_dynamic.h`, so one binary runs under either or neither. Do not add link-time dependencies on them.
+
+### ZWidget is a subtree
+
+`libraries/ZWidget` tracks `johncurley/ZWidget` (remote `zwidget`), branch `wayland-c-bindings`, which sits directly on top of `dpjudas/ZWidget` master with no divergence.
+
+```bash
+git subtree pull --prefix=libraries/ZWidget zwidget wayland-c-bindings --squash
+git subtree push --prefix=libraries/ZWidget zwidget <branch>
+```
+
+It was previously a plain directory copy with no recorded upstream ref, which let three lineages drift apart until **eight API families** had silently diverged — window creation (`WidgetType` vs a popup bool), `SetCursor`, the frame API, `OnWindowRawKey`, `ListView`, resource loading, themes, raw keyboard. None surfaced until the two halves were compiled together. **Keep the subtree relationship intact; do not hand-edit `libraries/ZWidget` without pushing back.**
+
+Fork-side work living there: generated Wayland protocol bindings replacing waylandpp, runtime `dlopen` loaders, `POSIXNativeTheme` (desktop colour detection), raw keyboard dispatch, and fixes for stuck keys, a window-destroy use-after-free, missing punctuation mappings, and `GetKeyState` on mouse buttons.
+
+### Input
+
+Two paths, selected per context:
+
+- **Cooked** — keysym → `InputKey` → gzkey. Used for GUI (menus, console) because only it produces text.
+- **Raw** (`in_rawkeyboard`, default off) — evdev scancode passed through unchanged. `RawKeycode`, `DIK_*` and evdev are the same PC scancode set, so no mapping table is involved and the path is layout- and modifier-independent.
+
+Raw drives gameplay only, when `in_rawkeyboard && !GUICapture`. The backend reports both, so cooked gameplay events are suppressed while raw is active. Switching paths under a held key resets button state, or the press and release land on different paths.
+
+`in_keytrace 1` logs every key event to **stderr** (not `Printf` — that goes to the in-game console once video is up) as `down`/`up`/`rep`/`rawdn`/`rawup`/`mdn`/`mup`/`wheel`, plus the held-button set once per tic. `ZWIDGET_TRACE_REPEAT=1` logs client-side key repeat. **These are temporary diagnostics and should be removed once input is settled.**
+
+**A trap worth knowing:** `I_StartTic()` must call `buttonMap.ResetButtonTriggers()` first. `bWentDown`/`bWentUp` are set by `PressKey`/`ReleaseKey` and cleared nowhere else, and `G_BuildTiccmd` reads `ButtonPressed()` (which *is* `bWentDown`) for jump and attack. Without it a single tap latches the button on for every subsequent tic. This was missing here and produced symptoms that looked exactly like stuck keys while every input trace showed balanced press/release pairs — because the latched flag was `bWentDown`, not `bDown`. The SDL backend still has the same omission, upstream included.
+
+### Theming
+
+ZWidget themes only the **launcher, error window and net-start window** — not in-game menus, which use GZDoom's own renderer. `InitWidgetResources()` runs once at startup, so `ui_theme` changes need a restart to show.
+
+```
+ui_theme 0   auto — native desktop colours on Unix   (default)
+ui_theme 1   dark
+ui_theme 2   light
+ui_theme 3   follow system light/dark, built-in palette
+```
+
+`POSIXNativeTheme` reads KDE `kdeglobals`, GTK `settings.ini`, then Xresources. Desktops only report a background and foreground, so the other ten colours are **derived by luminance** — a heuristic, which is why `3` exists as an escape hatch.
+
+GZDoom installs its own `ResourceLoader` because widget assets live in the pk3, not on disk, and maps ZWidget's abstract `"system"`/`"monospace"` families onto the bundled Noto Sans.
 
 ### Scripting
 
-`src/common/scripting/` holds the ZScript compiler and VM (`frontend/` parser+codegen, `vm/` interpreter, `jit/` asmjit x86-64 JIT, `backend/`, `dap/` debug adapter). `src/scripting/` binds engine C++ to script (`vmthunks*.cpp`, `thingdef*.cpp` for DECORATE). Objects are GC'd `DObject`s (`src/common/objects/`).
+`src/common/scripting/` holds the ZScript compiler and VM (`frontend/`, `vm/`, `jit/` asmjit, `dap/`). `src/scripting/` binds C++ to script. **Engine C++ and `wadsrc/static/zscript/` are versioned together** — a native signature change needs the ZScript side updated in the same commit.
 
-**Engine C++ and `wadsrc/static/zscript/` are versioned together** — a native function signature change requires updating the ZScript side in the same commit, or the game fails at startup with a script compile error.
+## CI
 
-## Conventions & gotchas
+`.github/workflows/continuous_integration.yml` — Windows MSVC 2022, macOS 14, Linux GCC 9/12/latest and Clang 11/15/latest.
 
-- **X11 header pollution**: always include `x11_compat.h` (it renames `GC`), and `#undef None` before including ZWidget headers — X11's `None`/`Window`/`GC` macros collide with engine and ZWidget identifiers. Several files forward-declare `Display`/`Window` rather than pull in Xlib.
-- **CVars, not config structs**: runtime settings are `CVAR`/`EXTERN_CVAR` globals (`c_cvars.h`). Add new toggles as CVars.
-- **Savegame compatibility**: changing serialized level state means bumping `SAVEVER` (and `MINSAVEVER` if you break old saves) in `src/version.h`.
-- **Debug output**: `mt_debug` for Metal, `vk_debug` for Vulkan, `stat fps` in console for frame timing.
-- **Metal Y-flip**: GZDoom is Y-up (GL convention), Metal is Y-down. `MtShaderManager::PatchVertexShader` rewrites `gl_Position` assignments (regex-based) to flip Y and remap Z from `[-1,1]` to `[0,1]`; this also inverts winding, so Metal front-face is Clockwise.
-- The working tree tends to accumulate scratch artifacts at the repo root (`log*.txt`, `*.patch`, `backtrace.txt`, `test.cpp`, `error.log`). These are debugging leftovers, not part of the build — don't treat them as source.
+Linux jobs install `libinput-dev libudev-dev libwayland-dev libxkbcommon-dev libx11-dev libxi-dev libgl1-mesa-dev libegl-dev libdbus-1-dev libfontconfig1-dev`. The dbus and fontconfig requirements come from ZWidget's portal dialogs and font handling.
+
+**A blocking smoke test runs the built binary** under Xvfb with `ZWIDGET_DISPLAY_BACKEND=X11`, asserting it reaches `W_Init` and brings up a GL context. It exists because a commit once passed all ten jobs while dying on startup — the workflow compiled and linked but never launched anything.
+
+**What CI does not cover:** `+quit` short-circuits before a map loads, so script parsing, the texture manager and rendering a frame are untested. There is no unit test suite. Anything behavioural needs playing the game.
+
+## Outstanding
+
+- **Merge `metal-audit` ↔ `native-platform-expansion`** — gates all renderer work. See the pending-merge section.
+- **Validate Metal on Apple Silicon** — developed on a macOS 12.7 Intel Mac. TBDR vs IMR differences (memoryless storage, store actions, `didModifyRange:`) mean Intel-correct code can be wrong on M-series.
+- **Remove the input diagnostics** (`in_keytrace`, `ZWIDGET_TRACE_REPEAT`) once input is settled.
+- **X11 raw input** — Wayland is done; X11 needs XInput2 raw events.
+- **`check_shader_parity.py` into CI** — more valuable as GL becomes a partial reference (GL 4.1 on macOS cannot do compute).
+- **Report ZWidget bugs upstream to dpjudas** — the stuck-key and use-after-free fixes affect every ZWidget application on Wayland.
 
 ## Other AI-agent docs
 
-On this branch:
-
-- `.github/copilot-instructions.md` — long, Metal-renderer-focused; good detail on Metal pitfalls (seam leaking, texture flashing, ring buffers, storage modes), but its build commands are macOS-centric.
-- `GEMINI.md` — one-page summary of the native POSIX backend strategy.
-- `gemini.md` — Vulkan architecture audit + Vulkan↔Metal parity table; useful when porting a Vulkan feature to Metal. Background only, not an active roadmap.
-
-Only on `origin/metal-audit` (read via `git show origin/metal-audit:<path>`) — these are the current source of truth for Metal/compute work:
-
-- `AGENTS.md` — implementation state, benchmark workflow, and session log for the Metal compute AO/bloom conversion.
-- `docs/engine-modernization.md` — durable roadmap: frame graph, deterministic visibility kernel, simulation modernization. Consult before proposing architectural changes.
-- `CLAUDE.md` — that branch's own version of this file.
-
-Metal-specific benchmarking uses the `mt_metrics` / `mt_metrics_reset` console commands (metal-audit only); `mt_debug` for Metal logging, `vk_debug` for Vulkan.
+- `.github/copilot-instructions.md` — Metal renderer field guide: Y-flip patching, ring buffers, sampler key values, culling winding. macOS-centric build commands.
+- `GEMINI.md` — one page on the native POSIX backend strategy.
+- `gemini.md` — Vulkan architecture audit and Vulkan↔Metal parity table. Background, not a roadmap.
+- On `origin/metal-audit` only: `AGENTS.md` (Metal compute state and benchmark workflow) and `docs/engine-modernization.md` (frame graph, visibility, simulation roadmap).
