@@ -82,8 +82,12 @@ struct SSAOParams {
     float maxThickness;
     float fadeStartDistance;
     float fadeEndDistance;
+    // World-space grid cell size (map units) the noise hash quantizes to --
+    // analogous to the old dither texture's implicit tiling frequency. See
+    // mt_compute_ao_noise_cellsize's doc comment (mt_postprocess.cpp).
+    float noiseCellSize;
     // 0 = normal AO. Nonzero renders a world-locked-noise diagnostic
-    // straight to aoOutput (viewable via the existing gl_ssao_debug 1
+    // straight to aoOutput (viewable via the existing gl_ssao_debug 2
     // raw-AO display) instead of running real AO math -- see
     // mt_compute_ao_worldpos_debug's doc comment (mt_postprocess.cpp).
     int debugMode;
@@ -406,8 +410,11 @@ kernel void ssao_compute(
                 continue;
             }
 
-            // Stencil coverage guard: skip samples from different portal layers
-            float sampleCov = coverageMask.sample(nearestClampSampler, sampleUV).r;
+            // Stencil coverage guard: skip samples from different portal layers.
+            // Sampled with sampleSceneUV, not sampleUV: the mask is allocated at
+            // the stencil attachment's resolution, so it shares the scene
+            // textures' coordinate space, not the AO-local one.
+            float sampleCov = coverageMask.sample(nearestClampSampler, sampleSceneUV).r;
             if (sampleCov < 0.5) continue;
 
             float sampleRawDepth = depthTexture.sample(nearestClampSampler, sampleSceneUV).r;
@@ -593,8 +600,11 @@ kernel void ssao_compute_alchemy(
             continue;
         }
 
-        // Stencil coverage guard: skip samples from different portal layers
-        float sampleCov = coverageMask.sample(nearestClampSampler, sampleUV).r;
+        // Stencil coverage guard: skip samples from different portal layers.
+        // Sampled with sampleSceneUV, not sampleUV: the mask is allocated at
+        // the stencil attachment's resolution, so it shares the scene
+        // textures' coordinate space, not the AO-local one.
+        float sampleCov = coverageMask.sample(nearestClampSampler, sampleSceneUV).r;
         if (sampleCov < 0.5) continue;
 
         float sampleRawDepth = depthTexture.sample(nearestClampSampler, sampleSceneUV).r;
@@ -815,8 +825,11 @@ kernel void ssao_compute_mip(
                 continue;
             }
 
-            // Stencil coverage guard: skip samples from different portal layers
-            float sampleCov = coverageMask.sample(nearestClampSampler, sampleUV).r;
+            // Stencil coverage guard: skip samples from different portal layers.
+            // Sampled with sampleSceneUV, not sampleUV: the mask is allocated at
+            // the stencil attachment's resolution, so it shares the scene
+            // textures' coordinate space, not the AO-local one.
+            float sampleCov = coverageMask.sample(nearestClampSampler, sampleSceneUV).r;
             if (sampleCov < 0.5) continue;
 
             // Mip-selected depth fetch: distant steps read a coarser,
@@ -1457,8 +1470,31 @@ void MtAOModule::EnsureTextures(int width, int height) {
     mBlurTexture = compute->CreateTexture(width, height, MTL::PixelFormatRG16Float,
                                           usage, MTL::StorageModePrivate);
 
-    // Stencil coverage mask: R8Unorm at AO resolution, render target for stencil-tested quad
+    mAOWidth = width;
+    mAOHeight = height;
+}
+
+// Stencil coverage mask: R8Unorm at *scene* resolution, render target for a
+// stencil-tested fullscreen triangle.
+//
+// It used to be allocated at AO resolution alongside mAOTexture, which cannot
+// work: a stencil test compares at the fragment's own framebuffer coordinate,
+// and the stencil attachment is the full-res SceneDepthStencil. A quarter-res
+// render target therefore rasterized quarter-res fragments that stencil-tested
+// against full-res stencil pixels (x,y) -- so the mask encoded the top-left
+// quarter of the screen's stencil state, addressed as if it were the whole
+// screen. No viewport or scissor setting can fix that; the sizes have to
+// match. Harmless whenever the stencil buffer is uniform (mask comes back
+// all-1), so it only ever manifested across portal boundaries.
+void MtAOModule::EnsureCoverageMask(int width, int height) {
+    width = std::max(width, 1);
+    height = std::max(height, 1);
+
+    if (mCoverageMask && mCoverageWidth == width && mCoverageHeight == height)
+        return;
+
     if (mCoverageMask) { mCoverageMask->release(); mCoverageMask = nullptr; }
+
     auto covDesc = MTL::TextureDescriptor::alloc()->init();
     covDesc->setWidth(width);
     covDesc->setHeight(height);
@@ -1468,8 +1504,8 @@ void MtAOModule::EnsureTextures(int width, int height) {
     mCoverageMask = fb->device->device->newTexture(covDesc);
     covDesc->release();
 
-    mAOWidth = width;
-    mAOHeight = height;
+    mCoverageWidth = width;
+    mCoverageHeight = height;
 }
 
 void MtAOModule::EnsureFullresTextures(int width, int height) {
@@ -1758,7 +1794,9 @@ bool MtAOModule::Render(float m5, int sceneWidth, int sceneHeight, const HWViewp
     auto aoStart = std::chrono::high_resolution_clock::now();
 
     // Render stencil coverage mask: white where stencil == screen->stencilValue
-    // Used by compute kernel to reject samples crossing portal boundaries
+    // Used by compute kernel to reject samples crossing portal boundaries.
+    // Sized from the stencil attachment inside RenderCoverageMask -- see
+    // EnsureCoverageMask.
     RenderCoverageMask(buffers->SceneDepthStencil->GetTexture(), screen->stencilValue);
 
     Execute(cmdBuf, buffers->SceneDepthStencil->GetTexture(),
@@ -2077,7 +2115,16 @@ void MtAOModule::CreateCoverageMaskPipeline() {
 }
 
 void MtAOModule::RenderCoverageMask(MTL::Texture* depthStencilTex, int stencilValue) {
-    if (!coverageMaskPSO || !mCoverageMask || !depthStencilTex)
+    if (!coverageMaskPSO || !depthStencilTex)
+        return;
+
+    // Size the mask from the stencil attachment itself, so the two can never
+    // drift out of sync: the mask's pixel grid *is* the stencil buffer's pixel
+    // grid. Note this is the full attachment (screen-sized), not the scene
+    // viewport sub-rect, which is why the kernels sample it with the same
+    // scene-scaled UV they use for scene colour/depth/normal.
+    EnsureCoverageMask((int)depthStencilTex->width(), (int)depthStencilTex->height());
+    if (!mCoverageMask)
         return;
 
     auto cmdBuf = fb->GetCommands()->GetRenderCommandBuffer();

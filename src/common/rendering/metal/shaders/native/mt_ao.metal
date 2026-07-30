@@ -371,8 +371,11 @@ kernel void ssao_compute(
                 continue;
             }
 
-            // Stencil coverage guard: skip samples from different portal layers
-            float sampleCov = coverageMask.sample(nearestClampSampler, sampleUV).r;
+            // Stencil coverage guard: skip samples from different portal layers.
+            // Sampled with sampleSceneUV, not sampleUV: the mask is allocated at
+            // the stencil attachment's resolution, so it shares the scene
+            // textures' coordinate space, not the AO-local one.
+            float sampleCov = coverageMask.sample(nearestClampSampler, sampleSceneUV).r;
             if (sampleCov < 0.5) continue;
 
             float sampleRawDepth = depthTexture.sample(nearestClampSampler, sampleSceneUV).r;
@@ -557,8 +560,11 @@ kernel void ssao_compute_alchemy(
             continue;
         }
 
-        // Stencil coverage guard: skip samples from different portal layers
-        float sampleCov = coverageMask.sample(nearestClampSampler, sampleUV).r;
+        // Stencil coverage guard: skip samples from different portal layers.
+        // Sampled with sampleSceneUV, not sampleUV: the mask is allocated at
+        // the stencil attachment's resolution, so it shares the scene
+        // textures' coordinate space, not the AO-local one.
+        float sampleCov = coverageMask.sample(nearestClampSampler, sampleSceneUV).r;
         if (sampleCov < 0.5) continue;
 
         float sampleRawDepth = depthTexture.sample(nearestClampSampler, sampleSceneUV).r;
@@ -778,8 +784,11 @@ kernel void ssao_compute_mip(
                 continue;
             }
 
-            // Stencil coverage guard: skip samples from different portal layers
-            float sampleCov = coverageMask.sample(nearestClampSampler, sampleUV).r;
+            // Stencil coverage guard: skip samples from different portal layers.
+            // Sampled with sampleSceneUV, not sampleUV: the mask is allocated at
+            // the stencil attachment's resolution, so it shares the scene
+            // textures' coordinate space, not the AO-local one.
+            float sampleCov = coverageMask.sample(nearestClampSampler, sampleSceneUV).r;
             if (sampleCov < 0.5) continue;
 
             // Mip-selected depth fetch: distant steps read a coarser,

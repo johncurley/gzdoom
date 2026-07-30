@@ -66,6 +66,12 @@ public:
 
 private:
     void EnsureTextures(int width, int height);
+    // The coverage mask lives at *scene* resolution, not AO resolution: a
+    // stencil test always compares at the fragment's own framebuffer
+    // coordinate, so a smaller render target cannot downsample a full-res
+    // stencil buffer -- it just reads the top-left corner of it. See
+    // RenderCoverageMask.
+    void EnsureCoverageMask(int width, int height);
     void EnsureFullresTextures(int width, int height);
     void EnsureDepthPyramid(int width, int height);
     void CreateDitherTexture();
@@ -95,6 +101,8 @@ private:
     MTL::Texture* mDepthPyramidTexture = nullptr;
     int mAOWidth = 0;
     int mAOHeight = 0;
+    int mCoverageWidth = 0;
+    int mCoverageHeight = 0;
     int mFullresWidth = 0;
     int mFullresHeight = 0;
     int mDepthPyramidWidth = 0;
