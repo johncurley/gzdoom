@@ -97,6 +97,10 @@ jobs:
         cmake --build build --config ${{ matrix.config.build_type }} --parallel 3
 
     # Compiling and linking says nothing about whether the binary starts.
+    # Covers startup as far as +quit reaches: display backend, widget resources
+    # and fonts, and the WAD filesystem. It stops short of full game init --
+    # script parsing, the texture manager, rendering a frame -- because +quit
+    # short-circuits before a map can load.
     # 8b4746558 passed every job in this workflow while dying on startup with
     # "Unable to find widgets/font/system.ttf", because nothing here had ever
     # launched it. This runs the real binary through full initialisation --
@@ -120,7 +124,11 @@ jobs:
         unzip -q -j freedoom.zip '*/freedoom2.wad' -d build
         cd build
         export ZWIDGET_DISPLAY_BACKEND=X11
-        timeout 120 xvfb-run -a ./gzdoom -iwad freedoom2.wad -nosound +quit
+        timeout 120 xvfb-run -a ./gzdoom -iwad freedoom2.wad -nosound +quit 2>&1 | tee startup.log
+        # Exit status alone would also be satisfied by bailing out before doing
+        # anything, so require evidence that startup actually got somewhere.
+        grep -q "W_Init: Init WADfiles" startup.log
+        grep -q "GL_VERSION" startup.log
         echo "startup smoke test passed"
 
     - name: Create Package
