@@ -2468,16 +2468,66 @@ that specific point and it would have been easy to get wrong.
   -- because a declared-but-unbound texture argument is invalid even when
   the sample is branch-guarded.
 
-Build clean, parity exits 0. **Not yet verified in-game.**
+Build clean, parity exits 0.
 
-### Verification protocol for the fix
+### VERIFIED 2026-07-30, and it exposed a second, larger bug
 
-At Ashes 2063 Enriched MAP51 "Dead Man Walking" with the solar lantern, `gl_exposure_speed 1`, fixed
-camera. Expect: `composite 0` and `2` now agree (the 3.8%/-7 gap closes),
-and the compute path now *responds* to `gl_exposure_base` 0.35 vs 10 where
-before it was byte-identical. The second is the stronger test -- it checks
-the exposure texture is actually reaching the kernel, not merely that two
-images look similar.
+The convergence check (Ashes 2063 MAP51, fixed camera, `gl_exposure_speed 1`)
+did **not** converge on the first run -- it overshot and flipped direction.
+Contribution over the `gl_bloom 0` baseline (19.2354): reference **+0.1387**,
+compute **+0.2913**, i.e. compute applied ~2.1x the reference's bloom, over
+4.63% of the frame, one-directional brighter (97,473 px brighter vs 103
+darker). The pre-fix error had been compute *darker* by peak -7; the
+overcorrection was larger than the original error.
+
+The exposure fix was not at fault. `bloom_extract` matches `bloomextract.fp`
+exactly, bias-before-multiply and threshold-after. What the exposure fix did
+was let enough bloom survive the extract to make a **pre-existing combine bug**
+measurable. See the pyramid fix below.
+
+**Lesson: an A/B that overshoots is not a failed fix, it is a second bug.**
+The instinct to revert the first fix would have been wrong here -- the
+extract was already correct and reverting would have re-hidden the real
+defect behind a compensating error.
+
+### Compute bloom summed mip levels the reference never sums (fixed 2026-07-30)
+
+`PPBloom::RenderBloom` adds bloom to the scene **exactly once**: `level0.VTexture`,
+additive, unit gain (`hw_postprocess.cpp:151-159`), and `bloomcombine.fp` is a
+plain copy with no gain. Its multi-scale look comes from a down-then-up chain
+where each upscale **replaces** the level below it (`SetNoBlend()`), so the
+final level0 is one wide soft unit-gain glow.
+
+The compute path instead summed four levels at 1.0/0.18/0.09/0.06 = 1.33x
+nominal gain. Worse, its down loop downsampled `bloomA` into *every* mip
+rather than chaining level to level, so the mips were four blurs of the same
+image -- correlated energy piled onto the same light, which is why the
+measured overshoot (2.1x) exceeded the nominal 1.33x.
+
+Fix (`mt_bloom.cpp`): run the reference's structure -- blur/downscale down the
+chain, blur/upscale back up replacing each lower level, then composite
+`bloomA` alone at strength 1.0. Both paths are 4 levels (`NumBloomLevels == 4`;
+`bloomA` + 3 mips), so they map one-to-one. `downsample_box` derives its UVs
+from the destination extent, so the same kernel serves both legs -- no new
+kernel. Slots 1-3 stay bound to `bloomA` at strength 0, since every declared
+texture argument must be bound.
+
+**Result: 81 px differing (0.0089%), mean signed +0.0002, bidirectional (40
+brighter / 41 darker), mean_lum 19.4665 vs 19.4666.** Down from 41,927 px
+(4.63%) -- a 518x reduction. The residual being *bidirectional* is the
+signal that gain is now correct and only bilinear-resample noise at one glow
+edge remains; a one-directional residual would have meant gain was still off.
+
+Caveat on method: the verification pair was captured at a slightly different
+camera/time than the baseline batch (baseline mean_lum shifted 19.37 -> 19.47),
+so contribution-over-baseline was **not** recomputed for it. The direct
+`composite 2` vs `0` comparison is the valid test and does not depend on the
+old baseline.
+
+Still unrun (the stronger of the two original exposure checks): does the
+compute path *respond* to `gl_exposure_base` 0.35 vs 10, where before the fix
+it was byte-identical? That checks the exposure texture actually reaches the
+kernel, rather than merely that two images agree.
 
 ### RESOLVED (not a renderer bug): compute-bloom "ghosting" above objects, motion-only (reported 2026-07-28, closed 2026-07-30)
 
