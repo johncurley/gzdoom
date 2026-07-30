@@ -2524,3 +2524,24 @@ stills do not; (3) Xcode GPU frame capture to inspect pipeline images
 mid-frame, which would settle the in-place-composite theory outright.
 
 **Still frames cannot diagnose this.** Do not spend more screenshots on it.
+
+## Screenshot A/B tooling (added 2026-07-30)
+
+`tools/cluster.py`, `tools/localize.py`, `tools/pngdiff.py` -- stdlib-only
+(no PIL/ImageMagick on this machine). Use them instead of eyeballing:
+
+    python3 tools/cluster.py shot*.png      # are any of these actually different?
+    python3 tools/localize.py a.png b.png   # where, how much, and which direction?
+
+Standing rules learned from the bloom work, in the scripts' docstrings too:
+
+1. Run a control that is *supposed* to differ (e.g. `gl_bloom 0` vs `1`)
+   before comparing anything subtler. Seven shots once came back as one
+   distinct image because the scene never exceeded the bloom threshold.
+2. Run a *same-config* control pair. Drift has exceeded the measured effect
+   by 26x on this machine.
+3. `gl_exposure_speed 1` before any bloom A/B (default 0.05 adapts for tens
+   of seconds).
+4. Difference shape identifies cause: compact one-directional blob at a light
+   = real bloom change; broad wash brightening over time = exposure drift;
+   scattered and bidirectional = animation between captures, retake.
