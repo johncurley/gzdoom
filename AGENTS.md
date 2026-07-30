@@ -2410,7 +2410,10 @@ itself** on this machine, for two reasons discovered the hard way:
    the scene keeps brightening for tens of seconds. At Ashes 2063 MAP51 the
    same-config control differed by max 52 luminance while the between-config
    difference was max 2 -- **the control drifted 26x more than the effect**.
-   Set `gl_exposure_speed 1` before any bloom A/B.
+   Set `gl_exposure_speed 1` before any bloom A/B -- **and reset it to 0.05
+   afterwards.** Left at 1, adaptation snaps every frame and manufactures a
+   motion-only bloom artifact on the compute path; that cost a session (see
+   the ghosting entry below).
 
 The test that worked is a **within-config toggle**, immune to both: hold the
 config fixed and toggle `gl_exposure_base` between 0.35 and 10 (which forces
@@ -2476,7 +2479,45 @@ before it was byte-identical. The second is the stronger test -- it checks
 the exposure texture is actually reaching the kernel, not merely that two
 images look similar.
 
-### OPEN: compute-bloom "ghosting" above objects, motion-only (reported 2026-07-28)
+### RESOLVED (not a renderer bug): compute-bloom "ghosting" above objects, motion-only (reported 2026-07-28, closed 2026-07-30)
+
+**Confirmed 2026-07-30: the ghost disappears at the default `gl_exposure_speed
+0.05` and does not reproduce. No code change was needed or made.**
+
+**User-identified: the ghost is an artifact of `gl_exposure_speed 1`,
+the diagnostic setting from the bloom-exposure A/B — not of the shipping
+config.** At speed 1 the adaptation snaps fully every frame instead of easing
+at the 0.05 default, so `CameraTexture` whipsaws whenever the view moves. The
+compute extract multiplies by that texture (added by the exposure fix the same
+session), so bloom brightness pulses with motion and reads as a ghost.
+
+This accounts for all three symptoms: motion-only (a static scene has stable
+adaptation), compute-specific (if compute and reference sample `CameraTexture`
+at different points in the frame, the resulting one-frame lag is invisible at
+0.05 and glaring at 1), and absent from stills (each screenshot is internally
+consistent; the artifact lives in the frame-to-frame delta).
+
+**Generalized trap: diagnostic cvars must be reverted before judging a
+visual artifact.** An instrumentation setting chosen to make one effect
+measurable can manufacture a different artifact entirely, and it will look
+like a renderer bug because it only reproduces on the path under test.
+
+The historical analysis below is kept for the ruled-out list; its "not caused
+by the exposure fix" claim is superseded — the mechanism does run through
+exposure, via the test config rather than the code change.
+
+Additionally ruled out by reading (2026-07-30), do not redo:
+
+- **The in-place composite asymmetry, previously the best suspect.** Compute
+  reads `PipelineImage[mCurrentPipelineImage]` and blits back into it, leaving
+  the index unchanged; reference writes N -> N+1 and advances. Both leave
+  `mCurrentPipelineImage` pointing at the image carrying bloom, which is what
+  `Pass2` consumes. Self-consistent, cannot displace anything.
+- **A compute->render hazard on `mCompositeTex`.** `MtComputeManager::CreateTexture`
+  (`mt_compute.cpp:11-27`) never sets `hazardTrackingMode`, so textures are
+  Tracked and Metal inserts the barrier across the `endEncoding()` handoff.
+
+### Original analysis (2026-07-28)
 
 User reports a ghost image roughly an inch above objects (Ashes 2063
 Enriched MAP51, campfire/crate scene) with `mt_compute_bloom_composite 0`,
@@ -2541,7 +2582,8 @@ Standing rules learned from the bloom work, in the scripts' docstrings too:
 2. Run a *same-config* control pair. Drift has exceeded the measured effect
    by 26x on this machine.
 3. `gl_exposure_speed 1` before any bloom A/B (default 0.05 adapts for tens
-   of seconds).
+   of seconds). Reset to 0.05 when done -- at 1 it fabricates a motion-only
+   ghosting artifact under compute bloom.
 4. Difference shape identifies cause: compact one-directional blob at a light
    = real bloom change; broad wash brightening over time = exposure drift;
    scattered and bidirectional = animation between captures, retake.
