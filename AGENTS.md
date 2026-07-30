@@ -2201,3 +2201,326 @@ exceeds the effect, tighter isolation would not change the conclusion.
   confirm the visible difference first.
 - Remaining matrix on `composite 0` only: resize, fullscreen toggle,
   portals, camera textures.
+
+## Independent GPT audit (2026-07-27) — 3 findings, all verified real
+
+Second outside audit, deliberately run differently from the Gemini round
+(see "Independent Gemini audit" above, which returned 6 false positives out
+of 18 with both CRITICALs wrong). The brief was `GPT_AUDIT_CONTRACT.md`
+(gitignored, root): scope narrowed to `mt_ao.*` first, bloom second, compute
+glue third; the Intel `mt_caps` profile stated as a hard constraint; and a
+standard-of-evidence section built from the three specific ways the previous
+round went wrong — the autorelease false-CRITICAL (must cite an ownership
+rule before reporting a leak), the thickness hypothesis (must state error
+*direction*), and disk-collapse (mechanism and site argued separately).
+Every finding had to arrive with a falsification test, expressible in
+`mt_metrics` whole-frame terms for perf claims since per-pass GPU timing is
+hardware-blocked here. Findings also self-label as correctness /
+visual-quality / performance / maintainability, and performance findings
+must name a bottleneck axis.
+
+**Result: 3 findings, 0 false positives.** Lower volume, and the count is
+the point — the brief explicitly said an empty report was acceptable and
+three well-evidenced findings beat eighteen. The narrow scope plus required
+falsification test is the shape to reuse. Keep §5 strict; only loosen if a
+future pass comes back too timid.
+
+The auditor disclosed up front that it had seen `AGENTS.md` content before
+starting, so finding 1 is a careful re-derivation, not independent
+confirmation. Findings 2 and 3 are genuinely new.
+
+### Finding 1 (bloom exposure) — confirmed, already documented
+
+Restates the divergence recorded under "Bloom Tier 1 vs reference" above,
+but added something that section missed: the reference's `+0.001` bias is
+**also** multiplied by exposure, so folding exposure into a scalar threshold
+cannot reach parity — it must multiply before thresholding. It also notes
+the reference samples an exposure *texture*, not a scalar, so any
+cvar-shaped fix is wrong by construction. Fix direction updated accordingly.
+
+### Finding 2 (`SSAOParams` struct drift) — FIXED this session
+
+`mt_ao.cpp`'s inline `SSAO_COMPUTE_SOURCE` had lost `float noiseCellSize`
+while every kernel body in it still referenced `params.noiseCellSize`. So
+the inline fallback would not have miscomputed — it would have **failed to
+compile**, leaving the compute AO PSOs null and silently dropping to the PP
+AO path. The shipped native path was never affected (`mt_ao.metal` and
+`mt_ao.h` both had the field, in the same order).
+
+The valuable half was the auditor noticing **why the existing parity script
+missed it**: `tools/check_shader_parity.py` compared kernel *bodies* only,
+and reported MATCH on all ten while the shared struct declaration had
+diverged.
+
+Fixed: added the field at `mt_ao.cpp:84`, plus a stale `gl_ssao_debug 1` ->
+`2` in the adjacent comment that had drifted invisibly (comments are
+stripped before comparison).
+
+**`check_shader_parity.py` extended** to compare shared struct declarations
+in two directions. The second matters more than the first:
+
+1. native `.metal` <-> inline fallback string — catches this drift, but only
+   ever breaks the rarely-exercised fallback, and breaks it loudly.
+2. native `.metal` <-> the C++ header (`mt_ao.h`, `mt_bloom.h`) — a
+   CPU/GPU field-order or size mismatch **silently misreads every parameter
+   after the divergence, on the path that actually ships**, and would
+   present as a shader math bug.
+
+Field *order* is compared, not just the name set: order determines layout,
+and a reordering with an unchanged name set is exactly the "someone appended
+a field for alignment on one side only" case. Two implementation notes for
+whoever touches this next:
+
+- First run false-positived on `float4x4 viewToWorld` vs
+  `float viewToWorld[16]` and `float2 srcRes` vs `float srcRes[2]` — same
+  bytes, different spelling. It now compares (scalar base, component count)
+  footprints, so those pass while real drift (`float2` vs `float4`, `int`
+  vs `float`) still fails.
+- Collapsing those spellings opens a gap: MSL `float2` aligns to 8 and
+  `float3`/`float4` to 16, but a C++ scalar array aligns to 4 — equal size,
+  different layout. A `check_alignment` pass walks byte offsets and WARNs
+  when a vector field sits where MSL would pad and a scalar-array
+  counterpart would not. Silent on current structs because they are
+  well-packed; verified to fire on a synthetic `float` + `float2` struct.
+- A clean run is **not** proof of identical layout. It cannot see `alignas`,
+  `packed_*`, or implicit tail padding. It rules out the drift class that
+  has actually bitten this codebase, nothing more.
+
+Both the fix and the script were validated: parity check exits 0, `zdoom`
+target builds clean.
+
+### Finding 3 (coverage mask coordinate space) — real, and the site is worse than reported
+
+Auditor's instinct was right and its site was wrong, the same pattern as
+Gemini's disk-collapse finding. It correctly spotted that `coverageMask` is
+sampled at raw `sampleUV` (`mt_ao.metal:375,561,782`) while every scene
+texture on the adjacent lines uses `offset + sampleUV * scale`, but blamed
+`SceneScale`/`SceneOffset` and rated it low severity, contingent on a
+letterboxed viewport.
+
+The sharper mechanism needs no letterboxing at all — it is a **render-target
+size mismatch**:
+
+- `EnsureTextures` is called with `(sceneWidth/aoScale, sceneHeight/aoScale)`
+  (`mt_ao.cpp:1556`) and `mCoverageMask` is allocated at that AO resolution
+  (`mt_ao.cpp:1462-1468`).
+- `RenderCoverageMask` (`mt_ao.cpp:2087-2097`) attaches that quarter-res
+  color target alongside the **full-res** `SceneDepthStencil`, then draws a
+  fullscreen triangle with **no viewport or scissor set**.
+
+Rasterization covers the AO-res render area, so mask pixel (x,y)
+stencil-tests against full-res stencil pixel (x,y). With `aoScale` forced to
+4 on Intel, the mask encodes the stencil state of the **top-left quarter of
+the screen, addressed as if it were the whole screen** — not a downsample of
+it. Predicted direction: portal-boundary AO wrong across the other three
+quadrants, anchored to the viewport rather than to scene geometry,
+brightening where samples are falsely rejected.
+
+Candidate cause for the unclassified "residual soft darkening low in the
+frame" left open by the seventh AO pass. Not yet confirmed — needs the
+strafe test, which now discriminates three ways rather than two: tracks the
+world (real AO) / glued to viewport border (bug-4 residue) / glued to a
+quadrant boundary (this).
+
+Open question a read cannot settle: whether Metal clamps the render area to
+the smallest attachment or whether validation objects to the mismatched
+attachment sizes.
+
+### Finding 3 fix (2026-07-27) — implemented, NOT yet verified in-game
+
+`mCoverageMask` is now allocated at the **stencil attachment's** resolution
+rather than AO resolution, and sized from `depthStencilTex->width()/height()`
+inside `RenderCoverageMask` itself so the two grids cannot drift apart.
+Allocation moved out of `EnsureTextures` (which only ever sees AO dims) into
+a new `EnsureCoverageMask`. All three AO kernels now sample the mask with
+`sampleSceneUV` instead of `sampleUV`, matching the coordinate space they
+already use for scene colour/depth/normal.
+
+Note this is the full attachment (screen-sized), *not* the scene viewport
+sub-rect — sizing to `sceneWidth/sceneHeight` was the first attempt and was
+also wrong, because the scene viewport can be a sub-rect of the screen-sized
+buffer and the stencil test compares in attachment coordinates.
+
+**Severity correction.** The fix is right, but the impact is what the auditor
+originally said (low, portal-only) and not what the AGENTS entry above
+implied. `GetPPStencilState` uses `CompareFunctionAlways` with depth writes
+off, so the mask is purely `stencil(x,y) == stencilValue`. In a non-portal
+scene the stencil buffer is uniformly 0 and `stencilValue` is 0, so the mask
+came back all-1 and the misalignment was invisible. **It is therefore not a
+candidate for the residual soft darkening in a plain scene** — that remains
+unexplained and still needs its own strafe test.
+
+Verification needed, and it must be in a portal-heavy map with a fixed
+camera; a plain corridor cannot distinguish this fix from a no-op by
+construction. Nothing to clear beforehand: `~/Library/Caches/gzdoom` does not
+currently exist, so neither the `.msl` cache nor `mt_pipelines.bin` can serve
+a stale kernel. Build is clean and parity exits 0.
+
+### Residual soft darkening: RESOLVED as real AO (2026-07-27)
+
+The "residual soft darkening low in the frame" left unclassified by the
+seventh AO pass was strafe-tested on DOOM2 MAP01 (compute AO on, algorithm 1
+AlchemyAO, `gl_ssao_debug 1` raw-AO view, fixed camera, strafe only — no
+mouse movement between observations). **It sticks to geometry**, so it is
+genuine ambient occlusion, not viewport-anchored border residue.
+
+Consequence: the bug-4 off-screen-sample-reject fix was complete. Nothing
+further is owed on it, and the "Open / next" item above is closed.
+
+#### Finding 3 fix: in-game result 2026-07-27 — NO REGRESSION, not confirmed
+
+Trenchfoot, compute AO on, algorithm 1, sky in frame. Observed: sky is
+masked correctly, no AO on it.
+
+**Read this carefully before treating the fix as verified.** Absence of AO on
+sky was *already* true pre-fix (see "Skybox AO seam fix" and "AO distance
+fade for sky-camera-room content" above), and the pre-fix bug predicted
+misplaced AO on **geometry** — occlusion sampled from the wrong screen
+location — not AO bleeding onto sky. So this observation confirms the mask
+changes did not break existing sky masking, and confirms nothing about
+whether the coordinate fix does what it is supposed to do.
+
+A true A/B needs the fix stashed and rebuilt, same fixed camera, in a portal
+inner-scene pass. Not done: impact is low and portal-only, and the fix is
+correct by construction (the mask's pixel grid is now derived from the
+stencil attachment itself, so mask/stencil grid mismatch cannot recur).
+Deprioritized in favour of the bloom exposure defect, which is visible in
+every dark scene. Left here as an explicit "unverified but structurally
+sound", not as a pass.
+
+## Bloom exposure divergence: CONFIRMED and FIXED (2026-07-27)
+
+Finding 1 of the GPT audit, previously recorded as a code-reading claim, is
+now **experimentally confirmed** and the fix is implemented. The measurement
+route matters as much as the result -- three earlier attempts produced
+invalid comparisons before the confounds were understood.
+
+### How it was finally measured
+
+Visual A/B of `mt_compute_bloom_composite 0` vs `2` **does not work by
+itself** on this machine, for two reasons discovered the hard way:
+
+1. **Wrong scene.** Ashes: Afterglow's dark corridor has max viewport
+   luminance ~231/255. Both extracts subtract 1.0 and clamp, so *nothing*
+   exceeded threshold: seven screenshots across `gl_bloom 0/1` and every
+   composite mode came back **pixel-identical**. Toggling bloom entirely off
+   changed zero pixels. Always run a `gl_bloom 0` vs `1` control first --
+   if that pair is identical, the location cannot test anything.
+2. **Exposure adaptation drift.** `gl_exposure_speed` defaults to 0.05, so
+   the scene keeps brightening for tens of seconds. At Ashes 2063 MAP51 the
+   same-config control differed by max 52 luminance while the between-config
+   difference was max 2 -- **the control drifted 26x more than the effect**.
+   Set `gl_exposure_speed 1` before any bloom A/B.
+
+The test that worked is a **within-config toggle**, immune to both: hold the
+config fixed and toggle `gl_exposure_base` between 0.35 and 10 (which forces
+`exposureAdjustment` from ~2.9 down to ~0.1), then repeat under the other
+config. Four shots, Ashes 2063 Enriched MAP51 "Dead Man Walking" (an
+`Ashes2063Enriched2_23.pk3` map -- DOOM2 has no MAP51; the pk3 defines
+slots 50+ via its own mapinfo, so the test needs `-file
+Ashes2063Enriched2_23.pk3`, *not* Afterglow):
+
+| Shot | Config | Result |
+|---|---|---|
+| 12.53.15 | reference, base 0.35 | **unique** |
+| 12.53.36 | reference, base 10   | identical to below |
+| 12.54.13 | compute,   base 0.35 | identical |
+| 12.54.26 | compute,   base 10   | identical |
+
+- **Reference responds to exposure; compute does not.** The compute pair is
+  byte-identical under a 29x change in exposure.
+- **Reference-with-exposure-disabled is byte-identical to compute.** Killing
+  the exposure term in the reference path reproduces the compute path
+  exactly, which proves exposure is the *only* difference between the two
+  implementations -- blur chain, downsample and composite all agree bit for
+  bit.
+- Defect magnitude with exposure live: compute darker across 3.8% of the
+  frame around light sources, peak block -7.0 luminance, max -10, and
+  **zero** pixels brighter (3 of 900k). Direction as predicted.
+
+Also confirmed en route, via `mt_metrics`, that the paths really do switch:
+`composite 0` reports `ComputeCPU Bloom ~0.27ms` and no PP counter,
+`composite 2` reports `PPCPU Bloom ~1.01ms` and no compute counter. They are
+mutually exclusive, and the ~4x CPU encode advantage reproduces.
+
+### The fix
+
+`bloom_extract` now matches `shaders/pp/bloomextract.fp` exactly:
+
+```
+max((color + 0.001) * exposureAdjustment - threshold, 0)
+```
+
+Note the operand order -- bias applied **before** the exposure multiply,
+threshold subtracted **after**. This is not the same as scaling the
+threshold, because the reference scales the bias too; the GPT audit caught
+that specific point and it would have been easy to get wrong.
+
+- `MtBloomModule::Execute` takes an `exposureTex` parameter;
+  `mt_postprocess.cpp` passes
+  `GetPPTexture(&hw_postprocess.exposure.CameraTexture)`. Ordering is safe:
+  `hw_postprocess.Pass1` runs `exposure.Render` before the compute bloom.
+- `BloomParams` gains `float useExposure` (now 9 fields in all three copies).
+  Slot 2 is always bound -- `srcTex` stands in when exposure is unavailable
+  -- because a declared-but-unbound texture argument is invalid even when
+  the sample is branch-guarded.
+
+Build clean, parity exits 0. **Not yet verified in-game.**
+
+### Verification protocol for the fix
+
+At Ashes 2063 Enriched MAP51 "Dead Man Walking" with the solar lantern, `gl_exposure_speed 1`, fixed
+camera. Expect: `composite 0` and `2` now agree (the 3.8%/-7 gap closes),
+and the compute path now *responds* to `gl_exposure_base` 0.35 vs 10 where
+before it was byte-identical. The second is the stronger test -- it checks
+the exposure texture is actually reaching the kernel, not merely that two
+images look similar.
+
+### OPEN: compute-bloom "ghosting" above objects, motion-only (reported 2026-07-28)
+
+User reports a ghost image roughly an inch above objects (Ashes 2063
+Enriched MAP51, campfire/crate scene) with `mt_compute_bloom_composite 0`,
+**not** present under `composite 2` (reference). Compute-path-specific.
+
+**Does not appear in screenshots.** Three stills at the reported camera
+position were measured; the only compute-vs-reference difference is a broad
+brightness change (35% of pixels, max 9 luminance, spread over ground and
+sky) consistent with overall bloom strength, plus a rectangular darker patch
+near the crate. No displaced copy of anything.
+
+Since GZDoom's screenshot reads back the composed frame -- and bloom *is* in
+that readback, every bloom measurement this session came from these files --
+the artifact is probably **not in the frame's pixel data**. It is temporal or
+presentational, visible across a sequence of frames rather than within one.
+
+Not caused by the exposure fix: that change only multiplies extracted
+values and cannot displace anything spatially. It may however have made a
+pre-existing misalignment *visible* by letting more bloom survive the
+extract.
+
+Candidate mechanisms, none yet discriminated:
+
+- One-frame-stale bloom (glow lagging geometry during motion; invisible when
+  static because consecutive frames are identical).
+- **In-place composite.** The Tier 1 path additively blits `mCompositeTex`
+  back into `srcTex` -- the *same* pipeline image it read for the extract
+  (`mt_bloom.cpp:553-568`). The reference path instead outputs to
+  `NextPipelineTexture` and advances `mCurrentPipelineImage`
+  (`mt_postprocess.cpp:377-381`). This asymmetry is compute-only, which
+  matches the report. Best current suspect.
+- Drawable recycling (max drawables 3 on this machine).
+
+Ruled out by reading: mip-chain partial writes (every dispatch grid matches
+its destination texture's dimensions exactly, so no stale texels survive);
+and the Y/viewport coordinate chain, which round-trips correctly --
+`mCompositeTex` is allocated at exactly `srcW x srcH`, the blit sets viewport
+to the scene rect, and extract row 0 -> scene `uv.y=0` -> image bottom ->
+`bloom_fs` `uv.y=0` -> viewport bottom.
+
+Next diagnostics, cheapest first: (1) does it depend on motion type --
+strafe vs rotate-in-place vs walk forward, since stale bloom tracks
+screen-space motion; (2) screen recording, which captures presentation where
+stills do not; (3) Xcode GPU frame capture to inspect pipeline images
+mid-frame, which would settle the in-place-composite theory outright.
+
+**Still frames cannot diagnose this.** Do not spend more screenshots on it.
