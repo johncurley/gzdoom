@@ -411,57 +411,83 @@ bool MtBloomModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* srcTex, fl
     encoder->dispatchThreads(grid, MTL::Size(16,16,1));
     encoder->memoryBarrier(MTL::BarrierScopeTextures);
 
-    // 2) Blur horizontal: bloomA -> bloomB
-    encoder->setComputePipelineState(blurHPSO);
-    encoder->setBytes(&params, sizeof(BloomParams), 0);
-    encoder->setTexture(bloomA, 0);
-    encoder->setTexture(bloomB, 1);
-    encoder->dispatchThreads(grid, MTL::Size(16,16,1));
-    encoder->memoryBarrier(MTL::BarrierScopeTextures);
+    // 2) Blur/downscale/upscale pyramid, mirroring PPBloom::RenderBloom.
+    //
+    // Level 0 is bloomA (bloomB is its ping-pong temp); levels 1..N are
+    // mDownsampledTextures[0..N-1] with mDownsampledTempTextures as temps.
+    // Both paths run 4 levels (NumBloomLevels == 4; bloomA plus 3 mips).
+    //
+    // The reference blurs each level, downscales into the next, then walks
+    // back up *replacing* each lower level with the upscaled one above it,
+    // and finally composites level 0 alone at unit gain. This path used to
+    // instead sum all four levels at 1.0/0.18/0.09/0.06, which both overshot
+    // the gain (1.33x nominal) and piled correlated energy onto the same
+    // light -- measured 2026-07-30 at ~2.1x the reference's bloom. It also
+    // downsampled bloomA into every mip rather than chaining level to level,
+    // so the mips were four blurs of the same image, not a real pyramid.
+    const size_t numMips = mDownsampledTextures.size();
 
-    // 3) Blur vertical: bloomB -> bloomA
-    encoder->setComputePipelineState(blurVPSO);
-    encoder->setBytes(&params, sizeof(BloomParams), 0);
-    encoder->setTexture(bloomB, 0);
-    encoder->setTexture(bloomA, 1);
-    encoder->dispatchThreads(grid, MTL::Size(16,16,1));
-    encoder->memoryBarrier(MTL::BarrierScopeTextures);
+    auto levelTex = [&](size_t level) -> MTL::Texture* {
+        return level == 0 ? bloomA : mDownsampledTextures[level - 1];
+    };
+    auto levelTmp = [&](size_t level) -> MTL::Texture* {
+        return level == 0 ? bloomB : mDownsampledTempTextures[level - 1];
+    };
 
-
-    // 5) Downsample primary bloom into mip levels and combine them with reduced strength
-    for (size_t i = 0; i < mDownsampledTextures.size(); ++i) {
-        MTL::Texture* dst = mDownsampledTextures[i];
-        if (!dst) continue;
-
-        // Downsample: bloomA -> dst
-        encoder->setComputePipelineState(downsamplePSO);
-        BloomParams downParams = params;
-        downParams.bloomRes[0] = (float)dst->width(); downParams.bloomRes[1] = (float)dst->height();
-        encoder->setBytes(&downParams, sizeof(BloomParams), 0);
-        encoder->setTexture(bloomA, 0);
-        encoder->setTexture(dst, 1);
-        MTL::Size dstGrid = { (NS::UInteger)dst->width(), (NS::UInteger)dst->height(), 1 };
-        encoder->dispatchThreads(dstGrid, MTL::Size(16,16,1));
-        encoder->memoryBarrier(MTL::BarrierScopeTextures);
-
-        // Blur the downsampled texture in-place using the temp ping-pong texture:
-        MTL::Texture* tmp = mDownsampledTempTextures[i];
-        // Horizontal blur: dst -> tmp
+    // Separable blur in place, via the level's ping-pong temp.
+    auto blurLevel = [&](size_t level) {
+        MTL::Texture* tex = levelTex(level);
+        MTL::Texture* tmp = levelTmp(level);
+        if (!tex || !tmp) return;
+        BloomParams p = params;
+        p.bloomRes[0] = (float)tex->width();
+        p.bloomRes[1] = (float)tex->height();
+        MTL::Size g = { tex->width(), tex->height(), 1 };
         encoder->setComputePipelineState(blurHPSO);
-        encoder->setBytes(&downParams, sizeof(BloomParams), 0);
-        encoder->setTexture(dst, 0);
+        encoder->setBytes(&p, sizeof(BloomParams), 0);
+        encoder->setTexture(tex, 0);
         encoder->setTexture(tmp, 1);
-        encoder->dispatchThreads(dstGrid, MTL::Size(16,16,1));
+        encoder->dispatchThreads(g, MTL::Size(16,16,1));
         encoder->memoryBarrier(MTL::BarrierScopeTextures);
-        // Vertical blur: tmp -> dst
         encoder->setComputePipelineState(blurVPSO);
-        encoder->setBytes(&downParams, sizeof(BloomParams), 0);
+        encoder->setBytes(&p, sizeof(BloomParams), 0);
         encoder->setTexture(tmp, 0);
-        encoder->setTexture(dst, 1);
-        encoder->dispatchThreads(dstGrid, MTL::Size(16,16,1));
+        encoder->setTexture(tex, 1);
+        encoder->dispatchThreads(g, MTL::Size(16,16,1));
         encoder->memoryBarrier(MTL::BarrierScopeTextures);
+    };
 
+    // Bilinear resample. downsample_box derives its UVs from the destination
+    // extent, so the same kernel serves the downscale and the upscale legs.
+    auto resample = [&](size_t from, size_t to) {
+        MTL::Texture* src = levelTex(from);
+        MTL::Texture* dst = levelTex(to);
+        if (!src || !dst) return;
+        BloomParams p = params;
+        p.bloomRes[0] = (float)dst->width();
+        p.bloomRes[1] = (float)dst->height();
+        encoder->setComputePipelineState(downsamplePSO);
+        encoder->setBytes(&p, sizeof(BloomParams), 0);
+        encoder->setTexture(src, 0);
+        encoder->setTexture(dst, 1);
+        MTL::Size g = { dst->width(), dst->height(), 1 };
+        encoder->dispatchThreads(g, MTL::Size(16,16,1));
+        encoder->memoryBarrier(MTL::BarrierScopeTextures);
+    };
+
+    // Blur and downscale.
+    for (size_t i = 0; i < numMips; ++i) {
+        blurLevel(i);
+        resample(i, i + 1);
     }
+
+    // Blur and upscale, each level replacing the one below it.
+    for (size_t i = numMips; i > 0; --i) {
+        blurLevel(i);
+        resample(i, i - 1);
+    }
+
+    blurLevel(0);
 
     // Finish initial compute encoder before creating another one
     encoder->endEncoding();
@@ -484,17 +510,19 @@ bool MtBloomModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* srcTex, fl
     compositeParams.viewportOrigin[0] = (float)viewport.left;
     compositeParams.viewportOrigin[1] = (float)viewport.top;
 
+    // Only level 0 is composited, at unit gain, matching the reference's single
+    // additive BloomCombine draw of level0.VTexture (hw_postprocess.cpp:151-159;
+    // bloomcombine.fp is a plain copy with no gain). The pyramid above has
+    // already folded the coarser levels into bloomA by upscale-replace, so
+    // summing the mips here would double-count them.
+    //
+    // Slots 1-3 keep bloomA bound with strength 0: the kernel skips zero-weight
+    // levels, but every declared texture argument must still be bound.
     MTL::Texture* compositeInputs[4] = { bloomA, bloomA, bloomA, bloomA };
-    const size_t compositeLevels = std::min<size_t>(mDownsampledTextures.size(), 3);
-    for (size_t i = 0; i < compositeLevels; ++i) {
-        auto dst = mDownsampledTextures[i];
-        if (!dst)
-            continue;
-        const size_t slot = i + 1;
-        compositeInputs[slot] = dst;
-        compositeParams.strength[slot] = 0.18f / (float)(i + 1);
-        compositeParams.bloomRes[slot][0] = (float)dst->width();
-        compositeParams.bloomRes[slot][1] = (float)dst->height();
+    for (int i = 1; i < 4; ++i) {
+        compositeParams.strength[i] = 0.0f;
+        compositeParams.bloomRes[i][0] = (float)bloomW;
+        compositeParams.bloomRes[i][1] = (float)bloomH;
     }
 
     // Either write directly into the scene on Tier 2 devices, or compute into
