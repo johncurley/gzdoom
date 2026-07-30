@@ -51,4 +51,6 @@ fmodapi*linux/
 /*.jpeg
 /FINDINGS*.md
 /GEMINI_AUDIT_HANDOFF*.md
+/GPT_AUDIT_CONTRACT*.md
+tools/__pycache__/
 /.antigravitycli/
