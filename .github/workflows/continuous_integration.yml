@@ -110,13 +110,11 @@ jobs:
     # the configuration with no other coverage. Runs under Xvfb with the X11
     # backend forced, since the runners have no compositor.
     #
-    # continue-on-error while the step proves itself on these runners -- the
-    # native backend opens input devices through libinput, which may not behave
-    # on a headless runner. Once it has been reliably green, drop that line so
-    # a failure to start actually fails the build.
+    # Blocking: the step passed on all six Linux jobs on its first run, headless
+    # Xvfb and libinput-without-a-seat included, which were the parts that could
+    # not be checked locally. A binary that will not start should fail the build.
     - name: Smoke test (start and quit)
       if: runner.os == 'Linux'
-      continue-on-error: true
       shell: bash
       run: |
         sudo apt-get install -y xvfb
