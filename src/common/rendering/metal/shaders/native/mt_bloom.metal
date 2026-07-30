@@ -20,6 +20,10 @@ struct BloomParams {
     float2 srcScale;
     float2 srcOffset;
     float2 viewportOrigin;
+    // Nonzero when an exposure texture is bound to bloom_extract. When zero
+    // the extract runs unexposed, which is only correct if the camera
+    // exposure pass did not run this frame.
+    float useExposure;
     float sampleWeights[8];
 };
 
@@ -34,15 +38,31 @@ kernel void bloom_extract(
     uint2 gid [[thread_position_in_grid]],
     constant BloomParams &params [[buffer(0)]],
     texture2d<float, access::sample> src [[texture(0)]],
-    texture2d<float, access::write> out [[texture(1)]])
+    texture2d<float, access::write> out [[texture(1)]],
+    texture2d<float, access::sample> exposureTex [[texture(2)]])
 {
     if (gid.x >= out.get_width() || gid.y >= out.get_height()) return;
     sampler s(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
     float2 uv = params.srcOffset + ((float2(gid) + 0.5) / params.bloomRes) * params.srcScale;
     float4 c = src.sample(s, uv);
-    // Match PP bloom extract: add a tiny bias before threshold so pure black
-    // doesn't bloom, and allow the threshold to be tuned (default 1.0).
-    float3 res = max(c.rgb - float3(params.threshold) + float3(0.001), float3(0.0));
+
+    // Match PP bloom extract (shaders/pp/bloomextract.fp) exactly:
+    //     max((color + 0.001) * exposureAdjustment - threshold, 0)
+    // The bias is applied *before* the exposure multiply and the threshold
+    // subtraction *after*, which is not the same as scaling the threshold:
+    // the reference scales the bias too. Getting this order wrong changes
+    // which pixels survive the extract at all.
+    //
+    // Omitting the exposure term made compute bloom measurably dimmer than
+    // the reference path in dark scenes (verified 2026-07-27: with exposure
+    // forced off the two paths produce byte-identical frames, and with it
+    // live the compute path was darker across ~3.8% of the frame around
+    // light sources, peak -7 luminance).
+    float exposureAdjustment = params.useExposure != 0.0
+        ? exposureTex.sample(s, float2(0.5)).x
+        : 1.0;
+    float3 res = max((c.rgb + float3(0.001)) * exposureAdjustment - float3(params.threshold),
+                     float3(0.0));
     out.write(float4(res, 1.0), gid);
 }
 

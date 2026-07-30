@@ -474,7 +474,13 @@ void MtPostprocess::PostProcessScene(
         auto srcTex = fb->GetBuffers()->PipelineImage[mCurrentPipelineImage]->GetTexture();
         if (cmdBuf && srcTex) {
           fb->GetRenderState()->EndRenderPass();
-          computeBloomRendered = fb->mBloomModule->Execute(cmdBuf, srcTex, gl_bloom_amount);
+          // hw_postprocess.Pass1 above ran exposure.Render, so CameraTexture
+          // holds this frame's adaptation. The reference extract multiplies
+          // by it; without it compute bloom is visibly dimmer in dark scenes.
+          MTL::Texture *exposureTex = fb->GetTextureManager()->GetPPTexture(
+              &hw_postprocess.exposure.CameraTexture);
+          computeBloomRendered = fb->mBloomModule->Execute(cmdBuf, srcTex, gl_bloom_amount,
+                                                          exposureTex);
         }
       }
 

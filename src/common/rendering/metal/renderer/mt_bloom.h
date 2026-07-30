@@ -14,6 +14,10 @@ struct BloomParams {
     float srcScale[2];
     float srcOffset[2];
     float viewportOrigin[2];
+    // Nonzero when an exposure texture is bound to bloom_extract. Must stay
+    // in this position -- mt_bloom.metal's BloomParams declares it here, and
+    // tools/check_shader_parity.py compares field order.
+    float useExposure;
     float sampleWeights[8];
 };
 
@@ -22,7 +26,11 @@ public:
     MtBloomModule(MetalRenderDevice* fb);
     ~MtBloomModule();
 
-    bool Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* sceneColor, float amount);
+    // exposureTex is hw_postprocess.exposure.CameraTexture (1x1 R32f). Pass
+    // nullptr only when the camera exposure pass did not run this frame;
+    // otherwise the extract diverges from the reference PP bloom path.
+    bool Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* sceneColor, float amount,
+                 MTL::Texture* exposureTex);
 
 private:
     MetalRenderDevice* fb;
