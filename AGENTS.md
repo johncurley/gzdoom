@@ -2669,6 +2669,100 @@ mid-frame, which would settle the in-place-composite theory outright.
 
 **Still frames cannot diagnose this.** Do not spend more screenshots on it.
 
+## Capture methodology: what a valid A/B scene requires (2026-07-31)
+
+Hard-won during the exposure-response test, which produced two entirely
+invalid data sets before the method was right. **Read this before planning
+any screenshot A/B.**
+
+**1. `pause` freezes the playsim but NOT the renderer.** Verified: with the
+game paused, toggling `gl_ssao_debug 0 -> 2` changed the frame from
+mean_lum 12.64 to 248.55. Postprocess re-runs on a paused frame, so `pause`
+is the correct tool for holding an animated scene still while still A/B-ing
+render settings. (`CHT_FREEZE` exists but is only reachable from bot code in
+this build -- there is no console cheat for it.)
+
+**2. Animated scene lighting invalidates everything.** Ashes 2063 MAP51's
+campfire scene dims and brightens as part of the mod. A same-config control
+pair three minutes apart differed by **12.4% of frame, mean delta 0.678** --
+larger than the effect under test. Every conclusion drawn from that set was
+noise. Always shoot a same-config control pair *in the same session* and
+treat its delta as the noise floor; any result smaller than it is not a
+result.
+
+**3. Scene must actually exercise the effect.** The Ashes Afterglow lantern
+in the dark area is a **dead scene for bloom** -- nothing crosses the
+threshold, so `mt_compute_bloom_composite` 0 vs 2 and `gl_exposure_base`
+0.35 vs 10 all produced *byte-identical* frames. Known-good bloom location
+is the **Ashes 2063 Enriched MAP51 solar lantern** (`gl_bloom` 0 vs 1
+differs across 9.4% of frame there).
+
+**4. Diagnostic signature of each failure mode:**
+- Shots that should differ are byte-identical -> dead scene (or a cvar that
+  did not apply).
+- Shots that should be identical differ -> scene animation or adaptation
+  drift.
+- Both at once -> you have the labels wrong.
+
+**5. Exposure direction, for sanity-checking results.**
+`exposureAdjustment = 1.0 / max(ExposureBase + light*ExposureScale, ExposureMin)`
+with defaults `scale 1.3, min 0.35, base 0.35`. So base 0.35 -> adj ~2.4,
+base 10 -> adj ~0.099. **Base 0.35 must be the brighter frame.** If a data
+set says otherwise, the data set is wrong. `CameraTexture` feeds *only* the
+bloom extract -- no tonemap path -- and `PPCameraExposure::Render` reads the
+pre-bloom scene, so there is no bloom->exposure feedback loop to blame.
+
+## Compute-bloom exposure response: inferred, not directly measured
+
+The direct test (does compute bloom respond to `gl_exposure_base` 0.35 vs
+10?) was attempted twice and abandoned -- both data sets were invalidated by
+the traps above. It is **not** recorded as verified.
+
+It is however strongly implied by the convergence result. Pre-fix, with
+compute ignoring exposure entirely, the two paths differed across 3.8% of
+frame at peak -7 luminance. Post-fix they agree to 81 px (0.0089%, mean
+signed +0.0002). The reference definitely applies exposure (stock
+`bloomextract.fp`, adj ~2.4 at defaults), so agreement that tight is only
+possible if compute applies essentially the same factor. The residual
+loophole -- compute applying a *constant* near 2.4 rather than sampling the
+texture -- requires a bug nobody wrote, since the extract is byte-matched to
+the reference and visibly samples `exposureTex` under `params.useExposure`.
+
+## AO combine: two findings, neither yet actioned (2026-07-31)
+
+**1. `ssao_combine` (compute kernel, `mt_ao.metal:1259`) is dead code.**
+Never compiled into a PSO -- only `ssao_combine_fs` is (`mt_ao.cpp:1340`).
+It is missing the reference's `ssao.y > 2.0` validity guard and `depthMask`
+ramp, which makes it look like a bug in the shipping path when it is not
+reachable at all. **Delete it**; it will mislead the next person debugging
+AO bleed.
+
+**2. `depthMask` ramp rate diverges from the reference.** Reference
+(`ssaocombine.fp`): `1.0 - exp2(-ssao.y * 0.01)`. Metal
+(`ssao_combine_fs`, both branches): `exp2(-... * 0.005)` -- half the rate,
+so Metal's depthMask is always smaller and AO fades in more slowly with
+distance. **Not yet established whether this is deliberate tuning or drift.**
+Do not "fix" it without checking, and re-measure AO appearance if changed.
+
+## Not a renderer bug: pixel bleedthrough in Ashes Enriched (2026-07-31)
+
+User-reported bleedthrough on some Ashes Enriched levels. **Reproduces
+identically on both the Metal and OpenGL backends, and is present with AO
+both on and off.** Therefore not a Metal issue and not AO -- it is mod
+assets or shared engine code. Recorded so it is not re-investigated as a
+backend bug. Backend switching for this kind of test:
+`vid_preferbackend` 0=OpenGL, 1=Vulkan, 3=Metal (`v_video.cpp:122-140`),
+restart required.
+
+Related observation, **impression not measurement**: the Metal backend looks
+visibly "richer/deeper" than OpenGL on the same scene. It is *not* pixel
+format -- scene colour is `BGRA8Unorm` on Metal and 8-bit on GL, and both
+use RGB10A2 for scene normals (`gl_renderbuffers.cpp:201,219`), with Metal
+only ever *falling back* below that. The likely cause is the compute AO
+being a more capable implementation than the stock PP SSAO. To settle it:
+three captures at one spot -- Metal `mt_compute_ao 1`, Metal
+`mt_compute_ao 0`, and OpenGL.
+
 ## Screenshot A/B tooling (added 2026-07-30)
 
 `tools/cluster.py`, `tools/localize.py`, `tools/pngdiff.py` -- stdlib-only
