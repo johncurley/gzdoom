@@ -2669,6 +2669,67 @@ mid-frame, which would settle the in-place-composite theory outright.
 
 **Still frames cannot diagnose this.** Do not spend more screenshots on it.
 
+## ROADMAP-LEVEL: Metal has no HDR pipeline buffer (found 2026-07-31)
+
+Probably the largest single fidelity gap between the backends, and it
+explains several things that were previously confusing.
+
+| buffer | OpenGL | Metal |
+|---|---|---|
+| Pipeline/postprocess textures | `GL_RGBA16F` (`gl_renderbuffers.cpp:246`) | `BGRA8Unorm` (`mt_renderbuffers.cpp:71`) |
+| Scene colour | `GL_RGBA16F` (198, 207) | `BGRA8Unorm` (124) |
+| Scene normal | `GL_RGB10_A2` (201, 219) | `RGB10A2Unorm` when supported |
+
+**Metal clamps scene colour to [0,1]. OpenGL carries half-float HDR.**
+
+Consequences:
+
+1. **The user's observation that Metal "looks richer and deeper" than GL is
+   probably Metal being *less* correct.** 8-bit clamping crushes highlights,
+   which raises apparent contrast and saturation. GL preserves headroom and
+   rolls it off. Punchier, not better.
+
+2. **The bloom extract's threshold of 1.0 assumes HDR.** It computes
+   `max((c + 0.001) * adj - 1.0, 0)`. On Metal `c <= 1.0` always, so the
+   term is at most `adj - 1` -- **compute bloom can only fire when
+   `exposureAdjustment > 1`.** On GL a bright light can be `c = 4.0` and
+   bloom regardless of exposure. This retroactively explains:
+   - why Metal bloom is so violently exposure-sensitive, and why
+     `gl_exposure_base` dominated every bloom measurement;
+   - why the Ashes Afterglow lantern was a **dead scene** for bloom --
+     nothing can cross a threshold of 1.0 when the buffer clamps at 1.0;
+   - why `gl_exposure_speed 1` had a large enough effect to manufacture a
+     visible motion artifact.
+
+**Do not treat this as a straightforward bug to fix.** Two caveats:
+
+- `BGRA8Unorm` may be a deliberate constraint. The Tier 2 direct-composite
+  bloom path is gated on `supportsReadWriteBGRA8` and exists *because* the
+  format is BGRA8. Moving to RGBA16F changes that design. (Note that path
+  has never executed on this hardware -- see the Apple Silicon gap.)
+- **Unverified:** whether GZDoom's scene rendering actually emits values
+  above 1.0 in practice. If the content is effectively LDR the headroom
+  matters less than the argument implies, though the precision/banding
+  difference would remain. Establish this before any format change.
+
+## TOOLING GAP: the parity script cannot catch reference divergence
+
+`tools/check_shader_parity.py` compares Metal-native against Metal-inline
+against the CPU headers. It is blind to divergence from the **reference**
+implementation in `wadsrc/static/shaders/pp/*.fp`.
+
+Demonstrated twice on 2026-07-31: the `depthMask` ramp (0.005 vs the
+reference's 0.01) drifted in the inline fallback, then a "parity sync"
+propagated it into the shipping `.metal`. After that sync both Metal copies
+agreed, the script reported MATCH, and the divergence from the reference was
+invisible. The bloom mip-summation bug was the same shape -- self-consistent
+Metal code that no longer matched what the reference actually does.
+
+**Highest-leverage tooling addition available:** extend the script to
+compare shared numeric constants and structure against the `.fp` reference
+shaders. Both of this session's real defects would have been caught
+automatically, and both cost hours to find by hand.
+
 ## Capture methodology: what a valid A/B scene requires (2026-07-31)
 
 Hard-won during the exposure-response test, which produced two entirely
