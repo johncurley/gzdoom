@@ -220,24 +220,24 @@ public:
           fb->GetBuffers()
               ->PipelineImage[fb->GetPostprocess()->mCurrentPipelineImage]
               ->GetTexture();
-      format = MTL::PixelFormatBGRA8Unorm;
+      format = (MTL::PixelFormat)fb->GetBuffers()->GetPipelineFormat();
     } else if (Output.Type == PPTextureType::NextPipelineTexture) {
       int next = (fb->GetPostprocess()->mCurrentPipelineImage + 1) %
                  MtRenderBuffers::NumPipelineImages;
       outputTex = fb->GetBuffers()->PipelineImage[next]->GetTexture();
-      format = MTL::PixelFormatBGRA8Unorm;
+      format = (MTL::PixelFormat)fb->GetBuffers()->GetPipelineFormat();
     } else if (Output.Type == PPTextureType::SceneColor) {
       outputTex = fb->GetBuffers()->SceneColor->GetTexture();
-      format = MTL::PixelFormatBGRA8Unorm;
+      format = (MTL::PixelFormat)fb->GetBuffers()->GetSceneColorFormat();
       // SSAO Fix: Enable Stencil Test when targeting SceneColor to avoid bleeding through portals
       depthStencil = fb->GetBuffers()->SceneDepthStencil->GetTexture();
       stencilTest = true;
     } else if (Output.Type == PPTextureType::SceneFog) {
       outputTex = fb->GetBuffers()->SceneFog->GetTexture();
-      format = MTL::PixelFormatBGRA8Unorm;
+      format = (MTL::PixelFormat)fb->GetBuffers()->GetSceneFogFormat();
     } else if (Output.Type == PPTextureType::SceneNormal) {
       outputTex = fb->GetBuffers()->SceneNormal->GetTexture();
-      format = MTL::PixelFormatBGRA8Unorm;
+      format = (MTL::PixelFormat)fb->GetBuffers()->GetSceneNormalFormat();
     } else if (Output.Type == PPTextureType::SceneDepth) {
       outputTex = fb->GetBuffers()->SceneDepthStencil->GetTexture();
       format = MTL::PixelFormatDepth32Float_Stencil8;
@@ -445,7 +445,7 @@ void MtPostprocess::SetActiveRenderTarget() {
   auto tex = buffers->PipelineImage[mCurrentPipelineImage]->GetTexture();
   fb->GetRenderState()->SetRenderTarget(
       tex, buffers->PipelineDepthStencil->GetTexture(), buffers->GetWidth(),
-      buffers->GetHeight(), (int)MTL::PixelFormatBGRA8Unorm, 1);
+      buffers->GetHeight(), buffers->GetPipelineFormat(), 1);
   // Ensure this active postprocess target uses a single color attachment
   fb->GetRenderState()->EnableDrawBuffers(1, false);
   fb->GetRenderState()->SetViewport(0, 0, fb->GetWidth(), fb->GetHeight());
@@ -688,5 +688,6 @@ void MtPostprocess::SetSceneRenderTarget(bool useSSAO) {
       fb->GetBuffers()->SceneDepthStencil->GetTexture(),
       fb->GetBuffers()->GetSceneWidth(),
       fb->GetBuffers()->GetSceneHeight(),
-      (int)MTL::PixelFormatBGRA8Unorm, fb->GetBuffers()->GetSceneSamples());
+      fb->GetBuffers()->GetSceneColorFormat(),
+      fb->GetBuffers()->GetSceneSamples());
 }

@@ -41,7 +41,14 @@ private:
     MTL::ComputePipelineState* blurVPSO = nullptr;
     MTL::ComputePipelineState* combineAllPSO = nullptr;
     MTL::ComputePipelineState* combineRWPSO = nullptr;
+    // Tier 1 composite. Keyed on the scene colour format, which mt_hdr_pipeline
+    // can change mid-session -- a PSO whose colour attachment format disagrees
+    // with the render target is a Metal validation error.
     MTL::RenderPipelineState* compositePSO = nullptr;
+    int compositePSOFormat = 0;
+    MTL::Function* compositeVertexFn = nullptr;
+    MTL::Function* compositeFragmentFn = nullptr;
+    MTL::RenderPipelineState* GetCompositePSO(MTL::PixelFormat format);
 
     std::vector<MTL::Texture*> mDownsampledTextures; // Mip chain for blur
     std::vector<MTL::Texture*> mDownsampledTempTextures; // ping-pong temps per level

@@ -274,32 +274,10 @@ MtBloomModule::MtBloomModule(MetalRenderDevice* device) : fb(device) {
 
     // Tier 1 cannot reliably write BGRA8 from compute. Composite the
     // high-precision bloom contribution with fixed-function blending instead.
-    auto vert = library->newFunction(NS::String::string("bloom_vs", NS::UTF8StringEncoding));
-    auto frag = library->newFunction(NS::String::string("bloom_fs", NS::UTF8StringEncoding));
-    if (vert && frag) {
-        NS::Error* rpError = nullptr;
-        auto rpDesc = MTL::RenderPipelineDescriptor::alloc()->init();
-        rpDesc->setVertexFunction(vert);
-        rpDesc->setFragmentFunction(frag);
-        auto color = rpDesc->colorAttachments()->object(0);
-        color->setPixelFormat(MTL::PixelFormatBGRA8Unorm);
-        color->setBlendingEnabled(true);
-        color->setRgbBlendOperation(MTL::BlendOperationAdd);
-        color->setAlphaBlendOperation(MTL::BlendOperationAdd);
-        color->setSourceRGBBlendFactor(MTL::BlendFactorOne);
-        color->setDestinationRGBBlendFactor(MTL::BlendFactorOne);
-        color->setSourceAlphaBlendFactor(MTL::BlendFactorZero);
-        color->setDestinationAlphaBlendFactor(MTL::BlendFactorOne);
-        compositePSO = deviceObj->newRenderPipelineState(rpDesc, &rpError);
-        if (!compositePSO && rpError) {
-            Printf(PRINT_LOG, "Metal: Failed to create Tier 1 bloom composite pipeline: %s\n",
-                   rpError->localizedDescription()->utf8String());
-        }
-        if (rpError) rpError->release();
-        rpDesc->release();
-    }
-    if (vert) vert->release();
-    if (frag) frag->release();
+    // The PSO itself is built on first use, once the scene colour format is
+    // known -- see GetCompositePSO.
+    compositeVertexFn = library->newFunction(NS::String::string("bloom_vs", NS::UTF8StringEncoding));
+    compositeFragmentFn = library->newFunction(NS::String::string("bloom_fs", NS::UTF8StringEncoding));
 
     if (releaseLibrary)
         library->release();
@@ -314,7 +292,44 @@ MtBloomModule::~MtBloomModule() {
     if (combineAllPSO) combineAllPSO->release();
     if (combineRWPSO) combineRWPSO->release();
     if (compositePSO) compositePSO->release();
+    if (compositeVertexFn) compositeVertexFn->release();
+    if (compositeFragmentFn) compositeFragmentFn->release();
     if (mCompositeTex) { mCompositeTex->release(); mCompositeTex = nullptr; }
+}
+
+MTL::RenderPipelineState* MtBloomModule::GetCompositePSO(MTL::PixelFormat format) {
+    if (compositePSO && compositePSOFormat == (int)format)
+        return compositePSO;
+    if (!compositeVertexFn || !compositeFragmentFn)
+        return nullptr;
+
+    if (compositePSO) {
+        compositePSO->release();
+        compositePSO = nullptr;
+    }
+    compositePSOFormat = (int)format;
+
+    NS::Error* rpError = nullptr;
+    auto rpDesc = MTL::RenderPipelineDescriptor::alloc()->init();
+    rpDesc->setVertexFunction(compositeVertexFn);
+    rpDesc->setFragmentFunction(compositeFragmentFn);
+    auto color = rpDesc->colorAttachments()->object(0);
+    color->setPixelFormat(format);
+    color->setBlendingEnabled(true);
+    color->setRgbBlendOperation(MTL::BlendOperationAdd);
+    color->setAlphaBlendOperation(MTL::BlendOperationAdd);
+    color->setSourceRGBBlendFactor(MTL::BlendFactorOne);
+    color->setDestinationRGBBlendFactor(MTL::BlendFactorOne);
+    color->setSourceAlphaBlendFactor(MTL::BlendFactorZero);
+    color->setDestinationAlphaBlendFactor(MTL::BlendFactorOne);
+    compositePSO = fb->device->device->newRenderPipelineState(rpDesc, &rpError);
+    if (!compositePSO && rpError) {
+        Printf(PRINT_LOG, "Metal: Failed to create Tier 1 bloom composite pipeline: %s\n",
+               rpError->localizedDescription()->utf8String());
+    }
+    if (rpError) rpError->release();
+    rpDesc->release();
+    return compositePSO;
 }
 
 void MtBloomModule::CreateTextures(int width, int height, MTL::PixelFormat format) {
@@ -548,7 +563,8 @@ bool MtBloomModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* srcTex, fl
             combEnc->setTexture(compositeInputs[i], i + 1);
         combEnc->dispatchThreads(fullGrid, MTL::Size(16,16,1));
         combEnc->endEncoding();
-    } else if (compositePSO && combineAllPSO) {
+    } else if (auto composite = GetCompositePSO(srcTex->pixelFormat());
+               composite && combineAllPSO) {
         // Create a high-precision target for the combined bloom contribution.
         if (auto compute = fb->GetComputeManager()) {
             const auto usage = (MTL::TextureUsage)(MTL::TextureUsageShaderRead | MTL::TextureUsageShaderWrite);
@@ -587,7 +603,7 @@ bool MtBloomModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* srcTex, fl
         renderState->SetScissor(viewport.left, viewport.top, srcW, srcH);
         renderState->BeginRenderPass();
         if (auto renderEncoder = renderState->GetEncoder()) {
-            renderEncoder->setRenderPipelineState(compositePSO);
+            renderEncoder->setRenderPipelineState(composite);
             renderEncoder->setFragmentTexture(mCompositeTex, 0);
             if (sampler) renderEncoder->setFragmentSamplerState(sampler, 0);
             renderEncoder->drawPrimitives(MTL::PrimitiveTypeTriangle,

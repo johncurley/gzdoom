@@ -14,20 +14,40 @@
 
 EXTERN_CVAR(Int, gl_shadowmap_quality)
 
+// Half-float scene colour / postprocess pipeline, matching the OpenGL and
+// Vulkan backends (both use RGBA16F). Metal has historically used BGRA8Unorm,
+// which clamps scene colour to [0,1]; the reference shaders deliberately carry
+// up to 1.4 out of ProcessMaterialLight, and the bloom extract threshold of 1.0
+// assumes that headroom exists. Off by default until the visual A/B lands.
+CVAR(Bool, mt_hdr_pipeline, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+
 MtRenderBuffers::MtRenderBuffers(MetalRenderDevice *fb) : fb(fb) {}
 
 MtRenderBuffers::~MtRenderBuffers() {}
 
+int MtRenderBuffers::DesiredColorFormat() const {
+  return (int)(mt_hdr_pipeline ? MTL::PixelFormatRGBA16Float
+                               : MTL::PixelFormatBGRA8Unorm);
+}
+
 void MtRenderBuffers::BeginFrame(int width, int height, int sceneWidth,
                                  int sceneHeight) {
-  if (mWidth != width || mHeight != height) {
+  // A mid-session mt_hdr_pipeline toggle changes the format of every colour
+  // buffer, so it forces the same recreation path a resize does. Metal keeps
+  // the outgoing textures alive for any command buffer still referencing them.
+  const int colorFormat = DesiredColorFormat();
+  const bool formatChanged = (colorFormat != mColorFormat);
+  mColorFormat = colorFormat;
+
+  if (mWidth != width || mHeight != height || formatChanged) {
     mWidth = width;
     mHeight = height;
     CreatePipeline(width, height);
     CreatePipelineDepthStencil(width, height);
   }
 
-  if (mSceneWidth != sceneWidth || mSceneHeight != sceneHeight) {
+  if (mSceneWidth != sceneWidth || mSceneHeight != sceneHeight ||
+      formatChanged) {
     mSceneWidth = sceneWidth;
     mSceneHeight = sceneHeight;
     CreateScene(sceneWidth, sceneHeight, 1); // samples=1 for now
@@ -68,7 +88,7 @@ void MtRenderBuffers::CreatePipeline(int width, int height) {
     auto desc = MTL::TextureDescriptor::alloc()->init();
     desc->setWidth(width);
     desc->setHeight(height);
-    desc->setPixelFormat(MTL::PixelFormatBGRA8Unorm);
+    desc->setPixelFormat((MTL::PixelFormat)mColorFormat);
     auto usage = MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead;
     if (fb->mVersionManager.supportsReadWriteBGRA8)
       usage = usage | MTL::TextureUsageShaderWrite;
@@ -121,7 +141,7 @@ void MtRenderBuffers::CreateSceneColor(int width, int height, int samples) {
   auto desc = MTL::TextureDescriptor::alloc()->init();
   desc->setWidth(width);
   desc->setHeight(height);
-  desc->setPixelFormat(MTL::PixelFormatBGRA8Unorm);
+  desc->setPixelFormat((MTL::PixelFormat)mColorFormat);
   // Allow compute shaders (e.g. bloom combine) to write into the scene color texture only on devices that support read-write BGRA8
   if (fb->mVersionManager.supportsReadWriteBGRA8) {
     desc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead | MTL::TextureUsageShaderWrite);
@@ -174,6 +194,7 @@ void MtRenderBuffers::CreateSceneNormal(int width, int height, int samples) {
   if (fb->mVersionManager.supportsRGB10A2) {
     format = MTL::PixelFormatRGB10A2Unorm;
   }
+  mNormalFormat = (int)format;
 
   desc->setPixelFormat(format);
   desc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
@@ -195,7 +216,9 @@ void MtRenderBuffers::CreateSceneFog(int width, int height, int samples) {
   auto desc = MTL::TextureDescriptor::alloc()->init();
   desc->setWidth(width);
   desc->setHeight(height);
-  desc->setPixelFormat(MTL::PixelFormatBGRA8Unorm);
+  // 8-bit in the reference too -- does not follow mt_hdr_pipeline.
+  mFogFormat = (int)MTL::PixelFormatBGRA8Unorm;
+  desc->setPixelFormat((MTL::PixelFormat)mFogFormat);
   desc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
   desc->setStorageMode(MTL::StorageModePrivate);
   desc->setSampleCount(samples);

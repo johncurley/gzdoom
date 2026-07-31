@@ -884,7 +884,7 @@ void MetalRenderDevice::SetActiveRenderTarget() {
   mMtRenderState->SetRenderTarget(
       tex, nullptr, // Disable depth for 2D pass
       mActiveRenderBuffers->GetWidth(), mActiveRenderBuffers->GetHeight(),
-      (int)MTL::PixelFormatBGRA8Unorm, 1);
+      mActiveRenderBuffers->GetSceneColorFormat(), 1);
 
   // Mark as filled so the renderer doesn't clear it during secondary passes
   // (like 2D)
@@ -943,22 +943,41 @@ void MetalRenderDevice::CopyScreenToBuffer(int w, int h, uint8_t *data) {
   auto srcTex = mPostprocess->GetCurrentTexture();
   if (!srcTex)
     return;
-  size_t dataSize = w * h * 4;
+  // The pipeline images are BGRA8Unorm normally and RGBA16Float when
+  // mt_hdr_pipeline is on, so neither the stride nor the unpack can be
+  // hardcoded.
+  const bool halfFloat = srcTex->pixelFormat() == MTL::PixelFormatRGBA16Float;
+  const size_t bytesPerPixel = halfFloat ? 8 : 4;
+  const size_t bytesPerRow = (size_t)w * bytesPerPixel;
+  const size_t dataSize = bytesPerRow * (size_t)h;
   MTL::Buffer *stagingBuffer =
       device->device->newBuffer(dataSize, MTL::ResourceStorageModeShared);
   auto cmdBuffer = mCommands->GetRenderCommandBuffer();
   auto blitEncoder = cmdBuffer->blitCommandEncoder();
   MTL::Size sourceSize = MTL::Size(w, h, 1);
   blitEncoder->copyFromTexture(srcTex, 0, 0, MTL::Origin(0, 0, 0), sourceSize,
-                               stagingBuffer, 0, w * 4, w * h * 4);
+                               stagingBuffer, 0, bytesPerRow, dataSize);
   blitEncoder->endEncoding();
   mCommands->WaitForCommands(true);
-  uint8_t *pixels = (uint8_t *)stagingBuffer->contents();
   uint8_t *dest = data;
-  for (int i = 0; i < w * h; i++) {
-    dest[i * 3 + 0] = pixels[i * 4 + 0];
-    dest[i * 3 + 1] = pixels[i * 4 + 1];
-    dest[i * 3 + 2] = pixels[i * 4 + 2];
+  if (halfFloat) {
+    // RGBA16Float is linear-ish scene colour above 1.0; the screenshot is 8-bit
+    // so clamp rather than tonemap -- the present pass has already run.
+    const __fp16 *pixels = (const __fp16 *)stagingBuffer->contents();
+    for (int i = 0; i < w * h; i++) {
+      for (int c = 0; c < 3; c++) {
+        float v = (float)pixels[i * 4 + c];
+        v = v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
+        dest[i * 3 + c] = (uint8_t)(v * 255.0f + 0.5f);
+      }
+    }
+  } else {
+    const uint8_t *pixels = (const uint8_t *)stagingBuffer->contents();
+    for (int i = 0; i < w * h; i++) {
+      dest[i * 3 + 0] = pixels[i * 4 + 0];
+      dest[i * 3 + 1] = pixels[i * 4 + 1];
+      dest[i * 3 + 2] = pixels[i * 4 + 2];
+    }
   }
   stagingBuffer->release();
 }

@@ -1277,6 +1277,62 @@ fragment float4 coverage_mask_fs(CoverageVSOut in [[stage_in]]) {
 }
 )";
 
+MTL::RenderPipelineState* MtAOModule::BuildCombinePipeline(MTL::Library* library,
+                                                      MTL::PixelFormat colorFormat) {
+    if (!library)
+        return nullptr;
+    auto vert = library->newFunction(NS::String::string("ssao_combine_vs", NS::UTF8StringEncoding));
+    auto frag = library->newFunction(NS::String::string("ssao_combine_fs", NS::UTF8StringEncoding));
+    if (!vert || !frag) {
+        if (vert) vert->release();
+        if (frag) frag->release();
+        return nullptr;
+    }
+
+    auto desc = MTL::RenderPipelineDescriptor::alloc()->init();
+    desc->setVertexFunction(vert);
+    desc->setFragmentFunction(frag);
+    desc->colorAttachments()->object(0)->setPixelFormat(colorFormat);
+    desc->colorAttachments()->object(0)->setBlendingEnabled(true);
+    desc->colorAttachments()->object(0)->setRgbBlendOperation(MTL::BlendOperationAdd);
+    desc->colorAttachments()->object(0)->setAlphaBlendOperation(MTL::BlendOperationAdd);
+    desc->colorAttachments()->object(0)->setSourceRGBBlendFactor(MTL::BlendFactorSourceAlpha);
+    desc->colorAttachments()->object(0)->setDestinationRGBBlendFactor(MTL::BlendFactorOneMinusSourceAlpha);
+    desc->colorAttachments()->object(0)->setSourceAlphaBlendFactor(MTL::BlendFactorOne);
+    desc->colorAttachments()->object(0)->setDestinationAlphaBlendFactor(MTL::BlendFactorOneMinusSourceAlpha);
+    desc->setDepthAttachmentPixelFormat(MTL::PixelFormatDepth32Float_Stencil8);
+    desc->setStencilAttachmentPixelFormat(MTL::PixelFormatDepth32Float_Stencil8);
+
+    NS::Error* error = nullptr;
+    auto pso = fb->device->device->newRenderPipelineState(desc, &error);
+    if (!pso && error) {
+        Printf(PRINT_LOG, "Metal: Failed to create SSAO combine render pipeline: %s\n",
+               error->localizedDescription()->utf8String());
+        error->release();
+    }
+
+    desc->release();
+    vert->release();
+    frag->release();
+    return pso;
+}
+
+bool MtAOModule::EnsureCombinePSOFormat(int colorFormat) {
+    if (combineRenderPSO && combineRenderPSOFormat == colorFormat)
+        return true;
+    if (!combineLibrary)
+        return false;
+
+    auto pso = BuildCombinePipeline(combineLibrary, (MTL::PixelFormat)colorFormat);
+    if (!pso)
+        return false; // keep the old PSO; Combine() bails on the format mismatch
+
+    if (combineRenderPSO) combineRenderPSO->release();
+    combineRenderPSO = pso;
+    combineRenderPSOFormat = colorFormat;
+    return true;
+}
+
 MtAOModule::MtAOModule(MetalRenderDevice* device) : fb(device) {
     auto shaderManager = fb->GetShaderManager();
     ssaoPSO = shaderManager->CreateComputePipeline("ssao_compute", SSAO_COMPUTE_SOURCE, "SSAO ssao_compute");
@@ -1287,47 +1343,14 @@ MtAOModule::MtAOModule(MetalRenderDevice* device) : fb(device) {
     upsamplePSO = shaderManager->CreateComputePipeline("ao_upsample_fullres", SSAO_COMPUTE_SOURCE, "SSAO fullres upsample");
     atrousPSO = shaderManager->CreateComputePipeline("ao_atrous_fullres", SSAO_COMPUTE_SOURCE, "SSAO fullres atrous");
 
-    auto createCombinePipeline = [&](MTL::Library* library) -> MTL::RenderPipelineState* {
-        if (!library)
-            return nullptr;
-        auto vert = library->newFunction(NS::String::string("ssao_combine_vs", NS::UTF8StringEncoding));
-        auto frag = library->newFunction(NS::String::string("ssao_combine_fs", NS::UTF8StringEncoding));
-        if (!vert || !frag) {
-            if (vert) vert->release();
-            if (frag) frag->release();
-            return nullptr;
-        }
 
-        auto desc = MTL::RenderPipelineDescriptor::alloc()->init();
-        desc->setVertexFunction(vert);
-        desc->setFragmentFunction(frag);
-        desc->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormatBGRA8Unorm);
-        desc->colorAttachments()->object(0)->setBlendingEnabled(true);
-        desc->colorAttachments()->object(0)->setRgbBlendOperation(MTL::BlendOperationAdd);
-        desc->colorAttachments()->object(0)->setAlphaBlendOperation(MTL::BlendOperationAdd);
-        desc->colorAttachments()->object(0)->setSourceRGBBlendFactor(MTL::BlendFactorSourceAlpha);
-        desc->colorAttachments()->object(0)->setDestinationRGBBlendFactor(MTL::BlendFactorOneMinusSourceAlpha);
-        desc->colorAttachments()->object(0)->setSourceAlphaBlendFactor(MTL::BlendFactorOne);
-        desc->colorAttachments()->object(0)->setDestinationAlphaBlendFactor(MTL::BlendFactorOneMinusSourceAlpha);
-        desc->setDepthAttachmentPixelFormat(MTL::PixelFormatDepth32Float_Stencil8);
-        desc->setStencilAttachmentPixelFormat(MTL::PixelFormatDepth32Float_Stencil8);
-
-        NS::Error* error = nullptr;
-        auto pso = fb->device->device->newRenderPipelineState(desc, &error);
-        if (!pso && error) {
-            Printf(PRINT_LOG, "Metal: Failed to create SSAO combine render pipeline: %s\n",
-                   error->localizedDescription()->utf8String());
-            error->release();
-        }
-
-        desc->release();
-        vert->release();
-        frag->release();
-        return pso;
-    };
-
-    combineRenderPSO = createCombinePipeline(shaderManager->LoadNativeLibrary());
+    combineRenderPSOFormat = (int)MTL::PixelFormatBGRA8Unorm;
+    combineLibrary = shaderManager->LoadNativeLibrary();
+    if (combineLibrary) combineLibrary->retain();
+    combineRenderPSO = BuildCombinePipeline(combineLibrary,
+                                             (MTL::PixelFormat)combineRenderPSOFormat);
     if (!combineRenderPSO) {
+        if (combineLibrary) { combineLibrary->release(); combineLibrary = nullptr; }
         auto sourceString = NS::String::string(SSAO_COMPUTE_SOURCE, NS::UTF8StringEncoding);
         auto compileOptions = MTL::CompileOptions::alloc()->init();
         compileOptions->setLanguageVersion(MTL::LanguageVersion2_0);
@@ -1335,8 +1358,12 @@ MtAOModule::MtAOModule(MetalRenderDevice* device) : fb(device) {
         auto library = fb->device->device->newLibrary(sourceString, compileOptions, &error);
         compileOptions->release();
         if (library) {
-            combineRenderPSO = createCombinePipeline(library);
-            library->release();
+            combineRenderPSO = BuildCombinePipeline(library,
+                                                     (MTL::PixelFormat)combineRenderPSOFormat);
+            if (combineRenderPSO)
+                combineLibrary = library; // ownership transferred to the member
+            else
+                library->release();
         } else if (error) {
             Printf(PRINT_LOG, "Metal: Failed to compile SSAO combine fallback library: %s\n",
                    error->localizedDescription()->utf8String());
@@ -1358,6 +1385,7 @@ MtAOModule::~MtAOModule() {
     if (atrousPSO) atrousPSO->release();
     if (combinePSO) combinePSO->release();
     if (combineRenderPSO) combineRenderPSO->release();
+    if (combineLibrary) combineLibrary->release();
     if (coverageMaskPSO) coverageMaskPSO->release();
     if (mAOTexture) mAOTexture->release();
     if (mBlurTexture) mBlurTexture->release();
@@ -1775,12 +1803,16 @@ void MtAOModule::Combine(MTL::Texture* aoTex, int sceneWidth, int sceneHeight, b
         return;
 
     auto buffers = fb->GetBuffers();
+    // mt_hdr_pipeline can change the scene colour format under us; the PSO's
+    // colour attachment format has to track it or the render pass is invalid.
+    if (!EnsureCombinePSOFormat(buffers->GetSceneColorFormat()))
+        return;
     auto renderState = fb->GetRenderState();
     renderState->SetRenderTarget(buffers->SceneColor->GetTexture(),
                                  buffers->SceneDepthStencil->GetTexture(),
                                  buffers->SceneColor->GetWidth(),
                                  buffers->SceneColor->GetHeight(),
-                                 (int)MTL::PixelFormatBGRA8Unorm, 1);
+                                 buffers->GetSceneColorFormat(), 1);
     renderState->EnableDrawBuffers(1, false);
     const auto& viewport = screen->mSceneViewport;
     renderState->SetViewport(viewport.left, viewport.top, viewport.width, viewport.height);

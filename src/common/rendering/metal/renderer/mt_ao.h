@@ -88,7 +88,15 @@ private:
     MTL::ComputePipelineState* upsamplePSO = nullptr;
     MTL::ComputePipelineState* atrousPSO = nullptr;
     MTL::ComputePipelineState* combinePSO = nullptr;
+    // The combine pass renders into SceneColor, so its colour attachment format
+    // must track mt_hdr_pipeline. The library is retained so the PSO can be
+    // rebuilt when the format changes mid-session.
     MTL::RenderPipelineState* combineRenderPSO = nullptr;
+    int combineRenderPSOFormat = 0;
+    MTL::Library* combineLibrary = nullptr;
+    MTL::RenderPipelineState* BuildCombinePipeline(MTL::Library* library,
+                                                   MTL::PixelFormat colorFormat);
+    bool EnsureCombinePSOFormat(int colorFormat);
     MTL::RenderPipelineState* coverageMaskPSO = nullptr;
     MTL::Texture* mAOTexture = nullptr;
     MTL::Texture* mBlurTexture = nullptr;
