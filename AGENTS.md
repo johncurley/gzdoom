@@ -2341,6 +2341,59 @@ sub-rect — sizing to `sceneWidth/sceneHeight` was the first attempt and was
 also wrong, because the scene viewport can be a sub-rect of the screen-sized
 buffer and the stencil test compares in attachment coordinates.
 
+### VERIFIED IN-GAME 2026-07-31 — three-capture A/B, prediction stated in advance
+
+Scene: Ashes Afterglow, "Hard Reset", map **Night School**, standing in front
+of a **mirror** with the player's reflection visible. Fixed camera from a
+savegame across all three captures. `gl_ssao 1`, `gl_ssao_debug 2` (raw
+unblurred AO), `mt_compute_ao 1`, `mt_compute_ao_scale 2`.
+
+**Mirrors are portals** for this purpose -- `HWMirrorPortal` derives from
+`HWScenePortalBase : HWPortal`, and portals bump `screen->stencilValue` and
+draw a stencil mask (`hw_portal.cpp:309`). This is the cheapest way to get a
+non-uniform stencil buffer on screen. Do **not** reach for vanilla Doom 2 to
+test this: no mirrors, no line portals, no stacked sectors.
+
+Three captures, cheapest-information-first (the ordering matters -- if A==B
+the mask is inert in that scene and C is a wasted rebuild):
+
+| Capture | Build | Result |
+|---|---|---|
+| A | current (fixed) | baseline |
+| B | `sampleCov < 0.5` guard forced false (mask all-white) | 3,501 px differ (0.39%), **all darker**, in two narrow vertical bands: x 460-520 and x 966-1014 |
+| C | `mt_ao.cpp` + `mt_ao.metal` checked out at `fc2000ecb^` | 19,593 px differ (2.16%), **all brighter** (26,236 brighter / 0 darker), spanning x 471-1011, peak block delta +11.06 at x=**927** |
+
+**A vs B proves the mask is live and correctly placed.** The two bands are the
+mirror's left and right edges. Mask on: samples crossing the boundary are
+rejected, no halo. Mask off: they are admitted and manufacture spurious
+occlusion along the edge. The effect is confined to ~1 AO radius either side
+of the boundary, as theory predicts.
+
+Note this **corrects an in-session hypothesis**: the flat white mirror
+interior is *not* the mask rejecting the whole portal region (which would
+have meant reflections get no AO at all). The interior is untouched; it is
+genuinely unoccluded geometry. Only the boundary is affected.
+
+**A vs C confirms the fix, via a prediction made before the capture.**
+Pre-fix, screen position *x* read `stencil(x/2)` -- the top-left quadrant
+stretched 2x. So the left mirror edge at x=460 was predicted to surface at
+**x~920**, and the right edge at 966 to map to ~1932, off a 1552px frame.
+Measured peak: **x=927** (7px error), and the right-hand edge band present in
+the fixed build is absent as an edge feature in C. Every differing pixel is
+brighter, i.e. the pre-fix mask over-rejects -- exactly the signature of a
+doubled, top-left-anchored mask. No other mechanism in the pipeline produces
+that combination.
+
+**Two process traps this run, both cost real time elsewhere:**
+1. The **PSO binary archive** (`~/Library/Application Support/zdoom/cache/mt_pipelines.bin`)
+   was written *during* capture A's session, before the diagnostic metallib
+   existed. Left in place it would very likely have replayed pre-diagnostic
+   pipelines and produced B==A for entirely the wrong reason. Delete it after
+   every shader-level rebuild in an A/B.
+2. CMake printing `Built target metal_native_shaders` rather than `Building`
+   is not proof the metallib changed. Check the `.metallib` mtime in all
+   three locations (`build/src/`, `Contents/MacOS/`, `Contents/Resources/`).
+
 **Severity correction.** The fix is right, but the impact is what the auditor
 originally said (low, portal-only) and not what the AGENTS entry above
 implied. `GetPPStencilState` uses `CompareFunctionAlways` with depth writes
