@@ -1255,52 +1255,6 @@ fragment float4 ssao_combine_fs(VSOut in [[stage_in]],
     else
         return float4(ssao.xyz, 1.0);
 }
-
-kernel void ssao_combine(
-    uint2 gid [[thread_position_in_grid]],
-    constant int &debugMode [[buffer(0)]],
-    texture2d<float, access::read> aoTexture [[texture(0)]],
-    texture2d<float, access::read> fogTexture [[texture(1)]],
-    texture2d<float, access::read_write> sceneTexture [[texture(2)]])
-{
-    if (gid.x >= sceneTexture.get_width() || gid.y >= sceneTexture.get_height()) return;
-
-    float4 ss = aoTexture.read(gid);
-    float ao = ss.r;
-    float4 scene = sceneTexture.read(gid);
-    float4 fog = fogTexture.read(gid);
-
-    // Debug modes mirror shaders/pp/ssaocombine.fp
-    if (debugMode == 0) {
-        // Emulate original: composite fog over scene using src alpha = 1 - ao
-        float srcAlpha = 1.0 - ao;
-        float3 result = fog.rgb * srcAlpha + scene.rgb * (1.0 - srcAlpha);
-        scene.rgb = result;
-        scene.a = 1.0;
-        sceneTexture.write(scene, gid);
-        return;
-    }
-    else if (debugMode < 3) {
-        float3 gray = float3(ao, ao, ao);
-        scene.rgb = gray;
-        scene.a = 1.0;
-        sceneTexture.write(scene, gid);
-        return;
-    }
-    else if (debugMode == 3) {
-        float depthVal = ss.g / 1000.0; // if AO stores viewZ in .g this shows depth
-        scene.rgb = float3(depthVal, depthVal, depthVal);
-        scene.a = 1.0;
-        sceneTexture.write(scene, gid);
-        return;
-    }
-    else {
-        scene.rgb = ss.rgb;
-        scene.a = 1.0;
-        sceneTexture.write(scene, gid);
-        return;
-    }
-}
 )";
 
 static const char* COVERAGE_MASK_SOURCE = R"(
