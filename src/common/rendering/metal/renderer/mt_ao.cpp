@@ -1136,7 +1136,7 @@ fragment float4 ssao_combine_fs(VSOut in [[stage_in]],
     float rawSceneDepth = depthTexture.sample(nearestSampler, fogUV).r;
     float normalizedDepth = clamp(1.0 - rawSceneDepth, 0.0, 1.0);
     float sceneDepth = 1.0 / (normalizedDepth * (1.0 / params.zFar - 1.0 / params.zNear) + max(1.0 / params.zNear, 1e-8));
-    float depthSignal = 1.0 - exp2(-sceneDepth * 0.005);
+    float depthSignal = 1.0 - exp2(-sceneDepth * 0.01);
     float depthMask = saturate(depthSignal);
     float3 decodedNormal = sceneNormal * 2.0 - 1.0;
 
@@ -1170,7 +1170,7 @@ fragment float4 ssao_combine_fs(VSOut in [[stage_in]],
             return float4(fogSample.rgb, aoAlpha);
         }
 
-        float centerAlpha = (1.0 - attenuation) * saturate(1.0 - exp2(-ssao.y * 0.005));
+        float centerAlpha = (1.0 - attenuation) * saturate(1.0 - exp2(-ssao.y * 0.01));
         float2 aoTexel = 1.0 / float2((float)aoTexture.get_width(), (float)aoTexture.get_height());
         float4 ssaoL = aoTexture.sample(nearestSampler, aoUV + float2(-aoTexel.x, 0.0));
         float4 ssaoR = aoTexture.sample(nearestSampler, aoUV + float2( aoTexel.x, 0.0));
@@ -1185,7 +1185,7 @@ fragment float4 ssao_combine_fs(VSOut in [[stage_in]],
             if (taps[i].y < 2.0) {
                 continue;
             }
-            float tapAlpha = (1.0 - taps[i].x) * saturate(1.0 - exp2(-taps[i].y * 0.005));
+            float tapAlpha = (1.0 - taps[i].x) * saturate(1.0 - exp2(-taps[i].y * 0.01));
             float depthDelta = (taps[i].y - centerDepth) * blurSharpness;
             float weight = exp2(-0.35 - depthDelta * depthDelta);
             alphaSum += tapAlpha * weight;
@@ -1198,7 +1198,7 @@ fragment float4 ssao_combine_fs(VSOut in [[stage_in]],
         float4 neighborVals[4] = { ssaoL, ssaoR, ssaoU, ssaoD };
         for (int n = 0; n < 4; n++) {
             if (neighborVals[n].y < 2.0) continue;
-            float nAlpha = (1.0 - neighborVals[n].x) * saturate(1.0 - exp2(-neighborVals[n].y * 0.005));
+            float nAlpha = (1.0 - neighborVals[n].x) * saturate(1.0 - exp2(-neighborVals[n].y * 0.01));
             float nDepthDelta = abs(neighborVals[n].y - centerDepth) * blurSharpness;
             float nWeight = exp2(-0.35 - nDepthDelta * nDepthDelta);
             neighborAlpha += nAlpha * nWeight;
