@@ -2712,6 +2712,71 @@ Consequences:
   matters less than the argument implies, though the precision/banding
   difference would remain. Establish this before any format change.
 
+### Both caveats resolved 2026-08-01 (beab06c94)
+
+**Caveat 1 -- not a deliberate constraint.** Both reference backends use
+half-float for scene colour *and* the pipeline images
+(`gl_renderbuffers.cpp:198,246`, `vk_renderbuffers.cpp:134,174`). Metal is
+the sole outlier.
+
+The Tier 2 concern was misread. `supportsReadWriteBGRA8` is just
+`readWriteTextureSupport() == Tier2` (`mt_version.h:121`) -- the tier gates
+`read_write` *access*, not any particular format, and it gates RGBA16Float
+exactly as it gates BGRA8. So the format change neither unlocks nor breaks
+the direct-composite path; only the flag's **name** goes stale. Write-only
+access needs no tier at all, which is why `mt_bloom.cpp` has been creating
+RGBA16Float ping-pong textures with `ShaderWrite` on this Tier 1 machine
+all along.
+
+**Caveat 2 -- the scene does emit above 1.0, and the bound is 1.4.**
+`ProcessMaterialLight` in `material_normal.fp:38`, default blend mode:
+
+```glsl
+frag = material.Base.rgb * clamp(color + desaturate(dynlight).rgb, 0.0, 1.4);
+```
+
+1.4 is the designed headroom. Blend mode 1 normalizes *to* 1.4; mode 2
+(`UNCLAMPED`) is unbounded. `FragColor` is written unclamped
+(`main.fp:903`) -- the `min(color, 1.0)` at `main.fp:733` sits *upstream*
+of dynamic lights, so it does not bound the output.
+
+This makes the bloom argument numeric rather than inferred. Extract is
+`max((c + 0.001) * adj - 1.0, 0)`. GL at c=1.4, adj=1 yields 0.4; Metal
+yields identically 0, always. The Afterglow dead scene is fully explained.
+
+**Status:** `mt_hdr_pipeline` CVAR added, defaulting **off**. The hardcoded
+formats are gone (`MtRenderBuffers::GetSceneColorFormat` and friends own it
+now), so the flip is one CVAR and takes effect on the next frame. Visual
+A/B pending.
+
+Three traps found while centralizing, worth remembering:
+
+- The bloom Tier 1 composite PSO and the AO combine PSO both hardcoded a
+  BGRA8 colour attachment while rendering into SceneColor, whose format
+  came from the render target. Both are now keyed on the scene colour
+  format and rebuilt on change. A stale attachment format is a Metal
+  validation error, not a silent wrong result.
+- **SceneFog must stay 8-bit** -- the reference keeps it RGBA8 too
+  (`vk_renderpass.cpp:180` `drawBufferFormats`). Only SceneColor and the
+  pipeline images go HDR.
+- `mt_pipelinestate.cpp:504` already took attachment 0's format from the
+  render target key, so the scene MRT pass needed no change.
+
+**Unverified in beab06c94:** the RGBA16Float branch of
+`CopyScreenToBuffer`. The A/B is being run with macOS Cmd+Shift+4 (see the
+screenshot note below), so the engine screenshot path never executes. The
+LDR branch is byte-identical to before and the split is on an exact format
+check, so the default path cannot regress -- but the half-float unpack is
+untested code.
+
+**Pre-existing, unrelated, not fixed:** `CopyScreenToBuffer` reads BGRA8
+source bytes in B,G,R order into a buffer tagged `SS_RGB`
+(`mt_renderdevice.cpp:990-993`), so engine screenshots have R and B
+swapped. Do **not** use the engine screenshot key for a colour A/B until
+this is settled -- it would swap one leg of the comparison and not the
+other. Cmd+Shift+4 captures the composited swapchain (BGRA8 in both cases),
+which is an identical path for both legs.
+
 ## TOOLING GAP: the parity script cannot catch reference divergence
 
 `tools/check_shader_parity.py` compares Metal-native against Metal-inline
