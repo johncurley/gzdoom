@@ -2669,6 +2669,44 @@ mid-frame, which would settle the in-place-composite theory outright.
 
 **Still frames cannot diagnose this.** Do not spend more screenshots on it.
 
+## MEASURED 2026-08-01: compute AO costs ~2x the reference PP path
+
+Settled the long-standing open question. `mt_compute_ao 0` falls through to
+`hw_postprocess.ssao.Render` (`mt_postprocess.cpp:437-446`), the path whose
+own comment says it "matches GL/Vulkan", so toggling it is a true
+compute-vs-reference A/B on identical hardware, scene and view.
+
+| path | FrameGPU avg |
+|---|---|
+| compute AO, with full-res cleanup | 22.05 / 22.41ms |
+| **reference PP AO** | **11.42ms** |
+
+**+10.8ms, a 1.95x ratio.** The noise floor is 0.36ms (established by two
+readings of an identical configuration), so this is ~30x noise.
+
+Backing out the full-res cleanup enabled the same day (+2.91ms), compute
+without it would be ~19.35ms vs 11.42ms -- still +7.9ms, 1.70x. The gap is
+not an artifact of that change.
+
+This independently reproduces the 2026-07-14 Intel bisection recorded at
+`mt_ao.cpp:1713` (~33ms compute vs a ~17ms PP-AO-equivalent baseline, a
+1.9x ratio). Two measurements, very different code, same answer. **Treat
+the Intel clamps as load-bearing** -- they are not conservative guesses.
+
+**Do not describe the Metal compute AO as superior in performance.** The
+defensible claims are masking (the coverage-mask fix was verified in-game
+with a numeric prediction stated before capture, `a9f22ab5a`) and features
+(multi-algorithm selection, world-locked noise, full-res cleanup -- none
+of which the reference has). Speed is not one of them; it is roughly half.
+
+**Validity check for anyone repeating this:** the `mt_compute_ao 1` leg
+must print a `ComputeCPU AO` line and the `mt_compute_ao 0` leg a
+`PPCPU AO` line. A missing AO line means AO did not run at all (
+`PrintMetricSummary` returns early at `samples == 0`), and the wrong label
+means the toggle did not take. Both failure modes occurred while taking
+this measurement and both were caught by the label rather than by the
+numbers looking wrong.
+
 ## AO artifacts 2026-08-01: it was the config, not the renderer
 
 Reported: AO crawling, salt/pepper squares, and an artificial look that
