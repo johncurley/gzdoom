@@ -2769,13 +2769,35 @@ LDR branch is byte-identical to before and the split is on an exact format
 check, so the default path cannot regress -- but the half-float unpack is
 untested code.
 
-**Pre-existing, unrelated, not fixed:** `CopyScreenToBuffer` reads BGRA8
-source bytes in B,G,R order into a buffer tagged `SS_RGB`
-(`mt_renderdevice.cpp:990-993`), so engine screenshots have R and B
-swapped. Do **not** use the engine screenshot key for a colour A/B until
-this is settled -- it would swap one leg of the comparison and not the
-other. Cmd+Shift+4 captures the composited swapchain (BGRA8 in both cases),
-which is an identical path for both legs.
+**Pre-existing R/B swap in engine screenshots -- FIXED 2026-08-01
+(3a2b21ebc).** `CopyScreenToBuffer` read BGRA8Unorm source bytes in memory
+order (B,G,R) into a buffer the caller tags `SS_RGB`, so every engine
+screenshot had red and blue exchanged. Unrelated to the HDR work; found
+while trying to verify it.
+
+Worth recording *how* it was settled, because the swap was reported as
+looking fine. Two channel-invariant checks decide it instantly, without a
+reference image:
+
+- **The health counter.** GZDoom renders low HP red. The shot was at 10 HP
+  and the file showed green.
+- **Round-trip the image.** Writing an R/B-swapped copy and looking at
+  both is decisive in one glance -- Ashes' brown dirt, the blood on the
+  crowbar, and the amber HUD lettering all read as blue-teal in the
+  original. `tools/pngdiff.py` has the stdlib PNG reader; the writer is
+  ~15 lines of zlib + struct.
+
+Note that magenta/purple regions are **invariant** under an R/B swap, so a
+sky can look plausible in both. Judge on a warm/cool axis, never a
+magenta one.
+
+The RGBA16Float branch already read channels in the correct order, so
+before the fix the two branches disagreed and toggling `mt_hdr_pipeline`
+silently changed screenshot channel order.
+
+**Still unverified:** the RGBA16Float branch of `CopyScreenToBuffer` has
+never executed. Both screenshot attempts so far were taken with
+`mt_hdr_pipeline` off.
 
 ## TOOLING GAP: the parity script cannot catch reference divergence
 
