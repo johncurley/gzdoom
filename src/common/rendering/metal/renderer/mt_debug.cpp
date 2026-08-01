@@ -22,6 +22,7 @@
 
 #include "mt_debug.h"
 #include "c_dispatch.h"
+#include "metal/renderer/mt_renderbuffers.h"
 #include "metal/system/mt_renderdevice.h"
 #include "metal/system/mt_version.h"
 #include "printf.h"
@@ -472,6 +473,16 @@ CCMD(mt_caps)
          v.isTBDR ? "yes" : "no", v.supportsMemoryless ? "yes" : "no");
   Printf(PRINT_HIGH, "  ReadWrite BGRA8 (Tier2): %s   <- bloom Tier 2 direct-composite gate\n",
          v.supportsReadWriteBGRA8 ? "yes" : "NO (Tier 1 path)");
+  // Read the format off the live texture, not off the CVAR -- the point is to
+  // prove what the buffers actually are, which is the question a colour A/B
+  // cannot answer from screenshots alone.
+  if (auto buffers = fb->GetBuffers()) {
+    const int fmt = buffers->GetSceneColorFormat();
+    const char *name = fmt == (int)MTL::PixelFormatRGBA16Float ? "RGBA16Float (HDR)"
+                     : fmt == (int)MTL::PixelFormatBGRA8Unorm  ? "BGRA8Unorm (LDR, clamps at 1.0)"
+                                                               : "<unexpected>";
+    Printf(PRINT_HIGH, "  Scene colour format:     %s   <- mt_hdr_pipeline\n", name);
+  }
   Printf(PRINT_HIGH, "  Argument buffers:        %s (tier %d)\n",
          v.supportsArgumentBuffers ? "yes" : "no", v.argumentBufferTier);
   Printf(PRINT_HIGH, "  RGB10A2:                 %s\n", v.supportsRGB10A2 ? "yes" : "no");
