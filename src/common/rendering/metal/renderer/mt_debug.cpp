@@ -21,8 +21,11 @@
 */
 
 #include "mt_debug.h"
+#include "../mt_system_wrapper.h"
 #include "c_dispatch.h"
 #include "metal/renderer/mt_renderbuffers.h"
+#include "metal/system/mt_commandbuffer.h"
+#include "metal/textures/mt_texture.h"
 #include "metal/system/mt_renderdevice.h"
 #include "metal/system/mt_version.h"
 #include "printf.h"
@@ -567,4 +570,128 @@ CCMD(mt_metrics_reset)
 
   debug->ClearBenchmarkHistory();
   Printf(PRINT_HIGH, "Metal benchmark history reset.\n");
+}
+
+// Answers the one question the mt_hdr_pipeline screenshot A/Bs could not:
+// does this content actually emit scene colour above 1.0?
+//
+// The argument for a half-float pipeline rests on ProcessMaterialLight
+// clamping to 1.4 rather than 1.0 (material_normal.fp), which makes 1.4 the
+// designed headroom and 1.0 the bloom extract threshold. But "the shader can
+// emit 1.4" is not "this scene does". Two valid A/Bs -- including one at the
+// Ashes Afterglow lantern -- came back at max per-channel delta 2, which is
+// equally consistent with the toggle working and the content simply being
+// LDR. Screenshots cannot separate those because the swapchain is 8-bit
+// either way; only the buffer itself can.
+//
+// Reads last frame's SceneColor, since a CCMD runs between frames.
+CCMD(mt_hdr_probe)
+{
+  auto fb = GetActiveMetalRenderDevice();
+  if (!fb || !fb->GetBuffers() || !fb->GetBuffers()->SceneColor) {
+    Printf(PRINT_HIGH, "Metal scene buffers are not available.\n");
+    return;
+  }
+
+  MTL::Texture *tex = fb->GetBuffers()->SceneColor->GetTexture();
+  if (!tex) {
+    Printf(PRINT_HIGH, "Metal scene colour texture is not available.\n");
+    return;
+  }
+
+  const bool halfFloat = tex->pixelFormat() == MTL::PixelFormatRGBA16Float;
+  if (!halfFloat && tex->pixelFormat() != MTL::PixelFormatBGRA8Unorm) {
+    Printf(PRINT_HIGH, "mt_hdr_probe: unexpected scene colour format %d.\n",
+           (int)tex->pixelFormat());
+    return;
+  }
+  if (tex->sampleCount() > 1) {
+    Printf(PRINT_HIGH, "mt_hdr_probe: multisampled scene colour is not supported.\n");
+    return;
+  }
+
+  const int w = (int)tex->width();
+  const int h = (int)tex->height();
+  const size_t bytesPerPixel = halfFloat ? 8 : 4;
+  const size_t bytesPerRow = (size_t)w * bytesPerPixel;
+  const size_t dataSize = bytesPerRow * (size_t)h;
+
+  MTL::Buffer *staging =
+      fb->device->device->newBuffer(dataSize, MTL::ResourceStorageModeShared);
+  if (!staging) {
+    Printf(PRINT_HIGH, "mt_hdr_probe: could not allocate a %zu byte staging buffer.\n", dataSize);
+    return;
+  }
+
+  auto cmdBuf = fb->GetCommands()->GetBlitCommandBuffer();
+  if (!cmdBuf) {
+    staging->release();
+    Printf(PRINT_HIGH, "mt_hdr_probe: no blit command buffer.\n");
+    return;
+  }
+  auto blit = cmdBuf->blitCommandEncoder();
+  blit->copyFromTexture(tex, 0, 0, MTL::Origin(0, 0, 0), MTL::Size(w, h, 1),
+                        staging, 0, bytesPerRow, dataSize);
+  blit->endEncoding();
+  cmdBuf->commit();
+  cmdBuf->waitUntilCompleted();
+  cmdBuf->release();
+
+  float maxChannel = 0.0f;
+  double sum = 0.0;
+  size_t over1 = 0, over1_05 = 0, over1_2 = 0;
+  const size_t pixels = (size_t)w * h;
+
+  if (halfFloat) {
+    const __fp16 *px = (const __fp16 *)staging->contents();
+    for (size_t i = 0; i < pixels; i++) {
+      for (int c = 0; c < 3; c++) {
+        float v = (float)px[i * 4 + c];
+        if (v > maxChannel) maxChannel = v;
+        sum += v;
+      }
+      float m = std::max({(float)px[i * 4], (float)px[i * 4 + 1], (float)px[i * 4 + 2]});
+      if (m > 1.0f)  over1++;
+      if (m > 1.05f) over1_05++;
+      if (m > 1.2f)  over1_2++;
+    }
+  } else {
+    // BGRA8 cannot represent anything above 1.0 by construction. Probing it
+    // is still worth allowing: it reports how much of the frame is *pinned*
+    // at 255, which is the clipping the half-float buffer would recover.
+    const uint8_t *px = (const uint8_t *)staging->contents();
+    for (size_t i = 0; i < pixels; i++) {
+      uint8_t m = 0;
+      for (int c = 0; c < 3; c++) {
+        uint8_t v = px[i * 4 + c];
+        if (v > m) m = v;
+        sum += v / 255.0;
+      }
+      if (m > maxChannel * 255.0f) maxChannel = m / 255.0f;
+      if (m == 255) over1++;
+    }
+  }
+  staging->release();
+
+  Printf(PRINT_HIGH, "Metal scene colour probe (%dx%d, %s):\n", w, h,
+         halfFloat ? "RGBA16Float" : "BGRA8Unorm");
+  Printf(PRINT_HIGH, "  max channel:        %.4f\n", maxChannel);
+  Printf(PRINT_HIGH, "  mean channel:       %.4f\n", (float)(sum / (pixels * 3)));
+  if (halfFloat) {
+    Printf(PRINT_HIGH, "  pixels > 1.00:      %zu (%.4f%%)\n", over1, 100.0 * over1 / pixels);
+    Printf(PRINT_HIGH, "  pixels > 1.05:      %zu (%.4f%%)\n", over1_05, 100.0 * over1_05 / pixels);
+    Printf(PRINT_HIGH, "  pixels > 1.20:      %zu (%.4f%%)\n", over1_2, 100.0 * over1_2 / pixels);
+    if (maxChannel <= 1.0f) {
+      Printf(PRINT_HIGH, "  -> Nothing exceeds 1.0. This content is LDR here; the half-float\n");
+      Printf(PRINT_HIGH, "     buffer buys precision only, and compute bloom cannot fire at\n");
+      Printf(PRINT_HIGH, "     exposureAdjustment <= 1 regardless of format.\n");
+    } else {
+      Printf(PRINT_HIGH, "  -> Headroom is in use. BGRA8 would clip this; tonemapping has\n");
+      Printf(PRINT_HIGH, "     something to roll off and bloom has something to extract.\n");
+    }
+  } else {
+    Printf(PRINT_HIGH, "  pixels pinned at 255: %zu (%.4f%%)\n", over1, 100.0 * over1 / pixels);
+    Printf(PRINT_HIGH, "  -> BGRA8 clamps at 1.0 by construction, so this cannot show\n");
+    Printf(PRINT_HIGH, "     headroom. Set mt_hdr_pipeline 1 and probe again to compare.\n");
+  }
 }
