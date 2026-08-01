@@ -594,7 +594,14 @@ CCMD(mt_metrics_reset)
 //
 //===========================================================================
 
-void MtDebugManager::ArmHdrProbe() {
+void MtDebugManager::ArmHdrProbe(int frames) {
+  mHdrProbeFramesLeft = std::max(frames, 1);
+  mHdrProbeFramesDone = 0;
+  mHdrProbeRunMax = 0.0f;
+  mHdrProbeRunMaxFrame = 0;
+  mHdrProbeRunOver1 = 0;
+  mHdrProbeRunOver1_2 = 0;
+  mHdrProbeRunMeanSum = 0.0;
   mHdrProbeArmed = true;
 }
 
@@ -708,24 +715,54 @@ void MtDebugManager::ReportHdrProbe() {
   mHdrProbeBuffer->release();
   mHdrProbeBuffer = nullptr;
 
+  // Accumulate; a single frame in a dark map cannot answer the question, so
+  // the interesting statistic is the peak over a window that can contain a
+  // muzzle flash or an explosion.
+  mHdrProbeFramesDone++;
+  if (maxChannel > mHdrProbeRunMax) {
+    mHdrProbeRunMax = maxChannel;
+    mHdrProbeRunMaxFrame = mHdrProbeFramesDone;
+  }
+  mHdrProbeRunOver1 = std::max(mHdrProbeRunOver1, over1);
+  mHdrProbeRunOver1_2 = std::max(mHdrProbeRunOver1_2, over1_2);
+  mHdrProbeRunMeanSum += sum / (pixels * 3);
+
+  if (mHdrProbeFramesLeft > 1) {
+    mHdrProbeFramesLeft--;
+    mHdrProbeArmed = true; // sample again next frame
+    return;
+  }
+  mHdrProbeFramesLeft = 0;
+
+  maxChannel = mHdrProbeRunMax;
+  over1 = mHdrProbeRunOver1;
+  over1_2 = mHdrProbeRunOver1_2;
+
   Printf(PRINT_HIGH, "Metal scene colour probe (%dx%d, %s, pre-postprocess, no HUD):\n",
          mHdrProbeW, mHdrProbeH, mHdrProbeHalfFloat ? "RGBA16Float" : "BGRA8Unorm");
-  Printf(PRINT_HIGH, "  max channel:        %.4f\n", maxChannel);
-  Printf(PRINT_HIGH, "  mean channel:       %.4f\n", (float)(sum / (pixels * 3)));
+  Printf(PRINT_HIGH, "  frames sampled:     %d\n", mHdrProbeFramesDone);
+  Printf(PRINT_HIGH, "  peak channel:       %.4f (frame %d of %d)\n",
+         maxChannel, mHdrProbeRunMaxFrame, mHdrProbeFramesDone);
+  Printf(PRINT_HIGH, "  mean channel:       %.4f (averaged over the window)\n",
+         (float)(mHdrProbeRunMeanSum / mHdrProbeFramesDone));
   if (mHdrProbeHalfFloat) {
-    Printf(PRINT_HIGH, "  pixels > 1.00:      %zu (%.4f%%)\n", over1, 100.0 * over1 / pixels);
-    Printf(PRINT_HIGH, "  pixels > 1.05:      %zu (%.4f%%)\n", over1_05, 100.0 * over1_05 / pixels);
-    Printf(PRINT_HIGH, "  pixels > 1.20:      %zu (%.4f%%)\n", over1_2, 100.0 * over1_2 / pixels);
+    Printf(PRINT_HIGH, "  peak pixels > 1.00: %zu (%.4f%%)\n", over1, 100.0 * over1 / pixels);
+    Printf(PRINT_HIGH, "  peak pixels > 1.20: %zu (%.4f%%)\n", over1_2, 100.0 * over1_2 / pixels);
     if (maxChannel <= 1.0f) {
-      Printf(PRINT_HIGH, "  -> Nothing exceeds 1.0 in this scene. The half-float buffer buys\n");
-      Printf(PRINT_HIGH, "     precision only here, and compute bloom cannot fire at\n");
+      Printf(PRINT_HIGH, "  -> Nothing exceeded 1.0 across the window. The half-float buffer\n");
+      Printf(PRINT_HIGH, "     buys precision only here, and compute bloom cannot fire at\n");
       Printf(PRINT_HIGH, "     exposureAdjustment <= 1 regardless of format.\n");
+      Printf(PRINT_HIGH, "     Note that brightmaps and fullbright sprites are clamped to\n");
+      Printf(PRINT_HIGH, "     exactly 1.0 by main.fp:745 in the reference, so a peak of\n");
+      Printf(PRINT_HIGH, "     1.0000 means a lamp or sprite, not headroom in use.\n");
     } else {
       Printf(PRINT_HIGH, "  -> Headroom is in use. BGRA8 clips this; tonemapping has something\n");
       Printf(PRINT_HIGH, "     to roll off and bloom has something to extract.\n");
     }
-    Printf(PRINT_HIGH, "  Note: a bright scene with dynamic lights on nearby geometry is where\n");
-    Printf(PRINT_HIGH, "  the 1.4 clamp binds. A dark scene proves little either way.\n");
+    Printf(PRINT_HIGH, "  The only path above 1.0 is Base.rgb * clamp(color + dynlight, 0, 1.4),\n");
+    Printf(PRINT_HIGH, "  so it needs a strong dynamic light on a pale surface at close range --\n");
+    Printf(PRINT_HIGH, "  a rocket blast or muzzle flash against a near wall. Arm a window and\n");
+    Printf(PRINT_HIGH, "  fire: mt_hdr_probe 120\n");
   } else {
     Printf(PRINT_HIGH, "  pixels pinned at 255: %zu (%.4f%%)\n", pinned, 100.0 * pinned / pixels);
     Printf(PRINT_HIGH, "  -> BGRA8 clamps at 1.0 by construction and cannot show headroom.\n");
@@ -741,6 +778,12 @@ CCMD(mt_hdr_probe)
     Printf(PRINT_HIGH, "Metal diagnostics are not available.\n");
     return;
   }
-  debug->ArmHdrProbe();
-  Printf(PRINT_HIGH, "mt_hdr_probe armed; sampling the next rendered frame.\n");
+  int frames = argv.argc() > 1 ? atoi(argv[1]) : 1;
+  frames = clamp(frames, 1, 600);
+  debug->ArmHdrProbe(frames);
+  if (frames == 1)
+    Printf(PRINT_HIGH, "mt_hdr_probe armed; sampling the next rendered frame.\n");
+  else
+    Printf(PRINT_HIGH, "mt_hdr_probe armed for %d frames; reporting the peak. Go make some light.\n",
+           frames);
 }

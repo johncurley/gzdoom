@@ -35,7 +35,7 @@ public:
   // scene lighting. Capture instead happens at PostProcessScene entry, which
   // is after the scene draw and before hw_postprocess.Pass1 moves SceneColor
   // into the pipeline images, so it sees raw scene output and no HUD.
-  void ArmHdrProbe();
+  void ArmHdrProbe(int frames);
   void CaptureHdrProbe();   // PostProcessScene entry; GPU blit only, no stall
   void ReportHdrProbe();    // next BeginFrame; readback is already complete
 
@@ -140,6 +140,13 @@ private:
   // mt_hdr_probe state; see the ArmHdrProbe/CaptureHdrProbe pair above.
   bool mHdrProbeArmed = false;
   bool mHdrProbePending = false;
+  int mHdrProbeFramesLeft = 0;
+  int mHdrProbeFramesDone = 0;
+  float mHdrProbeRunMax = 0.0f;
+  int mHdrProbeRunMaxFrame = 0;
+  size_t mHdrProbeRunOver1 = 0;
+  size_t mHdrProbeRunOver1_2 = 0;
+  double mHdrProbeRunMeanSum = 0.0;
   MTL::Buffer *mHdrProbeBuffer = nullptr;
   MTL::CommandBuffer *mHdrProbeCmd = nullptr;
   int mHdrProbeW = 0;
