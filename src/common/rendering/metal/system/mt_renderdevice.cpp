@@ -972,11 +972,13 @@ void MetalRenderDevice::CopyScreenToBuffer(int w, int h, uint8_t *data) {
       }
     }
   } else {
+    // BGRA8Unorm stores B in byte 0 and R in byte 2, but the caller tags the
+    // result SS_RGB. Read R from byte 2, not byte 0.
     const uint8_t *pixels = (const uint8_t *)stagingBuffer->contents();
     for (int i = 0; i < w * h; i++) {
-      dest[i * 3 + 0] = pixels[i * 4 + 0];
+      dest[i * 3 + 0] = pixels[i * 4 + 2];
       dest[i * 3 + 1] = pixels[i * 4 + 1];
-      dest[i * 3 + 2] = pixels[i * 4 + 2];
+      dest[i * 3 + 2] = pixels[i * 4 + 0];
     }
   }
   stagingBuffer->release();
