@@ -621,13 +621,29 @@ void MtPipelineStateManager::ConfigureBlendMode(
     return;
 
   case STYLEOP_Shadow:
-    // Special blend mode for shadows (similar to Opaque but dims destination)
+    // STYLEOP_Shadow takes the FUZZ mapping on the reference backends, not a
+    // dimming-by-source-alpha mode. In vk_renderpass.cpp renderops[] is -1 for
+    // every index above STYLEOP_RevSub, and STYLEOP_Shadow is 8, so it falls
+    // into the "this was a fuzz style" branch:
+    //
+    //   Cout = Cs*Cd + Cd*(1 - As)
+    //
+    // Metal previously used Zero/SourceAlpha, i.e. Cout = Cd*As. With the
+    // shadow sprite's SetColor(0.2, 0.2, 0.2, 0.44) in hw_sprites.cpp, the
+    // reference yields 0.76*Cd and this yielded 0.44*Cd -- 42% too dark. The
+    // divergence is alpha-dependent and reverses sign at As = 0.6 (reference
+    // is (1.2 - As)*Cd, Metal was As*Cd), and the fog branch scales fuzzalpha
+    // DOWN, so fogged shadow sprites diverged further, never less.
+    //
+    // Alpha uses the same factors as RGB because the reference does: ZVulkan's
+    // ColorBlendAttachmentBuilder::BlendMode assigns src/dst/op to both the
+    // color and alpha slots.
     attachment->setBlendingEnabled(true);
-    attachment->setSourceRGBBlendFactor(MTL::BlendFactorZero);
-    attachment->setDestinationRGBBlendFactor(MTL::BlendFactorSourceAlpha); // Use source alpha to dim background
+    attachment->setSourceRGBBlendFactor(MTL::BlendFactorDestinationColor);
+    attachment->setDestinationRGBBlendFactor(MTL::BlendFactorOneMinusSourceAlpha);
     attachment->setRgbBlendOperation(MTL::BlendOperationAdd);
-    attachment->setSourceAlphaBlendFactor(MTL::BlendFactorZero);
-    attachment->setDestinationAlphaBlendFactor(MTL::BlendFactorOne);
+    attachment->setSourceAlphaBlendFactor(MTL::BlendFactorDestinationColor);
+    attachment->setDestinationAlphaBlendFactor(MTL::BlendFactorOneMinusSourceAlpha);
     attachment->setAlphaBlendOperation(MTL::BlendOperationAdd);
     return;
 

@@ -53,15 +53,57 @@ static MTL::SamplerAddressMode MapAddressMode(int clampMode, bool isV) {
   case 4: // CLAMP_XY_NOMIP
   case 5: // CLAMP_NOFILTER
   case 8: // CLAMP_NOFILTER_XY
-  case 9: // CLAMP_CAMTEX
     return MTL::SamplerAddressModeClampToEdge;
+  case 9: // CLAMP_CAMTEX
+    // CAMTEX *repeats* on the reference backends -- vk_samplers.cpp builds it
+    // with REPEAT on all three axes and says so in its comment ("CAMTEX is
+    // repeating with texture filter and no mipmap"); the GL path agrees.
+    // Metal previously clamped, so for u = 1 + d it returned the right-edge
+    // texel where the reference returns the texel at d. Hardware canvas
+    // textures select CLAMP_CAMTEX explicitly (gametexture.h), so this was
+    // visible on any camera texture whose UVs cross the edge.
+    return MTL::SamplerAddressModeRepeat;
   case 0: // CLAMP_NONE
   default:
     return MTL::SamplerAddressModeRepeat;
   }
 }
 
-MTL::SamplerState *MtSamplerManager::GetSamplerState(const MtSamplerKey &key) {
+// The CLAMP_* modes are not purely address modes on the reference backends:
+// several of them also pin filtering and mipmapping (vk_samplers.cpp
+// CreateHWSamplers). Metal derived filtering from gl_texture_filter alone, so
+// a minified CLAMP_NOFILTER texture came out linear- or mip-filtered where the
+// reference stays nearest and unmipped. Applied to the key before the cache
+// lookup, so equivalent requests collapse onto one cached sampler.
+static void ApplyClampModeFilterOverrides(MtSamplerKey &key) {
+  switch (key.AddressU) {
+  case 5: // CLAMP_NOFILTER
+  case 6: // CLAMP_NOFILTER_X
+  case 7: // CLAMP_NOFILTER_Y
+  case 8: // CLAMP_NOFILTER_XY
+    // Reference: VK_FILTER_NEAREST min+mag, mip NEAREST, MaxLod 0.25.
+    key.MinFilter = 0;
+    key.MagFilter = 0;
+    key.MipFilter = 0;
+    break;
+  case 4: // CLAMP_XY_NOMIP
+  case 9: // CLAMP_CAMTEX
+    // Reference: keeps the configured texture filter but disables mipmapping
+    // (mip NEAREST + MaxLod 0.25). It also uses magFilter for BOTH min and
+    // mag on these two samplers; mirrored here deliberately -- parity with the
+    // reference matters more than whether that asymmetry was intentional.
+    key.MinFilter = key.MagFilter;
+    key.MipFilter = 0;
+    break;
+  default:
+    break;
+  }
+}
+
+MTL::SamplerState *MtSamplerManager::GetSamplerState(const MtSamplerKey &rawKey) {
+  MtSamplerKey key = rawKey;
+  ApplyClampModeFilterOverrides(key);
+
   // Check cache
   auto it = mSamplerCache.find(key);
   if (it != mSamplerCache.end()) {
