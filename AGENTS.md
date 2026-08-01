@@ -2777,7 +2777,50 @@ This makes the bloom argument numeric rather than inferred. Extract is
 `max((c + 0.001) * adj - 1.0, 0)`. GL at c=1.4, adj=1 yields 0.4; Metal
 yields identically 0, always. The Afterglow dead scene is fully explained.
 
-### RESOLVED 2026-08-01: the headroom is real and in use (peak 1.6055)
+### VERIFIED 2026-08-01: HDR recovers highlights; bloom still never observed
+
+Clean 2x2 at one spot in Ashes 2063 "Dead Man Walking" (bright room, pale
+wood, strong lamp; probe peak 1.2). All controls passed -- **title bar
+identical (max delta 0)**, HUD identical, no movement.
+
+```
+A = LDR bloom on    B = LDR bloom off    C = HDR bloom on    D = HDR bloom off
+A == B byte-identical      C == D byte-identical      A/B != C/D
+```
+
+**Result 1 -- HDR recovers highlight detail, modestly.** Binning by source
+luminance isolates it cleanly:
+
+| A luminance | pixels | mean signed (C-A) | max |
+|---|---|---|---|
+| 0-159 | 780k | -0.10 .. -0.29 | 2-4 |
+| **160-191** | 32.6k | **+0.641** | 6 |
+| 224-255 (lamp) | 17k | -0.060 | 1 |
+
+Bright saturated surfaces gain; everything else darkens slightly as
+auto-exposure answers the higher scene luminance. The lamp is unchanged
+because brightmaps clamp to 1.0 in the reference either way. Real,
+systematic, and **small** -- 4.5% of pixels, max per-channel 29.
+
+**Result 2 -- bloom did nothing, in either format.** `gl_bloom` on/off is
+byte-identical under both. At peak 1.2 the extract yields at most 0.2 on a
+few pixels, which is then downsampled 4x and blurred wide; the per-pixel
+contribution falls below 1/255 and quantizes away.
+
+**So the tranche's headline claim is still unproven.** "HDR lets compute
+bloom fire" has never been observed to change a frame, across two maps,
+four capture sessions and two probe designs. The clipping argument is
+sound and now measured; the *bloom* consequence is not demonstrated. Do
+not write it up as established.
+
+Note also that bloom fires more readily in **dark** scenes, not bright
+ones: the extract is `max((c+0.001)*adj - 1.0, 0)` and auto-exposure drives
+`adj` far above 1 in the dark, which clears the threshold even with `c`
+clamped at 1.0. An early prediction that bloom could not fire under BGRA8
+was wrong for exactly this reason, despite the constraint being written
+down in the original finding.
+
+### Probe result 2026-08-01: the headroom is real and in use (peak 1.6055)
 
 `mt_hdr_probe 120` in Ashes Afterglow, firing a weapon at close range:
 
