@@ -8,6 +8,11 @@
 
 class MetalRenderDevice;
 
+namespace MTL {
+class Buffer;
+class CommandBuffer;
+} // namespace MTL
+
 // Debug metrics and diagnostics for Metal renderer
 class MtDebugManager {
 public:
@@ -17,6 +22,22 @@ public:
   // Frame lifecycle
   void BeginFrame();
   void EndFrame();
+
+  // Scene colour HDR probe (mt_hdr_probe). Answers whether the scene shader
+  // actually emits above 1.0, which no screenshot can show because the
+  // swapchain is 8-bit regardless of the pipeline format.
+  //
+  // Deliberately split across two frames rather than read back inside the
+  // CCMD. A CCMD runs between frames, when SceneColor holds a *finished*
+  // frame -- including the 2D pass, which MetalRenderDevice::
+  // SetActiveRenderTarget points at SceneColor. That made the first version
+  // of this probe report the HUD's white pixels (exactly 1.0) rather than
+  // scene lighting. Capture instead happens at PostProcessScene entry, which
+  // is after the scene draw and before hw_postprocess.Pass1 moves SceneColor
+  // into the pipeline images, so it sees raw scene output and no HUD.
+  void ArmHdrProbe();
+  void CaptureHdrProbe();   // PostProcessScene entry; GPU blit only, no stall
+  void ReportHdrProbe();    // next BeginFrame; readback is already complete
 
   // Metric collection
   void RecordDrawCallCategory(int vertexCount, int indexCount, const char *category);
@@ -115,6 +136,15 @@ public:
 
 private:
   MetalRenderDevice *fb = nullptr;
+
+  // mt_hdr_probe state; see the ArmHdrProbe/CaptureHdrProbe pair above.
+  bool mHdrProbeArmed = false;
+  bool mHdrProbePending = false;
+  MTL::Buffer *mHdrProbeBuffer = nullptr;
+  MTL::CommandBuffer *mHdrProbeCmd = nullptr;
+  int mHdrProbeW = 0;
+  int mHdrProbeH = 0;
+  bool mHdrProbeHalfFloat = false;
 
   // Metrics for current frame
   FrameStats mCurrentFrameStats = {};

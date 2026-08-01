@@ -91,6 +91,9 @@ MtDebugManager::~MtDebugManager() {
 }
 
 void MtDebugManager::BeginFrame() {
+  // Last frame's probe blit has completed by now, so the readback is free.
+  ReportHdrProbe();
+
   // Reset current frame stats
   mCurrentFrameStats = {};
 
@@ -572,32 +575,39 @@ CCMD(mt_metrics_reset)
   Printf(PRINT_HIGH, "Metal benchmark history reset.\n");
 }
 
-// Answers the one question the mt_hdr_pipeline screenshot A/Bs could not:
-// does this content actually emit scene colour above 1.0?
-//
-// The argument for a half-float pipeline rests on ProcessMaterialLight
-// clamping to 1.4 rather than 1.0 (material_normal.fp), which makes 1.4 the
-// designed headroom and 1.0 the bloom extract threshold. But "the shader can
-// emit 1.4" is not "this scene does". Two valid A/Bs -- including one at the
-// Ashes Afterglow lantern -- came back at max per-channel delta 2, which is
-// equally consistent with the toggle working and the content simply being
-// LDR. Screenshots cannot separate those because the swapchain is 8-bit
-// either way; only the buffer itself can.
-//
-// Reads last frame's SceneColor, since a CCMD runs between frames.
-CCMD(mt_hdr_probe)
-{
-  auto fb = GetActiveMetalRenderDevice();
-  if (!fb || !fb->GetBuffers() || !fb->GetBuffers()->SceneColor) {
-    Printf(PRINT_HIGH, "Metal scene buffers are not available.\n");
-    return;
-  }
 
-  MTL::Texture *tex = fb->GetBuffers()->SceneColor->GetTexture();
-  if (!tex) {
-    Printf(PRINT_HIGH, "Metal scene colour texture is not available.\n");
+//===========================================================================
+//
+// mt_hdr_probe -- does the scene shader actually emit above 1.0?
+//
+// The mt_hdr_pipeline case rests on ProcessMaterialLight clamping to 1.4
+// rather than 1.0 (material_normal.fp), making 1.4 the designed headroom and
+// 1.0 the bloom extract threshold. "The shader can emit 1.4" is not "this
+// scene does", and screenshots cannot close that gap: the swapchain is 8-bit
+// whatever the pipeline format is.
+//
+// Capture is deferred by one frame rather than done inside the CCMD. A CCMD
+// runs between frames, when SceneColor holds a finished frame *including the
+// 2D pass* -- MetalRenderDevice::SetActiveRenderTarget points 2D at
+// SceneColor. The first version of this probe therefore reported the HUD's
+// white pixels, which sit at exactly 1.0, and not scene lighting at all.
+//
+//===========================================================================
+
+void MtDebugManager::ArmHdrProbe() {
+  mHdrProbeArmed = true;
+}
+
+void MtDebugManager::CaptureHdrProbe() {
+  if (!mHdrProbeArmed || mHdrProbePending)
     return;
-  }
+  mHdrProbeArmed = false;
+
+  if (!fb || !fb->GetBuffers() || !fb->GetBuffers()->SceneColor)
+    return;
+  MTL::Texture *tex = fb->GetBuffers()->SceneColor->GetTexture();
+  if (!tex)
+    return;
 
   const bool halfFloat = tex->pixelFormat() == MTL::PixelFormatRGBA16Float;
   if (!halfFloat && tex->pixelFormat() != MTL::PixelFormatBGRA8Unorm) {
@@ -616,82 +626,121 @@ CCMD(mt_hdr_probe)
   const size_t bytesPerRow = (size_t)w * bytesPerPixel;
   const size_t dataSize = bytesPerRow * (size_t)h;
 
-  MTL::Buffer *staging =
+  if (mHdrProbeBuffer) {
+    mHdrProbeBuffer->release();
+    mHdrProbeBuffer = nullptr;
+  }
+  mHdrProbeBuffer =
       fb->device->device->newBuffer(dataSize, MTL::ResourceStorageModeShared);
-  if (!staging) {
-    Printf(PRINT_HIGH, "mt_hdr_probe: could not allocate a %zu byte staging buffer.\n", dataSize);
+  if (!mHdrProbeBuffer) {
+    Printf(PRINT_HIGH, "mt_hdr_probe: could not allocate a %zu byte staging buffer.\n",
+           dataSize);
     return;
   }
 
   auto cmdBuf = fb->GetCommands()->GetBlitCommandBuffer();
   if (!cmdBuf) {
-    staging->release();
+    mHdrProbeBuffer->release();
+    mHdrProbeBuffer = nullptr;
     Printf(PRINT_HIGH, "mt_hdr_probe: no blit command buffer.\n");
     return;
   }
   auto blit = cmdBuf->blitCommandEncoder();
   blit->copyFromTexture(tex, 0, 0, MTL::Origin(0, 0, 0), MTL::Size(w, h, 1),
-                        staging, 0, bytesPerRow, dataSize);
+                        mHdrProbeBuffer, 0, bytesPerRow, dataSize);
   blit->endEncoding();
+  // Committed but deliberately not waited on -- ReportHdrProbe picks it up at
+  // the start of the next frame, by which point it has long since completed.
   cmdBuf->commit();
-  cmdBuf->waitUntilCompleted();
-  cmdBuf->release();
+  mHdrProbeCmd = cmdBuf;
 
+  mHdrProbeW = w;
+  mHdrProbeH = h;
+  mHdrProbeHalfFloat = halfFloat;
+  mHdrProbePending = true;
+}
+
+void MtDebugManager::ReportHdrProbe() {
+  if (!mHdrProbePending)
+    return;
+  mHdrProbePending = false;
+
+  if (mHdrProbeCmd) {
+    mHdrProbeCmd->waitUntilCompleted();
+    mHdrProbeCmd->release();
+    mHdrProbeCmd = nullptr;
+  }
+  if (!mHdrProbeBuffer)
+    return;
+
+  const size_t pixels = (size_t)mHdrProbeW * mHdrProbeH;
   float maxChannel = 0.0f;
   double sum = 0.0;
-  size_t over1 = 0, over1_05 = 0, over1_2 = 0;
-  const size_t pixels = (size_t)w * h;
+  size_t over1 = 0, over1_05 = 0, over1_2 = 0, pinned = 0;
 
-  if (halfFloat) {
-    const __fp16 *px = (const __fp16 *)staging->contents();
+  if (mHdrProbeHalfFloat) {
+    const __fp16 *px = (const __fp16 *)mHdrProbeBuffer->contents();
     for (size_t i = 0; i < pixels; i++) {
-      for (int c = 0; c < 3; c++) {
-        float v = (float)px[i * 4 + c];
-        if (v > maxChannel) maxChannel = v;
-        sum += v;
-      }
-      float m = std::max({(float)px[i * 4], (float)px[i * 4 + 1], (float)px[i * 4 + 2]});
+      float r = (float)px[i * 4 + 0];
+      float g = (float)px[i * 4 + 1];
+      float b = (float)px[i * 4 + 2];
+      sum += r + g + b;
+      float m = std::max({r, g, b});
+      if (m > maxChannel) maxChannel = m;
       if (m > 1.0f)  over1++;
       if (m > 1.05f) over1_05++;
       if (m > 1.2f)  over1_2++;
     }
   } else {
-    // BGRA8 cannot represent anything above 1.0 by construction. Probing it
-    // is still worth allowing: it reports how much of the frame is *pinned*
-    // at 255, which is the clipping the half-float buffer would recover.
-    const uint8_t *px = (const uint8_t *)staging->contents();
+    const uint8_t *px = (const uint8_t *)mHdrProbeBuffer->contents();
     for (size_t i = 0; i < pixels; i++) {
       uint8_t m = 0;
       for (int c = 0; c < 3; c++) {
         uint8_t v = px[i * 4 + c];
-        if (v > m) m = v;
         sum += v / 255.0;
+        if (v > m) m = v;
       }
-      if (m > maxChannel * 255.0f) maxChannel = m / 255.0f;
-      if (m == 255) over1++;
+      if (m / 255.0f > maxChannel) maxChannel = m / 255.0f;
+      if (m == 255) pinned++;
     }
   }
-  staging->release();
 
-  Printf(PRINT_HIGH, "Metal scene colour probe (%dx%d, %s):\n", w, h,
-         halfFloat ? "RGBA16Float" : "BGRA8Unorm");
+  mHdrProbeBuffer->release();
+  mHdrProbeBuffer = nullptr;
+
+  Printf(PRINT_HIGH, "Metal scene colour probe (%dx%d, %s, pre-postprocess, no HUD):\n",
+         mHdrProbeW, mHdrProbeH, mHdrProbeHalfFloat ? "RGBA16Float" : "BGRA8Unorm");
   Printf(PRINT_HIGH, "  max channel:        %.4f\n", maxChannel);
   Printf(PRINT_HIGH, "  mean channel:       %.4f\n", (float)(sum / (pixels * 3)));
-  if (halfFloat) {
+  if (mHdrProbeHalfFloat) {
     Printf(PRINT_HIGH, "  pixels > 1.00:      %zu (%.4f%%)\n", over1, 100.0 * over1 / pixels);
     Printf(PRINT_HIGH, "  pixels > 1.05:      %zu (%.4f%%)\n", over1_05, 100.0 * over1_05 / pixels);
     Printf(PRINT_HIGH, "  pixels > 1.20:      %zu (%.4f%%)\n", over1_2, 100.0 * over1_2 / pixels);
     if (maxChannel <= 1.0f) {
-      Printf(PRINT_HIGH, "  -> Nothing exceeds 1.0. This content is LDR here; the half-float\n");
-      Printf(PRINT_HIGH, "     buffer buys precision only, and compute bloom cannot fire at\n");
+      Printf(PRINT_HIGH, "  -> Nothing exceeds 1.0 in this scene. The half-float buffer buys\n");
+      Printf(PRINT_HIGH, "     precision only here, and compute bloom cannot fire at\n");
       Printf(PRINT_HIGH, "     exposureAdjustment <= 1 regardless of format.\n");
     } else {
-      Printf(PRINT_HIGH, "  -> Headroom is in use. BGRA8 would clip this; tonemapping has\n");
-      Printf(PRINT_HIGH, "     something to roll off and bloom has something to extract.\n");
+      Printf(PRINT_HIGH, "  -> Headroom is in use. BGRA8 clips this; tonemapping has something\n");
+      Printf(PRINT_HIGH, "     to roll off and bloom has something to extract.\n");
     }
+    Printf(PRINT_HIGH, "  Note: a bright scene with dynamic lights on nearby geometry is where\n");
+    Printf(PRINT_HIGH, "  the 1.4 clamp binds. A dark scene proves little either way.\n");
   } else {
-    Printf(PRINT_HIGH, "  pixels pinned at 255: %zu (%.4f%%)\n", over1, 100.0 * over1 / pixels);
-    Printf(PRINT_HIGH, "  -> BGRA8 clamps at 1.0 by construction, so this cannot show\n");
-    Printf(PRINT_HIGH, "     headroom. Set mt_hdr_pipeline 1 and probe again to compare.\n");
+    Printf(PRINT_HIGH, "  pixels pinned at 255: %zu (%.4f%%)\n", pinned, 100.0 * pinned / pixels);
+    Printf(PRINT_HIGH, "  -> BGRA8 clamps at 1.0 by construction and cannot show headroom.\n");
+    Printf(PRINT_HIGH, "     The pinned figure is what a half-float buffer would recover.\n");
+    Printf(PRINT_HIGH, "     Set mt_hdr_pipeline 1 and probe again to compare.\n");
   }
+}
+
+CCMD(mt_hdr_probe)
+{
+  auto debug = GetActiveMetalDebugManager();
+  if (!debug) {
+    Printf(PRINT_HIGH, "Metal diagnostics are not available.\n");
+    return;
+  }
+  debug->ArmHdrProbe();
+  Printf(PRINT_HIGH, "mt_hdr_probe armed; sampling the next rendered frame.\n");
 }

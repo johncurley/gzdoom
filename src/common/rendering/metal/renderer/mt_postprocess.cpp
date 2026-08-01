@@ -476,6 +476,12 @@ void MtPostprocess::PostProcessScene(
   int sceneWidth = fb->GetBuffers()->GetSceneWidth();
   int sceneHeight = fb->GetBuffers()->GetSceneHeight();
 
+  // Sample SceneColor before Pass1 moves it into the pipeline images, so the
+  // HDR probe sees raw scene output rather than postprocessed colour or the
+  // 2D pass. No-op unless mt_hdr_probe armed it.
+  if (auto debug = fb->GetDebugManager())
+    debug->CaptureHdrProbe();
+
   MtPPRenderState renderstate(fb);
 
   if (!swscene) {
