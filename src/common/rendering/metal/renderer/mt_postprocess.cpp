@@ -63,6 +63,22 @@ CUSTOM_CVAR(Int, mt_compute_ao_scale, 2, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 // written. Expect a large frame-time cost: quarter -> half res alone is 4x
 // the AO pixels, and lifting the sample clamp is another ~5x on top.
 CVAR(Bool, mt_compute_ao_intel_clamp, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+// Use the compute AO path on Intel integrated GPUs. Default false: measured
+// 2026-08-01 on an HD 6000, compute AO costs ~2x the reference PP path
+// (22.05/22.41ms vs 11.42ms FrameGPU, a 1.95x ratio against a 0.36ms noise
+// floor), which independently reproduces the 2026-07-14 bisection's ~1.9x.
+// The machine is GPU-bound either way, so that is ~45fps vs ~87fps.
+//
+// Deliberately separate from mt_compute_ao_intel_clamp. Folding the two
+// together would make the clamps unreachable -- anyone setting the clamp
+// flag false to raise quality would simultaneously switch the path on, so
+// the clamped configuration could never execute.
+//
+// Non-Intel behaviour is unchanged (compute stays the default). That is the
+// status quo, NOT a measured decision: nothing on this path has ever run on
+// Apple Silicon -- not the performance, not the Tier 2 read-write paths. Do
+// not promote it to a stated policy without measuring.
+CVAR(Bool, mt_compute_ao_intel, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Bool, mt_compute_ao_normal_upsample, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Bool, mt_compute_ao_normal_blur, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Bool, mt_compute_ao_fullres_cleanup, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
@@ -434,7 +450,15 @@ void MtPostprocess::AmbientOccludeScene(float m5, const HWViewpointUniforms* cur
   if (fb->mZNear < 0.1f) fb->mZNear = 5.0f;
   if (fb->mZFar < fb->mZNear) fb->mZFar = 65536.0f;
 
-  if (mt_compute_ao && fb->mAOModule->Render(m5, sceneWidth, sceneHeight, currentViewpoint)) {
+  // Intel integrated GPUs default to the reference PP path -- compute AO
+  // measured at ~2x its cost there. See mt_compute_ao_intel.
+  bool useComputeAO = mt_compute_ao;
+  if (useComputeAO && !mt_compute_ao_intel &&
+      fb->mVersionManager.architecture == MtGPUArchitecture::Intel) {
+    useComputeAO = false;
+  }
+
+  if (useComputeAO && fb->mAOModule->Render(m5, sceneWidth, sceneHeight, currentViewpoint)) {
     return;
   }
 
@@ -604,7 +628,14 @@ void MtPostprocess::BlitCurrentToImage(MTL::Texture *dstimage) {
     blitCmdBuf->waitUntilCompleted();
     blitCmdBuf->release();
   } else {
-    // Use a simple draw call to convert formats
+    // Use a simple draw call to convert formats.
+    // Reaching here is unexpected: the only caller matches the pipeline
+    // format deliberately. Log it, because this path's orientation handling
+    // has never been exercised.
+    Printf(PRINT_LOG,
+           "Metal: BlitCurrentToImage format-conversion path taken (src %d -> dst %d). "
+           "This path is untested; verify orientation.\n",
+           (int)srcimage->pixelFormat(), (int)dstimage->pixelFormat());
     MtPPRenderState renderstate(fb);
     renderstate.customOutputTex = dstimage;
     renderstate.Clear();
@@ -617,8 +648,22 @@ void MtPostprocess::BlitCurrentToImage(MTL::Texture *dstimage) {
     uniforms.Saturation = 1.0f;
     uniforms.GrayFormula = 0;
     uniforms.ColorScale = 255.0f;
-    uniforms.Scale = {1.0f, 1.0f};
-    uniforms.Offset = {0.0f, 0.0f};
+    // Flip V so this path matches the orientation of the copyFromTexture
+    // path above. Without it the function's output orientation depends on
+    // whether the caller's formats happen to agree, which shipped once as an
+    // upside-down screen wipe (dce604c31) when mt_hdr_pipeline made the
+    // pipeline images RGBA16Float while CreateWipeTexture still asked for
+    // BGRA8Unorm. present.fp samples at TexCoord * UVScale + UVOffset.
+    //
+    // UNVERIFIED. This branch currently has no reachable caller --
+    // CreateWipeTexture is the only caller of BlitCurrentToImage and now
+    // always matches the pipeline format, so the copy path is always taken.
+    // The flip direction is derived from the reported symptom, not observed.
+    // To verify: temporarily make CreateWipeTexture request BGRA8Unorm
+    // unconditionally, run a level-exit wipe under mt_hdr_pipeline 1, confirm
+    // the wipe is upright, then revert.
+    uniforms.Scale = {1.0f, -1.0f};
+    uniforms.Offset = {0.0f, 1.0f};
     uniforms.HdrMode = 0;
     renderstate.Uniforms.Set(uniforms);
     renderstate.Uniforms.Set(uniforms);
