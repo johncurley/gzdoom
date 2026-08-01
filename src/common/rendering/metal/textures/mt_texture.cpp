@@ -9,6 +9,7 @@
 #include "image.h"
 #include "metal/renderer/mt_debug.h"
 #include "metal/renderer/mt_postprocess.h"
+#include "metal/renderer/mt_renderbuffers.h"
 #include "metal/renderer/mt_renderstate.h"
 #include "metal/system/mt_commandbuffer.h"
 #include "metal/system/mt_renderdevice.h"
@@ -215,10 +216,19 @@ void MtHardwareTexture::CreateWipeTexture(int w, int h, const char *name) {
     mDebugName = name;
   Reset();
 
+  // Must match the pipeline image format. BlitCurrentToImage takes a raw
+  // copyFromTexture when the formats agree and a present-shader draw when they
+  // do not -- and those two paths have opposite vertical orientation, because
+  // the draw goes through PatchVertexShader's Y-flip. A mismatch here shows up
+  // as an upside-down screen wipe while the world view looks fine.
+  const MTL::PixelFormat format =
+      fb->GetBuffers() ? (MTL::PixelFormat)fb->GetBuffers()->GetPipelineFormat()
+                       : MTL::PixelFormatBGRA8Unorm;
+
   auto desc = MTL::TextureDescriptor::alloc()->init();
   desc->setWidth(w);
   desc->setHeight(h);
-  desc->setPixelFormat(MTL::PixelFormatBGRA8Unorm);
+  desc->setPixelFormat(format);
   desc->setUsage(MTL::TextureUsageShaderRead | MTL::TextureUsageRenderTarget);
   desc->setStorageMode(MTL::StorageModePrivate);
 
@@ -228,7 +238,7 @@ void MtHardwareTexture::CreateWipeTexture(int w, int h, const char *name) {
   mImage->SetTexture(texture);
   mImage->SetWidth(w);
   mImage->SetHeight(h);
-  mImage->SetFormat((int)MTL::PixelFormatBGRA8Unorm);
+  mImage->SetFormat((int)format);
 
   fb->GetPostprocess()->BlitCurrentToImage(texture);
 }
