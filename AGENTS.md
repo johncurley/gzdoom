@@ -2814,9 +2814,15 @@ Do not record that one as fixed.
 a renderer bug for a full session. A config that disables three quality
 passes produces artifacts indistinguishable from broken code.
 
-**Stale cvars:** `mt_compute_ao_temporal{,_blend,_debug,_depth_reject}`
-are still in the ini and still tab-complete, but the temporal feature was
-fully reverted and nothing reads them. They are inert; delete them.
+**Stale cvars: RESOLVED 2026-08-02.** `mt_compute_ao_temporal{,_blend,
+_debug,_depth_reject,_teleport_angle,_teleport_dist}` were left in the ini
+after the temporal feature was fully reverted. **The claim that they still
+tab-complete was wrong** -- no such symbol exists anywhere in the non-doc
+source tree, so a clean build cannot register them. They were parked in the
+ini's `[GlobalSettings.Unknown]` section, which is exactly where GZDoom puts
+values with no matching CVAR declaration; that section membership is the
+proof they were unbound. Deleted from the ini 2026-08-02. If those names ever
+autocomplete again, suspect a stale executable, not this tree.
 
 **Correction worth keeping.** The mechanism (quarter-res block grid) was
 identified correctly and the fix proposed was wrong: the first instinct
@@ -3171,21 +3177,29 @@ loophole -- compute applying a *constant* near 2.4 rather than sampling the
 texture -- requires a bug nobody wrote, since the extract is byte-matched to
 the reference and visibly samples `exposureTex` under `params.useExposure`.
 
-## AO combine: two findings, neither yet actioned (2026-07-31)
+## AO combine: two findings, BOTH NOW CLOSED (2026-07-31, closed 2026-08-02)
 
-**1. `ssao_combine` (compute kernel, `mt_ao.metal:1259`) is dead code.**
-Never compiled into a PSO -- only `ssao_combine_fs` is (`mt_ao.cpp:1340`).
-It is missing the reference's `ssao.y > 2.0` validity guard and `depthMask`
-ramp, which makes it look like a bug in the shipping path when it is not
-reachable at all. **Delete it**; it will mislead the next person debugging
-AO bleed.
+Both were still recorded as open here until 2026-08-02, when a source audit
+found they had already been fixed and this section had gone stale. Verified
+against HEAD before rewriting. **If you are reading a handoff that lists
+either as open, the handoff is stale, not this section.**
 
-**2. `depthMask` ramp rate diverges from the reference.** Reference
-(`ssaocombine.fp`): `1.0 - exp2(-ssao.y * 0.01)`. Metal
-(`ssao_combine_fs`, both branches): `exp2(-... * 0.005)` -- half the rate,
-so Metal's depthMask is always smaller and AO fades in more slowly with
-distance. **Not yet established whether this is deliberate tuning or drift.**
-Do not "fix" it without checking, and re-measure AO appearance if changed.
+**1. `ssao_combine` (dead compute kernel) -- DELETED in `f3f62c912`.**
+It was never compiled into a PSO (only `ssao_combine_fs` was), and it lacked
+the reference's validity guard and `depthMask` ramp, so it read as a bug in
+the shipping path while being unreachable. No `ssao_combine` symbol remains
+in `mt_ao.metal`; every surviving AO entry point has a PSO construction path
+at `mt_ao.cpp:1339`.
+
+**2. `depthMask` ramp rate -- RESTORED to the reference's `0.01` in
+`aba5fba35`.** It had been `0.005` (half rate, so AO faded in too slowly
+with distance). The live Metal combine path now matches
+`ssaocombine.fp:33`'s `1.0 - exp2(-x * 0.01)` at `mt_ao.metal:1097`, and the
+low-resolution branch uses `0.01` at `mt_ao.metal:1131`. The
+"deliberate tuning or drift?" question is resolved as drift.
+
+`tools/check_shader_parity.py` passes for all AO and bloom functions and
+shared structs as of 2026-08-02.
 
 ## Not a renderer bug: pixel bleedthrough in Ashes Enriched (2026-07-31)
 
