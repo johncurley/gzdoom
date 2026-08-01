@@ -2669,6 +2669,68 @@ mid-frame, which would settle the in-place-composite theory outright.
 
 **Still frames cannot diagnose this.** Do not spend more screenshots on it.
 
+## AO artifacts 2026-08-01: it was the config, not the renderer
+
+Reported: AO crawling, salt/pepper squares, and an artificial look that
+popped in and out near walls. All three came from `gzdoom.ini`, not code.
+
+The ini had three quality features disabled relative to their defaults:
+
+```
+mt_compute_ao_skip_fullres=true      # default false
+mt_compute_ao_normal_upsample=false  # default true
+mt_compute_ao_combine_smooth=0       # default 0.25
+gl_ssao_strength=1                   # default 0.7 -- and 1 is the maximum,
+                                     # intensity is clamped to [0,1]
+```
+
+**`skip_fullres=true` was the big one.** At `gl_ssao 3` the full-res
+upsample + a-trous cleanup auto-enables (`mt_ao.cpp:1589`), and
+`skip_fullres` vetoes it. AO was therefore being combined straight from
+the quarter-res texture with no cleanup: a hard quarter-res block grid,
+which is the "salt/pepper squares".
+
+**Measured, one variable at a time, same post and view:**
+
+| change | FrameGPU avg | delta |
+|---|---|---|
+| baseline | 19.06ms | -- |
+| `gl_ssao_strength 0.7` | 19.35ms | +0.29ms (noise) |
+| `mt_compute_ao_skip_fullres 0` | 22.26ms | **+2.91ms** |
+
+~52fps -> ~45fps GPU-limited. The strength drop is free and fixed the
+artificial look; the cleanup costs ~15% of frame time and fixed the
+squares. Note `FrameGPU` is the only usable cost metric here -- the
+`ComputeCPU AO` line is encode time, and stage-boundary counter sampling
+is unsupported on HD 6000, so per-pass GPU timing is unavailable.
+
+**The reported crawl also cleared, which was not predicted.** Most likely
+it was *block-grid swim* rather than the historical bug: with AO pinned to
+a quarter-res screen-space grid, world surfaces slide across fixed block
+boundaries as the camera moves and the pattern reads as crawl. The
+joint-bilateral upsample removes the grid, so there is nothing left to
+swim. **This is probably not the same defect** as the six-attempt "AO
+pattern slides near geometry while moving" bug, which was root-caused to
+dither-texture sampling and would not be touched by an upsampling pass.
+Do not record that one as fixed.
+
+**Check the ini before diagnosing AO artifacts.** This looked exactly like
+a renderer bug for a full session. A config that disables three quality
+passes produces artifacts indistinguishable from broken code.
+
+**Stale cvars:** `mt_compute_ao_temporal{,_blend,_debug,_depth_reject}`
+are still in the ini and still tab-complete, but the temporal feature was
+fully reverted and nothing reads them. They are inert; delete them.
+
+**Correction worth keeping.** The mechanism (quarter-res block grid) was
+identified correctly and the fix proposed was wrong: the first instinct
+was to spend GPU computing *more* AO pixels via
+`mt_compute_ao_intel_clamp 0`, when the actual fix was re-enabling the
+pass that *resolves* quarter-res to full res. AO still runs at quarter res
+after the fix. Trying free config changes before paid ones is what caught
+it -- on a GPU already at 19ms/frame, the wrong lever would have spent a
+budget that did not exist.
+
 ## TRAP: BlitCurrentToImage silently changes vertical orientation
 
 `MtPostprocess::BlitCurrentToImage` (`mt_postprocess.cpp`) picks its path
