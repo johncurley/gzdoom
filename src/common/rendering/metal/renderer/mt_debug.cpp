@@ -36,6 +36,7 @@
 
 EXTERN_CVAR(Bool, mt_debug)
 EXTERN_CVAR(Bool, mt_compute_ao)
+EXTERN_CVAR(Bool, mt_compute_ao_intel)
 EXTERN_CVAR(Bool, mt_compute_bloom)
 EXTERN_CVAR(Int, mt_compute_bloom_composite)
 EXTERN_CVAR(Int, mt_compute_ao_worldpos_debug)
@@ -506,13 +507,20 @@ CCMD(mt_caps)
            "(mt_ao.cpp aoScale>=4) regardless of mt_compute_ao_scale.\n");
   }
 
-  // Effective postprocess configuration. Every one of these is CVAR_ARCHIVE,
-  // so a value set during one debugging session silently persists into the
-  // next -- which has now invalidated three separate in-game A/B tests
+  // Effective postprocess configuration. MOST of these are CVAR_ARCHIVE, so a
+  // value set during one debugging session silently persists into the next --
+  // which has now invalidated three separate in-game A/B tests
   // (mt_compute_ao_worldpos_debug left on, AO directions/steps left at
   // experiment values, and mt_compute_bloom left off, which made the bloom
   // composite modes inert because the compute path never ran at all).
   // Printing the resolved path removes the guesswork.
+  //
+  // Two are NOT archived (declared with flags 0) and reset to their defaults
+  // on restart: mt_compute_bloom_composite (mt_postprocess.cpp) and
+  // gl_ssao_debug (hw_postprocess_cvars.cpp). This is the opposite trap and
+  // just as costly -- set one, restart to pick up an unrelated change, and
+  // the A/B silently reverts to the default path. They are tagged
+  // "not archived" below; do not assume a restart preserved them.
   {
     const bool computeBloomOn = mt_compute_bloom && fb->mBloomModule != nullptr;
     const bool tier2 = v.supportsReadWriteBGRA8;
@@ -526,10 +534,23 @@ CCMD(mt_caps)
                        : (tier2 && mode != 1)  ? "Tier 2 direct read-write composite"
                                                : "Tier 1 compute + raster composite";
       Printf(PRINT_HIGH, "  bloom composite path:    %s\n", path);
+      Printf(PRINT_HIGH, "    (mt_compute_bloom_composite = %d, not archived -- resets on restart)\n",
+             mode);
     }
+    // Print the RESOLVED AO path, not just the cvar. On Intel the cvar can
+    // read "on" while mt_postprocess.cpp's architecture gate silently routes
+    // the frame to the reference PP path -- so the cvar alone tells you
+    // nothing about which code actually ran.
+    const bool intelGated = mt_compute_ao && !mt_compute_ao_intel &&
+                            v.architecture == MtGPUArchitecture::Intel;
     Printf(PRINT_HIGH, "  mt_compute_ao:           %s\n", mt_compute_ao ? "on" : "OFF");
+    Printf(PRINT_HIGH, "  AO path in use:          %s\n",
+           !mt_compute_ao   ? "reference PP (hw_postprocess.ssao) -- compute AO off"
+           : intelGated     ? "reference PP (hw_postprocess.ssao) <- Intel gate, "
+                              "compute AO overridden (set mt_compute_ao_intel 1 to force compute)"
+                            : "Metal compute (MtAOModule)");
     Printf(PRINT_HIGH, "  gl_ssao / debug:         %d / %d%s\n", (int)gl_ssao, (int)gl_ssao_debug,
-           gl_ssao_debug != 0 ? "  <- debug view active, not the shaded result" : "");
+           gl_ssao_debug != 0 ? "  <- debug view active, not the shaded result (not archived)" : "");
     if (mt_compute_ao_worldpos_debug != 0)
       Printf(PRINT_HIGH, TEXTCOLOR_YELLOW "  mt_compute_ao_worldpos_debug = %d -- AO buffer shows a "
              "world-position grid, NOT occlusion.\n", (int)mt_compute_ao_worldpos_debug);
