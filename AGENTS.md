@@ -2777,6 +2777,41 @@ This makes the bloom argument numeric rather than inferred. Extract is
 `max((c + 0.001) * adj - 1.0, 0)`. GL at c=1.4, adj=1 yields 0.4; Metal
 yields identically 0, always. The Afterglow dead scene is fully explained.
 
+### RESOLVED 2026-08-01: the headroom is real and in use (peak 1.6055)
+
+`mt_hdr_probe 120` in Ashes Afterglow, firing a weapon at close range:
+
+```
+peak channel:       1.6055 (frame 112 of 120)
+peak pixels > 1.00: 6701 (0.6020%)
+peak pixels > 1.20: 194  (0.0174%)
+```
+
+**BGRA8 was clipping all of it.** Compute bloom's threshold of 1.0 has
+6701 pixels to extract at the peak, where before it had exactly zero.
+
+**Correction to the 1.4 figure recorded above.** 1.4 is the bound for
+`uLightBlendMode == 0` only. `lightblendmode` is a MAPINFO map option
+(`g_mapinfo.cpp:1628`): DEFAULT, CLAMP_COLOR, and **NOCLAMP**, the last of
+which is `frag = Base.rgb * (color + dynlight)` with no clamp at all. The
+measured 1.6055 exceeds 1.4, so this content is on the unbounded path.
+(Not directly confirmed in Ashes' MAPINFO -- but NOCLAMP is the only path
+in the shader that can exceed 1.4.) The practical consequence is that the
+HDR case is *stronger* than the 1.4 argument suggested: there is no
+ceiling on what an 8-bit buffer discards.
+
+**Why three earlier attempts found nothing.** The route above 1.0 needs a
+strong dynamic light on a pale surface at close range, which is a
+*transient* -- a muzzle flash or blast. Two still-frame A/Bs and two
+single-frame probes in dark corridors could not catch one. The instrument
+was wrong for the question, not just the scene. A peak of exactly 1.0000
+in those runs was a brightmap: `main.fp:745` clamps brightmaps and
+fullbright sprites to exactly 1.0 in the reference, so "1.0000" means a
+lamp is in frame, not that headroom is in use. **Do not read 1.0000 as a
+clamp bug.**
+
+Superseded, kept for the reasoning trail:
+
 **A/B result 2026-08-01: no visible difference, in two valid scenes.**
 The Afterglow lantern pair (a clean pair -- max per-channel delta 2, zero
 pixels differing above threshold, so no movement and no HUD change)
