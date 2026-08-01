@@ -22,6 +22,7 @@
 #include <vector>
 
 EXTERN_CVAR(Int, mt_compute_ao_scale)
+EXTERN_CVAR(Bool, mt_compute_ao_intel_clamp)
 EXTERN_CVAR(Bool, mt_compute_ao_normal_upsample)
 EXTERN_CVAR(Bool, mt_compute_ao_normal_blur)
 EXTERN_CVAR(Bool, mt_compute_ao_fullres_cleanup)
@@ -1568,9 +1569,13 @@ bool MtAOModule::Render(float m5, int sceneWidth, int sceneHeight, const HWViewp
     int aoScale = (int)mt_compute_ao_scale;
     // Intel integrated GPUs default to quarter-res to stay within 16ms budget.
     // Apple Silicon and discrete GPUs can handle half-res comfortably.
-    if (fb->mVersionManager.architecture == MtGPUArchitecture::Intel && aoScale < 4)
+    // mt_compute_ao_intel_clamp false opts out: the divisor is what produces
+    // the AO block grid, so this is the first thing to lift when trading
+    // performance for a tighter image.
+    if (mt_compute_ao_intel_clamp &&
+        fb->mVersionManager.architecture == MtGPUArchitecture::Intel && aoScale < 4)
         aoScale = 4;
-    aoScale = clamp(aoScale, 2, 4);
+    aoScale = clamp(aoScale, 1, 4);
     EnsureTextures((sceneWidth + aoScale - 1) / aoScale, (sceneHeight + aoScale - 1) / aoScale);
     if (!mAOTexture || !mBlurTexture)
         return false;
@@ -1718,7 +1723,8 @@ bool MtAOModule::Render(float m5, int sceneWidth, int sceneHeight, const HWViewp
     // PP-AO-equivalent baseline. Clamp down unconditionally (same hard-clamp
     // pattern as the aoScale override above) to keep compute AO viable there
     // instead of defaulting it off entirely.
-    if (fb->mVersionManager.architecture == MtGPUArchitecture::Intel) {
+    if (mt_compute_ao_intel_clamp &&
+        fb->mVersionManager.architecture == MtGPUArchitecture::Intel) {
         if (algorithm == 1) {
             // Algorithm 1's numSteps is a flat total sample count, not one
             // factor of GTAO's numSteps x numDirections product. Reusing

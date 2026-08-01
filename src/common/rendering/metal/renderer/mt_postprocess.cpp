@@ -39,11 +39,30 @@ CUSTOM_CVAR(Int, mt_compute_bloom_composite, 0, 0)
   if (self < 0) self = 0;
   if (self > 2) self = 2;
 }
+// AO resolution divisor. 1 = full-res (each AO sample is one screen pixel),
+// 2 = half, 4 = quarter. The visible cost of a divisor > 1 is a block grid:
+// one AO sample covers an NxN screen block, and the blur/atrous passes can
+// only smooth *within* blocks, never remove the grid itself. That grid is
+// the "salt and pepper squares" artifact. 1 is reachable but expensive;
+// note the Intel budget override below, which may pin this higher.
 CUSTOM_CVAR(Int, mt_compute_ao_scale, 2, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
-  if (self < 2) self = 2;
+  if (self < 1) self = 1;
   if (self > 4) self = 4;
 }
+// Intel integrated GPUs get two hard quality overrides -- quarter-res AO and
+// a clamp to 16 horizon samples -- from the 2026-07-14 cost bisection, which
+// measured gl_ssao 3's 8x6=48 iterations at ~33ms of GPU frame time on an
+// HD 6000 vs ~6.7ms at 4x4=16, against a ~17ms PP-AO-equivalent baseline.
+// They exist so compute AO stays viable there rather than being off by
+// default.
+//
+// They are overrides, not defaults, so before this CVAR there was no way to
+// spend performance on quality on those GPUs no matter what you set. Set
+// this to false to honour mt_compute_ao_scale and the sample-count CVARs as
+// written. Expect a large frame-time cost: quarter -> half res alone is 4x
+// the AO pixels, and lifting the sample clamp is another ~5x on top.
+CVAR(Bool, mt_compute_ao_intel_clamp, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Bool, mt_compute_ao_normal_upsample, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Bool, mt_compute_ao_normal_blur, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Bool, mt_compute_ao_fullres_cleanup, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
