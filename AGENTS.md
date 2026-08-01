@@ -2669,6 +2669,44 @@ mid-frame, which would settle the in-place-composite theory outright.
 
 **Still frames cannot diagnose this.** Do not spend more screenshots on it.
 
+## Masking: the PP AO path is already stencil-masked on Metal (2026-08-01)
+
+Two *different* mechanisms were conflated under "the compute path has
+masking":
+
+1. **Output-side stencil test** -- `mt_postprocess.cpp:251`, in
+   `MtPPRenderState::Draw`. Fires for any hw_postprocess pass targeting
+   `PPTextureType::SceneColor`. `PPAmbientOcclusion::Render`'s combine ends
+   with `SetOutputSceneColor()`, so **the reference PP AO path already gets
+   this on Metal**. It was never compute-specific.
+2. **Per-sample coverage rejection** -- compute only. A mask texture
+   sampled *inside* the AO loop (`sampleCov`, `mt_ao.cpp:418/608/833`) to
+   reject individual samples crossing a portal boundary. Strictly stronger
+   than masking the composite.
+
+**Tested (Ashes: Hard Reset corridor, compute vs PP, all gates passing --
+title bar max delta 1, HUD max 2):** no bleedthrough signature. The
+column profile of `pp - compute` is a smooth gradient, ~0 at x=100, peaking
++4.27 at x~=493-504, decaying to 0 by x~=537 -- which is the wall/pillar
+corner in frame. Sign is **PP brighter, i.e. less AO**, strongest *at the
+corner*.
+
+That is an algorithm difference in corner response (Alchemy darkens
+concave corners more than the reference horizon path), not a masking
+failure. The predicted signature of missing per-sample rejection -- PP
+showing *extra* darkening in a band inside a portal edge -- did not appear.
+**Prediction not supported.**
+
+Practical: switching to `mt_compute_ao 0` does not break masking; it gives
+**subtler corner occlusion**. That is the actual trade, not correctness.
+
+**Caveats, deliberately not glossed:** no mirror was identifiable in the
+test frame (the reporter states they were in front of one; the capture
+shows a corridor, wall, pillar and doorway), so the hard portal case may
+not have been exercised. The scene is also very dark, which compresses
+differences -- max delta was 8/255. Treat this as "no evidence of
+bleedthrough here", not "bleedthrough is impossible in the PP path".
+
 ## MEASURED 2026-08-01: compute AO costs ~2x the reference PP path
 
 Settled the long-standing open question. `mt_compute_ao 0` falls through to
