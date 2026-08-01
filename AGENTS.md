@@ -2669,6 +2669,39 @@ mid-frame, which would settle the in-place-composite theory outright.
 
 **Still frames cannot diagnose this.** Do not spend more screenshots on it.
 
+## TRAP: BlitCurrentToImage silently changes vertical orientation
+
+`MtPostprocess::BlitCurrentToImage` (`mt_postprocess.cpp`) picks its path
+from whether the source and destination pixel formats happen to match:
+
+| formats | path | orientation |
+|---|---|---|
+| equal | `blitEncoder->copyFromTexture` | preserved (raw memory copy) |
+| differ | fullscreen present-shader draw | **flipped** (`PatchVertexShader` Y-flip) |
+
+So the function's output orientation is a function of a pixel format the
+caller may not think it controls. This is not hypothetical: it shipped as
+an upside-down screen wipe the moment `mt_hdr_pipeline` made the pipeline
+images RGBA16Float while `CreateWipeTexture` still hardcoded BGRA8Unorm
+(fixed in `dce604c31` by making the wipe texture follow the pipeline
+format, restoring the copy path).
+
+The world view is unaffected because it never goes through this function,
+which is exactly what makes the symptom confusing -- "wipe inverted,
+worldview fine" reads like a wipe bug and is not one.
+
+**Current callers:** `CreateWipeTexture` (`mt_texture.cpp`) and the
+screenshot path. Both are in step today, by hand.
+
+**The fix, not yet done:** make the conversion draw path flip so the
+function has one orientation regardless of format. Deliberately deferred
+rather than folded into the HDR tranche -- it changes a shared path used by
+both remaining callers, and it needs its own verification (a wipe and a
+screenshot, at `mt_hdr_pipeline` 0 and 1, i.e. four checks) rather than
+riding along on someone else's A/B. Until then, **any new caller must
+match the pipeline format**, and any format change to the pipeline images
+must audit this function's callers.
+
 ## ROADMAP-LEVEL: Metal has no HDR pipeline buffer (found 2026-07-31)
 
 Probably the largest single fidelity gap between the backends, and it
@@ -2743,6 +2776,22 @@ of dynamic lights, so it does not bound the output.
 This makes the bloom argument numeric rather than inferred. Extract is
 `max((c + 0.001) * adj - 1.0, 0)`. GL at c=1.4, adj=1 yields 0.4; Metal
 yields identically 0, always. The Afterglow dead scene is fully explained.
+
+**A/B result 2026-08-01: no visible difference, in two valid scenes.**
+The Afterglow lantern pair (a clean pair -- max per-channel delta 2, zero
+pixels differing above threshold, so no movement and no HUD change)
+showed **max delta 2 across the whole frame, including at the lantern**.
+Prediction 1 -- that bloom would visibly fire once the 1.0 threshold
+became reachable -- is **not supported**. Mean luminance moved 14.507 ->
+14.244, which is a real but sub-perceptual shift.
+
+Do not read this as the format change being wrong; read it as the
+*bloom* argument being unconfirmed. The likely explanation is that the
+lantern sprite is drawn at 1.0 rather than above it, so nothing in these
+scenes actually uses the headroom that ProcessMaterialLight makes
+available. Parity with the reference and the precision/banding argument
+stand on their own. **Still untested:** a scene with strong dynamic
+lights on nearby geometry, which is where the 1.4 clamp actually binds.
 
 **Status:** `mt_hdr_pipeline` CVAR added, defaulting **off**. The hardcoded
 formats are gone (`MtRenderBuffers::GetSceneColorFormat` and friends own it
