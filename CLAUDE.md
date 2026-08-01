@@ -64,6 +64,37 @@ There is no unit test suite. Validation is manual:
 4. CI matrix (Windows MSVC, macOS Xcode Release+Debug, Linux GCC/Clang) is defined in
    `.github/workflows/continuous_integration.yml`.
 
+### Measuring a rendering change
+
+Read the **`FrameGPU`** line from `mt_metrics` for cost. It is real
+`GPUStartTime()/GPUEndTime()`. The `ComputeCPU` / `PPCPU` lines are *encode* time and
+are useless for cost — but their **presence and label** is the best available proof of
+which code path actually ran. Per-pass GPU timing needs stage-boundary counter sampling,
+which `mt_caps` reports and which older Intel GPUs lack.
+
+Establish a noise floor before trusting a delta: take two readings of an *identical*
+configuration. On the reference machine that is ~0.4ms, so smaller differences mean
+nothing.
+
+### Visual A/B captures
+
+`tools/pngdiff.py` (stats), `tools/localize.py` (where and in which direction), and
+`tools/cluster.py` (are these images even distinct) decode PNGs with the stdlib — the
+dev machine has neither PIL nor ImageMagick. Read each script's docstring; they encode
+hard-won rules about which difference *shapes* indicate which causes.
+
+Non-negotiables, each of which has produced a wasted session:
+- **Check MD5s first.** Byte-identical captures across a toggle mean the setting did not
+  apply, or the change genuinely does nothing — distinguish before interpreting.
+- **The title bar is the control, not the HUD.** The HUD catches game-state drift but not
+  relocation; two captures in different maps compare fine on HUD and mean nothing.
+- **State a numeric prediction before looking.** Every real defect found on this branch
+  was caught this way; several confident readings of the code were not.
+- **Check `gzdoom.ini` before diagnosing a renderer bug.** Non-default CVARs from earlier
+  experiments produce artifacts indistinguishable from broken code, and stale entries for
+  removed features still tab-complete. An entire AO investigation resolved to config.
+- **Try free config changes before spending GPU.** The reference machine is GPU-bound.
+
 ## Architecture
 
 ### Rendering backends

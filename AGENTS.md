@@ -2669,6 +2669,26 @@ mid-frame, which would settle the in-place-composite theory outright.
 
 **Still frames cannot diagnose this.** Do not spend more screenshots on it.
 
+## Intel now defaults to the reference AO path (2026-08-01, 2cf256d13)
+
+`mt_compute_ao_intel` (Bool, default **false**) routes Intel integrated
+GPUs to `hw_postprocess.ssao.Render`. Rationale is the ~2x measurement
+below; on an HD 6000 that is ~45fps vs ~87fps, GPU-bound either way.
+
+**Kept separate from `mt_compute_ao_intel_clamp` on purpose.** Folding them
+into one flag would make the clamps unreachable: anyone clearing the clamp
+flag to raise quality would simultaneously switch the compute path on, so
+the clamped configuration could never execute.
+
+**Non-Intel behaviour is unchanged, and that is the status quo rather than
+a measured decision.** Nothing on the compute path has ever run on Apple
+Silicon -- not the performance, not the Tier 2 read-write paths. Do not
+promote "compute on advanced hardware" to a stated policy without
+measuring it. The 15-minute test if hardware ever appears: `mt_caps`
+(confirm Tier 2 and arch detection), then `mt_compute_ao` 1 and 0 with
+`mt_metrics` either side, then `mt_compute_bloom 1` -- which would be the
+first execution of the Tier 2 direct-composite path anywhere.
+
 ## Masking: the PP AO path is already stencil-masked on Metal (2026-08-01)
 
 Two *different* mechanisms were conflated under "the compute path has
@@ -2831,14 +2851,24 @@ worldview fine" reads like a wipe bug and is not one.
 **Current callers:** `CreateWipeTexture` (`mt_texture.cpp`) and the
 screenshot path. Both are in step today, by hand.
 
-**The fix, not yet done:** make the conversion draw path flip so the
-function has one orientation regardless of format. Deliberately deferred
-rather than folded into the HDR tranche -- it changes a shared path used by
-both remaining callers, and it needs its own verification (a wipe and a
-screenshot, at `mt_hdr_pipeline` 0 and 1, i.e. four checks) rather than
-riding along on someone else's A/B. Until then, **any new caller must
-match the pipeline format**, and any format change to the pipeline images
-must audit this function's callers.
+**Fixed 2026-08-01 (2cf256d13), but UNVERIFIED and currently unverifiable.**
+The conversion path now flips V (`present.fp` samples at
+`TexCoord * UVScale + UVOffset`) so both paths share one orientation.
+
+The branch has **no reachable caller**: `CreateWipeTexture` is the only
+caller of `BlitCurrentToImage` and since `dce604c31` always matches the
+pipeline format, so the copy path is always taken. The flip direction was
+derived from the reported symptom, not observed. The path also logs when
+taken, so a future mismatched caller is visible rather than silently
+upside down.
+
+To verify: temporarily make `CreateWipeTexture` request `BGRA8Unorm`
+unconditionally, run a level-exit wipe under `mt_hdr_pipeline 1`, confirm
+the wipe is upright, revert.
+
+**Any new caller must still match the pipeline format** until that is done,
+and any format change to the pipeline images must audit this function's
+callers.
 
 ## ROADMAP-LEVEL: Metal has no HDR pipeline buffer (found 2026-07-31)
 
