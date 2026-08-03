@@ -1,0 +1,133 @@
+Handoff — metal-audit, 2026-08-03
+
+Supersedes the 2026-08-01 handoff. Nine commits, tree clean, build green
+throughout. Two source audits were run this session; both paid off.
+
+Read CLAUDE.md's "Measuring a rendering change" and "Visual A/B captures"
+first, then AGENTS.md. Everything below anchors to commits, not to docs —
+see "The method lesson" at the end for why that now matters.
+
+Verified on screen — STYLEOP_Shadow was 42% too dark on Metal
+
+- STYLEOP_Shadow is enum 8, and vk_renderpass.cpp's renderops[] holds -1 for
+  every index above STYLEOP_RevSub, so the reference routes it into the fuzz
+  branch: Cout = Cs*Cd + Cd*(1-As). Metal used Zero/SourceAlpha, i.e. Cd*As.
+  With hw_sprites.cpp's SetColor(0.2,0.2,0.2,0.44) that is 0.76*Cd against
+  0.44*Cd. Fixed in fde91b90b, recorded in 441bb959f.
+- The error was alpha-dependent, not constant: reference (1.2-As)*Cd vs Metal
+  As*Cd, crossing at As=0.6, and the fog branch scales fuzzalpha DOWN so
+  fogged sprites diverged further. Nothing in normal play crosses over.
+- Repro at all requires r_drawfuzz 2 (renderstyle.cpp:151-154 converts every
+  fuzz style to STYLEOP_Shadow). At the default of 1 this code never runs and
+  no stock actor uses STYLE_Shadow, so the bug was real but narrow.
+- MEASURED: Metal 0.679 vs Vulkan 0.676 darkening ratio, agreement 0.4%. Had
+  the fix not taken Metal would read ~0.39 — a gap ~100x larger.
+
+  The technique matters more than the result. A cross-backend whole-frame
+  diff is USELESS for a localized effect: it reported 92.7% of pixels
+  differing because the restart forces relocation and the backends differ
+  globally anyway. Use an intra-image ratio (effect vs unaffected neighbour
+  on the same scanlines, compared between images). Scale-invariant, cancels
+  both confounds.
+
+Compute bloom — the four-session null was CONFIG. Half-answered.
+
+- gl_exposure_base was 10 in the ini (default 0.35), left from the abandoned
+  exposure-response test. At base 10 adj ~0.09, and the extract subtracts a
+  hardcoded threshold of 1.0 AFTER the multiply, so a pixel needed c > 10.1
+  against a measured scene peak of 1.6055. Bloom extract output was
+  identically zero on both paths under both formats — exactly the recorded
+  "never observed to change a frame across four capture sessions" symptom.
+- Restoring 0.35 made gl_bloom 0 vs 1 differ across 10.94% of frame
+  immediately. First time bloom has been seen to change a frame here.
+- Cannot be proven retroactively (the ini is untracked), but it is a leftover
+  from those same sessions and matches the signature exactly. That is now
+  TWO multi-session investigations resolved by reading gzdoom.ini.
+
+- STILL OPEN, and the highest-value question: with bloom actually firing,
+  compute and reference DIFFER, at a zero noise floor. Ashes Enriched MAP51
+  solar lantern, each against a gl_bloom 0 baseline:
+
+                    bbox        aspect  centroid       peak  energy  px>2
+    reference    469 x 154     3.05:1  (798.6,424.6)  29.9  424242  47328
+    Metal        316 x 296     1.07:1  (794.3,478.4)  16.2  347624  54291
+
+  Ruled out by inspection, do NOT redo: level count (both 4), level0 res
+  (both quarter of mSceneViewport), composite weights (level0 only at unit
+  gain BOTH sides — mt_bloom.cpp:536-541 zeroes strength[1..3]), resample
+  kernel (downsample_box is a single bilinear sample, same as
+  bloomcombine.fp), pyramid structure.
+
+  Unexamined: whether Metal reads gl_bloom_amount at all; per-level dimension
+  rounding down the pyramid; edge/clamp behaviour at level boundaries; the
+  compute kernel's alpha (writes 1.0; the raster combine already matches the
+  reference's 0.0). This is audit-brief-02.md Task 1, already retargeted with
+  the table above as a fixed target.
+
+Also landed
+
+- Samplers (fde91b90b): CLAMP_CAMTEX clamped where the reference REPEATS
+  (canvas textures select it explicitly, so visible wherever camera-texture
+  UVs cross the edge); CLAMP_XY_NOMIP and CLAMP_NOFILTER* were address modes
+  only where the reference also pins filtering and mipmapping. BOTH STILL
+  UNVERIFIED ON SCREEN — CAMTEX needs a map with a camera texture whose UVs
+  cross the edge. Two of that commit's three fixes rest on reading alone.
+- mt_caps (5d239e884) now prints the RESOLVED AO path, not just the cvar. On
+  Intel the gate at mt_postprocess.cpp:454 forces the reference PP path while
+  mt_compute_ao can still read "on". Also tags the two non-archived cvars
+  (mt_compute_bloom_composite, gl_ssao_debug) that reset on restart — the
+  inverse of the documented persistence trap and just as costly.
+- check_shader_parity.py (6524a7f6b) gained a third direction: named
+  invariants against the reference .fp shaders. This is the class that
+  produced both of this branch's real defects. Run it before source-reviewing
+  shaders; every MATCH is an eliminated hypothesis.
+- ini cleaned: six dead mt_compute_ao_temporal* entries removed (they were in
+  [GlobalSettings.Unknown], which IS the proof they were unbound), two AO
+  tuning values restored to code defaults. Backups in the session scratchpad.
+
+Start here
+
+1. audit-brief-02.md Task 1 — explain the bloom signature. Best-posed
+   question available: five numbers to explain, five hypotheses eliminated,
+   candidates ranked. Send it out rather than reading it here; see below.
+2. Task 4 — one of depth/stencil, culling/winding, or push-constant vs
+   uniform-buffer binding. Blend modes are done and produced the session's
+   best finding, which is the argument for continuing.
+3. Ours, needs a build: the dead AO plumbing from brief 01 (combinePSO
+   declared and released but never assigned, Execute() taking fogTex/
+   combineTex it never reads, the dither texture gating compute AO though no
+   kernel uses it), and the W-axis sampler divergence deliberately left out
+   of fde91b90b (Metal derives W from the clamp mode; the reference hardcodes
+   REPEAT).
+4. Verify CAMTEX and NOFILTER on screen.
+
+Still open from before: texture-upload cold-load (never fired) · Gemini
+Findings 11/12 · Tier 2 direct-composite path has never executed · Apple
+Silicon completely untested · BlitCurrentToImage's conversion branch still
+has no reachable caller.
+
+The method lesson — the expensive one
+
+TWO source-reading conclusions about compute bloom were wrong in one session,
+against one correct measurement.
+
+- Claimed Metal sums all four bloom levels while the reference composites
+  only level0. FALSE. Read bloom_combine_contrib_all without reading its
+  caller, which zeroes three of four weights. The all-levels bug was real but
+  already fixed 2026-07-30. Retracted in f8fa3ad17.
+- Claimed a normalized-UV vs texel-offset unit mismatch. Disproved by
+  blur.fp using ivec2 textureOffset.
+
+Both were plausible from the shader alone. Neither survived. **Read every
+kernel together with its binding site, and read the comments in the .cpp —
+they record prior fixes.**
+
+Related: audit brief 01 named two "known live" defects from AGENTS.md that
+aba5fba35 and f3f62c912 had already fixed. The doc had drifted from the tree
+in under two weeks. Anchor findings to code and commits; treat the living
+docs as a hypothesis. Both audit briefs now say this explicitly.
+
+Config state at session end (it has changed, and this session turned on
+stale config twice): gl_bloom=true, gl_exposure_base=0.35, r_drawfuzz=1,
+mt_compute_bloom=true, gl_exposure_speed=0.05, vid_preferbackend=3,
+mt_compute_ao=false.
