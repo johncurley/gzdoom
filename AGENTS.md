@@ -3497,3 +3497,114 @@ texel centres, so it can only alter edge/rounding samples.
 **No single known source difference explains all five signature numbers.** The
 next measurement should isolate the intermediate `bloomA` / `mCompositeTex`
 outputs, which separates an upstream pyramid discrepancy from the final Y flip.
+
+## Audit round two: all three divergences FIXED in source, none yet on screen (2026-08-04)
+
+Commits `9d19739e4` and `3cb088b89`. Build green, `check_shader_parity.py`
+passes. **Every claim below is a source claim.** Nothing in this section has
+been seen on screen; the captures are the next session's job and the
+predictions are stated here so they cannot be adjusted afterwards.
+
+### The three round-two findings, now fixed
+
+**1. Tier 1 bloom composite sampled the contribution upside down.**
+`bloom_fs` now takes `float2(in.uv.x, 1.0 - in.uv.y)`. Confirmed in source
+before changing: `bloom_combine_contrib_all` writes `mCompositeTex` at `gid`,
+i.e. texture order with v=0 the top row, while `bloom_vs` sets
+`uv = position.xy * 0.5 + 0.5` from clip space where +Y is up. Native
+libraries bypass `PatchVertexShader`, so nothing reconciled them. Same
+correction and same reason as `ssao_combine_fs`.
+
+`bloom_vs`/`bloom_fs` are used by nothing but this composite (checked), so the
+fix is contained. The Tier 2 read-write kernel writes in texture order and
+never needed it.
+
+**The prior 81-pixel agreement is NOT inconsistent with this, and that worry
+is now closed.** The audit flagged it as something to check rather than
+explain away — correct instinct, but the extract-stage comparison never runs
+through the composite, so a broken composite could not have shown up in it.
+No contradiction to chase.
+
+**2. Bloom mip chain rounded the wrong way.** Now iterative ceiling-halving,
+matching `hw_postprocess.cpp:54-68`. Level 0 already agreed —
+`ceil(w/4) == ceil(ceil(w/2)/2)` — and every consumer (`blurLevel`,
+`resample`, the composite) reads the textures' real `width()`/`height()`, so
+the allocation in `CreateTextures` was the entire divergence.
+
+**3. Depth writes while depth testing disabled.** `pipelineKey.DepthWrite` is
+now `(mDepthTest && mDepthWrite)`, matching `vk_renderstate.cpp:217`. The
+reverse-Z compare mapping was NOT touched.
+
+### Predictions, stated before the captures
+
+The branch rule is a numeric prediction before looking. These are it.
+
+**Bloom, Ashes Enriched MAP51 solar lantern, each path against a `gl_bloom 0`
+baseline.** The two-sided test — both halves must hold:
+
+- Y centroid moves from the measured 478.4 to **424.6**, the reference value.
+- *Independently*, `424.6 == 2 * (mSceneViewport.top + height/2) - 478.4`.
+  **Read the real viewport at capture time and check this.** AGENTS.md's own
+  note on the round-two finding is right that the 451.5 axis was fitted to the
+  midpoint of the two measured centroids, so quoting it back as confirmation
+  is circular. Deriving it from scene geometry is what makes this a test.
+- X centroid unchanged (~794-798; it already agreed to 4px).
+- bbox, peak, energy, px>2 near their measured compute values
+  (316x296, 16.2, 347624, 54291) apart from a **small vertical contraction**
+  from fix 2. A pure reflection changes none of them.
+
+**If bbox instead jumps to 469x154 and peak to 29.9 — the reference values —
+that is a good outcome but the model was wrong**, and the reason needs
+finding rather than banking. Neither fixed mechanism predicts it: a flip
+preserves all four, and one texel of mip rounding cannot produce a 92% height
+change.
+
+**Depth writes:** the expected result is *no visible change in normal play*.
+The test is the two-primitive one — disable the test with the mask still true,
+write a known depth, re-enable `DF_Less`, draw an overlapping primitive.
+Metal should now retain the original depth as Vulkan does. A visible change
+in HUD/player sprites would mean something else depended on the old behaviour.
+
+### Also fixed: the deferred cleanups (`9d19739e4`)
+
+- `MtAOModule::Execute` took `fogTex` and `combineTex` and read neither. The
+  combine pass binds `SceneFog` itself; `combineTex` was `nullptr` at the sole
+  call site. Both params gone.
+- `combinePSO` was declared and released but never assigned — the combine pass
+  is the `ssao_combine_vs`/`_fs` raster pair, not a kernel. Gone.
+- The dither texture, superseded by the world-locked noise, was still created,
+  still bound at `texture(0)`, and still **gated compute AO in two places**
+  (`Render()` and `Execute()` both bailed without it) for a texture no kernel
+  read. All of it gone, including the `[[texture(0)]]` params in all three
+  kernels.
+
+  **The deferral comment was wrong about the cost**: it said removal meant
+  renumbering every subsequent texture index in the kernel, `Execute()`, and
+  the other two kernels. The indices are explicit `[[texture(n)]]` attributes,
+  so nothing else moved. That is why this was cheap after months of deferral —
+  worth remembering the next time a comment prices its own cleanup.
+
+- Sampler W address mode: `vk_samplers.cpp` passes `REPEAT` as the third
+  `AddressMode()` argument at **all four** of its call sites. Metal derived W
+  from `mClampMode`. No visual effect — everything sampled there is 2D — but
+  it split the sampler cache into keys the reference never has. The
+  postprocess path still sets W from its wrap mode, which is what its own
+  reference (`vk_samplers.cpp:162`) does.
+
+### Tooling
+
+`check_shader_parity.py` gained **`native raster bloom combine flips V into
+texture order`**. The V-flip is exactly the class the script exists to hold —
+a one-line convention whose absence is invisible in review and expensive to
+find by measurement.
+
+### Still not verified on screen
+
+The three fixes above, plus `CLAMP_CAMTEX` and the `NOFILTER` sampler changes
+carried over from 2026-08-03, which still rest on reading alone. CAMTEX needs
+a map with a camera texture whose UVs cross the edge.
+
+**Before capturing, delete `~/Library/Application Support/zdoom/cache/
+mt_pipelines.bin`.** A stale PSO binary archive can mask a native-shader
+change — this is a recorded trap and the bloom fix is exactly the kind it
+hides. It was moved aside on 2026-08-04 and regenerates on launch.
