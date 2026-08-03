@@ -3411,3 +3411,89 @@ numbers to explain is far more use to it than the brief alone.
   `blur.fp` disproves it -- the reference uses `textureOffset(..., ivec2(+-1..3, 0))`,
   texel offsets, same as the compute port. The spread comes from the mip chain,
   not the kernel.
+
+## Audit round two: three confirmed source divergences, none yet fixed (2026-08-03)
+
+From `audit-brief-02.md`'s results section (appended at `:269`). **All three
+independently verified against the tree before recording here.** None is fixed
+yet; none has been seen on screen.
+
+### 1. Tier 1 bloom composite omits the Y flip the AO path documents
+
+`bloom_vs` computes `out.uv = out.position.xy * 0.5 + 0.5` with no inversion
+and `bloom_fs` samples `in.uv` directly (`mt_bloom.metal:175-190`). But
+`mt_ao.metal:1084-1089` carries an explicit comment — "Metal's fullscreen-
+triangle UV is vertically opposite to the scene render textures" — and applies
+`float2(in.uv.x, 1.0 - in.uv.y)`. Native shaders bypass `PatchVertexShader`,
+while the PP `screenquad.vp` path is processed by it, so the correction has to
+be manual and bloom does not do it.
+
+**This is a real inconsistency between two Metal paths.** It was found by
+comparing Metal against Metal rather than against the reference — a technique
+worth reusing.
+
+**Leading candidate for the 54px Y-centroid displacement** in the bloom
+signature, and it cannot explain the rest: a pure vertical reflection
+preserves bbox extent, peak, energy and pixel count, so `469x154 -> 316x296`,
+the lower peak and the 18% energy loss all remain unexplained.
+
+**CAREFUL — one claim in the audit is overstated.** It reports the predicted
+reflected centroid as "exactly" the measured value via `2 * 451.5 - 424.6 =
+478.4`. That axis of 451.5 is the *midpoint of the two measured centroids* —
+it was fitted to the data, not derived independently from the scene viewport
+geometry. So the numbers are **consistent with** a vertical flip; they do not
+confirm one. The code evidence carries this finding, not the arithmetic.
+
+Settle it: capture Tier 1's `mCompositeTex` before the raster draw, then make
+only `bloom_fs` sample `float2(in.uv.x, 1.0 - in.uv.y)` and re-run the
+five-number capture. Y centroid should reflect back to ~424.6 with the other
+four metrics unchanged. **Also check the prior 81-pixel agreement result** —
+the audit notes it may be inconsistent with this source path if both captures
+used Tier 1, and that deserves checking rather than explaining away.
+
+### 2. Bloom mip chain rounds the wrong way
+
+Reference halves iteratively with `(prior + 1) / 2` — ceiling
+(`hw_postprocess.cpp:54-68`). Metal uses `width >> i` / `height >> i` — floor
+(`mt_bloom.cpp:350-361`). Odd lower mip heights therefore differ by one texel,
+giving the coarsest vertical blur a slightly larger footprint after upsampling.
+
+Direction matches the observed vertical broadening, magnitude does not: this
+cannot credibly produce a 92% height increase or the energy/peak change. Real
+divergence, small contributor at most.
+
+### 3. Metal writes depth when depth testing is disabled — CORRECTNESS BUG
+
+**The most valuable finding of the round, and independent of bloom.**
+
+    Vulkan   pipelineKey.DepthWrite = mDepthTest && mDepthWrite   (vk_renderstate.cpp:217-226)
+    Metal    pipelineKey.DepthFunc  = mDepthTest ? mDepthFunc : DF_Always
+             pipelineKey.DepthWrite = mDepthWrite ? 1 : 0          (mt_renderstate.cpp:750-752)
+
+So a draw with `EnableDepthTest(false)` and the depth mask still true writes
+every covered fragment's depth on Metal and none on Vulkan. In a reverse-Z
+scene each such write can change whether a later `DF_Less` draw is occluded.
+
+**Reachable:** `DrawEndScene2D` disables depth testing for player/HUD sprites
+without disabling the mask (`hw_drawinfo.cpp:964-985`). Other paths are safe
+because they explicitly clear the mask — `Draw2D` (`hw_draw2d.cpp:70-75`) and
+the projected-plane stencil fill (`hw_flats.cpp:281-299`).
+
+**Fix is to key the write on `mDepthTest && mDepthWrite`, matching Vulkan —
+NOT to touch the reverse-Z compare mapping**, which is deliberate and
+documented. Stencil function, reference, operation and masks otherwise match.
+
+### Properly eliminated by this round — do not re-open
+
+`gl_bloom_amount` **is** read and passed unchanged on both sides (PP via
+`ComputeBlurSamples` at `hw_postprocess.cpp:104-106`; Metal from
+`mt_postprocess.cpp:531` into `ComputeBloomBlurSamples` at
+`mt_bloom.cpp:381-412`). The compute-only alpha `1.0` is consumed by a
+fragment shader returning alpha `0.0` under additive RGB blend, so it cannot
+affect the measured RGB delta. The reference blur's implicit sampler is
+nearest where the native blur hardcodes linear, but all seven coordinates are
+texel centres, so it can only alter edge/rounding samples.
+
+**No single known source difference explains all five signature numbers.** The
+next measurement should isolate the intermediate `bloomA` / `mCompositeTex`
+outputs, which separates an upstream pyramid discrepancy from the final Y flip.
