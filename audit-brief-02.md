@@ -266,3 +266,125 @@ ring-buffer GPU/CPU sync before reporting anything in those areas as a defect.
 - Anything Apple Silicon — untested everywhere, not auditable from source.
 - Performance claims of any kind. `FrameGPU` from `mt_metrics` is the only
   valid cost signal and it requires the hardware.
+
+---
+
+## Audit results -- 2026-08-03
+
+Source-only pass at `d126ca6d4`. `python3 tools/check_shader_parity.py`
+passes before and after the review. The named reference invariants therefore
+eliminate the extract constants, blur Gaussian exponent/amount floor and tap
+count, and the raster combine RGB/alpha contract; they do not cover the
+coordinate and per-level behaviour below.
+
+### Task 1 -- bloom signature
+
+**1. Tier 1's final native composite flips the bloom contribution vertically.
+High confidence for the 54px Y error; not a complete explanation of the
+five-number signature.**
+
+The compute contribution is generated in texture order by
+`bloom_combine_contrib_all`: its local `gid.y` produces `uv.y` and writes to
+the identically ordered `mCompositeTex`
+(`mt_bloom.metal:124-143`; called at `mt_bloom.cpp:578-585`). The Tier 1
+composite then uses native `bloom_vs`, where `uv.y = position.y * 0.5 + 0.5`,
+with no inversion (`mt_bloom.metal:175-188`; called at
+`mt_bloom.cpp:597-613`). Native libraries bypass `PatchVertexShader`, while
+the PP `screenquad.vp` path is processed by it (`mt_shader.cpp:711-735`,
+`mt_shader.cpp:902-915`). The working native AO combine documents and applies
+the necessary correction explicitly: `sceneUV.y = 1.0 - in.uv.y`
+(`mt_ao.metal:1084-1089`).
+
+For a scene viewport whose top plus height/2 is 451.5, the predicted reflected
+centroid is `2 * 451.5 - 424.6 = 478.4`, exactly the measured compute Y
+centroid. X is unchanged, also matching the 4px X agreement. A pure vertical
+reflection preserves bounding-box width/height, peak, energy, and affected
+pixel count, so it cannot explain the measured `469x154 -> 316x296`, lower
+peak, or 18% energy loss. It is a real partial cause, not a substitute for
+the remaining investigation.
+
+Settle it by capturing the Tier 1 `mCompositeTex` before the raster draw and
+then making only `bloom_fs` sample `float2(in.uv.x, 1.0 - in.uv.y)`. The
+output centroid should reflect back to 424.6 without changing the other four
+metrics. This code predates `ef6a8ac87`, whose commit message recorded a
+near-match; the only later bloom change is `beab06c94`'s attachment-format PSO
+refactor. That history means the prior 81-pixel result is inconsistent with
+this source path if both captures used Tier 1, and should be checked rather
+than explained away.
+
+**2. Metal rounds odd lower mip heights down; PP rounds every level up.
+High confidence for the source divergence; low confidence that it accounts
+for more than a small part of the measured shape.**
+
+The reference updates each level with `(prior + 1) / 2`
+(`hw_postprocess.cpp:54-68`). Metal uses `width >> i` and `height >> i`
+(`mt_bloom.cpp:350-361`). At the likely `1600x900` scene size implied by the
+centroid reflection, both paths start at `400x225`, but PP then uses
+`200x113`, `100x57`, `50x29`; Metal uses `200x112`, `100x56`, `50x28`.
+The compute path consequently gives its coarsest vertical blur a 3.6% larger
+base-level footprint after upsampling (`225/28` rather than `225/29`), while
+the horizontal chain is unchanged. This predicts a modest vertical broadening
+and lower aspect ratio, in the observed direction, but cannot credibly create
+a 92% height increase or explain the energy/peak changes alone.
+
+Settle it by changing only the allocation to iterative ceiling-halving and
+repeating the five-number capture. The vertical extent should contract
+slightly; a large collapse of the mismatch would show thresholded metrics were
+amplifying the small geometric difference.
+
+**Eliminated candidates.** `gl_bloom_amount` is read and passed unchanged:
+PP supplies it to `ComputeBlurSamples` (`hw_postprocess.cpp:104-106`), and
+Metal passes it from `mt_postprocess.cpp:531` to `Execute`, then directly to
+`ComputeBloomBlurSamples` (`mt_bloom.cpp:381-412`). The Gaussian/tap invariant
+also passes. The reference blur's implicit sampler is nearest
+(`hw_postprocess.h:111-120`, `hw_postprocess.cpp:261-270`) whereas the native
+blur hardcodes linear (`mt_bloom.metal:69-108`), but all seven coordinates are
+texel centers (`(gid + 0.5) / extent` plus integral texels). It can only alter
+rounding/edge samples, not generate the central shape, energy and affected
+pixel changes by itself. The compute-only alpha `1.0` is consumed by a
+fragment shader that returns alpha `0.0`, and its RGB blend is additive
+(`mt_bloom.metal:142,185-188`; `mt_bloom.cpp:320-324`), so it cannot affect
+the reported RGB bloom delta.
+
+No single remaining source difference explains all five values. The next
+measurement should isolate the intermediate `bloomA`/`mCompositeTex` outputs;
+that separates an upstream pyramid discrepancy from the proven final Y flip.
+
+### Task 4 -- depth/stencil state
+
+Chosen subsystem: depth/stencil. Culling is explicitly known-deliberate, and
+blend was closed by `fde91b90b`; this leaves one bounded state surface with a
+direct Vulkan comparison.
+
+**3. Metal enables depth writes when depth testing is disabled. High
+confidence.**
+
+Vulkan makes writes conditional on the test:
+`pipelineKey.DepthWrite = mDepthTest && mDepthWrite`
+(`vk_renderstate.cpp:217-226`), then creates its pipeline with that disabled
+state (`vk_renderpass.cpp:308-313`). Metal instead changes the compare to
+`DF_Always` but keeps `DepthWrite = mDepthWrite`
+(`mt_renderstate.cpp:750-752`), which becomes Metal `CompareFunctionAlways`
+with `setDepthWriteEnabled(true)` (`mt_pipelinestate.cpp:261-280`). Thus a
+draw with `EnableDepthTest(false)` and a still-true depth mask writes every
+covered fragment's depth on Metal; Vulkan writes none. In a reverse-Z scene,
+each such write can change whether a subsequent `DF_Less` draw is occluded.
+
+This is reachable: `DrawEndScene2D` disables depth testing for player/HUD
+sprites without disabling the depth mask (`hw_drawinfo.cpp:964-985`), after
+the 3D path normally leaves the mask enabled. Other paths are deliberately
+safe because they explicitly set the mask off, including `Draw2D`
+(`hw_draw2d.cpp:70-75`) and the projected-plane stencil fill
+(`hw_flats.cpp:281-299`).
+
+Settle it with a depth attachment capture around a HUD/player-sprite draw, or
+a two-primitive test: disable depth test while leaving the mask true, draw a
+known depth, re-enable `DF_Less`, and draw an overlapping primitive. Metal
+will reject/accept based on the intervening write; Vulkan will retain the
+original depth. The intended fix is to key Metal depth writes on
+`mDepthTest && mDepthWrite`, matching Vulkan, not to change the documented
+reverse-Z compare mapping.
+
+Stencil function, reference, operation and masks otherwise match the Vulkan
+path in this pass: both route `SetStencil` through an Equal comparison and
+Keep/IncrementClamp/DecrementClamp operations. No stencil-only finding.
