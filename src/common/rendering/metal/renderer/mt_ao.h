@@ -62,7 +62,7 @@ public:
         float screenNoiseMix;
     };
     bool Render(float m5, int sceneWidth, int sceneHeight, const HWViewpointUniforms* currentViewpoint);
-    void Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL::Texture* normalTex, MTL::Texture* sceneColorTex, MTL::Texture* aoTex, MTL::Texture* ditherTex, MTL::Texture* fogTex, MTL::Texture* combineTex, MTL::Texture* coverageTex, const SSAOParams& params, bool blurAO, bool useFullresCleanup, int algorithm);
+    void Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL::Texture* normalTex, MTL::Texture* sceneColorTex, MTL::Texture* aoTex, MTL::Texture* coverageTex, const SSAOParams& params, bool blurAO, bool useFullresCleanup, int algorithm);
 
 private:
     void EnsureTextures(int width, int height);
@@ -74,7 +74,6 @@ private:
     void EnsureCoverageMask(int width, int height);
     void EnsureFullresTextures(int width, int height);
     void EnsureDepthPyramid(int width, int height);
-    void CreateDitherTexture();
     void CreateCoverageMaskPipeline();
     void RenderCoverageMask(MTL::Texture* depthStencilTex, int stencilValue);
     void Combine(MTL::Texture* aoTex, int sceneWidth, int sceneHeight, bool fullresAO);
@@ -87,7 +86,6 @@ private:
     MTL::ComputePipelineState* blurPSO = nullptr;
     MTL::ComputePipelineState* upsamplePSO = nullptr;
     MTL::ComputePipelineState* atrousPSO = nullptr;
-    MTL::ComputePipelineState* combinePSO = nullptr;
     // The combine pass renders into SceneColor, so its colour attachment format
     // must track mt_hdr_pipeline. The library is retained so the PSO can be
     // rebuilt when the format changes mid-session.
@@ -104,7 +102,6 @@ private:
     MTL::Texture* mFullresAOTexture = nullptr;
     MTL::Texture* mFullresTempTexture = nullptr;
     MTL::Texture* mFullresResultTexture = nullptr;
-    MTL::Texture* mDitherTexture = nullptr;
     MTL::Texture* mCoverageMask = nullptr;
     MTL::Texture* mDepthPyramidTexture = nullptr;
     int mAOWidth = 0;

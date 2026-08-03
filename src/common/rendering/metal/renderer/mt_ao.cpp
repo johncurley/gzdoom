@@ -286,7 +286,6 @@ kernel void ssao_compute(
     uint2 gid [[thread_position_in_grid]],
     constant SSAOParams &params [[buffer(0)]],
     constant AOFlags &flags [[buffer(1)]],
-    texture2d<float, access::sample> ditherTexture [[texture(0)]],
     texture2d<float, access::sample> depthTexture [[texture(1)]],
     texture2d<float, access::write> aoOutput [[texture(2)]],
     texture2d<float, access::sample> normalTexture [[texture(3)]],
@@ -296,12 +295,6 @@ kernel void ssao_compute(
     float2 outSize = float2((float)aoOutput.get_width(), (float)aoOutput.get_height());
     if (gid.x >= outSize.x || gid.y >= outSize.y) return;
 
-    // ditherTexture is intentionally unused now (world-locked noise
-    // replaced it -- see WorldNoise) but its parameter/binding is left in
-    // place; removing it means renumbering every subsequent texture index
-    // in this kernel, mt_ao.cpp's Execute(), and the other two sample
-    // kernels -- deferred to its own isolated cleanup once the new noise is
-    // confirmed correct in-game (see AGENTS.md).
     sampler nearestClampSampler(mag_filter::nearest, min_filter::nearest, address::clamp_to_edge);
 
     float2 pixelCenter = float2(gid) + 0.5;
@@ -476,7 +469,6 @@ kernel void ssao_compute_alchemy(
     uint2 gid [[thread_position_in_grid]],
     constant SSAOParams &params [[buffer(0)]],
     constant AOFlags &flags [[buffer(1)]],
-    texture2d<float, access::sample> ditherTexture [[texture(0)]],
     texture2d<float, access::sample> depthTexture [[texture(1)]],
     texture2d<float, access::write> aoOutput [[texture(2)]],
     texture2d<float, access::sample> normalTexture [[texture(3)]],
@@ -486,10 +478,6 @@ kernel void ssao_compute_alchemy(
     float2 outSize = float2((float)aoOutput.get_width(), (float)aoOutput.get_height());
     if (gid.x >= outSize.x || gid.y >= outSize.y) return;
 
-    // ditherTexture is intentionally unused now (world-locked noise
-    // replaced it -- see WorldNoise) but its parameter/binding is left in
-    // place; removal is deferred to its own isolated cleanup once the new
-    // noise is confirmed correct in-game (see AGENTS.md).
     sampler nearestClampSampler(mag_filter::nearest, min_filter::nearest, address::clamp_to_edge);
 
     float2 pixelCenter = float2(gid) + 0.5;
@@ -703,7 +691,6 @@ kernel void ssao_compute_mip(
     uint2 gid [[thread_position_in_grid]],
     constant SSAOParams &params [[buffer(0)]],
     constant AOFlags &flags [[buffer(1)]],
-    texture2d<float, access::sample> ditherTexture [[texture(0)]],
     texture2d<float, access::sample> depthTexture [[texture(1)]],
     texture2d<float, access::write> aoOutput [[texture(2)]],
     texture2d<float, access::sample> normalTexture [[texture(3)]],
@@ -714,10 +701,6 @@ kernel void ssao_compute_mip(
     float2 outSize = float2((float)aoOutput.get_width(), (float)aoOutput.get_height());
     if (gid.x >= outSize.x || gid.y >= outSize.y) return;
 
-    // ditherTexture is intentionally unused now (world-locked noise
-    // replaced it -- see WorldNoise) but its parameter/binding is left in
-    // place; removal is deferred to its own isolated cleanup once the new
-    // noise is confirmed correct in-game (see AGENTS.md).
     sampler nearestClampSampler(mag_filter::nearest, min_filter::nearest, address::clamp_to_edge);
 
     float2 pixelCenter = float2(gid) + 0.5;
@@ -1372,7 +1355,6 @@ MtAOModule::MtAOModule(MetalRenderDevice* device) : fb(device) {
         }
     }
 
-    CreateDitherTexture();
     CreateCoverageMaskPipeline();
 }
 
@@ -1384,7 +1366,6 @@ MtAOModule::~MtAOModule() {
     if (blurPSO) blurPSO->release();
     if (upsamplePSO) upsamplePSO->release();
     if (atrousPSO) atrousPSO->release();
-    if (combinePSO) combinePSO->release();
     if (combineRenderPSO) combineRenderPSO->release();
     if (combineLibrary) combineLibrary->release();
     if (coverageMaskPSO) coverageMaskPSO->release();
@@ -1392,39 +1373,8 @@ MtAOModule::~MtAOModule() {
     if (mBlurTexture) mBlurTexture->release();
     if (mFullresAOTexture) mFullresAOTexture->release();
     if (mFullresTempTexture) mFullresTempTexture->release();
-    if (mDitherTexture) mDitherTexture->release();
     if (mCoverageMask) mCoverageMask->release();
     if (mDepthPyramidTexture) mDepthPyramidTexture->release();
-}
-
-void MtAOModule::CreateDitherTexture() {
-    if (mDitherTexture)
-        return;
-
-    std::mt19937 generator(1337);
-    std::uniform_real_distribution<float> distribution(0.0f, 1.0f);
-    std::vector<int16_t> randomValues(64 * 64 * 4);
-    for (int i = 0; i < 64 * 64; i++) {
-        float angle = 2.0f * 3.14159265359f * distribution(generator);
-        randomValues[i * 4 + 0] = (int16_t)clamp(cosf(angle) * 32767.0f, -32768.0f, 32767.0f);
-        randomValues[i * 4 + 1] = (int16_t)clamp(sinf(angle) * 32767.0f, -32768.0f, 32767.0f);
-        randomValues[i * 4 + 2] = (int16_t)clamp(distribution(generator) * 32767.0f, -32768.0f, 32767.0f);
-        randomValues[i * 4 + 3] = (int16_t)clamp(distribution(generator) * 32767.0f, -32768.0f, 32767.0f);
-    }
-
-    auto desc = MTL::TextureDescriptor::alloc()->init();
-    desc->setWidth(64);
-    desc->setHeight(64);
-    desc->setPixelFormat(MTL::PixelFormatRGBA16Snorm);
-    desc->setUsage(MTL::TextureUsageShaderRead);
-    desc->setStorageMode(fb->mVersionManager.GetDynamicStorageMode());
-    mDitherTexture = fb->device->device->newTexture(desc);
-    desc->release();
-
-    if (mDitherTexture) {
-        auto region = MTL::Region::Make2D(0, 0, 64, 64);
-        mDitherTexture->replaceRegion(region, 0, randomValues.data(), 64 * 8);
-    }
 }
 
 void MtAOModule::EnsureTextures(int width, int height) {
@@ -1556,7 +1506,7 @@ void MtAOModule::EnsureDepthPyramid(int width, int height) {
 }
 
 bool MtAOModule::Render(float m5, int sceneWidth, int sceneHeight, const HWViewpointUniforms* currentViewpoint) {
-    if (!ssaoPSO || !blurPSO || !combineRenderPSO || !mDitherTexture || !fb->GetBuffers())
+    if (!ssaoPSO || !blurPSO || !combineRenderPSO || !fb->GetBuffers())
         return false;
 
     auto buffers = fb->GetBuffers();
@@ -1789,8 +1739,7 @@ bool MtAOModule::Render(float m5, int sceneWidth, int sceneHeight, const HWViewp
 
     Execute(cmdBuf, buffers->SceneDepthStencil->GetTexture(),
             buffers->SceneNormal->GetTexture(), buffers->SceneColor->GetTexture(),
-            mAOTexture, mDitherTexture,
-            buffers->SceneFog->GetTexture(), nullptr, mCoverageMask, params, blurAO,
+            mAOTexture, mCoverageMask, params, blurAO,
             useFullresCleanup, algorithm);
     MTL::Texture *combineAO = (useFullresCleanup && mFullresResultTexture) ? mFullresResultTexture :
         (mLowresResultTexture ? mLowresResultTexture : mAOTexture);
@@ -1878,8 +1827,8 @@ void MtAOModule::Combine(MTL::Texture* aoTex, int sceneWidth, int sceneHeight, b
                             (NS::UInteger)3);
 }
 
-void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL::Texture* normalTex, MTL::Texture* sceneColorTex, MTL::Texture* aoTex, MTL::Texture* ditherTex, MTL::Texture* fogTex, MTL::Texture* combineTex, MTL::Texture* coverageTex, const SSAOParams& params, bool blurAO, bool useFullresCleanup, int algorithm) {
-    if (!ssaoPSO || (blurAO && (!blurPSO || !mBlurTexture)) || !depthTex || !normalTex || !sceneColorTex || !ditherTex || !aoTex) return;
+void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL::Texture* normalTex, MTL::Texture* sceneColorTex, MTL::Texture* aoTex, MTL::Texture* coverageTex, const SSAOParams& params, bool blurAO, bool useFullresCleanup, int algorithm) {
+    if (!ssaoPSO || (blurAO && (!blurPSO || !mBlurTexture)) || !depthTex || !normalTex || !sceneColorTex || !aoTex) return;
     mFullresResultTexture = nullptr;
     mLowresResultTexture = aoTex;
 
@@ -1930,7 +1879,6 @@ void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL
 
     encoder->setComputePipelineState(ssaoPass);
     encoder->setBytes(&params, sizeof(SSAOParams), 0);
-    encoder->setTexture(ditherTex, 0);
     encoder->setTexture(depthTex, 1);
     encoder->setTexture(aoTex, 2);
     encoder->setTexture(normalTex, 3);

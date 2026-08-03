@@ -1114,7 +1114,13 @@ void MtRenderState::ApplyMaterial() {
 
             samplerKey.AddressU = mMaterial.mClampMode;
             samplerKey.AddressV = mMaterial.mClampMode;
-            samplerKey.AddressW = mMaterial.mClampMode;
+            // W is REPEAT for every entry of the reference's clamp table
+            // (vk_samplers.cpp passes VK_SAMPLER_ADDRESS_MODE_REPEAT as the
+            // third argument at all four AddressMode() call sites). Deriving
+            // it from mClampMode instead made CLAMP_XY et al. clamp W too --
+            // invisible on the 2D textures actually sampled here, but it
+            // split the sampler cache into keys the reference never has.
+            samplerKey.AddressW = CLAMP_NONE;
             samplerKey.MaxAnisotropy =
                 isUI ? 1.0f : (float)gl_texture_filter_anisotropic;
 

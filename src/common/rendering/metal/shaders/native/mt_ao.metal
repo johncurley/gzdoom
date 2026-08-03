@@ -246,7 +246,6 @@ kernel void ssao_compute(
     uint2 gid [[thread_position_in_grid]],
     constant SSAOParams &params [[buffer(0)]],
     constant AOFlags &flags [[buffer(1)]],
-    texture2d<float, access::sample> ditherTexture [[texture(0)]],
     texture2d<float, access::sample> depthTexture [[texture(1)]],
     texture2d<float, access::write> aoOutput [[texture(2)]],
     texture2d<float, access::sample> normalTexture [[texture(3)]],
@@ -256,12 +255,6 @@ kernel void ssao_compute(
     float2 outSize = float2((float)aoOutput.get_width(), (float)aoOutput.get_height());
     if (gid.x >= outSize.x || gid.y >= outSize.y) return;
 
-    // ditherTexture is intentionally unused now (world-locked noise
-    // replaced it -- see WorldNoise) but its parameter/binding is left in
-    // place; removing it means renumbering every subsequent texture index
-    // in this kernel, mt_ao.cpp's Execute(), and the other two sample
-    // kernels -- deferred to its own isolated cleanup once the new noise is
-    // confirmed correct in-game (see AGENTS.md).
     sampler nearestClampSampler(mag_filter::nearest, min_filter::nearest, address::clamp_to_edge);
 
     float2 pixelCenter = float2(gid) + 0.5;
@@ -435,7 +428,6 @@ kernel void ssao_compute_alchemy(
     uint2 gid [[thread_position_in_grid]],
     constant SSAOParams &params [[buffer(0)]],
     constant AOFlags &flags [[buffer(1)]],
-    texture2d<float, access::sample> ditherTexture [[texture(0)]],
     texture2d<float, access::sample> depthTexture [[texture(1)]],
     texture2d<float, access::write> aoOutput [[texture(2)]],
     texture2d<float, access::sample> normalTexture [[texture(3)]],
@@ -445,10 +437,6 @@ kernel void ssao_compute_alchemy(
     float2 outSize = float2((float)aoOutput.get_width(), (float)aoOutput.get_height());
     if (gid.x >= outSize.x || gid.y >= outSize.y) return;
 
-    // ditherTexture is intentionally unused now (world-locked noise
-    // replaced it -- see WorldNoise) but its parameter/binding is left in
-    // place; removal is deferred to its own isolated cleanup once the new
-    // noise is confirmed correct in-game (see AGENTS.md).
     sampler nearestClampSampler(mag_filter::nearest, min_filter::nearest, address::clamp_to_edge);
 
     float2 pixelCenter = float2(gid) + 0.5;
@@ -661,7 +649,6 @@ kernel void ssao_compute_mip(
     uint2 gid [[thread_position_in_grid]],
     constant SSAOParams &params [[buffer(0)]],
     constant AOFlags &flags [[buffer(1)]],
-    texture2d<float, access::sample> ditherTexture [[texture(0)]],
     texture2d<float, access::sample> depthTexture [[texture(1)]],
     texture2d<float, access::write> aoOutput [[texture(2)]],
     texture2d<float, access::sample> normalTexture [[texture(3)]],
@@ -672,10 +659,6 @@ kernel void ssao_compute_mip(
     float2 outSize = float2((float)aoOutput.get_width(), (float)aoOutput.get_height());
     if (gid.x >= outSize.x || gid.y >= outSize.y) return;
 
-    // ditherTexture is intentionally unused now (world-locked noise
-    // replaced it -- see WorldNoise) but its parameter/binding is left in
-    // place; removal is deferred to its own isolated cleanup once the new
-    // noise is confirmed correct in-game (see AGENTS.md).
     sampler nearestClampSampler(mag_filter::nearest, min_filter::nearest, address::clamp_to_edge);
 
     float2 pixelCenter = float2(gid) + 0.5;
