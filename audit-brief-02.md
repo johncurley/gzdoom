@@ -114,8 +114,10 @@ computation and whether the Metal path reads `gl_bloom_amount` at all (the
 reference feeds it to `ComputeBlurSamples(7, blurAmount, ...)` at
 `hw_postprocess.cpp:104-106`); per-level texture dimension rounding as the
 pyramid descends; filter and edge/clamp behaviour at level boundaries; and the
-composite alpha difference (`bloomcombine.fp` writes alpha `0.0`, the Metal
-composite kernel writes `1.0`).
+composite alpha difference — **narrowed 2026-08-03**: the parity script
+confirms the *raster* combine already matches `bloomcombine.fp` including the
+alpha clear, so this candidate applies **only** to the compute kernel
+`bloom_combine_contrib_all` (`mt_bloom.metal:124-143`), which writes `1.0`.
 
 **A cautionary note that is part of this task.** Two source-reading
 conclusions about this exact code were wrong on 2026-08-03. The second claimed
@@ -128,7 +130,27 @@ site, and check `mt_bloom.cpp`'s comments — they record prior fixes**
 (e.g. `mt_bloom.cpp:430-442` documents the all-levels summation being fixed on
 2026-07-30 at ~2.1x the reference).
 
-## Task 2 — extend `tools/check_shader_parity.py` with the `.fp` direction
+## Task 2 — DONE (`6524a7f6b`). Read the result before doing Task 1.
+
+The reference-GLSL invariant direction now exists and passes. **Its output is
+evidence for Task 1** — run `python3 tools/check_shader_parity.py` first and
+treat every `MATCH` as a hypothesis already eliminated. In particular it
+confirms the bloom extract bias, threshold, exposure guard, Gaussian exponent,
+blur-amount minimum, 7+7 tap count, and the raster combine's
+RGB-with-cleared-alpha contract all agree.
+
+Its limits are stated in its own docstring and matter here: it checks named
+invariants, not semantic equivalence. Coordinate conventions, resampling
+strategy, control-flow shape and per-level behaviour are explicitly outside
+it. **A clean run does not mean the two paths render the same image** — the
+measurement in Task 1 proves they do not.
+
+Extending it further is welcome but secondary. If you find the Task 1 cause
+and it is mechanically checkable, add it as an invariant so it cannot
+regress. Do not broaden it into token-set diffing; the docstring explains why
+a noisy checker is a worthless one.
+
+### Original brief for Task 2, kept for context
 
 The standing highest-leverage tooling item in `AGENTS.md`, and **not**
 addressed by brief 01. That audit reported the script "passes", which covers
@@ -153,7 +175,21 @@ is believed.
 Both of this branch's real defects were in this class and both cost hours by
 hand. Task 1 is the one-time report; this is the version that re-runs forever.
 
-## Task 3 — sampler address-mode and clamp audit
+## Task 3 — CLOSED. Do not re-run.
+
+The sweep was done and produced two real divergences, both fixed in
+`fde91b90b`: `CLAMP_CAMTEX` clamped where the reference repeats, and
+`CLAMP_XY_NOMIP`/`CLAMP_NOFILTER*` were treated as address modes only while
+the reference also pins filtering and mipmapping. The sampler cache key was
+confirmed complete for the state Metal actually creates.
+
+**One divergence found but deliberately NOT fixed**, still open: Metal derives
+the W address mode from the clamp mode, while the reference hardcodes `REPEAT`
+for W on every HW sampler. Only affects 3D sampling and touches the
+postprocess/bloom sampler paths, so it wants its own change. Not an audit
+task — it needs a build.
+
+### Original brief for Task 3, kept for context
 
 Mechanical, high value per unit effort, and it produces *visible* artifacts
 when wrong.
@@ -173,7 +209,34 @@ The sampler cache-key composition is also documented in the field guide as a
 gotcha — flag any key that omits a field it should include, since that
 silently returns the wrong cached sampler.
 
-## Task 4 — `MtRenderState` vs the Vulkan reference (scope tightly)
+## Task 4 — CONTINUE with the next subsystem (blend modes are done)
+
+**Blend modes were audited and produced the session's best finding**:
+`STYLEOP_Shadow` used `Zero`/`SourceAlpha` where the reference takes the fuzz
+mapping, making Metal 42% too dark on shadow sprites. Fixed in `fde91b90b` and
+**verified on screen** — Metal and Vulkan shadow-darkening ratios now agree to
+0.003. Do not re-audit blend modes.
+
+That hit rate is the argument for continuing. **Pick ONE of the remaining
+subsystems** and do it as thoroughly as the blend-mode pass was done:
+
+- depth/stencil state,
+- the culling/winding path,
+- push-constant vs uniform-buffer binding.
+
+Two notes carried from the blend-mode result. First, the reference's own
+mapping tables are the authority and can be counter-intuitive — `renderops[]`
+holding `-1` for everything above `STYLEOP_RevSub` is what routes
+`STYLEOP_Shadow` into the fuzz branch, and that is invisible unless you follow
+the index. Trace the table, don't infer from the enum name. Second, quantify:
+"42% darker, alpha-dependent, crossing at As = 0.6" is what made that finding
+actionable and testable, where "the blend factors differ" would not have been.
+
+For the culling/winding subsystem specifically, re-read the known-deliberate
+list in brief 01 first — the Clockwise `FrontFacingWinding` under the Y-flip
+patch is correct and must not be reported.
+
+### Original brief for Task 4, kept for context
 
 `CLAUDE.md` names `MtRenderState` the most critical class in the backend, and
 Vulkan parity is the branch's whole premise — but the class is large and an
