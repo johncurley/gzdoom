@@ -3314,7 +3314,7 @@ captures. Check this class of thing before trusting any A/B — it is the same
 effect. Whole-frame statistics are dominated by global backend differences and
 will hide the thing you are looking for.
 
-## COMPUTE BLOOM: the four-session null was CONFIG, and the real divergence is architectural (2026-08-03)
+## COMPUTE BLOOM: the four-session null was CONFIG; a real difference remains, cause UNKNOWN (2026-08-03)
 
 **Two findings. The first explains every previous null result; the second is
 the answer to this branch's longest-standing open question.**
@@ -3360,25 +3360,42 @@ every delta below is signal.
 Compute spreads wider and flatter-peaked over more pixels with ~18% less total
 energy. Root cause, confirmed in source:
 
-- **Reference** (`hw_postprocess.cpp:128-158`): the upscale loop uses
-  `SetNoBlend` writing into `next.VTexture`, so each level **overwrites** the
-  one below. Only `level0` -- the fully chained down/up-sampled result -- is
-  additively combined into the scene. One texture, added once.
-- **Metal** (`mt_bloom.metal:124-143`, `bloom_combine_contrib_all`): sums
-  **all four levels** at once, each weighted by `params.strength[i]`.
+**THE CAUSE IS NOT ESTABLISHED. A first attempt at it was WRONG — retracted
+here so nobody rebuilds on it.**
 
-This is not a drifted constant or a missing guard. It is GZDoom's chained-blur
-bloom versus a multi-level accumulation bloom. It accounts for every number
-above: coarse levels add wide low-amplitude energy (more pixels), the peak is
-spread rather than concentrated, the blob squares up, and the per-level
-strengths do not reproduce the reference's gain.
+The retracted claim was that Metal sums all four bloom levels while the
+reference composites only level 0. It came from reading
+`bloom_combine_contrib_all` (`mt_bloom.metal:124-143`), which does sum four
+weighted levels — **without reading its caller.** `mt_bloom.cpp:536-541` sets
+`strength[1..3] = 0.0f`, so only level 0 contributes, at unit gain, and the
+comment there says so explicitly. The all-levels summation was a real bug but
+it was **already fixed on 2026-07-30** (`mt_bloom.cpp:430-442` records the old
+1.0/0.18/0.09/0.06 weights measuring ~2.1x the reference). Reading a kernel
+without its binding site is exactly the error `audit-brief-02.md` warns against.
 
-**Not yet decided: whether to converge on the reference.** Multi-level
-accumulation is a defensible and arguably better-looking bloom. But the branch
-premise is reference parity, and this is currently an undocumented, unmeasured
-divergence that nobody chose. Decide deliberately, and if converging, note that
-the reference's overwrite-on-upscale semantics are load-bearing and easy to
-misread as accumulation.
+**Ruled out by inspection — do not re-check these:**
+
+- Level count: both 4 (`NumBloomLevels == 4`; Metal is bloomA + 3 mips).
+- Level 0 resolution: both quarter-res of `mSceneViewport`. Reference
+  `((w+1)/2+1)/2` (`hw_postprocess.cpp:53-58`), Metal `(srcW+3)/4`
+  (`mt_bloom.cpp:387-390`).
+- Composite weights: level 0 only, unit gain, both.
+- Resample: `downsample_box` (`mt_bloom.metal:111-122`) is a single bilinear
+  sample despite the name — functionally the same as `bloomcombine.fp`, which
+  is a plain bilinear copy. Used for both the down and up legs on both sides.
+- Blur pyramid structure: blur-then-downscale walking down, blur-then-upscale
+  replacing on the way back up, then a final blur of level 0. Matches.
+
+So the measured difference is real and reproducible, and the structures agree
+on every axis checked so far. **Open question, and now the highest-value one:
+what actually produces it?** Remaining unexamined candidates include the blur
+weight computation and whether Metal reads `gl_bloom_amount` at all, the
+per-level texture dimension rounding as the pyramid descends, filter/edge
+behaviour at level boundaries, and the composite's alpha handling
+(`bloomcombine.fp` writes alpha 0, the Metal kernel writes 1.0).
+
+Hand the measured signature above to the shader-parity audit — a table of
+numbers to explain is far more use to it than the brief alone.
 
 ### Method notes
 
