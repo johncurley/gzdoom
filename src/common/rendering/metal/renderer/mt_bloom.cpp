@@ -192,7 +192,14 @@ vertex BloomVSOut bloom_vs(uint vid [[vertex_id]]) {
 fragment float4 bloom_fs(BloomVSOut in [[stage_in]],
                          texture2d<float, access::sample> bloomTex [[texture(0)]],
                          sampler samp [[sampler(0)]]) {
-    return float4(bloomTex.sample(samp, in.uv).rgb, 0.0);
+    // bloom_vs derives uv from clip space, where +Y is up, but the composite
+    // texture was written by bloom_combine_contrib_all in texture order, where
+    // v=0 is the top row. Native libraries bypass PatchVertexShader, so nothing
+    // reconciles the two -- without this the bloom contribution lands mirrored
+    // about the viewport's horizontal centreline. Same correction, and same
+    // reason, as ssao_combine_fs in mt_ao.metal.
+    float2 uv = float2(in.uv.x, 1.0 - in.uv.y);
+    return float4(bloomTex.sample(samp, uv).rgb, 0.0);
 }
 )";
 
@@ -348,10 +355,19 @@ void MtBloomModule::CreateTextures(int width, int height, MTL::PixelFormat forma
                                      usage, MTL::StorageModePrivate);
 
     // Create a small mip chain for multi-scale bloom (half, quarter, eighth)
+    // Sizes must be halved by *iterative ceiling*, not by shifting: the
+    // reference carries each level's rounded-up size into the next
+    // (hw_postprocess.cpp:54-68, `(prior + 1) / 2`), so an odd level rounds up
+    // and every level below inherits that. `width >> i` rounds down instead
+    // and the error compounds -- at a 1600x900 viewport the reference gets
+    // 200x113 / 100x57 / 50x29 where shifting gets 200x112 / 100x56 / 50x28,
+    // giving the coarsest vertical blur a 3.6% larger footprint once
+    // upsampled. Level 0 itself already agrees: ceil(w/4) == ceil(ceil(w/2)/2).
     const int mipLevels = 3;
+    int w2 = width, h2 = height;
     for (int i = 1; i <= mipLevels; ++i) {
-        int w2 = std::max(1, width >> i);
-        int h2 = std::max(1, height >> i);
+        w2 = std::max(1, (w2 + 1) / 2);
+        h2 = std::max(1, (h2 + 1) / 2);
         MTL::Texture* t = compute->CreateTexture(w2, h2, MTL::PixelFormatRGBA16Float,
                                                  usage, MTL::StorageModePrivate);
         mDownsampledTextures.push_back(t);

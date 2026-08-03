@@ -748,7 +748,14 @@ void MtRenderState::ApplyRenderPass(int dt) {
   pipelineKey.AlphaTest = (mAlphaThreshold >= 0.f) ? 1 : 0;
 
   pipelineKey.DepthFunc = mDepthTest ? mDepthFunc : DF_Always;
-  pipelineKey.DepthWrite = mDepthWrite ? 1 : 0;
+  // Writes are gated on the *test*, as in vk_renderstate.cpp:217
+  // (`DepthWrite = mDepthTest && mDepthWrite`). Expressing "test off" as
+  // DF_Always is correct for the compare, but on its own it leaves writes
+  // enabled, so a depth-test-disabled draw stamps depth for every covered
+  // fragment where the reference stamps none. DrawEndScene2D
+  // (hw_drawinfo.cpp:981) reaches this: it disables the test for player
+  // sprites without clearing the mask the 3D pass left enabled.
+  pipelineKey.DepthWrite = (mDepthTest && mDepthWrite) ? 1 : 0;
   pipelineKey.DepthClampMode = mDepthClamp ? 1 : 0;
   pipelineKey.ColorMask = mColorMask;
   pipelineKey.CullMode = mCullMode;

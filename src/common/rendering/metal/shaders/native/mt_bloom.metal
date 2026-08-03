@@ -185,5 +185,12 @@ vertex BloomVSOut bloom_vs(uint vid [[vertex_id]]) {
 fragment float4 bloom_fs(BloomVSOut in [[stage_in]],
                          texture2d<float, access::sample> bloomTex [[texture(0)]],
                          sampler samp [[sampler(0)]]) {
-    return float4(bloomTex.sample(samp, in.uv).rgb, 0.0);
+    // bloom_vs derives uv from clip space, where +Y is up, but the composite
+    // texture was written by bloom_combine_contrib_all in texture order, where
+    // v=0 is the top row. Native libraries bypass PatchVertexShader, so nothing
+    // reconciles the two -- without this the bloom contribution lands mirrored
+    // about the viewport's horizontal centreline. Same correction, and same
+    // reason, as ssao_combine_fs in mt_ao.metal.
+    float2 uv = float2(in.uv.x, 1.0 - in.uv.y);
+    return float4(bloomTex.sample(samp, uv).rgb, 0.0);
 }

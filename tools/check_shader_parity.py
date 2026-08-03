@@ -426,7 +426,16 @@ def check_reference_invariants() -> bool:
         "vec4(texture(Bloom, TexCoord).rgb, 0.0)")
     ok &= require_invariant(
         "native raster bloom combine samples RGB and clears alpha", native_bloom,
-        "float4(bloomTex.sample(samp, in.uv).rgb, 0.0)")
+        "float4(bloomTex.sample(samp, uv).rgb, 0.0)")
+    # bloom_vs derives uv from clip space (+Y up) while the composite texture is
+    # written by bloom_combine_contrib_all in texture order (v=0 is the top row).
+    # Native libraries bypass PatchVertexShader, so bloom_fs must reconcile them
+    # itself. Without this the contribution lands mirrored about the viewport's
+    # horizontal centreline -- the defect that put the compute bloom centroid
+    # 54px low against the reference PP path.
+    ok &= require_invariant(
+        "native raster bloom combine flips V into texture order", native_bloom,
+        "float2 uv = float2(in.uv.x, 1.0 - in.uv.y);")
     return bool(ok)
 
 
