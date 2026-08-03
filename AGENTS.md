@@ -3241,3 +3241,75 @@ Standing rules learned from the bloom work, in the scripts' docstrings too:
 4. Difference shape identifies cause: compact one-directional blob at a light
    = real bloom change; broad wash brightening over time = exposure drift;
    scattered and bidirectional = animation between captures, retake.
+
+## STYLEOP_Shadow blend was wrong on Metal — found by audit, fixed and MEASURED (2026-08-03)
+
+**Status: closed. Fix verified on screen against the Vulkan reference.**
+
+`STYLEOP_Shadow` is enum value 8 (`renderstyle.h:96`), and `vk_renderpass.cpp`'s
+`renderops[]` holds `-1` for every index above `STYLEOP_RevSub`, so the
+reference falls into the "this was a fuzz style" branch:
+
+    reference   Cout = Cs*Cd + Cd*(1 - As)
+    Metal was   Cout = Cd*As
+
+With `hw_sprites.cpp:160`'s `SetColor(0.2, 0.2, 0.2, fuzzalpha=0.44)` for
+shadow sprites that is `0.76*Cd` against `0.44*Cd` — **Metal 42% too dark.**
+Fixed in `fde91b90b` by routing `STYLEOP_Shadow` through the fuzz mapping
+(`DestinationColor` / `OneMinusSourceAlpha`, Add) on both RGB and alpha —
+alpha included because ZVulkan's `ColorBlendAttachmentBuilder::BlendMode`
+assigns src/dst/op to the alpha slots too.
+
+**The error was alpha-dependent, not a constant 42%.** Reference is
+`(1.2 - As)*Cd`, old Metal was `As*Cd`; they cross at `As = 0.6`. The fog
+branch (`hw_sprites.cpp:147-157`) scales `fuzzalpha` DOWN, so fogged shadow
+sprites diverged *further*, never less. Nothing in normal play reaches the
+crossover.
+
+**How to reproduce a `STYLEOP_Shadow` sprite at all:** `r_drawfuzz 2`
+converts every fuzz style into `STYLEOP_Shadow` (`renderstyle.cpp:151-154`).
+That is the practical repro — `summon Spectre` with `r_drawfuzz 2`. At the
+default `r_drawfuzz 1` you get `STYLEOP_Fuzz` and never touch this code. No
+stock actor uses `STYLE_Shadow`; only `udmf.cpp:733`'s thing flag and mod
+content do. **So this bug was real but not something every player hit.**
+
+### The measurement, and the technique that made it possible
+
+DOOM 2 MAP01, `r_drawfuzz 2`, `summon Spectre`, `pause`, Metal vs Vulkan
+(`vid_preferbackend` 3 vs 1, restart between).
+
+**A whole-frame diff was useless and will be again.** `pngdiff` reported 92.7%
+of pixels differing, mean delta 24.4, bidirectional. Two confounds: the
+restart forces relocation (the Spectre landed 20px higher in the Vulkan shot),
+and the backends differ *globally* — the same "richer/deeper" difference
+already noted in this file. A cross-backend whole-frame comparison cannot
+isolate one sprite's blend mode. **Do not attempt it.**
+
+**What worked: an intra-image ratio.** Measure the shadowed region against
+unshadowed floor *on the same scanlines* within each image separately, then
+compare the two ratios. Scale-invariant, so camera offset and global backend
+differences both cancel.
+
+    Metal    luminance ratio 0.679   per-channel 0.737 / 0.649 / 0.664
+    Vulkan   luminance ratio 0.676   per-channel 0.724 / 0.651 / 0.666
+
+Agreement to **0.003 (0.4%)**. Had the fix not taken, Metal would read
+`0.44/0.76 = 0.58` of Vulkan's ratio — about 0.39 against 0.676, a gap ~100x
+larger than observed. The discrimination was not marginal.
+
+**Caveats, stated:** the absolute ratio is 0.68, not the modelled 0.76 —
+silhouette edge pixels with partial sprite coverage pull the box mean, and the
+floor reference box is not a perfect texture match for what sits under the
+sprite. It applies equally to both backends, so it does not weaken the
+agreement, but the absolute value does NOT independently validate the
+arithmetic. This establishes that **Metal now matches the reference**, not
+that both are correct.
+
+`r_drawfuzz` is `CVAR_ARCHIVE` (`renderstyle.cpp:40`) and read back as `2`
+from the ini after the restart, so the changed branch provably ran in both
+captures. Check this class of thing before trusting any A/B — it is the same
+"did the setting apply" trap that has invalidated data sets here before.
+
+**Reuse the ratio technique** for any cross-backend comparison of a localized
+effect. Whole-frame statistics are dominated by global backend differences and
+will hide the thing you are looking for.
