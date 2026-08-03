@@ -38,6 +38,15 @@ positionally after mapping C++ spellings onto their MSL equivalents (see
 TYPE_ALIASES). It cannot see `alignas`, `packed_*` attributes, or implicit
 tail padding, so a clean run is not proof of identical layout -- it only
 rules out the drift class that has actually bitten this codebase.
+
+A third, intentionally narrow direction checks named invariants against the
+GLSL postprocess reference shaders. It covers constants, guards, and tap
+counts whose equivalence can be stated mechanically across GLSL and MSL. It
+does not attempt semantic equivalence: coordinate conventions, resampling
+strategy, control-flow shape, and algorithm-specific filtering remain a
+source-review task. A clean reference-invariant result means only that the
+listed invariants still hold; it does not prove the two implementations render
+the same image.
 """
 
 import difflib
@@ -75,6 +84,15 @@ CPU_STRUCT_PAIRS = [
         "src/common/rendering/metal/renderer/mt_bloom.h",
     ),
 ]
+
+REFERENCE_SHADER_PATHS = {
+    "ao_combine": "wadsrc/static/shaders/pp/ssaocombine.fp",
+    "bloom_extract": "wadsrc/static/shaders/pp/bloomextract.fp",
+    "bloom_combine": "wadsrc/static/shaders/pp/bloomcombine.fp",
+    "bloom_blur": "wadsrc/static/shaders/pp/blur.fp",
+    "bloom_setup": "src/common/rendering/hwrenderer/postprocessing/hw_postprocess.cpp",
+    "bloom_cvars": "src/common/rendering/hwrenderer/postprocessing/hw_postprocess_cvars.cpp",
+}
 
 SIGNATURE_RE = re.compile(r"\b(?:kernel|vertex|fragment)\s+[\w<>:,\s\*&]+?\b(\w+)\s*\(")
 COMMENT_RE = re.compile(r"//[^\n]*|/\*.*?\*/", re.DOTALL)
@@ -322,6 +340,96 @@ def check_cpu_structs(metal_path: Path, header_path: Path) -> bool:
     return shared
 
 
+def require_invariant(label: str, source: str, needle: str) -> bool:
+    """Report one explicit, reviewable cross-language invariant."""
+    if needle in normalize(source):
+        print(f"  MATCH {label}")
+        return True
+    print(f"  FAIL  {label}: expected `{needle}`")
+    return False
+
+
+def check_reference_invariants() -> bool:
+    """Check the small GLSL/MSL overlap that can be compared mechanically.
+
+    These checks deliberately name both implementations and the CPU setup
+    where a Metal shader parameter stands in for a reference literal. Do not
+    generalize this into token-set comparison: unrelated algorithms naturally
+    use different literals, which would make the checker noisy and untrusted.
+    """
+    native_ao = (REPO_ROOT / PAIRS[0][0]).read_text()
+    fallback_ao = extract_fallback_source((REPO_ROOT / PAIRS[0][1]).read_text(), PAIRS[0][2])
+    native_bloom = (REPO_ROOT / PAIRS[1][0]).read_text()
+    bloom_cpp = (REPO_ROOT / PAIRS[1][1]).read_text()
+    refs = {name: (REPO_ROOT / path).read_text()
+            for name, path in REFERENCE_SHADER_PATHS.items()}
+
+    print("== Reference GLSL invariants ==")
+    ok = True
+
+    # The 0.005-vs-0.01 AO ramp drifted in both Metal copies in 2026-07.
+    # Keep the literal check exact; the live combine path's additional
+    # filtering is intentionally outside this mechanical comparison.
+    ok &= require_invariant(
+        "reference AO depth-mask ramp", refs["ao_combine"],
+        "float depthSignal = 1.0 - exp2(-ssao.y * 0.01);")
+    for label, source in (("native AO low-res combine ramp", native_ao),
+                          ("fallback AO low-res combine ramp", fallback_ao)):
+        ok &= require_invariant(label, source,
+                                "1.0 - exp2(-ssao.y * 0.01)")
+
+    # bloom_extract expresses the reference threshold as a Metal parameter;
+    # verify both the shader expression and the CPU value that supplies it.
+    ok &= require_invariant(
+        "reference bloom extract bias and threshold", refs["bloom_extract"],
+        "vec4((color.rgb + vec3(0.001)) * exposureAdjustment - 1, 1)")
+    ok &= require_invariant(
+        "native bloom extract bias", native_bloom,
+        "(c.rgb + float3(0.001)) * exposureAdjustment - float3(params.threshold)")
+    ok &= require_invariant(
+        "Metal bloom extract threshold setup", bloom_cpp,
+        "params.threshold = 1.0f;")
+    ok &= require_invariant(
+        "native bloom extract exposure guard", native_bloom,
+        "params.useExposure != 0.0")
+
+    # The reference and Metal both generate the seven tap weights on the CPU.
+    # The equivalent exponent is the important numeric term; the different
+    # standard-library spellings of sqrt/exp are intentionally not compared.
+    ok &= require_invariant(
+        "reference bloom Gaussian exponent", refs["bloom_setup"],
+        "-(n * n) / (2.0f * theta * theta)")
+    ok &= require_invariant(
+        "Metal bloom Gaussian exponent", bloom_cpp,
+        "-(n * n) / (2.0f * theta * theta)")
+    ok &= require_invariant(
+        "reference bloom amount minimum", refs["bloom_cvars"],
+        "if (self < 0.1f) self = 0.1f;")
+    ok &= require_invariant(
+        "Metal bloom amount minimum", bloom_cpp,
+        "theta = std::max(theta, 0.1f);")
+
+    # Both reference blur variants have seven weighted taps. The Metal source
+    # has one seven-tap horizontal kernel and one seven-tap vertical kernel.
+    reference_blur_taps = normalize(refs["bloom_blur"]).count(
+        "textureOffset(SourceTexture, TexCoord,")
+    native_blur_taps = normalize(native_bloom).count("params.sampleWeights[")
+    if reference_blur_taps == 14 and native_blur_taps == 14:
+        print("  MATCH bloom blur tap declarations (7 horizontal + 7 vertical)")
+    else:
+        print("  FAIL  bloom blur tap declarations: expected 14 on each side, "
+              f"found reference={reference_blur_taps}, native={native_blur_taps}")
+        ok = False
+
+    ok &= require_invariant(
+        "reference bloom combine samples RGB and clears alpha", refs["bloom_combine"],
+        "vec4(texture(Bloom, TexCoord).rgb, 0.0)")
+    ok &= require_invariant(
+        "native raster bloom combine samples RGB and clears alpha", native_bloom,
+        "float4(bloomTex.sample(samp, in.uv).rgb, 0.0)")
+    return bool(ok)
+
+
 def main() -> int:
     all_ok = True
     for metal_rel, cpp_rel, var_name in PAIRS:
@@ -332,8 +440,11 @@ def main() -> int:
         ok = check_cpu_structs(REPO_ROOT / metal_rel, REPO_ROOT / header_rel)
         all_ok = all_ok and ok
         print()
+    ok = check_reference_invariants()
+    all_ok = all_ok and ok
+    print()
     if all_ok:
-        print("All kernels and shared structs match across canonical, fallback and CPU sources.")
+        print("All kernels, shared structs, and named GLSL reference invariants match.")
         return 0
     print("Parity check FAILED -- see FAIL lines above.")
     return 1
