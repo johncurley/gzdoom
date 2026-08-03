@@ -3313,3 +3313,84 @@ captures. Check this class of thing before trusting any A/B — it is the same
 **Reuse the ratio technique** for any cross-backend comparison of a localized
 effect. Whole-frame statistics are dominated by global backend differences and
 will hide the thing you are looking for.
+
+## COMPUTE BLOOM: the four-session null was CONFIG, and the real divergence is architectural (2026-08-03)
+
+**Two findings. The first explains every previous null result; the second is
+the answer to this branch's longest-standing open question.**
+
+### 1. `gl_exposure_base=10` in the ini made bloom mathematically impossible
+
+Left over from the abandoned exposure-response test. Work it through:
+
+    exposureAdjustment = 1 / max(base + light*scale, min)   -> ~0.088-0.099 at base 10
+    bloom extract       = max((c + 0.001) * adj - threshold, 0), threshold = 1.0
+                                                    (hardcoded, mt_bloom.cpp:402)
+    => a pixel must exceed c ~ 10.1 to contribute anything
+    measured scene peak (mt_hdr_probe) = 1.6055
+
+**Bloom extract output was identically zero, on both paths, under both pixel
+formats.** That is precisely the recorded symptom — "compute bloom has never
+been observed to change a frame, across two maps, four capture sessions and
+two probe designs", and `gl_bloom` 0 vs 1 byte-identical under LDR and HDR.
+
+Restoring `gl_exposure_base 0.35` (with `gl_bloom 1`) made bloom fire
+immediately: `gl_bloom` 0 vs 1 now differs across **10.94% of frame**,
+unidirectional brightening, max delta 16. **First time bloom has been observed
+to change a frame on this branch.**
+
+This cannot be *proven* retroactively for the earlier sessions — the ini is not
+version controlled, so there is no history to check. But it is a leftover from
+a test those same sessions ran and it produces exactly the observed signature.
+CLAUDE.md's "check gzdoom.ini before diagnosing a renderer bug" has now
+resolved a second multi-session investigation.
+
+### 2. Compute bloom and the reference use DIFFERENT ALGORITHMS
+
+Measured at the Ashes 2063 Enriched MAP51 solar lantern, each path against a
+`gl_bloom 0` baseline. Noise floor was exactly **zero** — two same-config
+captures a minute apart were byte-identical (`gl_bloom1.png` and
+`mt_compute_bloom1.png` share an MD5), so the scene is perfectly static and
+every delta below is signal.
+
+                        bbox        aspect  centroid        peak   energy   px>2
+    reference PP     469 x 154     3.05:1  (798.6,424.6)   29.9   424242   47328
+    Metal compute    316 x 296     1.07:1  (794.3,478.4)   16.2   347624   54291
+
+Compute spreads wider and flatter-peaked over more pixels with ~18% less total
+energy. Root cause, confirmed in source:
+
+- **Reference** (`hw_postprocess.cpp:128-158`): the upscale loop uses
+  `SetNoBlend` writing into `next.VTexture`, so each level **overwrites** the
+  one below. Only `level0` -- the fully chained down/up-sampled result -- is
+  additively combined into the scene. One texture, added once.
+- **Metal** (`mt_bloom.metal:124-143`, `bloom_combine_contrib_all`): sums
+  **all four levels** at once, each weighted by `params.strength[i]`.
+
+This is not a drifted constant or a missing guard. It is GZDoom's chained-blur
+bloom versus a multi-level accumulation bloom. It accounts for every number
+above: coarse levels add wide low-amplitude energy (more pixels), the peak is
+spread rather than concentrated, the blob squares up, and the per-level
+strengths do not reproduce the reference's gain.
+
+**Not yet decided: whether to converge on the reference.** Multi-level
+accumulation is a defensible and arguably better-looking bloom. But the branch
+premise is reference parity, and this is currently an undocumented, unmeasured
+divergence that nobody chose. Decide deliberately, and if converging, note that
+the reference's overwrite-on-upscale semantics are load-bearing and easy to
+misread as accumulation.
+
+### Method notes
+
+- **Check MD5s first, again.** The identical hash between `gl_bloom1.png` and
+  `mt_compute_bloom1.png` was not an error -- `mt_compute_bloom` was already 1.
+  It handed us a zero noise floor for free.
+- **A whole-frame diff was fine here** because the camera did not move and the
+  difference is localized; the flat surround is what proves the mid-session map
+  reload did not relocate the view, and that the `gl_exposure_base 0.05`
+  excursion in the console log is not in these captures.
+- **A wrong hypothesis, recorded so it is not re-derived:** the 3.05 vs 1.07
+  aspect difference looked like a normalized-UV vs texel-offset porting error.
+  `blur.fp` disproves it -- the reference uses `textureOffset(..., ivec2(+-1..3, 0))`,
+  texel offsets, same as the compute port. The spread comes from the mip chain,
+  not the kernel.
