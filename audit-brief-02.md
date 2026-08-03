@@ -73,10 +73,60 @@ there is more likely a misread than a defect, and should be reported with
 that stated. The **combine and blur stages are the unexamined ground**; weight
 your effort there.
 
-This task is being run in parallel with a live Metal-vs-reference bloom
-measurement. Convergence or contradiction between the two is the point, so
-report divergences even when you believe they are visually negligible —
-state the predicted magnitude and let the measurement arbitrate.
+### UPDATE 2026-08-03 — the measurement is IN. Task 1 now has a fixed target.
+
+This task no longer runs in parallel with an unknown. The Metal-vs-reference
+bloom measurement has been taken, at a **zero noise floor** (two same-config
+captures a minute apart were byte-identical), and the two paths **differ**.
+Ashes 2063 Enriched MAP51 solar lantern, each path measured against a
+`gl_bloom 0` baseline:
+
+                        bbox        aspect  centroid        peak   energy   px>2
+    reference PP     469 x 154     3.05:1  (798.6,424.6)   29.9   424242   47328
+    Metal compute    316 x 296     1.07:1  (794.3,478.4)   16.2   347624   54291
+
+Compute spreads over **more pixels at a lower peak with ~82% of the total
+energy**, in a squarer blob whose centroid sits 54px lower in Y (X agrees to
+4px). The reference blob is wide and flat; the compute blob is nearly square.
+
+**Your job on Task 1 is now specific: find the code difference that produces
+this signature.** Any candidate you propose should be checked against all five
+numbers, not just one — a mechanism that explains the lower peak but predicts
+*fewer* affected pixels is contradicted by the data and should be reported as
+contradicted, not quietly dropped.
+
+**Already ruled out by inspection. Do NOT re-report these:**
+
+- Level count — both 4 (`NumBloomLevels == 4`; Metal is bloomA + 3 mips).
+- Level 0 resolution — both quarter-res of `mSceneViewport`. Reference
+  `((w+1)/2+1)/2` at `hw_postprocess.cpp:53-58`, Metal `(srcW+3)/4` at
+  `mt_bloom.cpp:387-390`.
+- Composite weights — level 0 only at unit gain on **both** sides.
+  `mt_bloom.cpp:536-541` sets `strength[1..3] = 0`.
+- Resample kernel — `downsample_box` (`mt_bloom.metal:111-122`) is a single
+  bilinear sample despite its name, functionally identical to
+  `bloomcombine.fp`, and both sides use one kernel for the down and up legs.
+- Pyramid structure — blur-then-downscale walking down, blur-then-upscale
+  *replacing* the level below walking up, then a final blur of level 0.
+
+**Unexamined candidates, in rough order of suspicion:** the blur weight
+computation and whether the Metal path reads `gl_bloom_amount` at all (the
+reference feeds it to `ComputeBlurSamples(7, blurAmount, ...)` at
+`hw_postprocess.cpp:104-106`); per-level texture dimension rounding as the
+pyramid descends; filter and edge/clamp behaviour at level boundaries; and the
+composite alpha difference (`bloomcombine.fp` writes alpha `0.0`, the Metal
+composite kernel writes `1.0`).
+
+**A cautionary note that is part of this task.** Two source-reading
+conclusions about this exact code were wrong on 2026-08-03. The second claimed
+Metal sums all four bloom levels — derived from reading
+`bloom_combine_contrib_all` **without reading its caller**, which zeroes three
+of the four weights. The first proposed a normalized-UV vs texel-offset unit
+mismatch, disproved by `blur.fp` using `ivec2` `textureOffset`. Both were
+plausible from the shader alone. **Read every kernel together with its binding
+site, and check `mt_bloom.cpp`'s comments — they record prior fixes**
+(e.g. `mt_bloom.cpp:430-442` documents the all-levels summation being fixed on
+2026-07-30 at ~2.1x the reference).
 
 ## Task 2 — extend `tools/check_shader_parity.py` with the `.fp` direction
 
