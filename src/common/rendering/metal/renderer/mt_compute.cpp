@@ -93,11 +93,36 @@ void MtComputeManager::Dispatch(MTL::ComputeCommandEncoder *encoder,
   MTL::Size gridSize = {(NS::UInteger)width, (NS::UInteger)height, 1};
   MTL::Size threadGroupSize = {(NS::UInteger)threadGroupWidth,
                                (NS::UInteger)threadGroupHeight, 1};
-  encoder->dispatchThreads(gridSize, threadGroupSize);
+  MtDispatchThreads(encoder, fb, gridSize, threadGroupSize);
 }
 
 void MtComputeManager::EndComputePass(MTL::ComputeCommandEncoder *encoder) {
   if (encoder) {
     encoder->endEncoding();
   }
+}
+
+void MtDispatchThreads(MTL::ComputeCommandEncoder *encoder,
+                       const MetalRenderDevice *fb,
+                       MTL::Size gridThreads, MTL::Size threadsPerGroup) {
+  if (!encoder)
+    return;
+  if (threadsPerGroup.width == 0 || threadsPerGroup.height == 0 ||
+      threadsPerGroup.depth == 0)
+    return;
+
+  if (fb && fb->mVersionManager.supportsNonUniformThreadgroups) {
+    encoder->dispatchThreads(gridThreads, threadsPerGroup);
+    return;
+  }
+
+  // Ceiling division: never dispatch fewer threads than asked for. The
+  // overhang is discarded by each kernel's own bounds check against its
+  // output extent -- which is why those checks must not be "optimized away"
+  // as redundant.
+  MTL::Size groups = {
+      (gridThreads.width + threadsPerGroup.width - 1) / threadsPerGroup.width,
+      (gridThreads.height + threadsPerGroup.height - 1) / threadsPerGroup.height,
+      (gridThreads.depth + threadsPerGroup.depth - 1) / threadsPerGroup.depth};
+  encoder->dispatchThreadgroups(groups, threadsPerGroup);
 }

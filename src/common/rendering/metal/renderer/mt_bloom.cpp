@@ -439,7 +439,7 @@ bool MtBloomModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* srcTex, fl
     // texture argument unbound is invalid. srcTex is the harmless stand-in.
     encoder->setTexture(exposureTex ? exposureTex : srcTex, 2);
     MTL::Size grid = { (NS::UInteger)bloomW, (NS::UInteger)bloomH, 1 };
-    encoder->dispatchThreads(grid, MTL::Size(16,16,1));
+    MtDispatchThreads(encoder, fb, grid, MTL::Size(16,16,1));
     encoder->memoryBarrier(MTL::BarrierScopeTextures);
 
     // 2) Blur/downscale/upscale pyramid, mirroring PPBloom::RenderBloom.
@@ -478,13 +478,13 @@ bool MtBloomModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* srcTex, fl
         encoder->setBytes(&p, sizeof(BloomParams), 0);
         encoder->setTexture(tex, 0);
         encoder->setTexture(tmp, 1);
-        encoder->dispatchThreads(g, MTL::Size(16,16,1));
+        MtDispatchThreads(encoder, fb, g, MTL::Size(16,16,1));
         encoder->memoryBarrier(MTL::BarrierScopeTextures);
         encoder->setComputePipelineState(blurVPSO);
         encoder->setBytes(&p, sizeof(BloomParams), 0);
         encoder->setTexture(tmp, 0);
         encoder->setTexture(tex, 1);
-        encoder->dispatchThreads(g, MTL::Size(16,16,1));
+        MtDispatchThreads(encoder, fb, g, MTL::Size(16,16,1));
         encoder->memoryBarrier(MTL::BarrierScopeTextures);
     };
 
@@ -502,7 +502,7 @@ bool MtBloomModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* srcTex, fl
         encoder->setTexture(src, 0);
         encoder->setTexture(dst, 1);
         MTL::Size g = { dst->width(), dst->height(), 1 };
-        encoder->dispatchThreads(g, MTL::Size(16,16,1));
+        MtDispatchThreads(encoder, fb, g, MTL::Size(16,16,1));
         encoder->memoryBarrier(MTL::BarrierScopeTextures);
     };
 
@@ -577,7 +577,7 @@ bool MtBloomModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* srcTex, fl
         combEnc->setTexture(srcTex, 0);
         for (int i = 0; i < 4; ++i)
             combEnc->setTexture(compositeInputs[i], i + 1);
-        combEnc->dispatchThreads(fullGrid, MTL::Size(16,16,1));
+        MtDispatchThreads(combEnc, fb, fullGrid, MTL::Size(16,16,1));
         combEnc->endEncoding();
     } else if (auto composite = GetCompositePSO(srcTex->pixelFormat());
                composite && combineAllPSO) {
@@ -597,7 +597,7 @@ bool MtBloomModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* srcTex, fl
         for (int i = 0; i < 4; ++i)
             combEnc->setTexture(compositeInputs[i], i);
         combEnc->setTexture(mCompositeTex, 4);
-        combEnc->dispatchThreads(fullGrid, MTL::Size(16,16,1));
+        MtDispatchThreads(combEnc, fb, fullGrid, MTL::Size(16,16,1));
         combEnc->endEncoding();
 
         MtSamplerKey samplerKey;

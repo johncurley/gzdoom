@@ -1853,7 +1853,7 @@ void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL
             linearizeEncoder->setTexture(depthTex, 0);
             linearizeEncoder->setTexture(mDepthPyramidTexture, 1);
             MTL::Size pyramidGrid = { (NS::UInteger)mDepthPyramidTexture->width(), (NS::UInteger)mDepthPyramidTexture->height(), 1 };
-            linearizeEncoder->dispatchThreads(pyramidGrid, MTL::Size(8, 8, 1));
+            MtDispatchThreads(linearizeEncoder, fb, pyramidGrid, MTL::Size(8, 8, 1));
             linearizeEncoder->endEncoding();
 
             auto blit = cmdBuf->blitCommandEncoder();
@@ -1895,7 +1895,7 @@ void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL
     encoder->setBytes(&aoFlags, sizeof(aoFlags), 1);
 
     MTL::Size gridSize = { (NS::UInteger)aoTex->width(), (NS::UInteger)aoTex->height(), 1 };
-    encoder->dispatchThreads(gridSize, MTL::Size(8, 8, 1));
+    MtDispatchThreads(encoder, fb, gridSize, MTL::Size(8, 8, 1));
     
     if (blurAO) {
         encoder->memoryBarrier(MTL::BarrierScopeTextures);
@@ -1946,7 +1946,7 @@ void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL
             encoder->setTexture(src, 0);
             encoder->setTexture(dst, 1);
             encoder->setTexture(normalTex, 2);
-            encoder->dispatchThreads(gridSize, MTL::Size(8, 8, 1));
+            MtDispatchThreads(encoder, fb, gridSize, MTL::Size(8, 8, 1));
             src = dst;
         }
         mLowresResultTexture = src;
@@ -1980,7 +1980,7 @@ void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL
         encoder->setTexture(depthTex, 1);
         encoder->setTexture(normalTex, 2);
         encoder->setTexture(mFullresAOTexture, 3);
-        encoder->dispatchThreads(fullGrid, MTL::Size(8, 8, 1));
+        MtDispatchThreads(encoder, fb, fullGrid, MTL::Size(8, 8, 1));
         mFullresResultTexture = mFullresAOTexture;
 
         int atrousPasses = clamp((int)mt_compute_ao_atrous_passes, 0, 3);
@@ -1996,7 +1996,7 @@ void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL
             encoder->setTexture(srcPass, 0);
             encoder->setTexture(normalTex, 1);
             encoder->setTexture(dstPass, 2);
-            encoder->dispatchThreads(fullGrid, MTL::Size(8, 8, 1));
+            MtDispatchThreads(encoder, fb, fullGrid, MTL::Size(8, 8, 1));
             mFullresResultTexture = dstPass;
             MTL::Texture *tmp = srcPass;
             srcPass = dstPass;
