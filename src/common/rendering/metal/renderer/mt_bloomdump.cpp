@@ -30,6 +30,7 @@
 #include "../system/mt_renderdevice.h"
 #include "../textures/mt_texture.h"
 #include "../system/mt_commandbuffer.h"
+#include "mt_renderstate.h"
 #include "hwrenderer/postprocessing/hw_postprocess.h"
 #include "c_dispatch.h"
 #include "printf.h"
@@ -42,6 +43,14 @@
 #include <vector>
 #include <cmath>
 
+// mt_debug.cpp has an identical helper but it lives in an anonymous namespace,
+// so it cannot be shared. Same two-line check, kept local.
+static MetalRenderDevice *ActiveMetalDevice() {
+  if (!screen || !screen->IsMetal())
+    return nullptr;
+  return static_cast<MetalRenderDevice *>(screen);
+}
+
 static bool gBloomDumpArmed = false;
 // Frames to keep waiting for a pyramid that actually has content. Arming from
 // the command line (+mt_bloom_dump) happens before the map has loaded, and the
@@ -53,6 +62,13 @@ static int gBloomDumpFramesLeft = 0;
 // True on the frames just before the dump, so MtBloomModule::Execute snapshots
 // its extract output. Asked for a couple of frames early because the dump reads
 // the PREVIOUS frame's textures.
+// Persistent copy of the reference path's extract output, filled by the
+// PPBloom::DebugAfterExtract hook.
+static MTL::Texture *gRefExtractSnapshot = nullptr;
+static MTL::Texture *gRefBlurHSnapshot = nullptr;
+static MTL::Texture *gRefBlurVSnapshot = nullptr;
+static MetalRenderDevice *gDumpDevice = nullptr;
+
 bool MtBloomDumpWantsExtract() {
   return gBloomDumpArmed && gBloomDumpFramesLeft <= 3;
 }
@@ -234,6 +250,66 @@ static MTL::Texture *ReferenceLevelTexture(MetalRenderDevice *fb, int i) {
   return texMan->GetPPTexture(&vtex);
 }
 
+// Installed as PPBloom::DebugAfterExtract. Runs immediately after the
+// reference extract draw and before any blur, which is the only moment that
+// texture holds the extract -- the up-leg overwrites it later in the same
+// RenderBloom call. MtPPRenderState::Draw ends its render pass
+// (mt_postprocess.cpp:412), so encoding a blit here is safe, and encoding it
+// (rather than reading now) is required: the draw itself has not executed yet.
+static void CaptureInto(MTL::Texture *&slot, PPTexture *extractOutput) {
+  MetalRenderDevice *fb = gDumpDevice;
+  if (!fb || !extractOutput)
+    return;
+  auto texMan = fb->GetTextureManager();
+  if (!texMan || extractOutput->Width <= 0 || extractOutput->Height <= 0)
+    return;
+  MTL::Texture *src = texMan->GetPPTexture(extractOutput);
+  if (!src)
+    return;
+
+  if (slot && (slot->width() != src->width() ||
+               slot->height() != src->height() ||
+               slot->pixelFormat() != src->pixelFormat())) {
+    slot->release();
+    slot = nullptr;
+  }
+  if (!slot) {
+    auto desc = MTL::TextureDescriptor::alloc()->init();
+    desc->setWidth(src->width());
+    desc->setHeight(src->height());
+    desc->setPixelFormat(src->pixelFormat());
+    desc->setUsage(MTL::TextureUsageShaderRead);
+    desc->setStorageMode(MTL::StorageModePrivate);
+    slot = fb->device->device->newTexture(desc);
+    desc->release();
+  }
+  if (!slot)
+    return;
+
+  auto cmdBuf = fb->GetCommands()->GetRenderCommandBuffer();
+  if (!cmdBuf)
+    return;
+  fb->GetRenderState()->EndRenderPass();
+  if (auto blit = cmdBuf->blitCommandEncoder()) {
+    blit->copyFromTexture(src, 0, 0, MTL::Origin(0, 0, 0),
+                          MTL::Size(src->width(), src->height(), 1),
+                          slot, 0, 0, MTL::Origin(0, 0, 0));
+    blit->endEncoding();
+  }
+}
+
+static void CaptureReferenceExtract(PPTexture *out) {
+  CaptureInto(gRefExtractSnapshot, out);
+}
+
+// Only level 0 matters here: the question is whether each half of a blur pair
+// spreads along its own axis, and level 0 has the most resolution to show it.
+static void CaptureReferenceBlur(PPTexture *out, bool vertical, int level) {
+  if (level != 0)
+    return;
+  CaptureInto(vertical ? gRefBlurVSnapshot : gRefBlurHSnapshot, out);
+}
+
 } // namespace
 
 void MtBloomDumpIfArmed(MetalRenderDevice *fb) {
@@ -271,6 +347,9 @@ void MtBloomDumpIfArmed(MetalRenderDevice *fb) {
       DumpOne(fb, fb->mBloomModule->DebugLevel(i), "compute", i, dir.GetChars());
   }
 
+  DumpOne(fb, gRefExtractSnapshot, "reference-extract", 0, dir.GetChars());
+  DumpOne(fb, gRefBlurHSnapshot, "reference-afterH", 0, dir.GetChars());
+  DumpOne(fb, gRefBlurVSnapshot, "reference-afterV", 0, dir.GetChars());
   // VTexture is the level's settled output on both legs -- the reference blurs
   // V->H then H->V, so V holds the result after each BlurStep pair.
   for (int i = 0; i < NumBloomLevels; i++)
@@ -288,6 +367,9 @@ void MtBloomDumpIfArmed(MetalRenderDevice *fb) {
 CCMD(mt_bloom_dump) {
   gBloomDumpArmed = true;
   gBloomDumpFramesLeft = 30;
+  gDumpDevice = ActiveMetalDevice();
+  PPBloom::DebugAfterExtract = CaptureReferenceExtract;
+  PPBloom::DebugAfterBlur = CaptureReferenceBlur;
   if (argv.argc() > 1) {
     int n = atoi(argv[1]);
     if (n > 0)

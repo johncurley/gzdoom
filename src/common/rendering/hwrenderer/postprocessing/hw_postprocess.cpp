@@ -72,6 +72,9 @@ void PPBloom::UpdateTextures(int width, int height)
 	lastHeight = height;
 }
 
+void (*PPBloom::DebugAfterExtract)(PPTexture *) = nullptr;
+void (*PPBloom::DebugAfterBlur)(PPTexture *, bool, int) = nullptr;
+
 void PPBloom::RenderBloom(PPRenderState *renderstate, int sceneWidth, int sceneHeight, int fixedcm)
 {
 	// Only bloom things if enabled and no special fixed light mode is active
@@ -101,6 +104,9 @@ void PPBloom::RenderBloom(PPRenderState *renderstate, int sceneWidth, int sceneH
 	renderstate->SetNoBlend();
 	renderstate->Draw();
 
+	if (DebugAfterExtract)
+		DebugAfterExtract(&level0.VTexture);
+
 	const float blurAmount = gl_bloom_amount;
 	BlurUniforms blurUniforms;
 	ComputeBlurSamples(7, blurAmount, blurUniforms.SampleWeights);
@@ -112,7 +118,11 @@ void PPBloom::RenderBloom(PPRenderState *renderstate, int sceneWidth, int sceneH
 		auto &next = levels[i + 1];
 
 		BlurStep(renderstate, blurUniforms, blevel.VTexture, blevel.HTexture, blevel.Viewport, false);
+		if (DebugAfterBlur)
+			DebugAfterBlur(&blevel.HTexture, false, i);
 		BlurStep(renderstate, blurUniforms, blevel.HTexture, blevel.VTexture, blevel.Viewport, true);
+		if (DebugAfterBlur)
+			DebugAfterBlur(&blevel.VTexture, true, i);
 
 		// Linear downscale:
 		renderstate->Clear();

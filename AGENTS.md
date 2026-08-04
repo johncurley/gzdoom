@@ -3912,3 +3912,76 @@ relative to `hw_postprocess.Pass1`, and the pipeline images ping-pong.
 
 Do NOT go back to reading the pyramid or the blur. Five source reads and three
 measurement rounds have now cleared it.
+
+## SOLVED 2026-08-05: the bloom divergence was a shader-cache key, and the COMPUTE path was right
+
+`MtShaderManager::CompileShader` keyed its in-memory `mShaderCache` on the
+shader's *name* alone. Several `PPShader`s share a fragment filename and differ
+only in their `Defines`, which are baked into the source text but were absent
+from that key -- so the second variant requested silently received the first
+one's compiled module.
+
+`shaders/pp/blur.fp` is both `BlurHorizontal` and `BlurVertical`.
+`PPBloom::RenderBloom` runs the horizontal step first, so **every "vertical"
+blur in Metal's PP bloom was a second horizontal blur.**
+
+### The measurement chain, which is the reusable part
+
+    reference stage      bbox    aspect   px
+    extract             85x62   1.37:1    797
+    after horizontal    78x41   1.90:1    888
+    after vertical      78x41   1.90:1    927   <-- bbox UNCHANGED by a blur
+
+A blur that does not move the bounding box at all is not blurring along that
+axis. That single row identified the bug; everything before it was narrowing.
+
+After the fix, at the same viewpoint:
+
+    stage / level     compute        reference (before)   reference (after)
+    L0              109x90 1.21:1    130x52 2.50:1        112x90 1.24:1
+    L1               55x44           64x26                 56x45
+    L2               27x22           31x13                 27x22
+    L3               13x11           15x6                  13x11
+
+L2 and L3 extents are now identical, peak agrees to 1.9%, energy to 2.4%, pixel
+count to 3.0%. **The compute path was correct all along.**
+
+### The reasoning error worth keeping
+
+Between the last two rounds I argued: "a separable Gaussian cannot elongate a
+blob, so the reference's 2.50:1 output means its extract must already be
+elongated -- therefore the divergence is in the extract." The extracts then
+measured *identical* (85x62, 1.37:1, peak within 0.1%), so the premise was
+false: the reference's pyramid really was elongating, because it was applying
+the horizontal kernel twice.
+
+The deduction was valid and the conclusion was wrong, because it assumed the
+code did what it said. **When an elimination argument concludes that the
+divergence must be somewhere you have already cleared, suspect the assumption,
+not the location.** The earlier note in this file -- "do not assume Metal is
+the one that is wrong about shape until the intermediate levels say so" -- was
+the right instinct, and I argued past it once before the data settled it.
+
+### Wider blast radius -- NOT yet verified
+
+`shaders/pp/tonemap.fp` has **five** variants differing only by defines
+(Uncharted2, HejlDawson, Reinhard, Linear, Palette). All five shared one cache
+key, so on Metal every tonemap mode resolved to whichever compiled first --
+`gl_tonemap` would have had no effect beyond the first mode used in a session.
+Same for any future shader pair sharing a filename. **This is an inference from
+the same defect, not a measurement. Verify it before claiming it.**
+
+### Why a cache wipe never helped
+
+Only the in-memory map was wrong. The on-disk cache below it was always keyed
+on a hash of the source, defines included, so clearing
+`mt_pipelines.bin` or the shader cache could never have surfaced this. Worth
+remembering next time "try clearing the cache" is proposed as a diagnostic.
+
+### What this retires
+
+Every compute-vs-reference bloom number recorded on this branch was measured
+against a reference path whose vertical blur was missing -- on top of the
+Rgba16f-as-8-bit defect fixed the same day. The anisotropy hunt
+(energy ratios 1.33/1.38, aspect 0.67/0.48, "68% taller and 20% narrower") was
+chasing this bug. Those numbers are history, not targets.

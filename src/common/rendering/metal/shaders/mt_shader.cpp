@@ -330,8 +330,36 @@ MtShaderManager::CompileShader(const std::string &name,
                                const std::string &vertexSource,
                                const std::string &fragmentSource,
                                const std::vector<std::string> &defines) {
+  // Key the cache on the SOURCE, not just the name. Several PPShaders share a
+  // fragment filename and differ only in their Defines, which are baked into
+  // the source text but were absent from this key -- so the second variant to
+  // be requested silently received the first one's compiled module.
+  //
+  // This was not hypothetical. `shaders/pp/blur.fp` is both BlurHorizontal and
+  // BlurVertical; PPBloom::RenderBloom runs the horizontal step first, so every
+  // "vertical" blur in the Metal PP path was a second horizontal blur. Measured
+  // 2026-08-05: the reference bloom blob's bbox was identical before and after
+  // its vertical pass, and the pyramid elongated it 1.37 -> 1.90 -> 2.50:1.
+  // `shaders/pp/tonemap.fp` has five variants and was affected the same way.
+  //
+  // The on-disk cache below was always keyed correctly, by a hash of the
+  // source; only this in-memory map was wrong, which is why a cache wipe never
+  // helped.
+  uint32_t sourceHash = 0;
+  if (!vertexSource.empty())
+    sourceHash = SuperFastHash(vertexSource.c_str(), vertexSource.length());
+  if (!fragmentSource.empty())
+    sourceHash = SuperFastHash(fragmentSource.c_str(), fragmentSource.length()) ^
+                 (sourceHash << 1);
+  for (auto &d : defines)
+    sourceHash = SuperFastHash(d.c_str(), d.length()) ^ (sourceHash << 1);
+
+  char keyBuf[64];
+  snprintf(keyBuf, sizeof(keyBuf), "#%08x", sourceHash);
+  const std::string cacheKey = name + keyBuf;
+
   // Check cache first
-  auto it = mShaderCache.find(name);
+  auto it = mShaderCache.find(cacheKey);
   if (it != mShaderCache.end())
     return it->second;
 
@@ -489,7 +517,7 @@ MtShaderManager::CompileShader(const std::string &name,
 
   // Cache the compiled shader
   module->isReady = true;
-  mShaderCache[name] = module;
+  mShaderCache[cacheKey] = module;
 
   return module;
 }

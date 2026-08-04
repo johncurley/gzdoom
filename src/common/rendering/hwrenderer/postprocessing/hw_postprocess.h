@@ -385,6 +385,19 @@ public:
 	// Not for rendering use.
 	const PPBlurLevel &DebugLevel(int i) const { return levels[i]; }
 
+	// Called immediately after the bloom extract draw, before any blur, with
+	// the texture the extract wrote. A backend debug path can copy it here to
+	// compare its own extract against the reference's; by the end of
+	// RenderBloom this texture has been overwritten by the pyramid's up-leg,
+	// so there is no later opportunity. Null unless a debug path installs it.
+	static void (*DebugAfterExtract)(PPTexture *extractOutput);
+
+	// Called after each half of a blur pair on the down-leg, with the texture
+	// that half wrote. Lets a backend debug path see whether the horizontal and
+	// vertical halves each actually spread the image along their own axis --
+	// which the pyramid's final state cannot show. Null unless installed.
+	static void (*DebugAfterBlur)(PPTexture *output, bool vertical, int level);
+
 private:
 	void BlurStep(PPRenderState *renderstate, const BlurUniforms &blurUniforms, PPTexture &input, PPTexture &output, PPViewport viewport, bool vertical);
 	void UpdateTextures(int width, int height);
