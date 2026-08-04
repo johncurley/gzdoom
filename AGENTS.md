@@ -3777,3 +3777,80 @@ this effect and the next cheap win is intermediate data, not a fourth read.
 - Run `mt_caps` immediately before each shot. It prints the resolved bloom
   path and both cvars, which turns "which config was this file?" from
   inference into a log line.
+
+## dispatchThreads was NOT the bloom cause (measured 2026-08-04, round two of captures)
+
+`29cdcd619` routed all 12 compute dispatches through `MtDispatchThreads`,
+which rounds up to whole threadgroups where `dispatchThreads` is unsupported.
+Re-measured at the same viewpoint (savegame-pinned) with A/B/C each set from
+the command line so no console toggle was involved.
+
+                     bbox       aspect  centroid       peak   energy   px>2
+    reference PP   533 x 212    2.51:1  (746.4,409.6)  46.0   695117  67263
+    Metal compute  427 x 357    1.20:1  (749.7,416.4)  35.0   955928  90441
+
+Ratios Metal/reference, against the previous round's at a different viewpoint:
+
+                 round 1    round 2
+    energy         1.33       1.38
+    px>2           1.34       1.34
+    peak           0.86       0.76
+    aspect         0.67       0.48
+
+**Nothing moved toward 1.0.** The driver was rounding partial threadgroups up
+-- the harmless branch -- so the conformance fix changed no pixels here.
+Keep it (the old code was outside the API contract on a GPU reporting
+Common3 = no / Mac2 = no), but it is **eliminated as the bloom cause**.
+
+### The signature is stable, and it is ANISOTROPIC -- restate it that way
+
+Two independent rounds at different viewpoints agree closely on the ratios
+(px>2 1.340 vs 1.345, energy 1.33 vs 1.38). This is a reproducible property,
+not a single measurement.
+
+"Broader" was the wrong description and it sent the search toward energy and
+gain. The real signature is **directional**: Metal's blob is **68% taller and
+20% narrower** than the reference's (427x357 against 533x212). Both rounds
+agree on the direction. The reference blob is strongly elongated horizontally;
+Metal's is nearly isotropic.
+
+That matters because the blur *should* be isotropic in screen space on both
+paths -- level 0 is 360x194 for a 1440x773 viewport, so one texel is ~4 screen
+px in x and ~3.98 in y, and both paths step whole texels with identical
+weights. **A path that is isotropic where the reference is 2.5:1 elongated is
+the anomaly to explain, and the elongation is on the REFERENCE side.** Do not
+assume Metal is the one that is wrong about shape until the intermediate
+levels say so.
+
+Centroids still agree (X 3.3px, Y 6.8px), so the V-flip fix holds at a second
+viewpoint.
+
+### Next step is the intermediate dump, not another A/B capture
+
+Every static candidate is now eliminated: level count, level-0 resolution,
+composite weights, resample kernel, pyramid structure (round two); tap
+placement, Gaussian exponent, amount floor, resample coordinates (round
+three); upscale-replace leg, blur weight normalization, blur tap offsets, and
+dispatch conformance (this session). Four source reads have been spent.
+
+Dump `bloomA` and each pyramid level to disk on both paths and compare them
+stage by stage. That localizes the divergence to a stage instead of inferring
+it from the composite, and the anisotropy gives it a specific question to
+answer: **at which level does the vertical extent first exceed the
+reference's?**
+
+### Capture protocol that finally worked -- use this one
+
+Three capture rounds were lost to avoidable causes: console-pause staleness,
+a reversed toggle order, and viewpoint drift between sessions. What works:
+
+1. **Pin the viewpoint with a savegame.** Walk to the spot once, `save
+   capspot`. Absolute pixel numbers are only comparable within a viewpoint,
+   and across rounds only the RATIOS survive.
+2. **One launch per configuration, cvars set on the command line**, so the
+   setting is live from the first rendered frame. The operator types only
+   `screenshot`. No cvar typing means no reversed order and no `;` hazard,
+   and no console-pause staleness because the frame was drawn before the
+   console opened.
+3. Compare with `tools/blobstats.py`, and report ratios when comparing across
+   rounds.
