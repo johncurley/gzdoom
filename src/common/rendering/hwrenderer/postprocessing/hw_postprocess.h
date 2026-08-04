@@ -379,6 +379,12 @@ public:
 	void RenderBloom(PPRenderState *renderstate, int sceneWidth, int sceneHeight, int fixedcm);
 	void RenderBlur(PPRenderState *renderstate, int sceneWidth, int sceneHeight, float gameinfobluramount);
 
+	// Read-only access to the pyramid for backend debug dumps. Exists so a
+	// backend can compare its own bloom levels against the reference's level
+	// for level rather than inferring a divergence from the final composite.
+	// Not for rendering use.
+	const PPBlurLevel &DebugLevel(int i) const { return levels[i]; }
+
 private:
 	void BlurStep(PPRenderState *renderstate, const BlurUniforms &blurUniforms, PPTexture &input, PPTexture &output, PPViewport viewport, bool vertical);
 	void UpdateTextures(int width, int height);

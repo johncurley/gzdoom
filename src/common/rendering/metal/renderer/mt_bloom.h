@@ -32,6 +32,12 @@ public:
     bool Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* sceneColor, float amount,
                  MTL::Texture* exposureTex);
 
+    // Read-only access to the pyramid for the mt_bloom_dump debug path, laid
+    // out to match PPBloom::DebugLevel: 0 is bloomA, 1..3 are the mips.
+    // Returns nullptr for a level that has not been allocated.
+    MTL::Texture* DebugLevel(int i) const;
+    static constexpr int DebugNumLevels = 4;
+
 private:
     MetalRenderDevice* fb;
 

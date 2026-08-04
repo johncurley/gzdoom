@@ -791,6 +791,7 @@ set (METAL_SOURCES
 	common/rendering/metal/renderer/mt_postprocess.cpp
 	common/rendering/metal/renderer/mt_ao.cpp
 	common/rendering/metal/renderer/mt_bloom.cpp
+	common/rendering/metal/renderer/mt_bloomdump.cpp
 	common/rendering/metal/renderer/mt_compute.cpp
 	common/rendering/metal/renderer/mt_metrics.cpp
 	common/rendering/metal/renderer/mt_resourcebinding.cpp

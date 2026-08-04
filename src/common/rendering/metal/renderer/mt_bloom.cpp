@@ -339,6 +339,13 @@ MTL::RenderPipelineState* MtBloomModule::GetCompositePSO(MTL::PixelFormat format
     return compositePSO;
 }
 
+MTL::Texture* MtBloomModule::DebugLevel(int i) const {
+    if (i == 0) return mBloomA;
+    size_t mip = (size_t)(i - 1);
+    if (i < 1 || mip >= mDownsampledTextures.size()) return nullptr;
+    return mDownsampledTextures[mip];
+}
+
 void MtBloomModule::CreateTextures(int width, int height, MTL::PixelFormat format) {
     if (mBloomA && mBloomB && mCachedBloomW == width && mCachedBloomH == height) return;
     ReleaseTextures();

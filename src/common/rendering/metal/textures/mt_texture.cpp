@@ -701,8 +701,17 @@ static MTL::PixelFormat GetMetalPPTextureFormat(PixelFormat format,
     bpp = 4;
     break;
   case PixelFormat::Rgba16f:
-    metalFormat = MTL::PixelFormatBGRA8Unorm;
-    bpp = 4;
+    // Half-float, NOT BGRA8Unorm. This mapped to 8-bit unorm until 2026-08-04,
+    // which silently ran every Rgba16f postprocess target at 8-bit LDR --
+    // clamped at 1.0 and quantized to 256 levels -- where Vulkan uses
+    // VK_FORMAT_R16G16B16A16_SFLOAT (vk_pptexture.cpp:36) and GL uses
+    // GL_RGBA16F (gl_renderbuffers.cpp:806). The only shared-code consumer is
+    // the bloom pyramid (hw_postprocess.cpp:64-65), so Metal's reference PP
+    // bloom was running its whole pyramid in LDR while the compute path ran in
+    // RGBA16Float -- which made the reference path an invalid baseline to
+    // compare the compute path against.
+    metalFormat = MTL::PixelFormatRGBA16Float;
+    bpp = 8;
     break;
   case PixelFormat::R32f:
     metalFormat = MTL::PixelFormatR32Float;

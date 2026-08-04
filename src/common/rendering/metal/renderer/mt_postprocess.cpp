@@ -4,6 +4,8 @@
 */
 
 #include "mt_postprocess.h"
+
+void MtBloomDumpIfArmed(MetalRenderDevice *fb);
 #include "i_time.h"
 #include <Metal/Metal.hpp>
 #include <QuartzCore/QuartzCore.hpp>
@@ -505,6 +507,11 @@ void MtPostprocess::PostProcessScene(
   // 2D pass. No-op unless mt_hdr_probe armed it.
   if (auto debug = fb->GetDebugManager())
     debug->CaptureHdrProbe();
+
+  // Runs before anything this frame overwrites the pyramid, and reads the
+  // levels the previous frame left behind -- see mt_bloomdump.cpp on why it
+  // cannot read this frame's.
+  MtBloomDumpIfArmed(fb);
 
   MtPPRenderState renderstate(fb);
 
