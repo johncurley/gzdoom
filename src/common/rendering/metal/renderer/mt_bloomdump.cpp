@@ -50,6 +50,13 @@ static bool gBloomDumpArmed = false;
 // of retrying forever.
 static int gBloomDumpFramesLeft = 0;
 
+// True on the frames just before the dump, so MtBloomModule::Execute snapshots
+// its extract output. Asked for a couple of frames early because the dump reads
+// the PREVIOUS frame's textures.
+bool MtBloomDumpWantsExtract() {
+  return gBloomDumpArmed && gBloomDumpFramesLeft <= 3;
+}
+
 namespace {
 
 struct LevelStats {
@@ -255,6 +262,11 @@ void MtBloomDumpIfArmed(MetalRenderDevice *fb) {
          "exceed the reference's?\n");
 
   if (fb->mBloomModule) {
+    // The extract, before the pyramid. This is the row that separates an
+    // extract divergence from a pyramid one -- the four levels below cannot,
+    // because the up-leg leaves every one of them a copy of the deepest.
+    DumpOne(fb, fb->mBloomModule->DebugExtractSnapshot(), "compute-extract", 0,
+            dir.GetChars());
     for (int i = 0; i < MtBloomModule::DebugNumLevels; i++)
       DumpOne(fb, fb->mBloomModule->DebugLevel(i), "compute", i, dir.GetChars());
   }

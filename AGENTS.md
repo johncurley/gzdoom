@@ -3854,3 +3854,61 @@ a reversed toggle order, and viewpoint drift between sessions. What works:
    console opened.
 3. Compare with `tools/blobstats.py`, and report ratios when comparing across
    rounds.
+
+## LOCALIZED 2026-08-04: the bloom divergence is in the EXTRACT, not the pyramid
+
+Measured with the new `mt_bloom_dump`, savegame-pinned viewpoint (`capspot`,
+MAP51 lantern), one launch per config.
+
+    stage                          bbox     aspect   peak     px    energy
+    compute extract (pre-pyramid)  85x62    1.37:1   1.27853   797   298.9
+    compute L0 (post-pyramid)     109x90    1.21:1   0.14046  7229   288.7
+    compute L1                     55x44    1.25:1   0.14190  1788    72.2
+    compute L2                     27x22    1.23:1   0.14620   442    18.3
+    compute L3                     13x11    1.18:1   0.17068   100     4.7
+
+    reference L0                  130x52    2.50:1   0.21937  4743   239.1
+    reference L1                   64x26    2.46:1   0.22623  1173    59.9
+    reference L2                   31x13    2.38:1   0.23299   285    15.1
+    reference L3                   15x6     2.50:1   0.25706    63     3.9
+
+**The compute extract is already 1.37:1 before the pyramid runs**, and the
+pyramid only rounds it further to 1.21:1. A separable Gaussian cannot elongate
+a blob, so the reference's 2.50:1 output can only come from an extract that was
+already elongated. The pyramid is exonerated on both paths.
+
+### Read the four level rows correctly -- they are ONE number, not four
+
+The up-leg replaces every level with the upscaled level above it, so each
+path's final L0/L1/L2 are copies of its L3 at different resolutions. The
+constant aspect down each column is guaranteed by construction and is **not**
+evidence that the shape is preserved through the pyramid. That is exactly why
+the extract snapshot had to be added -- the level rows alone cannot separate an
+extract divergence from a down-leg one.
+
+### Ruled out inside the extract
+
+Its arithmetic is identical. `params.threshold` is `1.0f`
+(`mt_bloom.cpp:428`), matching `bloomextract.fp`'s hardcoded `- 1`. The uv
+mapping is the same expression on both sides: `Offset + TexCoord * Scale`
+against `srcOffset + ((gid + 0.5) / bloomRes) * srcScale`, and at this viewport
+SceneScale is (1,1) and SceneOffset (0,0). Both minify 4x with a linear
+sampler and no mips. Both multiply by the same
+`hw_postprocess.exposure.CameraTexture`.
+
+**So the extract math is not the divergence -- what it READS is.** Both name
+`PipelineImage[mCurrentPipelineImage]`, but they read it at different points
+relative to `hw_postprocess.Pass1`, and the pipeline images ping-pong.
+
+### Next: snapshot the extract's SOURCE, ranked first
+
+1. **Dump `srcTex` itself** on the compute path, and the reference's bound
+   input, and compare. If the compute path reads the pre-Pass1 image while the
+   reference reads the post-Pass1 one (or the other ping-pong buffer), the two
+   extracts see genuinely different images and every downstream number follows.
+   This is cheap -- the snapshot mechanism already exists.
+2. Add the same extract snapshot to the reference path for a like-for-like
+   comparison. Harder, since the extract lives in shared code.
+
+Do NOT go back to reading the pyramid or the blur. Five source reads and three
+measurement rounds have now cleared it.

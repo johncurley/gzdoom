@@ -38,6 +38,13 @@ public:
     MTL::Texture* DebugLevel(int i) const;
     static constexpr int DebugNumLevels = 4;
 
+    // Snapshot of bloomA taken immediately after the extract dispatch, before
+    // the pyramid runs. Needed because the up-leg replaces every level with the
+    // upscaled level above it, so the pyramid's final state cannot distinguish
+    // an extract divergence from a down-leg one. Only populated on a frame
+    // where the dump is armed.
+    MTL::Texture* DebugExtractSnapshot() const { return mExtractSnapshot; }
+
 private:
     MetalRenderDevice* fb;
 
@@ -68,6 +75,8 @@ private:
 
     // Full-resolution high-precision bloom contribution
     MTL::Texture* mCompositeTex = nullptr;
+    MTL::Texture* mExtractSnapshot = nullptr;
+    int mExtractSnapW = 0, mExtractSnapH = 0;
     int mCompositeW = 0;
     int mCompositeH = 0;
 

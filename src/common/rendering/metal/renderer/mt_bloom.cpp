@@ -4,6 +4,8 @@
 #include "metal/renderer/mt_compute.h"
 #include "metal/renderer/mt_renderstate.h"
 #include "metal/textures/mt_sampler.h"
+bool MtBloomDumpWantsExtract();
+
 #include "c_cvars.h"
 #include "printf.h"
 #include "v_video.h"
@@ -302,6 +304,7 @@ MtBloomModule::~MtBloomModule() {
     if (compositeVertexFn) compositeVertexFn->release();
     if (compositeFragmentFn) compositeFragmentFn->release();
     if (mCompositeTex) { mCompositeTex->release(); mCompositeTex = nullptr; }
+    if (mExtractSnapshot) { mExtractSnapshot->release(); mExtractSnapshot = nullptr; mExtractSnapW = mExtractSnapH = 0; }
 }
 
 MTL::RenderPipelineState* MtBloomModule::GetCompositePSO(MTL::PixelFormat format) {
@@ -448,6 +451,30 @@ bool MtBloomModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* srcTex, fl
     MTL::Size grid = { (NS::UInteger)bloomW, (NS::UInteger)bloomH, 1 };
     MtDispatchThreads(encoder, fb, grid, MTL::Size(16,16,1));
     encoder->memoryBarrier(MTL::BarrierScopeTextures);
+
+    // Snapshot the extract before the pyramid overwrites bloomA. Uses
+    // downsample_box at matching resolution, which is an identity copy, so it
+    // stays inside this compute encoder -- a blit would need the encoder ended
+    // and reopened. Only on a dump frame; costs nothing otherwise.
+    if (MtBloomDumpWantsExtract()) {
+        if (auto compute = fb->GetComputeManager()) {
+            const auto snapUsage = (MTL::TextureUsage)(MTL::TextureUsageShaderRead | MTL::TextureUsageShaderWrite);
+            compute->EnsureTexture(mExtractSnapshot, mExtractSnapW, mExtractSnapH,
+                                   bloomW, bloomH, MTL::PixelFormatRGBA16Float,
+                                   snapUsage, MTL::StorageModePrivate);
+        }
+        if (mExtractSnapshot && downsamplePSO) {
+            BloomParams sp = params;
+            sp.bloomRes[0] = (float)bloomW;
+            sp.bloomRes[1] = (float)bloomH;
+            encoder->setComputePipelineState(downsamplePSO);
+            encoder->setBytes(&sp, sizeof(BloomParams), 0);
+            encoder->setTexture(bloomA, 0);
+            encoder->setTexture(mExtractSnapshot, 1);
+            MtDispatchThreads(encoder, fb, grid, MTL::Size(16,16,1));
+            encoder->memoryBarrier(MTL::BarrierScopeTextures);
+        }
+    }
 
     // 2) Blur/downscale/upscale pyramid, mirroring PPBloom::RenderBloom.
     //
