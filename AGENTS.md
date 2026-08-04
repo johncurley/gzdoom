@@ -3684,3 +3684,96 @@ path. **Not yet observed firing** — that needs a real precache cold load.
   decal/coplanar-plane sweep against Vulkan, not a code review — but the
   comment at `mt_renderstate.cpp:829` now says plainly that it is fitted, so
   nobody derives anything else from it.
+
+## MEASURED 2026-08-04: the bloom V-flip fix is CONFIRMED; a broader-blob difference remains
+
+Captures at Ashes Enriched MAP51, Metal Tier 1, scene viewport `0,0 1440x773`
+(from `mt_caps`), `gl_exposure_speed 1`. Five Cmd+Shift+4 window captures at
+1552x913, measured with the new `tools/blobstats.py`.
+
+**Both controls passed**, which is what makes the rest trustworthy:
+bloom-off before and after the whole sequence were **byte-identical**
+(`b878ce7b`), and the compute config captured twice was **byte-identical**
+(`80f4c7a9`). Zero noise floor. Negative-delta pixels were ~0.1% of the
+positive count on both paths, so both are cleanly additive.
+
+                     bbox        aspect  centroid        peak   energy    px>2
+    reference PP   539 x 334    1.61:1  (834.5,412.5)   43.0    823856   86911
+    Metal compute  471 x 436    1.08:1  (829.1,410.8)   37.0   1092532  116478
+
+**The Y centroids agree to 1.7px, X to 5.4px.** Before the fix they differed
+by 53.8px. The composite V-flip (`3cb088b89`) is confirmed on screen.
+
+This is much better evidence than the arithmetic that motivated the fix. The
+round-two audit offered `2 * 451.5 - 424.6 = 478.4` as confirmation, with the
+axis fitted from the midpoint of the two measurements it was explaining. The
+within-session test needs no axis at all: the two paths now land in the same
+place. **Prefer a test that compares two live measurements over one that
+compares a measurement to a number derived from it.**
+
+### The prediction was right in substance and wrong in coordinates
+
+`AGENTS.md` predicted a Y centroid of **424.6**. That number was never
+reachable: it came from a session at a different viewport, and these are
+window captures including chrome. Absolute positions do not survive across
+capture geometries. Stating the prediction as "Metal's Y centroid will equal
+the reference's Y centroid, both measured this session" would have been both
+falsifiable and reachable. **Predict a relationship between two things you
+will measure together, not a constant from an old session.**
+
+### RETIRE the historical five-number table -- do not reconcile it
+
+    (2026-08-03)     bbox        aspect  centroid        peak  energy  px>2
+    reference     469 x 154     3.05:1  (798.6,424.6)   29.9  424242  47328
+    Metal         316 x 296     1.07:1  (794.3,478.4)   16.2  347624  54291
+
+Those numbers were taken with the compute blob **mirrored onto different
+scene content**, so its thresholded bbox, energy and pixel count were
+measuring a different part of the image than the reference's. They are not a
+valid target and were never a valid target. The evidence: the energy ratio
+**reversed** direction after the fix, from 82% of reference to 132%. A pure
+reflection cannot change total energy; a reflection onto different content
+can change *thresholded* energy in either direction, which is exactly what a
+mirrored measurement looks like in hindsight.
+
+### What remains, and where to look next
+
+With position resolved, Metal's bloom is **broader and stronger**: 34% more
+pixels above threshold, 33% more energy, at 86% of the peak, in a square blob
+(1.08:1) against the reference's wide one (1.61:1). Aspect is the one metric
+whose direction survived the fix unchanged.
+
+Broader + lower peak + more total energy is the signature of **coarser pyramid
+levels contributing too much**. Audit round three eliminated tap placement,
+the Gaussian exponent, the amount floor, and the resample coordinate
+convention by reading, and round two eliminated level count, level-0
+resolution, composite weights and the resample kernel. What that leaves is the
+**upscale-replace leg** -- whether Metal's walk back up the pyramid replaces
+each level as the reference does, or accumulates.
+
+That is a source question again, and it is now narrow enough to be worth one
+more read. But **dump the intermediate `bloomA` and per-level textures first**
+if it does not fall out immediately; three source reads have been spent on
+this effect and the next cheap win is intermediate data, not a fourth read.
+
+### Method notes that cost time this session
+
+- **GZDoom's `-exec` runs before `Init complete.`** and `+screenshot` never
+  fires. Neither can drive a capture sequence; the whole script executed with
+  no map loaded and no frames rendered. Captures are manual.
+- **The console pauses single-player, and `GetScreenshotBuffer` does not
+  re-render** -- it re-presents the existing pipeline image
+  (`mt_renderdevice.cpp:1004`). So a screenshot taken from an open console
+  reflects the last frame rendered with the console DOWN. An earlier attempt
+  this session produced seven byte-identical shots across four cvar toggles
+  purely from this. Set the cvar, **close the console**, let it render, then
+  reopen and shoot.
+- **Never use `;` to chain console commands in a capture sequence.** A shot
+  that came out identical to bloom-off was almost certainly
+  `gl_bloom 1; mt_compute_bloom 0` not applying `gl_bloom`. `Pass1` runs the
+  exposure pass whenever `bloomEligible` is true, so *any* gl_bloom-on frame
+  differs from a gl_bloom-off frame even before bloom is composited -- which
+  makes "identical to bloom off" a reliable tell that `gl_bloom` never took.
+- Run `mt_caps` immediately before each shot. It prints the resolved bloom
+  path and both cvars, which turns "which config was this file?" from
+  inference into a log line.
