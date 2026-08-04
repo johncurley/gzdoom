@@ -490,6 +490,19 @@ CCMD(mt_caps)
                                                                : "<unexpected>";
     Printf(PRINT_HIGH, "  Scene colour format:     %s   <- mt_hdr_pipeline\n", name);
   }
+  // The scene viewport is the coordinate frame every postprocess and compute
+  // pass works in, and it is NOT the window size (screenblocks, letterboxing
+  // and scaling all move it). Printing it makes a capture's reflection axis
+  // -- top + height/2 -- derivable from geometry instead of fitted to the
+  // measurement, which is the difference between a prediction and a circular
+  // check. See the bloom V-flip predictions in AGENTS.md.
+  Printf(PRINT_HIGH, "  Scene viewport:          %d,%d %dx%d  (centre y = %.1f)\n",
+         screen->mSceneViewport.left, screen->mSceneViewport.top,
+         screen->mSceneViewport.width, screen->mSceneViewport.height,
+         screen->mSceneViewport.top + screen->mSceneViewport.height * 0.5f);
+  Printf(PRINT_HIGH, "  Screen viewport:         %d,%d %dx%d\n",
+         screen->mScreenViewport.left, screen->mScreenViewport.top,
+         screen->mScreenViewport.width, screen->mScreenViewport.height);
   Printf(PRINT_HIGH, "  Argument buffers:        %s (tier %d)\n",
          v.supportsArgumentBuffers ? "yes" : "no", v.argumentBufferTier);
   Printf(PRINT_HIGH, "  RGB10A2:                 %s\n", v.supportsRGB10A2 ? "yes" : "no");

@@ -918,6 +918,15 @@ void MtTextureManager::PerformAsyncGPUUpload(MtHardwareTexture *hwTex,
     desc->release();
   }
 
+  // Timed for the same reason, and over the same span, as the synchronous
+  // path in CreateImage: staging memcpy + blit encode + commit of a separate
+  // command buffer is real render-thread CPU cost. This path was previously
+  // untimed, so TextureUploadCPU read zero through a precache cold load even
+  // though the work happened -- the extraCommandBuffers counter covered it
+  // (GetBlitCommandBuffer increments centrally) but the timer did not, which
+  // made the two disagree exactly when the metric mattered most.
+  auto uploadStart = std::chrono::high_resolution_clock::now();
+
   size_t alignedPitch = (pitch + 1023) & ~1023;
   size_t totalSize = alignedPitch * task.height;
   MTL::Buffer *staging = fb->GetStagingBuffer(totalSize);
@@ -943,6 +952,12 @@ void MtTextureManager::PerformAsyncGPUUpload(MtHardwareTexture *hwTex,
     cmdBuf->release();
   }
   fb->RecycleBuffer(staging);
+
+  if (fb->GetDebugManager()) {
+    auto uploadEnd = std::chrono::high_resolution_clock::now();
+    float uploadMs = std::chrono::duration<float, std::milli>(uploadEnd - uploadStart).count();
+    fb->GetDebugManager()->RecordTextureUpload(uploadMs);
+  }
 
   static_cast<MtRenderState *>(fb->RenderState())->MarkAsFilled(texture);
   hwTex->ResetStagingBuffer(); // clears mNeedsUpload

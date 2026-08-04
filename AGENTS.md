@@ -3608,3 +3608,79 @@ a map with a camera texture whose UVs cross the edge.
 mt_pipelines.bin`.** A stale PSO binary archive can mask a native-shader
 change — this is a recorded trap and the bloom fix is exactly the kind it
 hides. It was moved aside on 2026-08-04 and regenerates on launch.
+
+## Audit round three (2026-08-04): render state and bloom clean, one real instrumentation defect
+
+Run against `643ab33a2`. Two of three tasks came back clean, which is itself
+the result — they were the two most likely places for a remaining bloom or
+constant-binding defect, and they are now eliminated by reading.
+
+**Task 1, MtRenderState constants — CLEAN.** Vulkan's set-1 bindings map
+deliberately onto Metal indices (light 16, viewpoint 17, bones 18, matrices
+19, stream data 20), the inline buffer at index 21 is the correct equivalent
+of Vulkan push constants with every consumed field and offset preserved, and
+inline constants are explicitly invalidated for every new render encoder
+(`mt_renderstate.cpp:1632`), which rules out the encoder-transition
+stale-constant path. No field, offset, binding or staleness divergence.
+
+**Task 2, the bloom remainder — CLEAN, no new source candidate.** All three
+areas named unexamined by round two came back matching: the blur's linear
+samples at constructed texel centres land on the same centres as the
+reference's nearest `textureOffset` at every level, clamp-to-edge agrees for
+out-of-range taps, and `(gid + 0.5) / destExtent` is the same
+destination-pixel-centre coordinate the reference screen quad generates, on
+both the downscale and the upscale-replace leg.
+
+**This is important for the pending capture.** There is now no known
+source-only mechanism left that predicts a visible bloom mismatch beyond the
+two already fixed. If the re-measurement still shows a large gap, the cause is
+not in the shader constants or the resampling coordinates, and the next step
+is isolating the intermediate `bloomA`/`mCompositeTex` outputs rather than
+another source read. Three source reads have now been spent on this.
+
+### The one real finding: TextureUploadCPU misses the async upload path
+
+**VERIFIED IN SOURCE, and it contradicted this document — the doc was wrong.**
+
+`RecordTextureUpload` was called from exactly one place, the synchronous
+`CreateImage` blit path (`mt_texture.cpp:495`). But normal precaching queues
+async loads (`mt_renderdevice.cpp:807`) whose GPU upload runs in
+`PerformAsyncGPUUpload`, which does the same staging memcpy + blit encode +
+separate command-buffer commit and **never recorded a timing**.
+
+The `extraCommandBuffers` counter *does* cover both, because it increments
+centrally in `GetBlitCommandBuffer`. So the two metrics disagree exactly when
+the metric matters most: a genuine precache cold load would show extra command
+buffers while `TextureUploadCPU` sat at zero.
+
+This also resolves the long-standing "the upload timer has never fired"
+item — **and the prior all-zero readings are still valid as evidence that no
+upload occurred**, since the sync path was instrumented correctly. The defect
+is that a *future* cold load would have been missed too, and silently.
+
+Fixed 2026-08-04: `PerformAsyncGPUUpload` now times the same span as the sync
+path. **Not yet observed firing** — that needs a real precache cold load.
+
+### Verdicts on the other two long-open items
+
+- **`BlitCurrentToImage`'s conversion branch is genuinely unreachable.**
+  `CreateWipeTexture` is the only caller and creates the destination in the
+  pipeline format immediately before calling it (`mt_texture.cpp:214`). Keep
+  it as a guarded future conversion path rather than delete it, but note its
+  V-flip is still unverified — and given the composite V-flip found in round
+  two, that neighbourhood has now produced one real orientation bug. The
+  forced-format wipe test is the right way to settle it.
+- **Round-1 Finding 11 is CLOSED as not a divergence.** `EnableMultisampling`
+  and `EnableLineSmooth` are empty no-ops in *Vulkan too*
+  (`vk_renderstate.cpp:173-179`) — only OpenGL toggles those legacy raster
+  states. Metal matches the reference. This was carried as an open item for
+  weeks; it was never a gap.
+- **Round-1 Finding 12: the `128.0f` depth-bias factor is a FITTED constant.**
+  Not derivable from `Depth32Float` or the reverse-Z mapping; history shows
+  `1/2^24` was introduced as a "reasonable" 24-bit emulation and the `* 128`
+  was added later with no derivation and no measurement. At the common
+  `units = -128` it produces a `+0.0009765625` reverse-Z offset, 128x the
+  preceding formula. **Left in place** — changing it needs a controlled
+  decal/coplanar-plane sweep against Vulkan, not a code review — but the
+  comment at `mt_renderstate.cpp:829` now says plainly that it is fitted, so
+  nobody derives anything else from it.

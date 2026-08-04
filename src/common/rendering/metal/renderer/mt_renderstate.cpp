@@ -835,7 +835,15 @@ void MtRenderState::ApplyDepthBias() {
     // resolvable difference). We use 1/2^24 as a reasonable epsilon for 32-bit
     // float buffers to simulate 24-bit precision.
     float unitsScale = 1.0f / 16777216.0f;
-    mCurrentBiasUnits = -mBias.mUnits * unitsScale * 128.0f; // Scale up for Reverse-Z precision
+    // The 128.0f is a FITTED CONSTANT, not a derived one -- audited
+    // 2026-08-04 and confirmed to have been added after the 1/2^24 epsilon
+    // without a derivation or a measurement. It is not obtainable from
+    // Depth32Float or from the reverse-Z range. At the common units = -128 it
+    // yields a +0.0009765625 reverse-Z offset, 128x what the preceding formula
+    // alone gives. Left in place because changing it needs a controlled
+    // decal/coplanar-plane sweep against Vulkan, not a code review -- but do
+    // not treat it as principled, and do not derive anything else from it.
+    mCurrentBiasUnits = -mBias.mUnits * unitsScale * 128.0f;
     mCurrentBiasFactor = -mBias.mFactor;
     mEncoder->setDepthBias(mCurrentBiasUnits, mCurrentBiasFactor, 0.0f);
     mBias.mChanged = false;
