@@ -124,3 +124,49 @@ Config at session end: gl_bloom=true, gl_exposure_base=0.35,
 gl_exposure_speed=0.05 (captures used 1), r_drawfuzz=1, mt_compute_bloom
 varies by run, vid_preferbackend=3, mt_compute_ao=false. Window 1440x801,
 scene viewport 0,0 1440x773.
+
+RUNNING THE GAME — operational details, so a cold session need not rediscover
+
+    ./build/gzdoom.app/Contents/MacOS/gzdoom \
+      -iwad DOOM2.wad \
+      -file ~/Documents/GZDoom/Ashes2063Enriched2_23.pk3 \
+      -loadgame capspot.zds \
+      +gl_exposure_speed 1 \
+      "+mt_bloom_dump 60"          # optional; quote it, the arg is part of it
+
+- `-loadgame` takes a BARE filename; it prepends the savegame directory
+  itself. The pinned viewpoint is `capspot.zds` (MAP51 lantern) in
+  `~/Documents/GZDoom/Savegames/doom.id.doom2.commercial/`. That file lives
+  outside the repo and is NOT covered by git — do not delete it, it is what
+  makes captures comparable across builds.
+- Redirect stdout to a log; console output goes there, including `mt_caps`,
+  `mt_metrics`, the dump tables, and `Captured <file>.png` lines. That log is
+  how you prove which config a screenshot belongs to.
+- Screenshots land in `~/Documents/GZDoom/Screenshots`.
+- Frames render at only a few fps at this viewpoint, so a dump armed for N
+  frames can take well over a minute of wall clock. Budget for it.
+
+THE TONEMAP CHECK — task 1, concretely
+
+`PPTonemap` declares five PPShaders, all named `shaders/pp/tonemap.fp`,
+differing only in defines (`LINEAR`, `REINHARD`, `HEJLDAWSON`, `UNCHARTED2`,
+`PALETTE`), selected by `gl_tonemap` (hw_postprocess.h:585-589, .cpp:625-629).
+Before `b017e7c92` they all shared one cache key.
+
+`ETonemapMode`: 0 None, 1 Uncharted2, 2 HejlDawson, 3 Reinhard, 4 Linear,
+5 Palette.
+
+Test, following the capture protocol (one launch per config, cvar on the
+command line, operator types only `screenshot`):
+
+1. On the CURRENT build, capture `+gl_tonemap 1`, `3`, and `5`. **All three
+   must differ.** Any byte-identical pair means something is still collapsing
+   and the fix is incomplete.
+2. To establish the bug was real rather than merely possible, repeat one pair
+   on a build at `b017e7c92^`. Expect those two to be byte-identical there.
+   Without step 2 this stays an inference — which is exactly the status it has
+   now, and the reason it is task 1.
+
+Note gl_tonemap interacts with mt_hdr_pipeline and the scene colour format;
+check `mt_caps` reports the same "Scene colour format" line in every capture,
+or you are comparing across a format change rather than across tonemap modes.
