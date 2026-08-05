@@ -1,7 +1,12 @@
 Handoff — metal-audit, 2026-08-05 (evening)
 
-Supersedes the 2026-08-05 morning handoff. Four commits, tree clean, build
-green throughout.
+Supersedes the 2026-08-05 morning handoff. Seven commits, tree clean, build
+green throughout, binary at HEAD.
+
+If you read nothing else: two bugs fixed and verified on screen, the previous
+handoff's task 1 closed by measurement, and the whole postprocess surface
+enumerated for the first time. START HERE has two paste-ready five-minute tests
+at the top; everything below them is standing work.
 
 Read CLAUDE.md's "Measuring a rendering change" and "Visual A/B captures"
 first, then AGENTS.md. Everything below anchors to commits, not to docs.
@@ -49,7 +54,52 @@ Also fixed today, each verified
       afterH  78x41  1.90:1  px= 919
       afterV  76x43  1.77:1  px=1105   <-- bbox MOVES (was frozen at 78x41)
 
+WHAT LANDED (7 commits, tree clean, build green, binary current)
+
+    ad35e9a52  metal: PixelFormat::Rgba8 is RGBA, not BGRA
+    5a9b53e1b  metal: make every postprocess pass orientation-correct
+    12cb27f97  docs: AGENTS.md -- verification and the two defects
+    a103eb862  tools: tonemap_predict.py
+    80590000b  handoff: refresh
+    8fbdbb475  handoff: AO composite is pre-existing, measured
+    5d62250fd  handoff: correct determinism claim, record the sweep
+
 START HERE
+
+FIRST — TWO ONE-LAUNCH TESTS, PASTE-READY. Neither blocks anything, both are
+about five minutes, and the first is the highest-value item on this whole list.
+
+  (a) colormap — the only broken-by-default path that affected ORDINARY PLAY.
+
+      ./build/gzdoom.app/Contents/MacOS/gzdoom -iwad DOOM2.wad \
+        -file ~/Documents/GZDoom/Ashes2063Enriched2_23.pk3 \
+        -loadgame capspot.zds \
+        +gl_exposure_speed 1 +gl_lens 0 +gl_fxaa 0 +gl_tonemap 0 \
+        > /tmp/colormap.log 2>&1
+
+      In the console:  give PowerInvulnerable
+      Then CLOSE the console and type:  screenshot
+      (NOT `give invulnerability` — that fails in a total conversion.)
+
+      EXPECT: inverse-greyscale frame, UPRIGHT. If it is upside down,
+      5a9b53e1b is incomplete — stop and fix that before anything else.
+
+  (b) fxaa — unresolved, needs a control pair because the first attempt was
+      confounded by exposure drift. THREE launches, identical settling routine,
+      type only `screenshot` in each:
+
+        +gl_fxaa 0   -> fxaa0a.png
+        +gl_fxaa 0   -> fxaa0b.png     <- the control pair, measures drift
+        +gl_fxaa 1   -> fxaa1.png
+
+      Then:  python3 tools/localize.py fxaa0a.png fxaa0b.png   (the floor)
+             python3 tools/localize.py fxaa0a.png fxaa1.png    (the effect)
+
+      EXPECT: the effect must clear the floor AND have the edge-local, roughly
+      symmetric shape antialiasing produces. A broad one-directional wash is
+      exposure, not FXAA — that is exactly how the first attempt failed.
+
+THE STANDING LIST
 
 1. **AO computes but never reaches the screen.** gl_ssao 0 vs gl_ssao 3
    produce BYTE-IDENTICAL frames, yet AO is running and correct. Everything
