@@ -73,6 +73,20 @@ START HERE
    this needs a fresh look rather than another capture.
    Do NOT re-measure AO generation. Four debug modes have now cleared it.
 
+   PRE-EXISTING, AND THAT IS MEASURED, NOT ASSUMED. It would have been easy to
+   assume 5a9b53e1b caused this, since every AO A/B above ran on a build that
+   already contained it, and the argument for innocence was only that a
+   coordinate flip relocates AO rather than zeroing it. So mt_shader.cpp was
+   reverted to 5a9b53e1b^, rebuilt, and the A/B repeated:
+
+       pre-fix  gl_ssao 0   md5 092337f83c455bb8827f1e7f08c8ddb3
+       pre-fix  gl_ssao 3   md5 092337f83c455bb8827f1e7f08c8ddb3
+
+   Byte-identical there too, so AO contributed nothing before the orientation
+   fix either. Do not re-run this; it is settled. (It also cost one file
+   rebuild and two launches, which is what a claim of this kind is worth on
+   this branch -- four source-reading passes once cleared the vertical blur.)
+
 2. **Audit the remaining string patches — one is already silently dead.**
    PatchPostprocessFragmentShader searches ssaocombine for
 
