@@ -125,16 +125,85 @@ Assume every default-off postprocess setting on Metal is untested until
 someone turns it on and looks. Three of them were broken; the fourth (AO
 composite) is item 1 above.
 
-NEW: THIS VIEWPOINT IS BIT-DETERMINISTIC
+THE SWEEP — the whole postprocess surface, enumerated
+
+  pass        gate                     default        draws  status
+  present     always                   on             1      exercised constantly
+  exposure    with bloom               on             many   exercised
+  bloom       gl_bloom                 false          many   on in this ini; sub-1%
+  tonemap     gl_tonemap               0 = off        1      WAS BROKEN -> fixed
+  lens        gl_lens                  false          1      WAS BROKEN -> fixed
+  fxaa        gl_fxaa                  0 = off        2      UNRESOLVED, see below
+  ssao        gl_ssao                  0 = off        many   composite broken, item 1
+  colormap    GAMEPLAY (fixedcm/flash) fires in play  1      NEVER TESTED
+  menu blur   gl_menu_blur / gameinfo  -1 = mod's     many   runs, output sane
+  custom PP   gl_custompost + a mod    true           N      NEVER TESTED, no mod to hand
+
+**colormap is the one that matters and it is not a cvar at all.**
+PPColormap::Render returns early only when `flash == 1.f` and fixedcm is not a
+special colormap. A palette flash — taking damage, picking up an item — or a
+special colormap makes it run ONE draw. Pre-5a9b53e1b that means the screen
+flipped upside down every time the player got hit. It survived unnoticed
+because all testing happens standing still at a pinned savegame where nothing
+ever flashes. Every other item on this list required opting in via a cvar;
+this one did not.
+
+Still untested. `give invulnerability` FAILS in Ashes 2063 ("Unknown item") —
+it is a total conversion and the Doom item does not exist. Use the powerup
+CLASS instead, which lives in the base gzdoom.pk3 zscript and sets
+player.fixedcolormap directly (powerups.zs:221):
+
+    give PowerInvulnerable
+
+That gives a SUSTAINED special colormap for ~30s, so the pass runs every frame
+and can be screenshotted at leisure rather than racing a few-tic flash.
+
+fxaa is unresolved, not passing. The one A/B taken was confounded by exposure
+drift (see the determinism section). Redo it with a same-config control pair:
+gl_fxaa 0 twice and gl_fxaa 1 once, all captured after the same settling
+routine. Only a difference clearing the control pair counts, and it must have
+the EDGE-LOCAL, roughly symmetric shape antialiasing produces.
+
+menu blur was captured with gl_menu_blur 4 forced (the -1 default defers to the
+mod's gameinfo, and then "blur is fine" cannot be told from "the mod never
+asked for blur"). It executes and the output is sane, but at that blur radius
+orientation is not rigorously determinable. Treat as weak evidence.
+
+NEW: THIS VIEWPOINT CAN REPRODUCE BIT-EXACTLY — BUT ONLY ONE DIRECTION OF THE
+RESULT IS TRUSTWORTHY
 
 Two launches of an identical config produced byte-identical PNGs
-(ssao3a == ssao3b, md5 af8e771f...). The noise floor is ZERO, not the ~0.4ms
-figure that applies to timing. That makes md5 a valid instrument for pixel A/Bs
-here and is far cheaper than the blob statistics used up to now. It also
-retroactively strengthens the tonemap 0 == 4 result.
+(ssao3a == ssao3b, md5 af8e771f...), and so did the pre-fix AO pair
+(092337f8...). So md5 CAN settle a question here, far more cheaply than the
+blob statistics used up to now.
 
-Caveat: this holds for a pinned savegame at a static viewpoint. Anything with
-animation, exposure adaptation mid-run, or RNG will not reproduce it.
+**The asymmetry is the whole point, and an earlier draft of this handoff got it
+wrong by claiming a zero noise floor outright:**
+
+  - BYTE-IDENTICAL is strong. It means no drift occurred AND the change under
+    test did nothing. Both at once. tonemap 0 == 4 and the pre-fix AO pair are
+    solid on this basis.
+  - BYTE-DIFFERENT is AMBIGUOUS. It is equally consistent with a real effect
+    and with exposure drift between launches, and it needs a same-config
+    control pair before it means anything.
+
+MEASURED counterexample, so this is not theoretical. gl_fxaa 0 vs gl_fxaa 1,
+captured in two launches with gl_exposure_speed 1 set in both:
+
+    mean signed delta +4.12   brighter 279948 px (39.3%)   darker 6650 (0.9%)
+
+FXAA is edge antialiasing; its difference must be thin, edge-local and roughly
+symmetric. A broad one-directional BRIGHTENING over 39% of the frame,
+concentrated on the lantern and crate, is exposure adaptation — the exact shape
+tools/localize.py's docstring warns about. The FXAA question is still open
+because of it.
+
+Determinism holds for the same elapsed FRAME COUNT, not the same wall clock.
+Exposure adapts over frames, so a screenshot taken sooner or later after load
+converges differently even with gl_exposure_speed 1. ssao3a/ssao3b happened to
+be captured at comparable elapsed times; the fxaa pair was not.
+
+Anything with animation, RNG, or a moving viewpoint will not reproduce at all.
 
 TOOLS
 
