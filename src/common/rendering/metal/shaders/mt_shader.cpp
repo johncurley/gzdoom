@@ -892,13 +892,16 @@ static void PatchPostprocessFragmentShader(std::string &source,
   }
 
   if (shadername.find("ssaocombine") != std::string::npos) {
-    size_t pos = source.find("vec4 ssao = texture(AODepthTexture, TexCoord);");
-    if (pos != std::string::npos) {
-      source.replace(pos, strlen("vec4 ssao = texture(AODepthTexture, TexCoord);"),
-                     "vec4 ssao = texture(AODepthTexture, vec2(TexCoord.x, 1.0 - TexCoord.y));");
-    }
+    // NOTE: a local V-flip was applied to the AODepthTexture fetch here until
+    // 2026-08-05. It was a workaround for the general Metal PP orientation
+    // defect -- every postprocess pass mirrored V because the shared
+    // fullscreen triangle's UVs assume OpenGL's bottom-left texture origin.
+    // That is now fixed at the source, in the PP vertex shader (see MtPPShader
+    // below), so this compensation would be a second flip and would misalign
+    // AO against the scene. Removed deliberately; do not reinstate it without
+    // first checking whether the general fix is still in place.
 
-    pos = source.find("FragColor = vec4(fogColor, (1.0 - attenutation) * depthMask);");
+    size_t pos = source.find("FragColor = vec4(fogColor, (1.0 - attenutation) * depthMask);");
     if (pos != std::string::npos) {
       source.replace(pos, strlen("FragColor = vec4(fogColor, (1.0 - attenutation) * depthMask);"),
                      "FragColor = vec4(vec3(0.0), clamp((1.0 - attenutation) * depthMask * 1.85, 0.0, 1.0));");
@@ -1353,6 +1356,50 @@ MtPPShader::MtPPShader(MetalRenderDevice *fb, PPShader *shader) : fb(fb) {
   std::string vertSource = fb->GetShaderManager()->LoadPrivateShaderLump(
       shader->VertexShader.GetChars());
   PatchVertexShader(vertSource, shader->VertexShader.GetChars());
+
+  // Make each postprocess pass orientation-preserving on Metal.
+  //
+  // The shared fullscreen triangle (flatvertices.cpp:66-68) is
+  //   (-1,-1) UV(0,0)   (3,-1) UV(2,0)   (-1,3) UV(0,2)
+  // so UV.y increases with NDC.y. That is correct only under OpenGL's
+  // bottom-left texture origin. Metal's texture origin is top-left, so UV.y=0
+  // is the TOP of the source while NDC.y=-1 is the BOTTOM of the target, and
+  // every pass that samples a texture and writes it out mirrors V.
+  //
+  // The chain used to survive this by accident, because the flips cancelled:
+  // BlitSceneToPostprocess flipped once and the final Present flipped again,
+  // so an EVEN pass count came out upright. Any effect adding an ODD number of
+  // passes inverted the whole frame. MEASURED 2026-08-05: gl_lens 1 (one draw)
+  // renders upside down; gl_fxaa 1 (two draws) renders upright; gl_tonemap
+  // 1-5 (one draw) all render upside down, including mode 4, which is a
+  // mathematical identity -- proving the defect is in the plumbing and not in
+  // any shader's maths.
+  //
+  // The present* shaders are deliberately excluded. They are the only ones
+  // that apply their own UVScale/UVOffset (present.fp:56), which is how both
+  // the scene-viewport mapping and the final orientation correction are
+  // expressed, and they are the two call sites that are correct today. Leaving
+  // them untouched keeps every existing uniform value valid and confines this
+  // change to the passes that are actually broken.
+  //
+  // Only possible because b017e7c92 keys the shader cache on source rather
+  // than name: this produces two variants of screenquad.vp, which would
+  // previously have collided on a single cache entry.
+  if (strstr(shader->FragmentShader.GetChars(), "present") == nullptr) {
+    const char *kTexCoordAssign = "TexCoord = UV;";
+    size_t pos = vertSource.find(kTexCoordAssign);
+    if (pos != std::string::npos) {
+      vertSource.replace(pos, strlen(kTexCoordAssign),
+                         "TexCoord = vec2(UV.x, 1.0 - UV.y);");
+    } else {
+      Printf(PRINT_LOG,
+             "Metal: PP V-flip patch did not match in %s (vertex shader %s) -- "
+             "this pass will render inverted.\n",
+             shader->FragmentShader.GetChars(),
+             shader->VertexShader.GetChars());
+    }
+  }
+
   vertCode += vertSource;
 
   // Compile fragment shader
