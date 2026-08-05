@@ -697,7 +697,19 @@ static MTL::PixelFormat GetMetalPPTextureFormat(PixelFormat format,
   MTL::PixelFormat metalFormat = MTL::PixelFormatBGRA8Unorm;
   switch (format) {
   case PixelFormat::Rgba8:
-    metalFormat = MTL::PixelFormatBGRA8Unorm;
+    // RGBA byte order, NOT BGRA. This mapped to BGRA8Unorm until 2026-08-05,
+    // which transposed R and B in every Rgba8 postprocess texture, because
+    // both shared-code producers write R,G,B,A in that byte order:
+    //   - the palette tonemap LUT (hw_postprocess.cpp:600-603), and
+    //   - custom shader textures (hw_postprocess.cpp:1132-1136), which swap
+    //     BGR->RGB on the way in *specifically* to match this format tag.
+    // Vulkan uses VK_FORMAT_R8G8B8A8_UNORM (vk_pptexture.cpp:35) and GL uses
+    // GL_RGBA8 (gl_renderbuffers.cpp:805); Metal was the only backend
+    // disagreeing. It went unnoticed because the other Rgba8 textures in play
+    // are noise-like (dither), where a channel transpose is invisible --
+    // gl_tonemap 5 is the first consumer where it shows, as inverted colour.
+    // Same defect family as the Rgba16f case below.
+    metalFormat = MTL::PixelFormatRGBA8Unorm;
     bpp = 4;
     break;
   case PixelFormat::Rgba16f:
