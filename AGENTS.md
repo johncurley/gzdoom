@@ -3985,3 +3985,81 @@ against a reference path whose vertical blur was missing -- on top of the
 Rgba16f-as-8-bit defect fixed the same day. The anisotropy hunt
 (energy ratios 1.33/1.38, aspect 0.67/0.48, "68% taller and 20% narrower") was
 chasing this bug. Those numbers are history, not targets.
+
+## VERIFIED 2026-08-05 (later): the tonemap inference, and two bugs it uncovered
+
+The "NOT yet verified" inference above is now **settled**, and verifying it
+turned up two real defects that the cache bug had been concealing. Fixes:
+`ad35e9a52` (Rgba8 format) and `5a9b53e1b` (PP orientation).
+
+### How they stayed hidden -- the reusable part
+
+`gl_tonemap` defaults to `0` (`hw_postprocess_cvars.cpp:41`), and mode 0 makes
+`PPTonemap::Render` return before doing anything. **The tonemap pass had never
+once executed on the Metal backend.** Same for `gl_lens` (default `false`) and
+custom PP shader textures.
+
+This branch is validated by "build it, load a WAD, look at it" -- there is no
+test suite. That makes the tested surface exactly equal to *whatever the dev
+config happens to enable*. Passes that run by default (bloom, SSAO, present)
+have been debugged hard; passes behind a default-off cvar have never had a
+single pixel checked. The Metal backend was written by mirroring Vulkan, so this
+code gets written correctly-looking and then never runs.
+
+There was a second layer: even if someone had tried `gl_tonemap` before
+`b017e7c92`, all five modes rendered identically, so a casual "does this cvar do
+anything?" test would have looked *consistent*, merely ineffective. The cache
+bug was actively concealing whether the modes worked. Fixing it is what made the
+pass observable at all.
+
+**Assume every default-off postprocess setting on Metal is untested until
+someone turns it on and looks.**
+
+### Bug 1: every PP pass mirrored V (`5a9b53e1b`)
+
+The shared fullscreen triangle's UVs assume OpenGL's bottom-left texture origin;
+Metal's is top-left. Every pass that sampled and wrote flipped V. The chain
+survived on flip *cancellation* -- blit flipped once, final present flipped
+again -- so only an ODD pass count broke:
+
+    gl_fxaa 1       2 draws   even   upright     <- accidentally worked
+    gl_lens 1       1 draw    odd    INVERTED
+    gl_tonemap 1-5  1 draw    odd    INVERTED
+
+Fixed by flipping `TexCoord` in the PP vertex shader for all PP shaders except
+the four `present*` ones, which own their own `UVScale`/`UVOffset` and were
+already correct.
+
+### Bug 2: `PixelFormat::Rgba8` mapped to BGRA8Unorm (`ad35e9a52`)
+
+R and B transposed in every `Rgba8` PP texture. Invisible on the dither noise
+texture; visible the moment the palette LUT was used. Also affected custom PP
+shader textures, i.e. mods. Sibling of the `Rgba16f` case in the same switch.
+
+### The method lessons
+
+- **A test whose two outcomes look the same is not a test.** `gl_fxaa 1` was
+  designed to prove the parity theory and came back upright -- apparently
+  falsifying it. FXAA is *two* draws, so an even count was the theory's own
+  prediction. Count the draws before predicting the parity.
+- **Prefer an effect whose application is self-evident.** `gl_lens` was the test
+  that worked, partly because barrel distortion is unmistakable: a null result
+  could not masquerade as a pass. FXAA's subtlety made its null undetectable.
+- **A mathematical identity is the strongest available probe.** `gl_tonemap 4`
+  is `sqrt(c*c) == c`. It removed the shader maths as a variable entirely:
+  pre-fix it inverted the frame (proving the pass runs), post-fix it is
+  byte-identical to mode 0 (proving the pass is now exact). Both halves were
+  needed; either alone is consistent with "the setting did nothing."
+- **Byte-identical captures still need the null ruled out.** The final pair
+  matched at `326268d2...`, which is equally consistent with "perfect identity"
+  and "the pass never ran." What distinguished them was the *pre-fix*
+  observation that mode 4 visibly broke the frame.
+
+### Capture-protocol note
+
+The one-launch-per-config rule got relaxed during this session -- cvars were
+typed into a running console instead. That left `gl_lens 1` set for every
+subsequent capture including the `mt_bloom_dump`, an uncontrolled confound that
+made four screenshots uninterpretable. The clean two-launch pair had to be
+redone. macOS `Cmd+Shift+4` *does* sidestep protocol item 4 (the console-pause
+trap), since it captures the live window rather than re-presenting.
