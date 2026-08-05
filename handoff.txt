@@ -1,131 +1,188 @@
-Handoff — metal-audit, 2026-08-05
+Handoff — metal-audit, 2026-08-05 (evening)
 
-Supersedes the 2026-08-03 handoff. Ten commits, tree clean, build green
-throughout, check_shader_parity.py passing.
+Supersedes the 2026-08-05 morning handoff. Four commits, tree clean, build
+green throughout.
 
 Read CLAUDE.md's "Measuring a rendering change" and "Visual A/B captures"
 first, then AGENTS.md. Everything below anchors to commits, not to docs.
 
-THE HEADLINE — the compute-vs-reference bloom difference is SOLVED, and the
-compute path was right all along
+THE HEADLINE — every Metal postprocess pass was mirroring V, and the chain
+only worked when the pass count happened to be even
 
-- `MtShaderManager::CompileShader` keyed its in-memory `mShaderCache` on the
-  shader NAME alone. PPShaders that share a fragment filename and differ only
-  in `Defines` collided, and the second one requested silently received the
-  first one's compiled module. `shaders/pp/blur.fp` is both BlurHorizontal and
-  BlurVertical, and RenderBloom runs horizontal first — so **every "vertical"
-  blur in Metal's PP bloom was a second horizontal blur.** Fixed b017e7c92.
-- After the fix the two paths agree at every pyramid level: L0 109x90 vs
-  112x90, L2 and L3 extents identical, peak within 1.9%, energy 2.4%, pixel
-  count 3.0%.
-- Found by measurement, not reading. The row that did it:
+- The shared fullscreen triangle (flatvertices.cpp:66-68) maps UV.y with NDC.y,
+  which is correct only under OpenGL's bottom-left texture origin. Metal's is
+  top-left, so every PP pass that sampled a texture and wrote it out flipped V.
+- BlitSceneToPostprocess flipped once and the final Present flipped again, so
+  an EVEN pass count came out upright. Any effect adding an ODD number of
+  passes inverted the whole frame. Fixed 5a9b53e1b.
+- MEASURED, one variable at a time:
 
-      after horizontal   78x41   1.90:1   px=888
-      after vertical     78x41   1.90:1   px=927   <-- bbox UNCHANGED
+      gl_fxaa 1       2 draws   even   upright     <- accidentally worked
+      gl_lens 1       1 draw    odd    INVERTED
+      gl_tonemap 1-5  1 draw    odd    INVERTED
 
-  A blur that does not move the bounding box is not blurring along that axis.
-  Four source-reading passes had already cleared this code.
+- gl_tonemap 4 is a mathematical identity, sqrt(c*c) == c, and it inverted the
+  frame too. That is what proved the defect was in the plumbing and not in any
+  shader's maths, and it made the fix falsifiable: with orientation correct,
+  mode 4 must be byte-identical to mode 0. It is —
+
+      gl_tonemap 0   md5 326268d2e5070b81cf9f115d655011bb
+      gl_tonemap 4   md5 326268d2e5070b81cf9f115d655011bb
 
 Also fixed today, each verified
 
-- Composite V-flip (3cb088b89), CONFIRMED ON SCREEN at two viewpoints —
-  centroids agree to 1.7px where they differed by 53.8px. This was the real
-  bug the branch was chasing.
-- `PixelFormat::Rgba16f` mapped to BGRA8Unorm on Metal (3531ea502). Vulkan
-  uses R16G16B16A16_SFLOAT, GL uses GL_RGBA16F. The only shared-code consumer
-  is the bloom pyramid, so Metal's reference bloom ran entirely in 8-bit LDR,
-  clamped at 1.0.
-- Bloom mip chain rounded down where the reference ceiling-halves; depth
-  writes were enabled while depth testing was disabled (both 3cb088b89).
-- TextureUploadCPU missed the async upload path used by precaching
-  (74ca264d7). extraCommandBuffers covered it, the timer did not, so the two
-  would have disagreed exactly on a cold load.
-- Dead AO plumbing and the sampler W axis (9d19739e4).
-- dispatchThreads on a GPU reporting no non-uniform threadgroups (29cdcd619).
-  Conformance only — MEASURED not to change pixels.
+- PixelFormat::Rgba8 mapped to BGRA8Unorm (ad35e9a52). Vulkan uses
+  R8G8B8A8_UNORM, GL uses GL_RGBA8. Transposed R and B in the palette tonemap
+  LUT and in custom PP shader textures — the latter is a user-facing bug for
+  modders. Invisible until now because the other Rgba8 textures in play are
+  noise-like (dither), where a channel swap cannot be seen.
+- The handoff's task 1 is CLOSED by measurement. tools/tonemap_predict.py
+  (a103eb862) predicts the Reinhard capture from the Uncharted2 one per pixel:
+  0.925 levels of error against 12.291 levels of raw difference. That proves
+  each PPShader compiled and ran ITS OWN source with its own defines, which is
+  much stronger than "the modes differ."
+- Compute-vs-reference bloom re-measured after the orientation change and now
+  agrees to under 1% on every metric at every level (was 1.9/2.4/3.0%). L1, L2,
+  L3 extents identical; the extract matches exactly at 85x62.
+- The original diagnostic row, re-measured in clean config:
+
+      afterH  78x41  1.90:1  px= 919
+      afterV  76x43  1.77:1  px=1105   <-- bbox MOVES (was frozen at 78x41)
 
 START HERE
 
-1. **Verify the tonemap implication.** `shaders/pp/tonemap.fp` has FIVE
-   variants differing only by defines, so before b017e7c92 every tonemap mode
-   on Metal resolved to whichever compiled first — `gl_tonemap` would have had
-   no effect beyond the first mode used in a session. This is an INFERENCE
-   from the same defect, not a measurement. It is the highest-value open item
-   and it is cheap: cycle gl_tonemap and diff.
-2. Re-measure bloom on screen if you want a whole-frame confirmation. The
-   level dump already settles it; this would be belt-and-braces.
-3. audit-brief-03 Task 1 (push-constant vs uniform-buffer binding) came back
-   CLEAN from the external auditor, as did Task 2. Task 4's remaining
-   subsystem is culling/winding — re-read the known-deliberate list first.
-4. Still open from before: Tier 2 direct-composite path has never executed ·
+1. **AO computes but never reaches the screen.** gl_ssao 0 vs gl_ssao 3
+   produce BYTE-IDENTICAL frames, yet AO is running and correct. Everything
+   below is measured, not inferred:
+     - PPCPU AO present, samples=120, at gl_ssao 3; absent at gl_ssao 0, so
+       the cvar applies and the pass really is gated off.
+     - gl_ssao_debug 1 shows a healthy occlusion buffer, aligned with the real
+       geometry (dark in the actual concave corners).
+     - gl_ssao_debug 7 (step(1e-5, ssao.y)) is white everywhere: the depth
+       channel is populated.
+     - gl_ssao_debug 3 (ssao.yyy/1000) measured min 43, median 75, max 106 —
+       correct WORLD units for this compact interior. So the shader's
+       `ssao.y > 2.0` gate PASSES, and depthMask ~= 0.38.
+     - Computed alpha should therefore reach ~0.11 in corners. An 11% blend
+       cannot produce byte-identical frames.
+   The narrowing that matters: every gl_ssao_debug mode uses SetNoBlend and
+   every one of them reaches the screen. Normal mode is the ONLY path that
+   uses SetAlphaBlend() + SetOutputSceneColor() (hw_postprocess.cpp:940-945).
+   Suspect the alpha-blend composite, NOT AO generation. Metal does plumb
+   BlendMode through PP pipeline creation (mt_postprocess.cpp:303-320), so
+   this needs a fresh look rather than another capture.
+   Do NOT re-measure AO generation. Four debug modes have now cleared it.
+
+2. **Audit the remaining string patches — one is already silently dead.**
+   PatchPostprocessFragmentShader searches ssaocombine for
+
+       FragColor = vec4(fogColor, (1.0 - attenutation) * depthMask);
+
+   but the shader now reads `..., ssao.y > 2.0 ? (...) : 0.0);`. Exact-match
+   count is ZERO, so `find()` returns npos, the `if` quietly fails, and that
+   Metal-specific adjustment has been doing nothing. The other regex/find
+   patches in mt_shader.cpp have no protection against the same thing — an
+   upstream shader edit breaks them invisibly. The vertex patch added in
+   5a9b53e1b logs a warning naming the shader when its pattern misses; the rest
+   should do likewise, or better, fail loudly.
+
+3. Still open from before: Tier 2 direct-composite path has never executed ·
    Apple Silicon completely untested · BlitCurrentToImage's conversion branch
    confirmed unreachable, kept deliberately, its V-flip unverified.
 
-TOOLS ADDED
+4. SKIPPED DELIBERATELY: the morning handoff's task-1 step 2 (rebuild at
+   b017e7c92^ to show the tonemap modes were byte-identical BEFORE the fix).
+   The cache-collision mechanism was already proven by direct measurement on
+   blur.fp (the frozen 78x41 bbox), the key demonstrably excluded the defines,
+   and tonemap.fp's five variants sit in the same code path. It would confirm a
+   mechanism already confirmed. Reinstate it only if you want the record
+   airtight.
 
-- `mt_bloom_dump [frames]` — per-level bloom pyramid stats (dimensions, peak,
-  bbox and aspect, pixel count above 5% of that level's own peak, energy) plus
-  peak-normalized PNGs, for both paths, plus the compute extract and the
-  reference's extract / after-H / after-V snapshots. One launch per config.
-- `tools/blobstats.py` — the five-number signature of a localized additive
-  effect from two screenshots. Validated against a synthetic blob.
-- `mt_caps` now prints the scene and screen viewports.
+THE COVERAGE HOLE — the durable finding
 
-CAPTURE PROTOCOL — use this, three rounds were lost before it existed
+gl_tonemap defaults to 0 and mode 0 early-returns; gl_lens defaults to false.
+**Neither pass had ever executed on Metal.** Same for custom PP shader
+textures. This branch is validated by "build it, load a WAD, look at it", so
+the tested surface equals exactly whatever the dev config happens to enable.
+Passes that run by default (bloom, SSAO, present) have been debugged hard;
+passes behind a default-off cvar had never had a single pixel checked.
 
-1. Pin the viewpoint with a savegame (`capspot.zds` exists, MAP51 lantern).
-   Absolute pixel numbers are comparable only within a viewpoint; across
-   rounds only RATIOS survive.
-2. One launch per configuration with cvars on the command line, so the setting
-   is live from the first rendered frame. The operator types only
-   `screenshot`.
-3. Never chain console commands with `;` — it silently dropped a cvar and
-   produced a phantom "compute bloom does nothing" result.
-4. The console pauses the game and `GetScreenshotBuffer` only re-presents, so
-   a shot taken with the console open reflects the last frame rendered with it
-   CLOSED. This produced seven byte-identical shots across four toggles.
-5. `-exec` runs before `Init complete.` and `+screenshot` never fires. Neither
-   can drive a capture sequence.
+Assume every default-off postprocess setting on Metal is untested until
+someone turns it on and looks. Three of them were broken; the fourth (AO
+composite) is item 1 above.
+
+NEW: THIS VIEWPOINT IS BIT-DETERMINISTIC
+
+Two launches of an identical config produced byte-identical PNGs
+(ssao3a == ssao3b, md5 af8e771f...). The noise floor is ZERO, not the ~0.4ms
+figure that applies to timing. That makes md5 a valid instrument for pixel A/Bs
+here and is far cheaper than the blob statistics used up to now. It also
+retroactively strengthens the tonemap 0 == 4 result.
+
+Caveat: this holds for a pinned savegame at a static viewpoint. Anything with
+animation, exposure adaptation mid-run, or RNG will not reproduce it.
+
+TOOLS
+
+- tools/tonemap_predict.py (NEW) — predicts the Reinhard capture from the
+  Uncharted2 one per pixel, by inverting the tonemap curves. Validated against
+  a synthetic ramp: 0.309 levels on a true pair vs 28.122 on a collapsed pair.
+  Its docstring carries the rules that cost time this session.
+- mt_bloom_dump [frames] — per-level pyramid stats plus PNGs. NOTE: it dumps
+  only the path that ACTUALLY RAN last frame; the other prints <unavailable>.
+  Comparing compute against reference takes TWO launches, one per config.
+- tools/blobstats.py, pngdiff.py, localize.py, cluster.py as before.
+
+CAPTURE PROTOCOL — unchanged, and it was violated again today at a cost
+
+1. Pin the viewpoint with capspot.zds (MAP51 lantern).
+2. ONE LAUNCH PER CONFIGURATION, cvars on the command line. The operator types
+   only `screenshot`.
+3. Never chain console commands with `;`.
+4. The console pauses the game and GetScreenshotBuffer only re-presents, so a
+   shot taken with the console open reflects the last frame rendered with it
+   CLOSED. This applies to the ENGINE's screenshot command. macOS Cmd+Shift+4
+   sidesteps it entirely by capturing the live window.
+5. -exec runs before `Init complete.` and +screenshot never fires.
+
+What went wrong today: cvars were typed into a running console instead of one
+launch per config. `gl_lens 1` was set and never set back, so it silently
+applied to four later captures INCLUDING an mt_bloom_dump, and the whole batch
+had to be redone. Setting a cvar on the command line also means the frame
+before you open the console already has the right config, which is what makes
+rule 4 safe.
+
+Note +mt_caps on the command line prints viewport numbers from before the first
+frame (it reported `Scene viewport: 0,386 0x773`). The format line is valid;
+the viewport lines are not. Type it in the console if you need those.
 
 THE METHOD LESSONS — the expensive ones
 
-- **When an elimination argument concludes the divergence must be somewhere
-  you have already cleared, suspect the assumption, not the location.** I
-  argued "a separable Gaussian cannot elongate a blob, therefore the
-  reference's extract must already be elongated, therefore the bug is in the
-  extract." The extracts then measured identical. The deduction was valid; it
-  assumed the code did what it said.
-- **Prefer a test comparing two live measurements over one comparing a
-  measurement to a number derived from it.** The V-flip was originally
-  "confirmed" by arithmetic whose reflection axis was fitted from the midpoint
-  of the two measurements it explained. The real confirmation was that the two
-  paths landed in the same place.
-- **Predict a relationship between things you will measure together, not an
-  absolute from an old session.** A predicted centroid of 424.6 was
-  unreachable because it came from a different viewport.
-- **Debug code must not materialize or perturb what it inspects.** Two
-  self-inflicted bugs: a probe called GetPPTexture, which CREATES the texture,
-  asserting on a 0x0 descriptor; and a readiness check did a blocking GPU
-  readback every frame, slowing the frame rate until its own countdown never
-  elapsed.
-- **"Clear the cache" is not a general answer to "my shader change had no
-  effect."** The on-disk cache was always keyed correctly; only the in-memory
-  map was wrong, so no amount of clearing could have surfaced it.
+- **A test whose two outcomes look the same is not a test.** gl_fxaa 1 was
+  designed to prove the pass-parity theory and came back upright, apparently
+  falsifying it. FXAA is TWO draws, so an even count was the theory's own
+  prediction. Count the draws before predicting the parity.
+- **Prefer an effect whose application is self-evident.** gl_lens was the test
+  that worked, partly because barrel distortion is unmistakable: a null result
+  could not masquerade as a pass. FXAA's subtlety made its null undetectable.
+- **A mathematical identity is the strongest available probe.** gl_tonemap 4
+  removed the shader maths as a variable entirely.
+- **Byte-identical captures are ambiguous, ALWAYS.** They mean "perfect
+  identity" and "the pass never ran" equally well. What distinguished them for
+  tonemap 4 was the PRE-fix observation that mode 4 visibly broke the frame.
+  What distinguished them for AO was the PPCPU AO metric label.
+- **Measure the magnitude, do not eyeball the image.** gl_ssao_debug 3 looked
+  "near-black, so the depth must be normalised" — the obvious reading, and
+  wrong. Sampling the actual pixels gave 43-106 world units and overturned the
+  diagnosis. The launch was worth it precisely because it could overturn it.
 
-RETIRED — do not treat as targets
+Config at session end: gl_tonemap=0, gl_lens=false, gl_fxaa=0, gl_ssao=3,
+gl_bloom=true, gl_bloom_amount=1.4, gl_exposure_base=0.35,
+gl_exposure_speed=1, mt_compute_bloom=false, mt_compute_ao=false,
+mt_hdr_pipeline=true, vid_preferbackend=3, r_drawfuzz=1.
+Window 1440x801, scene viewport 1440x773.
 
-Every compute-vs-reference bloom number recorded before 2026-08-05 was
-measured against a reference path whose vertical blur was missing, on top of
-the Rgba16f-as-8-bit defect. That includes the 2026-08-03 five-number table
-and the anisotropy ratios (energy 1.33/1.38, aspect 0.67/0.48, "68% taller and
-20% narrower"). They are history, not targets.
-
-Config at session end: gl_bloom=true, gl_exposure_base=0.35,
-gl_exposure_speed=0.05 (captures used 1), r_drawfuzz=1, mt_compute_bloom
-varies by run, vid_preferbackend=3, mt_compute_ao=false. Window 1440x801,
-scene viewport 0,0 1440x773.
-
-RUNNING THE GAME — operational details, so a cold session need not rediscover
+RUNNING THE GAME
 
     ./build/gzdoom.app/Contents/MacOS/gzdoom \
       -iwad DOOM2.wad \
@@ -134,39 +191,14 @@ RUNNING THE GAME — operational details, so a cold session need not rediscover
       +gl_exposure_speed 1 \
       "+mt_bloom_dump 60"          # optional; quote it, the arg is part of it
 
-- `-loadgame` takes a BARE filename; it prepends the savegame directory
-  itself. The pinned viewpoint is `capspot.zds` (MAP51 lantern) in
-  `~/Documents/GZDoom/Savegames/doom.id.doom2.commercial/`. That file lives
-  outside the repo and is NOT covered by git — do not delete it, it is what
-  makes captures comparable across builds.
-- Redirect stdout to a log; console output goes there, including `mt_caps`,
-  `mt_metrics`, the dump tables, and `Captured <file>.png` lines. That log is
-  how you prove which config a screenshot belongs to.
-- Screenshots land in `~/Documents/GZDoom/Screenshots`.
+- -loadgame takes a BARE filename. capspot.zds lives in
+  ~/Documents/GZDoom/Savegames/doom.id.doom2.commercial/, OUTSIDE the repo and
+  NOT covered by git. Do not delete it; it is what makes captures comparable
+  across builds.
+- Redirect stdout to a log. That log is how you prove which config a screenshot
+  belongs to — and today it is also what revealed the console-typed cvars.
+- Engine screenshots land in ~/Documents/GZDoom/Screenshots. Use these rather
+  than Cmd+Shift+4 for anything involving pixel maths: they are exact, with no
+  window chrome and consistent dimensions.
 - Frames render at only a few fps at this viewpoint, so a dump armed for N
-  frames can take well over a minute of wall clock. Budget for it.
-
-THE TONEMAP CHECK — task 1, concretely
-
-`PPTonemap` declares five PPShaders, all named `shaders/pp/tonemap.fp`,
-differing only in defines (`LINEAR`, `REINHARD`, `HEJLDAWSON`, `UNCHARTED2`,
-`PALETTE`), selected by `gl_tonemap` (hw_postprocess.h:585-589, .cpp:625-629).
-Before `b017e7c92` they all shared one cache key.
-
-`ETonemapMode`: 0 None, 1 Uncharted2, 2 HejlDawson, 3 Reinhard, 4 Linear,
-5 Palette.
-
-Test, following the capture protocol (one launch per config, cvar on the
-command line, operator types only `screenshot`):
-
-1. On the CURRENT build, capture `+gl_tonemap 1`, `3`, and `5`. **All three
-   must differ.** Any byte-identical pair means something is still collapsing
-   and the fix is incomplete.
-2. To establish the bug was real rather than merely possible, repeat one pair
-   on a build at `b017e7c92^`. Expect those two to be byte-identical there.
-   Without step 2 this stays an inference — which is exactly the status it has
-   now, and the reason it is task 1.
-
-Note gl_tonemap interacts with mt_hdr_pipeline and the scene colour format;
-check `mt_caps` reports the same "Scene colour format" line in every capture,
-or you are comparing across a format change rather than across tonemap modes.
+  frames can take well over a minute. Budget for it.
