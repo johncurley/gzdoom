@@ -1,4 +1,4 @@
-Handoff — metal-audit, 2026-08-06
+Handoff — metal-audit, 2026-08-07
 
 Supersedes the 2026-08-05 handoff, which had accreted six layers of correction
 and become archaeology. Detail that used to live here now lives in commit
@@ -10,18 +10,23 @@ the first time on this branch — root-caused, fixed and verified on 2026-08-06 
 two independent instruments plus a screenshot pair that had been byte-identical
 for the life of the branch. Details in standing item 1.
 
-Colormap also passed, which closes the last broken-by-default pass that affected
-ORDINARY PLAY. THE COVERAGE HOLE IS NOW WORKED THROUGH: of the passes that had
-never been checked, four were broken and all four are fixed and confirmed on
-screen. The remaining launch-work is test (c) fxaa, plus a one-shot polarity
-check on colormap.
+THE COVERAGE HOLE IS NOW CLOSED (2026-08-07). Of the passes that had never been
+checked, four were broken; all four are fixed and confirmed on screen, and the
+last two open checks — fxaa and colormap polarity — both PASSED. No launch-work
+is outstanding. The standing list is item 3 only.
+
+Captures are now UNATTENDED: +shotafter / +execafter arm a countdown from the
+command line, and +cl_capfps 1 makes the frames bit-reproducible. A control pair
+at capspot now comes back byte-identical, i.e. a zero noise floor, so an A/B is
+worth taking without an operator at the keyboard. See CAPTURE PROTOCOL.
 
 Read CLAUDE.md's "Measuring a rendering change", "GPU frame captures" and
 "Visual A/B captures" first. Then docs/metal-postprocess-graphs.md, which is new
 and is the fastest way to understand the AO chain.
 
 ================================================================================
-START HERE — three tests, each one launch
+START HERE — nothing is open. The three tests below all PASSED and are kept
+as regression checks, each one launch and each unattended.
 ================================================================================
 
 (0) DONE 2026-08-06 -- AO verified working. Kept as the regression check:
@@ -54,12 +59,20 @@ START HERE — three tests, each one launch
     default path that affected ordinary play.
     Screenshot_Doom_20260806_231319.png.
 
-    STILL OPEN, minor: POLARITY not verified. InverseMap maps ColorizeStart
-    {1,1,1} to ColorizeEnd {0,0,0}, so it should read as a photographic
-    NEGATIVE in luminance, not merely desaturated. The capture is consistent
-    with either. To close it, take the same viewpoint WITHOUT the sphere and
-    run tools/pngdiff.py on the pair -- inverted luminance is unmistakable
-    there. Orientation, which is what this test existed for, is settled.
+    POLARITY ALSO CLOSED 2026-08-07. It is a photographic NEGATIVE, as
+    InverseMap's ColorizeStart {1,1,1} -> ColorizeEnd {0,0,0} requires, not a
+    desaturation. Same viewpoint, one launch each, the sphere delivered by
+    +execafter 60 give InvulnerabilitySphere:
+
+      mean scene luminance   39.85 -> 167.75    (a dark interior became bright)
+      Pearson r, off vs on   -0.5460
+      slope                  -0.630
+
+    The SIGN is the whole test and it is unambiguous: desaturation preserves
+    luminance and would give r near +1, so a NEGATIVE correlation can only be
+    an inversion. r is not -1 because the HUD is untouched (PPColormap runs on
+    the scene only) and the tonemap/exposure curve is nonlinear — both push r
+    toward zero, neither can flip its sign. Script at tools/polarity.py.
 
     NOTE the capture was taken at a different viewpoint, not capspot.zds. Fine
     for an orientation test; not comparable to the AO captures.
@@ -80,19 +93,47 @@ START HERE — three tests, each one launch
 
     EXPECT: inverse-greyscale frame, UPRIGHT.
 
-(c) FXAA — unresolved. Needs a control pair; the first attempt was confounded by
-    exposure drift. THREE launches, identical settling, type only `screenshot`:
+(c) FXAA — PASSED 2026-08-07. Kept as the regression check.
 
-        +gl_fxaa 0  -> fxaa0a.png
-        +gl_fxaa 0  -> fxaa0b.png     <- the control pair, measures drift
-        +gl_fxaa 1  -> fxaa1.png
+    The first attempt failed because it had no control pair and the frames were
+    not deterministic. Both are now fixed by the new shotafter/execafter
+    countdown plus +cl_capfps 1, and the whole series runs unattended:
 
-        python3 tools/localize.py fxaa0a.png fxaa0b.png   (the floor)
-        python3 tools/localize.py fxaa0a.png fxaa1.png    (the effect)
+        for cfg in 0 0 1; do
+          ./build/gzdoom.app/Contents/MacOS/gzdoom -iwad DOOM2.wad \
+            -file ~/Documents/GZDoom/Ashes2063Enriched2_23.pk3 \
+            -loadgame capspot.zds \
+            +gl_exposure_speed 1 +cl_capfps 1 +gl_fxaa $cfg \
+            +shotafter 120 quit
+        done
 
-    EXPECT: the effect must clear the floor AND be edge-local and roughly
-    symmetric. A broad one-directional wash is exposure, not FXAA — that is
-    exactly how the first attempt failed.
+    RESULT, and read the floor first:
+
+      floor (gl_fxaa 0 twice)   BYTE-IDENTICAL, md5 09eb7dd8
+      effect (0 vs 1)           4.20% of pixels changed
+                                brighter 2.099% / darker 2.100%
+                                mean signed delta +0.0044
+                                largest block delta +1.371 lum
+
+    That is the prediction met on both halves: the effect clears a zero floor,
+    and it is edge-local and symmetric to three decimal places rather than a
+    one-directional wash. Contrast the failed first attempt, which was +4.12
+    mean signed delta over 39% of the frame — exposure drift, not FXAA. FXAA
+    works on Metal, and its even draw count is why it was upright even before
+    5a9b53e1b.
+
+    **cl_capfps 1 IS LOAD-BEARING, and this is the reusable part.** Without it
+    the same two identical launches diverged by a mean 1.7 lum over 98% of the
+    frame with block deltas up to 174 — a floor far larger than FXAA's effect,
+    which would have made the result uninterpretable in either direction. The
+    cause is that this viewpoint has animated content (the lantern) and the
+    tics elapsed by a given RENDERED frame depend on real-world frame rate.
+    capfps ties one frame to one tic, and determinism returns exactly.
+
+    Retire the handoff's older claim that the viewpoint "reproduces bit-exactly
+    for the same elapsed frame count" as stated without qualification. It is
+    true for the same elapsed TIC count; frame count only equals tic count
+    under cl_capfps.
 
 ================================================================================
 THE STANDING LIST
@@ -253,9 +294,9 @@ on and looks.
   bloom       gl_bloom                 false          many    on in this ini; sub-1%
   tonemap     gl_tonemap               0 = off        1      WAS BROKEN -> fixed
   lens        gl_lens                  false          1      WAS BROKEN -> fixed
-  fxaa        gl_fxaa                  0 = off        2      UNRESOLVED, test (c)
+  fxaa        gl_fxaa                  0 = off        2      PASSED (was fine)
   ssao        gl_ssao                  0 = off        many   FIXED, verify with (0)
-  colormap    GAMEPLAY (fixedcm/flash) fires in play  1      NEVER TESTED, test (b)
+  colormap    GAMEPLAY (fixedcm/flash) fires in play  1      FIXED, passed + polarity
   menu blur   gl_menu_blur / gameinfo  -1 = mod's     many   runs, output sane
   custom PP   gl_custompost + a mod    true           N      NEVER TESTED
 
@@ -295,6 +336,9 @@ TOOLS
 - tools/tonemap_predict.py — predicts the Reinhard capture from the Uncharted2
   one by inverting the curves. Checks tonemap modes by curve RELATION, not by
   difference.
+- tools/polarity.py (NEW) — inversion vs desaturation, by the SIGN of the
+  luminance correlation. Closes the class of test where the two outcomes look
+  the same by eye.
 - tools/blobstats.py, pngdiff.py, localize.py, cluster.py as before. Each
   docstring encodes rules that cost a session.
 
@@ -302,9 +346,18 @@ TOOLS
 CAPTURE PROTOCOL — screenshots
 ================================================================================
 
+0. **+cl_capfps 1 ON EVERY LAUNCH IN A SERIES.** Without it the noise floor at
+   capspot is a mean 1.7 lum over 98% of the frame, which is larger than a real
+   FXAA effect. Animated content advances by TIC, and how many tics have
+   elapsed by rendered frame N depends on the frame rate. capfps pins one frame
+   to one tic and the floor collapses to byte-identical.
 1. Pin the viewpoint with capspot.zds (MAP51 lantern).
-2. ONE LAUNCH PER CONFIGURATION, cvars on the command line. The operator types
-   only `screenshot`.
+2. ONE LAUNCH PER CONFIGURATION, cvars on the command line, and take the shot
+   with `+shotafter <frames> quit` so the operator types NOTHING. If the capture
+   needs a game state rather than a cvar, deliver it with
+   `+execafter <frames> <command>` at a lower count — that is how the colormap
+   sphere is given. Both countdowns run only on in-level frames, so the count
+   means the same thing in every launch of the series.
 3. Never chain console commands with `;`.
 4. The console pauses the game and GetScreenshotBuffer only re-presents, so a
    shot taken with the console open reflects the last frame rendered with it
@@ -313,16 +366,19 @@ CAPTURE PROTOCOL — screenshots
 6. +mt_caps on the command line prints viewport numbers from before the first
    frame. The format line is valid; the viewport lines are not.
 
-Determinism: this viewpoint reproduces BIT-EXACTLY for the same elapsed frame
-count, and byte-identical pairs have been observed repeatedly. The asymmetry is
+Determinism: this viewpoint reproduces BIT-EXACTLY for the same elapsed TIC
+count — which equals the frame count only under cl_capfps 1, see item 0. The
+older unqualified "same frame count" phrasing was wrong and cost one capture
+round. The asymmetry is
 the point:
   - BYTE-IDENTICAL is strong: no drift occurred AND the change did nothing.
   - BYTE-DIFFERENT is AMBIGUOUS: equally consistent with a real effect and with
     exposure drift. It needs a same-config control pair before it means
     anything. Measured counterexample: gl_fxaa 0 vs 1 gave +4.12 mean signed
     delta over 39% of the frame, which was exposure, not FXAA.
-The frame-count explanation is a plausible mechanism, not a measured result —
-no frame-count-controlled artifact is retained.
+The tic-vs-frame explanation is no longer a plausible mechanism but a measured
+one: identical launches diverge without cl_capfps and are byte-identical with
+it.
 
 ================================================================================
 THE METHOD LESSONS — the expensive ones
