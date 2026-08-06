@@ -175,7 +175,67 @@ about five minutes, and the first is the highest-value item on this whole list.
 
 THE STANDING LIST
 
-1. **AO computes but never reaches the screen.** gl_ssao 0 vs gl_ssao 3
+1. **ROOT CAUSE FOUND 2026-08-06. Fix applied, awaiting one verification run.**
+
+   AO was computed correctly and then multiplied by zero.
+
+   depthblur.fp's VERTICAL pass -- the last thing to touch Ambient0 before the
+   composite -- wrote 0.0 into the depth channel:
+
+       #if defined(BLUR_HORIZONTAL)
+           FragColor = vec4(fragAO, centerDepth, 0.0, 1.0);   // depth kept
+       #else
+           FragColor = vec4(pow(...), 0.0, 0.0, 1.0);         // depth DESTROYED
+       #endif
+
+   ssaocombine.fp derives its ENTIRE output alpha from that channel, twice over:
+   depthSignal = 1 - exp2(-ssao.y * 0.01) is 0 when y is 0, and the
+   ssao.y > 2.0 gate fails as well. Alpha is zero, so the alpha blend is an
+   exact no-op and SceneColor is unchanged to the byte.
+
+   MEASURED with mt_ao_probe, not inferred:
+
+       mean ssao.x = 0.86671   <- real occlusion, ~13%, AO generation is FINE
+       max  ssao.y = 0.000     <- depth channel dead
+       gate ssao.y > 2.0 passes 0 / 278640 px
+       SceneColor differing px = 0 / 1113120 across the composite draw
+
+   WHY FOUR DEBUG MODES ALL POINTED THE WRONG WAY -- the durable lesson here.
+   hw_postprocess.cpp:910 wraps BOTH blur passes in `if (gl_ssao_debug < 2)`.
+   So gl_ssao_debug 3 and 7 SKIP THE BLUR and read ssao.fp's raw output, where
+   .y is still viewPosition.z and perfectly healthy. Those readings were
+   CORRECT. They were also structurally incapable of finding this bug: the only
+   modes that display the depth channel are the modes that bypass the pass which
+   destroys it. Normal mode is the sole path that runs the vertical blur.
+   The previous handoff's "Do NOT re-measure AO generation, four debug modes
+   have now cleared it" was reasonable and wrong -- four observations of a code
+   path that does not contain the defect. A debug mode that changes the pipeline
+   is not an observation of the pipeline.
+
+   NOT A METAL BUG. depthblur.fp and ssaocombine.fp are shared. GL and Vulkan
+   have had this since 595ffaf0f introduced depthSignal/depthMask, which is also
+   why the pre-5a9b53e1b A/B in this handoff came back byte-identical: the bug
+   long predates the orientation work. ac0fec5db later added the redundant
+   ssao.y > 2.0 gate and, in the same commit, changed the line Metal's string
+   patch matched -- which is why items 1 and 2 share a cause.
+   VERIFY ON GL OR VULKAN before assuming the fix is Metal-only.
+
+   THE FIX: preserve centerDepth through the vertical pass. Removing the gate
+   alone would NOT have worked -- depthMask would still zero the alpha, and
+   that trap is the reason the obvious one-line revert was not taken.
+
+   Shader change, so it needs `zipdir -udf build/gzdoom.pk3 wadsrc/static` and a
+   cleared MSL cache. Both were done; there WERE stale mt_shadersppdepthblurfp
+   *.msl files that would have masked it.
+
+   STILL TO VERIFY: one mt_ao_probe run. Expect the gate to pass on most pixels,
+   alpha ~0.1-0.3 in corners, and [2] to show a large non-zero differing count.
+   If [2] is still 0 with alpha non-zero, the fragments are not landing and the
+   stencil test comes back into play.
+
+   Original diagnosis below, kept because the eliminations in it remain valid.
+
+   **AO computes but never reaches the screen.** gl_ssao 0 vs gl_ssao 3
    produce BYTE-IDENTICAL frames, yet AO is running and correct. Everything
    below is measured, not inferred:
      - PPCPU AO present, samples=120, at gl_ssao 3; absent at gl_ssao 0, so
