@@ -238,11 +238,30 @@ THE STANDING LIST
    (mean ssao.y 64.861) and by an independent static audit. Default for a long-dead patch is delete or leave
    dead unless you can MEASURE that enabling it helps.
 
-3. STILL OPEN, UNCHANGED: Tier 2 direct-composite path has never executed ·
-   Apple Silicon completely untested (nothing on the compute path has ever run
-   there — not performance, not the read-write paths) · BlitCurrentToImage's
-   conversion branch confirmed unreachable, kept deliberately, its V-flip
-   unverified · custom PP shaders never tested, no mod to hand.
+3. TIER 2 DIRECT COMPOSITE — BLOCKED BY HARDWARE, not by missing work
+   (2026-08-07). Measured, not assumed: mt_caps reports ReadWrite BGRA8 (Tier2)
+   = NO on this Intel HD 6000. Tier 1 read-write covers only r32float/r32uint/
+   r32sint, and the scene colour is RGBA16Float, so bloom_combine_rw_all can
+   never bind its read_write scene texture here. THIS ITEM AND "Apple Silicon
+   untested" ARE THE SAME ITEM — one run on any Tier 2 device settles both.
+
+   Everything reachable around it is now tested and passed:
+     composite 1 (force Tier 1)     byte-identical to composite 0   <- correct no-op
+     composite 2 (Tier 2 required)  byte-identical to reference PP  <- fallback works
+     bloom-off control              differs, 17.1% of px            <- not a dropped effect
+   And compute bloom vs reference bloom over the whole frame is now max_delta 1,
+   mean 0.049, ZERO pixels differing by more than 2 — the whole-frame
+   confirmation of the 2026-08-05 cache fix, which had only ever been checked
+   with blob statistics.
+
+   The Tier 2 kernel was read against the verified Tier 1 legs and is
+   consistent with them, including the deliberately absent V flip (it never
+   leaves texture order, so it needs none). Details in AGENTS.md. Nothing is
+   known to be wrong with it; it is simply unexecuted.
+
+   STILL OPEN, UNCHANGED: BlitCurrentToImage's conversion branch confirmed
+   unreachable, kept deliberately, its V-flip unverified · custom PP shaders
+   never tested, no mod to hand.
 
 ================================================================================
 WHAT LANDED TODAY
@@ -352,7 +371,14 @@ CAPTURE PROTOCOL — screenshots
    elapsed by rendered frame N depends on the frame rate. capfps pins one frame
    to one tic and the floor collapses to byte-identical.
 1. Pin the viewpoint with capspot.zds (MAP51 lantern).
-2. ONE LAUNCH PER CONFIGURATION, cvars on the command line, and take the shot
+2. PUT `+execafter <n> mt_caps` IN EVERY CAPTURE LAUNCH. It prints the
+   RESOLVED path and the live cvar values into the log, which turns "which
+   config was this file?" from inference into a line you can grep — and it is
+   what caught a whole five-launch matrix silently running one config. In zsh,
+   an unquoted variable holding several arguments does NOT word-split; use
+   ${=VAR}, or the engine receives one argv entry and only its first cvar
+   applies.
+   ONE LAUNCH PER CONFIGURATION, cvars on the command line, and take the shot
    with `+shotafter <frames> quit` so the operator types NOTHING. If the capture
    needs a game state rather than a cvar, deliver it with
    `+execafter <frames> <command>` at a lower count — that is how the colormap

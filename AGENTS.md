@@ -4193,3 +4193,90 @@ outcomes look the same is not a test" — the recurring failure in this file. Th
 fix in each case was not a better eye but a statistic whose *sign* differs
 between the hypotheses, plus a same-config control pair to establish that the
 floor is below the effect. Take the floor first, always.
+
+## 2026-08-07: Tier 2 direct-composite — UNREACHABLE ON THIS HARDWARE, everything around it now tested
+
+The standing item read "Tier 2 direct-composite path has never executed." It
+cannot execute here, and that is now measured rather than assumed. `mt_caps`:
+
+    ReadWrite BGRA8 (Tier2): NO (Tier 1 path)
+    Common3 no · Mac2 no · Apple1 no          (Intel HD 6000, Metal 2.0, IMR)
+
+`MTL::ReadWriteTextureTier1` covers only r32float/r32uint/r32sint. The scene
+colour is RGBA16Float (or BGRA8Unorm), both of which need Tier 2, so
+`bloom_combine_rw_all` can never bind its `access::read_write` scene texture on
+this GPU. **This is a hardware ceiling, not a missing test.** It merges with the
+"Apple Silicon completely untested" item: the same machine blocks both, and one
+run on any Tier 2 device would settle them together.
+
+### What WAS testable, and passed — the fallback matrix
+
+`mt_compute_bloom_composite` selects the path, and two of its three modes are
+reachable on Tier 1. Predictions stated before capture; all five held.
+
+    config                                   result
+    gl_bloom 0                               034adf54   (the null control)
+    mt_compute_bloom 0     (reference PP)    f87dbcf2
+    composite 0            (auto -> Tier 1)  0792f53b
+    composite 1            (force Tier 1)    0792f53b   == composite 0
+    composite 2            (Tier 2 required) f87dbcf2   == reference PP
+
+- **composite 1 is byte-identical to composite 0**, which is the correct no-op:
+  on Tier 1 hardware "force Tier 1" and "auto" resolve to the same leg.
+- **composite 2 is byte-identical to the reference path.** `Execute` returns
+  false at the unsupported gate and `MtPostprocess`'s `!computeBloomRendered`
+  branch runs `hw_postprocess.bloom.RenderBloom`. The fallback is exercised,
+  and it is a real fallback rather than a dropped effect — which the bloom-off
+  control is what proves, since bloom is worth 17.1% of pixels and max delta 47.
+- Note the fallback still ENCODES the whole compute pyramid before bailing.
+  Wasted GPU, no correctness impact (it writes only bloom textures, never
+  srcTex). Left alone; the early-out could move above the pyramid if it ever
+  matters.
+
+**Bonus result worth recording:** compute bloom against reference bloom over
+the whole frame is now **max_delta 1, mean 0.049, zero pixels differing by more
+than 2**. Every earlier comparison on this branch was blob statistics; this is
+the whole-frame confirmation that the 2026-08-05 shader-cache fix closed it.
+
+### Static parity of the Tier 2 kernel against the verified Tier 1 pair
+
+Since the path cannot run, it was read against the Tier 1 legs, which ARE
+verified on screen. `bloom_combine_rw_all` vs `bloom_combine_contrib_all` +
+`bloom_fs`:
+
+- Identical uv construction (`(gid + 0.5) / srcRes`), identical sampler, and
+  identical zero-strength skips over the same four bound levels.
+- **The absent V flip is CORRECT, not a repeat of the round-two bug.** Tier 1
+  needs it only because `bloom_vs` derives uv from clip space where +Y is up.
+  The read-write kernel never leaves texture order: `gid` is a destination
+  texel and the sample uv is derived from that same `gid`.
+- Alpha agrees. `bloom_fs` returns alpha 0 under additive blend; the kernel
+  reads the scene texel and writes back `scene.rgb + bloom` with `scene.a`
+  untouched.
+- `viewportOrigin` is applied the same way both legs apply it — `SetViewport`
+  passes `mViewportY` to Metal's top-down `originY` with no flip. So Tier 2
+  inherits Tier 1's behaviour exactly, including at a non-zero viewport top;
+  it does not introduce a new convention.
+- The scene texture gets `TextureUsageShaderWrite` only when
+  `supportsReadWriteBGRA8` (`mt_renderbuffers.cpp:106-108`), matching the gate,
+  so there is no latent case where the tier is present but the usage flag is
+  missing.
+- `combineRWPSO` builds successfully even on Tier 1 (no failure in the log), so
+  a Tier 2 device will not additionally trip over PSO creation.
+
+Eliminated along the way: `EnsureTexture` requires an exact size match and
+recreates otherwise, so `mCompositeTex` can never be larger than the viewport
+and the Tier 1 raster composite cannot sample a stale margin.
+
+### The method failure, which cost the first whole matrix
+
+The first five-launch run came back with **four configs byte-identical** and
+`mt_caps` reporting cvar values that contradicted the command line. The cause
+was **zsh**: `$2` unquoted does not word-split, so each config string arrived as
+one argv entry and only its FIRST cvar took effect.
+
+The branch rule caught it immediately — byte-identical across a toggle means
+the setting did not apply. What made it cheap to catch was `+execafter 100
+mt_caps` printing the RESOLVED path in every log: the contradiction was visible
+in the log rather than inferable from pixels. **Put a state dump in every
+capture launch.** In zsh use `${=VAR}` when splitting is wanted.
