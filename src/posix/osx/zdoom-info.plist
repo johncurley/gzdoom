@@ -22,6 +22,13 @@
 	<string>????</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.action-games</string>
+	<!-- Permits programmatic MTLCaptureManager frame capture (the mt_capture
+	     console command). Note this only applies when launched as a bundle;
+	     running Contents/MacOS/gzdoom directly, which is how the capture
+	     protocol launches it, needs METAL_CAPTURE_ENABLED=1 in the
+	     environment instead. -->
+	<key>MetalCaptureEnabled</key>
+	<true/>
 	<key>LSMinimumSystemVersion</key>
 	<string>10.13</string>
 	<key>CFBundleDocumentTypes</key>

@@ -306,6 +306,13 @@ void MetalRenderDevice::InitializeState() {
          TEXTCOLOR_GREEN "Metal renderer initialized successfully!\n");
 }
 
+// Defined in renderer/mt_capture.cpp. Bracketed around the whole frame rather
+// than hooked into the postprocess chain, because a capture is only useful if
+// it contains the frame's complete command stream. Declared here, above
+// Update(), because Update() closes the frame and BeginFrame() opens it.
+void MtCaptureBeginFrameIfArmed(MetalRenderDevice *fb);
+void MtCaptureEndFrameIfCapturing();
+
 void MetalRenderDevice::Update() {
   NS::AutoreleasePool *pool = NS::AutoreleasePool::alloc()->init();
 
@@ -392,6 +399,10 @@ void MetalRenderDevice::Update() {
     mDebugManager->EndFrame();
 
   mInFrame = false;
+
+  // After the drawable is released and the frame is fully closed out, so the
+  // trace contains the present as well as the scene and postprocess work.
+  MtCaptureEndFrameIfCapturing();
 }
 
 void MetalRenderDevice::PresentFrame(void *drawablePtr) {
@@ -472,6 +483,8 @@ void MetalRenderDevice::BeginFrame() {
   if (mInFrame)
     return;
   mInFrame = true;
+
+  MtCaptureBeginFrameIfArmed(this);
 
   SetViewportRects(nullptr);
   mViewpoints->Clear();

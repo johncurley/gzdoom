@@ -273,6 +273,40 @@ THE STANDING LIST
        executing, item 2 included. No amount of further reading can close that
        gap; only the capture can.
 
+   HOW TO CAPTURE — mt_capture, NEW this session, no Xcode build needed.
+
+   Programmatic MTLCaptureManager capture armed from the console, so the
+   existing one-launch-per-configuration protocol is unchanged. It was written
+   in preference to an Xcode-generator build because that build needs the
+   viewpoint-pinning arguments (-iwad, -file, -loadgame capspot.zds) retyped
+   into a scheme by hand, and a wrong viewpoint in a trace has no HUD or title
+   bar to catch it. It would also carry a SECOND PSO archive, which is the last
+   thing wanted when a stale archive is one of the hypotheses under test.
+
+       METAL_CAPTURE_ENABLED=1 ./build/gzdoom.app/Contents/MacOS/gzdoom \
+         -iwad DOOM2.wad \
+         -file ~/Documents/GZDoom/Ashes2063Enriched2_23.pk3 \
+         -loadgame capspot.zds \
+         +gl_exposure_speed 1 +gl_ssao 3 \
+         > /tmp/capture.log 2>&1
+
+   In the console type `mt_capture`, then CLOSE THE CONSOLE. The world does not
+   render while the console is open, so the countdown does not advance and the
+   capture never fires — the same constraint mt_bloom_dump has. Default is 30
+   frames; `mt_capture 60` if more settling is wanted. Frames are slow at this
+   viewpoint, so budget well over a minute. The trace lands in
+   ~/Documents/GZDoom/gputrace/frame-<timestamp>.gputrace; `open` it.
+
+   THE ENV VAR IS NOT OPTIONAL when running the binary directly, which is how
+   this protocol launches it. The bundle's Info.plist does carry
+   MetalCaptureEnabled, but that only applies to a bundle launch. Without the
+   variable, mt_capture refuses at ARMING time and prints the instructions
+   rather than failing silently a minute later, which would waste the launch.
+
+   NOT RUNTIME-VERIFIED YET. It builds, the CCMD is registered, and the plist
+   key is in the bundle, but no capture has actually been taken — the first run
+   is the test. If it misbehaves, suspect the arming path first.
+
    CLEAR THE PSO BINARY ARCHIVE FIRST. GetPPPipelineState feeds every pipeline
    through setBinaryArchives (mt_pipelinestate.cpp:221-226). Capturing a stale
    PSO would look exactly like a real finding. This branch has been bitten by
