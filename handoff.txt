@@ -192,17 +192,32 @@ THE STANDING LIST
 WHAT LANDED TODAY
 ================================================================================
 
-    45d558b74  handoff: static audit pass — a false-pass test caught before it ran
-    117eb475f  metal: mt_capture — programmatic GPU frame capture
-    518af860b  docs: GPU capture protocol; label PP encoders
-    ae3f5a0a8  docs: where each capture reading lives in Xcode
-    2f6d864b2  metal: label render targets
-    354b0e038  metal: mt_ao_probe — measure the composite instead of a trace
-    6e72df1f8  metal: probe the AO alpha; fix a degenerate reading
-    ebc854ebf  shaders: keep depth through the vertical AO blur   <- THE FIX
-    6fd5271d1  docs: the pk3 rebuild command targeted a file the engine never loads
-    85f5583e0  docs: postprocess pass graph for the reference AO chain
-    91d6e7213  metal: audit the shader string patches
+19 commits. Build green throughout, tree clean, binary at HEAD.
+
+  Instruments (most of the session's lasting value)
+    117eb475f  mt_capture -- programmatic GPU frame capture, no Xcode build
+    518af860b  GPU capture protocol doc; label PP encoders
+    ae3f5a0a8  where each capture reading lives in Xcode
+    2f6d864b2  label render targets, so a capture names them
+    354b0e038  mt_ao_probe -- measure the composite instead of reading a trace
+    6e72df1f8  probe the AO alpha; fix a degenerate reading of my own
+    07aa0740f  let mt_ao_probe arm from the command line
+
+  The fix
+    ebc854ebf  keep depth through the vertical AO blur   <- THE FIX
+    66b0b6f64  revert the ssao sky-dome guard -- re-enabling it removed the AO
+
+  Cleanup and documentation
+    45d558b74  static audit pass -- a false-pass test caught before it ran
+    6fd5271d1  the pk3 rebuild command targeted a file the engine never loads
+    85f5583e0  postprocess pass graph for the reference AO chain
+    91d6e7213  audit the shader string patches -- delete the dead, warn on rest
+    142d68a04  handoff rewritten for the current state
+    d6f80a0ed  AO verified; correct an overstated depth-scale claim
+    09e53ca10  AO closed, verified on screen; probe now warns it poisons metrics
+    939b73f6b  AGENTS.md: record the failure, fence the reasoning that hid it
+    33c07ea22  colormap PASSES
+    5ce1bb59f  header refresh -- the coverage hole is worked through
 
 Commit messages carry the reasoning. This file deliberately does not repeat it.
 
