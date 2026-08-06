@@ -179,7 +179,22 @@ THE STANDING LIST
    Its mechanism is still not understood: it edits only the occlusion expression
    (FragColor.x) yet toggling it also moved FragColor.y from ~65 to ~15600, with
    no compile error logged. Do not reinstate without establishing what it does
-   to the translated shader. Default for a long-dead patch is delete or leave
+   to the translated shader.
+
+   IF ANYONE WANTS THAT ROOT-CAUSED, the discriminating measurement is a
+   same-frame, same-pixel readback of raw SceneDepthStencil, LinearDepthTexture.r
+   and Ambient0.y together, with zNear/zFar logged. That separates a real
+   depth/uniform fault from an SSAO translation/output fault. mt_ao_probe already
+   has the readback machinery; it would be a small extension. Nothing depends on
+   the answer -- the guard is reverted and AO works -- so this is curiosity, not
+   blocking work.
+
+   The depth chain itself is CONFIRMED HEALTHY and needs no change: reverse-Z is
+   handled correctly by InverseDepthRangeA=-1/B=1 (hw_postprocess.cpp:839-843),
+   and the Metal lineardepth sky patch (1.0 -> 0.0) is correct and properly
+   backend-side, since the shared shader's literal 1.0 is right for standard-Z
+   GL/Vulkan while Metal's far-plane raw depth is zero. Verified by measurement
+   (mean ssao.y 64.861) and by an independent static audit. Default for a long-dead patch is delete or leave
    dead unless you can MEASURE that enabling it helps.
 
 3. STILL OPEN, UNCHANGED: Tier 2 direct-composite path has never executed ·
