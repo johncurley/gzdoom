@@ -16,6 +16,7 @@
 #include "printf.h"
 #include <fstream>
 #include <regex>
+#include <set>
 #include <shadertranslator/shader_translator.h>
 #include <sstream>
 
@@ -736,6 +737,68 @@ bool MtShaderManager::CompileNextShader() {
   }
 }
 
+// Source patching helpers that FAIL LOUDLY.
+//
+// Every one of these patches is a literal or a regex matched against shader
+// text that upstream (and this branch) edits freely. When a pattern stops
+// matching, the patch silently becomes a no-op and the renderer quietly loses
+// a fix. That has now happened at least three times here, and one instance --
+// the ssaocombine alpha patch -- sat dead next to an AO bug for months while
+// four debugging sessions looked elsewhere. A warning naming the shader and the
+// patch costs nothing and turns an invisible regression into a log line.
+//
+// Audited 2026-08-06; every surviving patch below was re-derived against the
+// current shader sources and its match count measured.
+// Warn once per patch per run. These patches target main.vp, which every scene
+// shader compiles against, so an unguarded warning would repeat for each of the
+// ~20 stock shaders and train the reader to ignore it.
+static bool WarnPatchMissedOnce(const char *what, const std::string &shadername) {
+  static std::set<std::string> warned;
+  if (!warned.insert(what).second)
+    return false;
+  Printf(PRINT_LOG,
+         TEXTCOLOR_YELLOW
+         "Metal: shader patch MISSED -- '%s' (first seen in %s). The pattern no "
+         "longer matches; this fix is NOT being applied.\n" TEXTCOLOR_NORMAL,
+         what, shadername.c_str());
+  return true;
+}
+
+static bool PatchLiteral(std::string &source, const char *find,
+                         const char *replace, const char *what,
+                         const std::string &shadername) {
+  size_t pos = source.find(find);
+  if (pos == std::string::npos) {
+    WarnPatchMissedOnce(what, shadername);
+    return false;
+  }
+  source.replace(pos, strlen(find), replace);
+  return true;
+}
+
+static bool PatchRegex(std::string &source, const std::regex &re,
+                       const char *replace, const char *what,
+                       const std::string &shadername, int expectedMatches) {
+  const int found = (int)std::distance(
+      std::sregex_iterator(source.begin(), source.end(), re),
+      std::sregex_iterator());
+  if (found == 0) {
+    WarnPatchMissedOnce(what, shadername);
+    return false;
+  }
+  if (expectedMatches > 0 && found != expectedMatches) {
+    // Partial application is worse than none: half a coordinated set of edits
+    // leaves the shader in a state neither the author nor the reader expects.
+    Printf(PRINT_LOG,
+           TEXTCOLOR_YELLOW
+           "Metal: shader patch '%s' in %s matched %d times, expected %d.\n"
+                   TEXTCOLOR_NORMAL,
+           what, shadername.c_str(), found, expectedMatches);
+  }
+  source = std::regex_replace(source, re, replace);
+  return true;
+}
+
 static void PatchVertexShader(std::string &source,
                               const std::string &shadername) {
   // GZDoom shaders expect OpenGL NDC (-1..1 for all axes, Y up)
@@ -773,102 +836,58 @@ static void PatchVertexShader(std::string &source,
   // direction instead of zero. Must guard the entire normal assignment chain
   // BEFORE the normalize stabilization patch below, which would otherwise
   // rewrite the lines before this guard can match the original patterns.
-  {
-    std::regex worldNormRegex(
-      R"(vWorldNormal\s*=\s*vec4\(normalize\(\(NormalModelMatrix\s*\*\s*vec4\(normalize\(bones\.Normal\),\s*1\.0\)\)\.xyz\),\s*1\.0\);)");
-    if (std::regex_search(source, worldNormRegex)) {
-      source = std::regex_replace(source, worldNormRegex,
-        "vWorldNormal = length(bones.Normal) > 0.0001 ? vec4(normalize((NormalModelMatrix * vec4(normalize(bones.Normal), 1.0)).xyz), 1.0) : vec4(0.0);");
-      Printf(PRINT_LOG, "Metal: zero-world-normal guard applied in %s\n",
-             shadername.c_str());
-    }
-  }
-  {
-    std::regex eyeNormRegex(
-      R"(vEyeNormal\s*=\s*vec4\(normalize\(\(NormalViewMatrix\s*\*\s*vec4\(normalize\(vWorldNormal\.xyz\),\s*1\.0\)\)\.xyz\),\s*1\.0\);)");
-    if (std::regex_search(source, eyeNormRegex)) {
-      source = std::regex_replace(source, eyeNormRegex,
-        "vEyeNormal = length(vWorldNormal.xyz) > 0.0001 ? vec4(normalize((NormalViewMatrix * vec4(normalize(vWorldNormal.xyz), 1.0)).xyz), 1.0) : vec4(0.0);");
-    }
-  }
+  PatchRegex(
+      source,
+      std::regex(
+          R"(vWorldNormal\s*=\s*vec4\(normalize\(\(NormalModelMatrix\s*\*\s*vec4\(normalize\(bones\.Normal\),\s*1\.0\)\)\.xyz\),\s*1\.0\);)"),
+      "vWorldNormal = length(bones.Normal) > 0.0001 ? vec4(normalize((NormalModelMatrix * vec4(normalize(bones.Normal), 1.0)).xyz), 1.0) : vec4(0.0);",
+      "zero world-normal guard", shadername, 1);
 
-  // Normalize normals if assigned to stabilize lighting (vNormal only —
-  // vWorldNormal / vEyeNormal are handled by the zero-guards above)
-  std::regex normalRegex(R"(vNormal\s*=\s*([^;]+);)");
-  if (std::regex_search(source, normalRegex)) {
-    source = std::regex_replace(source, normalRegex,
-                                "vNormal = vec4(normalize($1.xyz + 1e-10), $1.w);");
-  }
+  PatchRegex(
+      source,
+      std::regex(
+          R"(vEyeNormal\s*=\s*vec4\(normalize\(\(NormalViewMatrix\s*\*\s*vec4\(normalize\(vWorldNormal\.xyz\),\s*1\.0\)\)\.xyz\),\s*1\.0\);)"),
+      "vEyeNormal = length(vWorldNormal.xyz) > 0.0001 ? vec4(normalize((NormalViewMatrix * vec4(normalize(vWorldNormal.xyz), 1.0)).xyz), 1.0) : vec4(0.0);",
+      "zero eye-normal guard", shadername, 1);
+
+  // The vNormal normalize-stabilization patch that stood here is DELETED.
+  // `vNormal\s*=` matches ZERO times across every shader under
+  // wadsrc/static/shaders -- the variable it targeted no longer exists, and
+  // vWorldNormal / vEyeNormal are covered by the two guards above. It was doing
+  // nothing, and unlike those it had no warning to say so.
 }
 
-static void PatchFragmentShader(std::string &source,
-                                const std::string &shadername) {
-  // 1. Patch ShadowMap generation and usage
-  if (shadername.find("shadowmap") != std::string::npos) {
-    size_t pos = source.find("FragColor = vec4(1.0, 0.0, 0.0, 1.0);");
-    if (pos != std::string::npos) {
-      source.replace(pos, strlen("FragColor = vec4(1.0, 0.0, 0.0, 1.0);"),
-                     "FragColor = vec4(1e20, 0.0, 0.0, 1.0);");
-    }
-  }
-
-  // 2. Patch main.fp to increase shadow bias
-  if (shadername.find("main") != std::string::npos) {
-    // Increase shadow bias
-    std::regex biasRegex(R"(float\s+bias\s*=\s*[0-9\.]+;)");
-    source = std::regex_replace(source, biasRegex, "float bias = 16.0;");
-  }
-
-  // 3. Patch lineardepth.fp to handle Reverse-Z
-  if (shadername.find("lineardepth") != std::string::npos) {
-      std::regex fetchRegex(R"(float\s+depth\s*=\s*normalizeDepth\((.*)\);)");
-      source = std::regex_replace(source, fetchRegex, 
-          "float rawDepth = $1;\n"
-          "        float depth = normalizeDepth(1.0 - rawDepth);");
-  }
-
-  // 4. Patch ssao.fp to fix orientation and depth consistency
-  if (shadername.find("ssao") != std::string::npos) {
-      // Reconstruct view position with GZDoom's standard UVs.
-      // Use linearized Reverse-Z depth.
-      std::regex fetchVPRegex(R"(vec3\s+FetchViewPos\(vec2\s+uv\)\s*\{\s*float\s+z\s*=\s*texture\(DepthTexture,\s*uv\)\.x;\s*return\s+vec3\(\(UVToViewA\s*\*\s*uv\s*\+\s*UVToViewB\)\s*\*\s*z,\s*z\);\s*\})");
-      source = std::regex_replace(source, fetchVPRegex, 
-          "vec3 FetchViewPos(vec2 uv) {\n"
-          "    float rawZ = texture(DepthTexture, uv).x;\n"
-          "    if (rawZ <= 0.0) return vec3(0.0, 0.0, 1e20);\n"
-          "    float z = 1.0 - rawZ;\n"
-          "    return vec3((UVToViewA * uv + UVToViewB) * z, z);\n"
-          "}");
-
-      // Flip normal.z: Scene is internally inverted, so we must align normals
-      // with the reconstructed positive-Z forward view space.
-      size_t pos = source.find("normal.z = -normal.z;");
-      if (pos != std::string::npos) {
-          source.replace(pos, strlen("normal.z = -normal.z;"), "/* normal.z = -normal.z; */");
-      }
-
-      // NOISE/BANDING FIX:
-      // Inject IGN function
-      source.insert(0, "float IGN(vec2 v) { return fract(52.9829189 * fract(dot(v, vec2(0.06711056, 0.00583715)))); }\n");
-      
-      // Patch GetJitter to mix in high-frequency noise
-      std::regex jitterRegex(R"(return\s+texture\(RandomTexture,\s*gl_FragCoord\.xy\s*/\s*RANDOM_TEXTURE_WIDTH\);)");
-      source = std::regex_replace(source, jitterRegex, 
-          "vec4 r = texture(RandomTexture, gl_FragCoord.xy / RANDOM_TEXTURE_WIDTH);\n"
-          "    float ign = IGN(gl_FragCoord.xy);\n"
-          "    return vec4(r.xy, fract(r.z + ign), fract(r.w + ign));");
-
-      // Jitter directions in ComputeAO
-      std::regex angleRegex(R"(float\s+angle\s*=\s*directionAngleStep\s*\*\s*directionIndex;)");
-      source = std::regex_replace(source, angleRegex, 
-          "float angle = directionAngleStep * (directionIndex + rand.z);");
-
-      // Smoother blending: reduce harshness and use power-based falloff
-      std::regex returnAORegex(R"(return\s+clamp\(1\.0\s*-\s*ao\s*\*\s*2\.0,\s*0\.0,\s*1\.0\);)");
-      source = std::regex_replace(source, returnAORegex, 
-          "return pow(clamp(1.0 - ao * 1.5, 0.0, 1.0), 1.5);");
-  }
-}
+// PatchFragmentShader is GONE, deliberately -- see git history for the body.
+//
+// It was called only from LoadFragShader, which compiles SCENE shaders, and it
+// dispatched on shadername containing "shadowmap", "main", "lineardepth" or
+// "ssao". The names LoadFragShader actually receives are the fixed set in
+// hw_shaderpatcher.cpp's defaultshaders/effectshaders tables -- "Default",
+// "Warp 1", "Specular", "PBR", "Paletted", "Basic Fuzz", "fogboundary",
+// "spheremap", "burn", "stencil", "dithertrans" and so on. NONE of them
+// contains any of those four substrings, so every branch was unreachable: not
+// merely mis-routed to the wrong patch function, but dead by construction for
+// every stock shader.
+//
+// The postprocess shaders it appeared to target (shadowmap.fp, lineardepth.fp,
+// ssao.fp) are compiled through MtPPShader and PatchPostprocessFragmentShader
+// instead, so they never saw these edits either.
+//
+// Deleting rather than rerouting, on evidence:
+//   - AO generation demonstrably works without them. mt_ao_probe measured mean
+//     ssao.x = 0.867, i.e. real occlusion, and gl_ssao_debug 1 shows a buffer
+//     correctly aligned to geometry.
+//   - Three of the block's six ssao sub-patterns ALSO no longer match current
+//     source (the jitter, angle and AO-return rewrites). Rerouting would have
+//     applied three of six -- a half-patched shader, which is harder to
+//     diagnose than an unpatched one.
+//   - Its lineardepth reverse-Z rewrite would now compound with the live sky
+//     patch in PatchPostprocessFragmentShader, which handles the same concern.
+//   - The only way any branch could ever fire was a USER shader whose filename
+//     contains one of those substrings (LoadFragShader is called with
+//     ExtractFileBase of a mod's shader path). A mod shader called main.fp
+//     would have had its `float bias = ...;` silently rewritten to 16.0. That
+//     is a latent bug against modders, not a feature worth preserving.
 
 static void PatchPostprocessFragmentShader(std::string &source,
                                            const std::string &shadername) {
@@ -876,8 +895,12 @@ static void PatchPostprocessFragmentShader(std::string &source,
   // but with Metal's Reverse-Z params, that maps to zNear instead of zFar.
   // Change forced depth to 0.0 (Reverse-Z far plane) so sky pixels get zFar.
   if (shadername.find("lineardepth") != std::string::npos) {
+    // Two matches expected: the MSAA and non-MSAA branches of the same
+    // expression. One match means the shader grew or lost a branch and only
+    // half the sky handling is corrected.
     std::regex skyRegex(R"(: 1\.0\);)");
-    source = std::regex_replace(source, skyRegex, ": 0.0);");
+    PatchRegex(source, skyRegex, ": 0.0);", "lineardepth sky far-plane",
+               shadername, 2);
   }
 
   // Sky-dome guard: Metal may produce non-zero normals for the sky dome's
@@ -885,10 +908,21 @@ static void PatchPostprocessFragmentShader(std::string &source,
   // Skip AO computation on far-plane pixels by checking linear depth > 50000.
   if (shadername.find("ssao.fp") != std::string::npos &&
       shadername.find("ssaocombine") == std::string::npos) {
-    std::regex occlusionRegex(
-      R"(float occlusion = viewNormal != vec3\(0\.0\) \? ComputeAO\(viewPosition, viewNormal\) \* AOStrength \+ \(1\.0 - AOStrength\) : 1\.0;)");
-    source = std::regex_replace(source, occlusionRegex,
-      "float occlusion = (viewPosition.z > 0.0001 && viewNormal != vec3(0.0)) ? ComputeAO(viewPosition, viewNormal) * AOStrength + (1.0 - AOStrength) : 1.0;");
+    // RE-DERIVED 2026-08-06. The previous pattern spelled out the whole
+    // occlusion expression including `* AOStrength + (1.0 - AOStrength)`, and
+    // ac0fec5db -- our own AO distance-fade commit -- rewrote that to use
+    // `effectiveStrength`. The patch had matched zero times ever since and this
+    // sky-dome guard was silently absent.
+    //
+    // Now anchored on the smallest thing that must be true: the ternary's
+    // condition. It no longer cares what the strength term is called or how the
+    // branches are written, so the next edit to that line does not disarm it.
+    // This is the general lesson from the audit -- match the minimum, not the
+    // sentence.
+    std::regex occlusionRegex(R"(viewNormal != vec3\(0\.0\) \?)");
+    PatchRegex(source, occlusionRegex,
+               "(viewPosition.z > 0.0001 && viewNormal != vec3(0.0)) ?",
+               "ssao sky-dome far-plane guard", shadername, 1);
   }
 
   if (shadername.find("ssaocombine") != std::string::npos) {
@@ -901,11 +935,31 @@ static void PatchPostprocessFragmentShader(std::string &source,
     // AO against the scene. Removed deliberately; do not reinstate it without
     // first checking whether the general fix is still in place.
 
-    size_t pos = source.find("FragColor = vec4(fogColor, (1.0 - attenutation) * depthMask);");
-    if (pos != std::string::npos) {
-      source.replace(pos, strlen("FragColor = vec4(fogColor, (1.0 - attenutation) * depthMask);"),
-                     "FragColor = vec4(vec3(0.0), clamp((1.0 - attenutation) * depthMask * 1.85, 0.0, 1.0));");
-    }
+    // The alpha patch that lived here is REMOVED, not repaired. It rewrote
+    //     FragColor = vec4(fogColor, (1.0 - attenutation) * depthMask);
+    // into
+    //     FragColor = vec4(vec3(0.0), clamp((1.0 - attenutation) * depthMask * 1.85, 0.0, 1.0));
+    // and had matched zero times since ac0fec5db added the `ssao.y > 2.0`
+    // ternary to that line.
+    //
+    // Deliberately not re-derived against the new text, for two reasons:
+    //
+    //  - Forcing RGB to vec3(0.0) discards fogColor. On this test map that is
+    //    invisible -- mt_ao_probe measured SceneFog as black across the entire
+    //    frame -- but in a fogged map it would make Metal's AO darken toward
+    //    black where GL and Vulkan darken toward the fog colour. A silent
+    //    backend divergence, against the parity goal of this branch.
+    //  - The * 1.85 is an unexplained strength multiplier. Nothing records what
+    //    it compensated for, and it was written while the AO composite was
+    //    contributing NOTHING at all (the depth channel was zeroed by
+    //    depthblur.fp until 2026-08-06), so it cannot have been tuned against a
+    //    working composite. Reinstating a magic constant fitted to a broken
+    //    pipeline would be the wrong default.
+    //
+    // If Metal's AO turns out to read weak against GL or Vulkan once the depth
+    // fix is verified, that is a real comparison to make on measured output --
+    // not a reason to restore this.
+    (void)source;
   }
 }
 
@@ -959,7 +1013,6 @@ std::shared_ptr<MtShaderModule> MtShaderManager::LoadFragShader(
 
   code += "\n#line 1\n";
   std::string fragSource = LoadPrivateShaderLump(frag_lump);
-  PatchFragmentShader(fragSource, shadername);
   code += fragSource;
 
   if (material_lump) {
