@@ -612,6 +612,14 @@ guards (coverage/depth/sky/normal) were misfiring — this was a real
 sampling-math bug, not an invalid-pixel bug, despite the initial "unset"
 description.
 
+> **NOTE added 2026-08-06.** This `gl_ssao_debug 7` reasoning is sound *for the
+> compute path it was applied to*, and the conclusion stands. Do NOT generalise
+> it to the reference PP path. `hw_postprocess.cpp:910` gates BOTH blur passes
+> behind `gl_ssao_debug < 2`, so on the reference path debug 7 reads `ssao.fp`'s
+> raw output and cannot see what the vertical blur does to `.y`. That blind spot
+> hid a total AO composite failure for months — see "SOLVED 2026-08-06" at the
+> end of this file.
+
 Root cause, confirmed by computing actual numbers rather than guessing:
 `radiusPixels = params.radiusToScreen / max(centerViewPos.z, 1e-5)` has no
 upper bound, in all three kernels identically. At `centerViewPos.z ≈ 20`
@@ -4063,3 +4071,84 @@ subsequent capture including the `mt_bloom_dump`, an uncontrolled confound that
 made four screenshots uninterpretable. The clean two-launch pair had to be
 redone. macOS `Cmd+Shift+4` *does* sidestep protocol item 4 (the console-pause
 trap), since it captures the live window rather than re-presenting.
+
+## SOLVED 2026-08-06: the reference AO path composited nothing, and every debug mode was structurally unable to show it
+
+`gl_ssao 0` and `gl_ssao 3` produced byte-identical frames on the reference PP
+AO path. Root cause, fixed in `ebc854ebf`:
+
+`depthblur.fp`'s **vertical** pass wrote `0.0` into the depth channel while the
+horizontal pass preserved it:
+
+```glsl
+#if defined(BLUR_HORIZONTAL)
+    FragColor = vec4(fragAO, centerDepth, 0.0, 1.0);   // depth kept
+#else
+    FragColor = vec4(pow(clamp(fragAO,0,1), PowExponent), 0.0, 0.0, 1.0);  // destroyed
+#endif
+```
+
+The vertical pass is the last writer of `Ambient0` before the composite, and
+`ssaocombine.fp` derives its whole output alpha from that channel *twice*:
+`depthSignal = 1 - exp2(-ssao.y * 0.01)` collapses to 0, and the `ssao.y > 2.0`
+gate fails. Alpha was zero, so the alpha blend was an exact no-op. **AO was
+computed correctly and multiplied by zero.**
+
+Measured with `mt_ao_probe` (new this session), before -> after:
+
+| | before | after |
+|---|---|---|
+| mean `ssao.x` | 0.86671 | 0.86671 (occlusion, correctly unchanged) |
+| max `ssao.y` | 0.000 | 101.375 (mean 64.861, sane world units) |
+| gate passing | 0 / 278640 | 278640 / 278640 |
+| computed alpha | 0 | mean 0.05532, max 0.21731 |
+| SceneColor differing px | 0 | 550267 (49.43%) |
+
+Screenshot pair confirms independently: 50.8% of pixels darker, 0.149% brighter,
+largest block delta -15.208 lum.
+
+### Why this survived, and what it does NOT invalidate
+
+**`hw_postprocess.cpp:910` wraps BOTH blur passes in `if (gl_ssao_debug < 2)`.**
+So every debug mode that displays the depth channel skips the pass that destroys
+it. The `gl_ssao_debug 7` reasoning recorded further up this file was *correct
+for what it measured* and structurally incapable of revealing this: the only
+modes that show you `.y` are the modes that bypass the vertical blur. Four such
+observations were recorded as clearing AO generation. They cleared a code path
+that does not contain the defect.
+
+**The compute-path AO work in this file stands.** The compute path
+(`MtAOModule`, `mt_ao.metal`) has its own `ssao_combine_vs`/`ssao_combine_fs`
+and never touches `depthblur.fp` or `ssaocombine.fp`. Every
+`mt_compute_ao_algorithm` comparison, the AlchemyAO grain measurements, the
+regression hunts -- all compute-vs-compute, all unaffected.
+
+**What IS invalidated:** any claim about the *reference* PP path producing
+correct AO output, and any compute-vs-reference visual parity claim. Those were
+comparing against a blank.
+
+### The timeline is the point
+
+- `595ffaf0f` introduced `depthSignal`/`depthMask` -> reference PP AO silently
+  dies, on **all three backends**. `master` is unaffected: it composites
+  `vec4(fogColor, 1.0 - attenutation)` with no depth dependency, so there is
+  nothing to report upstream.
+- Before 2026-08-01 the Intel dev machine defaulted to **compute** AO, so AO was
+  visible and the algorithm work above was done against real output.
+- `2cf256d13` (2026-08-01) switched Intel to the reference path by default. **AO
+  silently vanished from the default configuration that day**, which is why the
+  byte-identical A/B surfaced when it did.
+
+### Method lesson
+
+**A debug mode that changes the pipeline is not an observation of the pipeline.**
+Before trusting a debug view, check what it changes besides the display. This
+one gated out two passes, and it cost four sessions.
+
+Corollary, learned the same day: **re-enabling a long-dead string patch is a
+behaviour change, not a repair.** The `ssao.fp` sky-dome guard had matched
+nothing since `ac0fec5db` renamed `AOStrength` to `effectiveStrength`;
+re-deriving it dropped mean `ssao.x` from 0.86671 to 0.99924 -- AO essentially
+gone -- and it was reverted the same day (`66b0b6f64`). Its mechanism is still
+not understood: it edits only the occlusion expression yet toggling it also
+moved `FragColor.y` by three orders of magnitude, with no compile error logged.
