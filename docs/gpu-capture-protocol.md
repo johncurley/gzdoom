@@ -137,6 +137,47 @@ predicts *not equal*, which would mean the dead `ssaocombine` patch is **not**
 the whole story and item 1 stays open — the outcome that costs more work, which
 is why it is written down in advance.
 
+### Where each one lives in Xcode
+
+Written against **Xcode 14.2 on macOS 12.7.6**, the reference machine's version.
+Later Xcode versions move this UI around; the structure below holds but the
+exact panel names may not.
+
+Opening the `.gputrace` loads the frame debugger directly — no project, no
+scheme, no Xcode build. The **left navigator** is the command stream: command
+buffers → render command encoders → draws. The encoder labels added in
+`518af860b` show here, which is how you find the pass at all.
+
+Selecting the *encoder* and selecting a *draw inside it* show different things,
+and this investigation needs both.
+
+- **Reading 1 (blend)** — select the **draw**. Its bound resources include the
+  render pipeline state; open that for the pipeline descriptor, where colour
+  attachment 0 carries `blendingEnabled` and the source/destination RGB and
+  alpha factors. Take this reading first: it is the one that confirms or
+  destroys the static audit.
+- **Reading 3 (load action)** — select the **encoder**. That shows the render
+  pass descriptor, with each colour attachment's texture, load action and store
+  action.
+- **Reading 4 (texture values)** — in the draw's bound resources, input textures
+  are listed by index; double-click to open the texture viewer, which gives a
+  per-pixel value readout. Zoom well in, pick a dark concave corner, and **write
+  the pixel coordinates down** — you need the same pixel in both textures, and
+  zoom and cursor position are easy to lose between them.
+- **Reading 2 (did the draw survive)** — **do not** plan on fragments-in vs
+  fragments-out. That is GPU counter data, and older Intel GPUs lack the
+  stage-boundary counter sampling it needs (see `CLAUDE.md`); on the HD 6000 the
+  counters may not exist. Use the **attachment contents** instead: the frame
+  debugger shows the render target as of the selected draw, so compare SceneColor
+  immediately before the `ssaocombine` draw with immediately after. Identical
+  means the draw contributed nothing.
+
+  This is the better instrument regardless of hardware. It observes the defect
+  directly rather than through a proxy, and it stays valid whatever the cause —
+  stencil, blend, or zero alpha. If you want the stencil state specifically, the
+  depth/stencil state and stencil reference value appear on the encoder
+  selection alongside the render pass descriptor.
+
 ### What each outcome means
 
 - **#1 comes back disabled or with wrong factors** → the running binary does not
