@@ -343,6 +343,15 @@ void MtAOProbeAfter(MetalRenderDevice *fb, const FRenderStyle &blend,
     Printf(PRINT_HIGH, "[5] AO input texture UNAVAILABLE\n");
   }
 
+  Printf(PRINT_HIGH,
+         TEXTCOLOR_YELLOW
+         "NOTE: this probe made three BLOCKING GPU readbacks. Every timing "
+         "number\n"
+         "from this session is now contaminated -- mt_metrics will show a "
+         "PPCPU AO\n"
+         "max in the hundreds of ms and an inflated active_avg. Take metrics "
+         "in a\n"
+         "SEPARATE launch with the probe unarmed.\n" TEXTCOLOR_NORMAL);
   Printf(PRINT_HIGH, TEXTCOLOR_GOLD "=== end probe ===\n\n" TEXTCOLOR_NORMAL);
   gBeforeValid = false;
 }

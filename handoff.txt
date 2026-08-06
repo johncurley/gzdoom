@@ -5,9 +5,11 @@ and become archaeology. Detail that used to live here now lives in commit
 messages; this file is open work, protocol, and the lessons that keep costing
 money. Tree clean, build green.
 
-If you read nothing else: the AO composite defect is ROOT-CAUSED AND FIXED IN
-SOURCE but has never once executed — verifying it is the single highest-value
-thing left, and it takes one launch. START HERE has it, paste-ready.
+If you read nothing else: AO NOW REACHES THE SCREEN on the reference path, for
+the first time on this branch — root-caused, fixed and verified on 2026-08-06 by
+two independent instruments plus a screenshot pair that had been byte-identical
+for the life of the branch. Details in standing item 1. The remaining open work
+is tests (b) colormap and (c) fxaa, each one launch.
 
 Read CLAUDE.md's "Measuring a rendering change", "GPU frame captures" and
 "Visual A/B captures" first. Then docs/metal-postprocess-graphs.md, which is new
@@ -17,7 +19,7 @@ and is the fastest way to understand the AO chain.
 START HERE — three tests, each one launch
 ================================================================================
 
-(0) VERIFY THE AO FIX. Highest value on this list by a wide margin.
+(0) DONE 2026-08-06 -- AO verified working. Kept as the regression check:
 
     ./build/gzdoom.app/Contents/MacOS/gzdoom \
       -iwad DOOM2.wad \
@@ -72,7 +74,44 @@ START HERE — three tests, each one launch
 THE STANDING LIST
 ================================================================================
 
-1. AO COMPOSITE — root-caused, fixed, UNVERIFIED AT RUNTIME. See (0) above.
+1. AO COMPOSITE — FIXED AND VERIFIED 2026-08-06. Closed.
+
+   Verified three ways, on screen and by two independent instruments:
+
+     mt_ao_probe, before -> after
+       mean ssao.x   0.86671 -> 0.86671   (occlusion, correctly unchanged)
+       max  ssao.y   0.000   -> 101.375   (depth channel alive; mean 64.861,
+                                           sane world units for this interior)
+       gate passing  0/278640 -> 278640/278640
+       alpha         0 -> mean 0.05532, max 0.21731, non-zero on 59.69% px
+       SceneColor    0 differing px -> 550267 (49.43%), maxdelta 0.11230
+
+     Screenshots, gl_ssao 0 vs 3, which were BYTE-IDENTICAL for the life of
+     this branch and are not now (md5 d30e0f8e / d3101961):
+       mean signed delta -2.0664
+       darker  361561 px (50.816%)
+       brighter   1057 px (0.149%)      <- 99.7% of change is DARKENING
+       largest block delta -15.208 lum at (808,339)
+     tools/localize.py shows a coherent dark region fading to no change across
+     the right quarter of the frame — occlusion respecting geometry, not a
+     global wash. Contrast the FXAA false positive, which was broad
+     one-directional BRIGHTENING (exposure). Sign and structure both matter.
+
+     The two instruments agree independently: 49.43% of pixels modified per the
+     probe, 50.8% darker per the screenshot pair.
+
+   COST: not established either way, and the a priori argument is that the fix
+   is free — it writes centerDepth instead of 0.0 in a shader that already ran,
+   and the blend was already executing with zero alpha. Clean metrics after the
+   fix read GPU Frame active_avg 15.093ms (min 11.952, max 17.761), 62.8 fps,
+   PPCPU AO 0.821ms. Do NOT compare that against the 11.42ms in
+   mt_postprocess.cpp:79 — different session, unknown config, and bloom is on
+   here at ~2.5ms. A matched measurement needs one launch at ebc854ebf^.
+
+   Note the reference path was paying its full AO cost the whole time it
+   contributed nothing.
+
+   PRIOR DIAGNOSIS, kept for the method lesson:
 
    depthblur.fp's VERTICAL pass wrote 0.0 into the depth channel while the
    horizontal pass preserved it. ssaocombine.fp derives its whole output alpha
@@ -104,8 +143,20 @@ THE STANDING LIST
    "ssao", silently rewriting it). vNormal patch deleted (zero matches).
    ssaocombine alpha patch removed rather than re-derived: it discarded fogColor
    and its *1.85 was tuned against a composite that contributed nothing.
-   Sky-dome guard re-derived and re-anchored. Everything surviving now warns
-   once per run on a miss or an unexpected match count.
+   Everything surviving now warns once per run on a miss or an unexpected match
+   count, and every surviving pattern was verified against current sources.
+
+   THE SKY-DOME GUARD WAS RE-DERIVED AND THEN REVERTED THE SAME DAY (66b0b6f64),
+   which is the lesson worth keeping. Re-enabling a patch that had matched
+   nothing for months is a BEHAVIOUR CHANGE, not a repair — the shader had time
+   to evolve around its absence. Measured either side:
+       guard off  mean ssao.x = 0.86671   (~13% occlusion)
+       guard on   mean ssao.x = 0.99924   (~0.08% occlusion — AO essentially gone)
+   Its mechanism is still not understood: it edits only the occlusion expression
+   (FragColor.x) yet toggling it also moved FragColor.y from ~65 to ~15600, with
+   no compile error logged. Do not reinstate without establishing what it does
+   to the translated shader. Default for a long-dead patch is delete or leave
+   dead unless you can MEASURE that enabling it helps.
 
 3. STILL OPEN, UNCHANGED: Tier 2 direct-composite path has never executed ·
    Apple Silicon completely untested (nothing on the compute path has ever run
