@@ -734,8 +734,15 @@ UNSAFE_CCMD (shotafter)
 // Both countdowns run on in-level frames, so the ordering is by count and
 // never by typing speed -- which is what the `;`-chaining trap in the capture
 // protocol was really about.
-static int gExecAfterFrames = -1;
-static FString gExecAfterCommand;
+// Several armings QUEUE rather than replace. A single slot silently dropped
+// the earlier one, which is precisely the kind of confound this whole mechanism
+// exists to remove: the log said "armed" twice and only the second ever ran.
+struct FDeferredCommand
+{
+	int frames;
+	FString command;
+};
+static TArray<FDeferredCommand> gExecAfter;
 
 UNSAFE_CCMD (execafter)
 {
@@ -745,27 +752,34 @@ UNSAFE_CCMD (execafter)
 		return;
 	}
 
-	gExecAfterFrames = atoi (argv[1]);
-	gExecAfterCommand = argv[2];
+	FDeferredCommand entry;
+	entry.frames = atoi (argv[1]);
+	entry.command = argv[2];
 	for (int i = 3; i < argv.argc(); ++i)
 	{
-		gExecAfterCommand += ' ';
-		gExecAfterCommand += argv[i];
+		entry.command += ' ';
+		entry.command += argv[i];
 	}
 
 	Printf ("execafter: armed for %d frames, then \"%s\"\n",
-			gExecAfterFrames, gExecAfterCommand.GetChars());
+			entry.frames, entry.command.GetChars());
+	gExecAfter.Push (entry);
 }
 
 void M_TickDeferredScreenShot ()
 {
-	if (gExecAfterFrames >= 0 && gamestate == GS_LEVEL && gameaction == ga_nothing)
+	if (gExecAfter.Size() > 0 && gamestate == GS_LEVEL && gameaction == ga_nothing)
 	{
-		if (--gExecAfterFrames <= 0)
+		// Backwards so a removal cannot skip the next entry, and so two
+		// commands armed for the same frame still both run.
+		for (int i = (int)gExecAfter.Size() - 1; i >= 0; --i)
 		{
-			gExecAfterFrames = -1;
-			Printf ("execafter: running \"%s\"\n", gExecAfterCommand.GetChars());
-			C_DoCommand (gExecAfterCommand.GetChars());
+			if (--gExecAfter[i].frames > 0)
+				continue;
+			FString cmd = gExecAfter[i].command;
+			gExecAfter.Delete (i);
+			Printf ("execafter: running \"%s\"\n", cmd.GetChars());
+			C_DoCommand (cmd.GetChars());
 		}
 	}
 
