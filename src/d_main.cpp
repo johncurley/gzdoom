@@ -1265,6 +1265,7 @@ void D_DoomLoop ()
 			D_ProcessEvents();
 
 			D_Display ();
+			M_TickDeferredScreenShot ();
 			S_UpdateMusic();
 
 			if (gameloop_abort)

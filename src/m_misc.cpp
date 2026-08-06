@@ -67,6 +67,9 @@
 #include "gameconfigfile.h"
 #include "gstrings.h"
 #include "vm.h"
+#include "d_event.h"
+#include "gamestate.h"
+#include "engineerrors.h"
 
 FGameConfigFile *GameConfig;
 
@@ -661,6 +664,132 @@ UNSAFE_CCMD (screenshot)
 		G_ScreenShot (NULL);
 	else
 		G_ScreenShot (argv[1]);
+}
+
+//==========================================================================
+//
+// Deferred screenshot: shotafter <frames> [quit]
+//
+// The capture protocol on this branch is one launch per configuration with
+// every cvar on the command line, precisely so that no console typing can
+// reorder or confound a setting. The one step that could not be automated was
+// the shot itself: `-exec` runs before `Init complete.`, and `+screenshot`
+// fires before there is a frame to capture, so an operator had to sit at the
+// keyboard for every capture in a series.
+//
+// This arms a countdown instead. It is deliberately the same shape as
+// mt_ao_probe and mt_bloom_dump -- arm from the command line with a frame
+// count large enough to outlast map and savegame loading:
+//
+//     +shotafter 900 quit
+//
+// The countdown runs on RENDERED frames, not tics, because what is being
+// captured is a frame. With `quit` the whole capture is non-interactive, which
+// is what makes a three-launch control series (see handoff.txt test (c))
+// something a script can run identically three times.
+//
+// The console is not involved, so this also sidesteps the recorded trap that
+// GetScreenshotBuffer only re-presents the last frame drawn with the console
+// CLOSED -- here it never opened.
+//
+//==========================================================================
+
+static int gShotAfterFrames = -1;
+static FString gShotAfterName;
+static bool gShotAfterQuit;
+
+UNSAFE_CCMD (shotafter)
+{
+	if (argv.argc() < 2)
+	{
+		Printf ("shotafter <frames> [name] [quit]: take a screenshot after that many rendered frames.\n");
+		return;
+	}
+
+	gShotAfterFrames = atoi (argv[1]);
+	gShotAfterName = "";
+	gShotAfterQuit = false;
+
+	for (int i = 2; i < argv.argc(); ++i)
+	{
+		if (stricmp (argv[i], "quit") == 0)
+			gShotAfterQuit = true;
+		else
+			gShotAfterName = argv[i];
+	}
+
+	Printf ("shotafter: armed for %d frames%s%s\n", gShotAfterFrames,
+			gShotAfterName.IsEmpty() ? "" : ", named ",
+			gShotAfterName.IsEmpty() ? (gShotAfterQuit ? ", then quitting" : "") : gShotAfterName.GetChars());
+}
+
+// execafter <frames> <command...> -- the same countdown, running a console
+// command instead of taking a shot. It exists for the captures that need a
+// GAME STATE, not just a cvar: the colormap polarity check needs
+// `give InvulnerabilitySphere`, which cannot go on the command line because
+// -exec runs before there is a level. Combine the two with different counts:
+//
+//     +execafter 60 give InvulnerabilitySphere  +shotafter 120 quit
+//
+// Both countdowns run on in-level frames, so the ordering is by count and
+// never by typing speed -- which is what the `;`-chaining trap in the capture
+// protocol was really about.
+static int gExecAfterFrames = -1;
+static FString gExecAfterCommand;
+
+UNSAFE_CCMD (execafter)
+{
+	if (argv.argc() < 3)
+	{
+		Printf ("execafter <frames> <command...>: run a console command after that many in-level frames.\n");
+		return;
+	}
+
+	gExecAfterFrames = atoi (argv[1]);
+	gExecAfterCommand = argv[2];
+	for (int i = 3; i < argv.argc(); ++i)
+	{
+		gExecAfterCommand += ' ';
+		gExecAfterCommand += argv[i];
+	}
+
+	Printf ("execafter: armed for %d frames, then \"%s\"\n",
+			gExecAfterFrames, gExecAfterCommand.GetChars());
+}
+
+void M_TickDeferredScreenShot ()
+{
+	if (gExecAfterFrames >= 0 && gamestate == GS_LEVEL && gameaction == ga_nothing)
+	{
+		if (--gExecAfterFrames <= 0)
+		{
+			gExecAfterFrames = -1;
+			Printf ("execafter: running \"%s\"\n", gExecAfterCommand.GetChars());
+			C_DoCommand (gExecAfterCommand.GetChars());
+		}
+	}
+
+	if (gShotAfterFrames < 0)
+		return;
+
+	// The countdown does not start until the level is actually up and no
+	// gameaction is pending. This is what makes the count mean the same thing
+	// in every launch of a series: title screens, the IWAD picker and savegame
+	// loading all render frames, and how many varies run to run. Counting only
+	// in-level frames makes exposure settling identical across launches, which
+	// is the whole point of a control pair. It also avoids losing the shot --
+	// G_ScreenShot silently does nothing while gameaction != ga_nothing.
+	if (gamestate != GS_LEVEL || gameaction != ga_nothing)
+		return;
+
+	if (--gShotAfterFrames > 0)
+		return;
+
+	gShotAfterFrames = -1;
+	G_ScreenShot (gShotAfterName.IsEmpty() ? NULL : gShotAfterName.GetChars());
+
+	if (gShotAfterQuit)
+		throw CExitEvent(0);
 }
 
 CCMD(openscreenshots)

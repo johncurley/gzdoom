@@ -39,6 +39,9 @@ void M_FindResponseFile (void);
 //		Pass a NULL to get the original behavior.
 void M_ScreenShot (const char *filename);
 
+// [metal-audit] Deferred screenshot (`shotafter`), ticked once per rendered frame.
+void M_TickDeferredScreenShot ();
+
 void M_LoadDefaults ();
 
 bool M_SaveDefaults (const char *filename);
