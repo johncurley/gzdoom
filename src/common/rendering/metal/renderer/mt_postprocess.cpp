@@ -6,6 +6,7 @@
 #include "mt_postprocess.h"
 
 void MtBloomDumpIfArmed(MetalRenderDevice *fb);
+
 #include "i_time.h"
 #include <Metal/Metal.hpp>
 #include <QuartzCore/QuartzCore.hpp>
@@ -32,6 +33,14 @@ void MtBloomDumpIfArmed(MetalRenderDevice *fb);
 #include "metal/textures/mt_texture.h"
 #include "r_videoscale.h"
 #include "v_video.h"
+
+// Defined in mt_aoprobe.cpp -- see there for why the AO composite is measured
+// this way rather than read out of a GPU frame capture.
+bool MtAOProbeWantsPass(const char *fragShaderName);
+void MtAOProbeBefore(MetalRenderDevice *fb);
+void MtAOProbeAfter(MetalRenderDevice *fb, const FRenderStyle &blend,
+                    bool stencilTest, bool clearRequested);
+void MtAOProbeCountdown();
 
 EXTERN_CVAR(Int, gl_dither_bpc)
 CVAR(Bool, mt_compute_ao, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
@@ -221,6 +230,15 @@ public:
 
   void Draw() override {
     if (!fb->GetBuffers()) return;
+
+    // AO composite probe (mt_ao_probe). Snapshot the render target before the
+    // pass under investigation, so the draw's actual contribution can be
+    // measured rather than eyeballed in a frame capture. Both hooks sit
+    // outside the render encoder's lifetime, which a readback requires.
+    const bool aoProbe =
+        Shader && MtAOProbeWantsPass(Shader->FragmentShader.GetChars());
+    if (aoProbe)
+      MtAOProbeBefore(fb);
     auto renderState = fb->GetRenderState();
     auto mtRenderState = static_cast<MtRenderState *>(renderState);
 
@@ -305,8 +323,10 @@ public:
     mtRenderState->SetScissor(0, 0, width, height);
 
     // Handle clearing if requested
-    if (BlendMode.SrcAlpha == (uint8_t)STYLEALPHA_One &&
-        BlendMode.DestAlpha == (uint8_t)STYLEALPHA_Zero && !ShadowMapBuffers) {
+    const bool clearRequested =
+        BlendMode.SrcAlpha == (uint8_t)STYLEALPHA_One &&
+        BlendMode.DestAlpha == (uint8_t)STYLEALPHA_Zero && !ShadowMapBuffers;
+    if (clearRequested) {
       mtRenderState->Clear(CT_Color);
     }
 
@@ -430,6 +450,11 @@ public:
 
     mtRenderState->EndRenderPass();
 
+    // Read the target back now the pass is closed and report all four
+    // readings. Disarms itself, so this costs one frame's hitch, once.
+    if (aoProbe)
+      MtAOProbeAfter(fb, BlendMode, stencilTest, clearRequested);
+
     // Advance pipeline index if output was Next and no custom output was used
     if (Output.Type == PPTextureType::NextPipelineTexture && !customOutputTex) {
       fb->GetPostprocess()->mCurrentPipelineImage =
@@ -531,6 +556,7 @@ void MtPostprocess::PostProcessScene(
   // levels the previous frame left behind -- see mt_bloomdump.cpp on why it
   // cannot read this frame's.
   MtBloomDumpIfArmed(fb);
+  MtAOProbeCountdown();
 
   MtPPRenderState renderstate(fb);
 
