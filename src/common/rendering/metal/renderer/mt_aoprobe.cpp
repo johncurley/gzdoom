@@ -354,10 +354,19 @@ void MtAOProbeAfter(MetalRenderDevice *fb, const FRenderStyle &blend,
 // reading [1] would come back "NO BLEND", which is correct behaviour rather
 // than the defect.
 CCMD(mt_ao_probe) {
-  if (!screen || !screen->IsMetal()) {
-    Printf(PRINT_HIGH, "mt_ao_probe: the Metal backend is not active.\n");
-    return;
-  }
+  // Deliberately NOT refusing when the Metal device is absent. Arming from the
+  // command line (+mt_ao_probe 900) happens before the backend exists, and a
+  // hard early-out here made the probe console-only -- which meant every
+  // verification run needed an operator at the keyboard. mt_bloom_dump takes
+  // the same approach and for the same reason. The hooks in
+  // MtPPRenderState::Draw already no-op when there is no device, so arming
+  // early is safe; if the run ends up on a non-Metal backend the probe simply
+  // never fires and the log says nothing.
+  if (screen && !screen->IsMetal())
+    Printf(PRINT_HIGH, TEXTCOLOR_YELLOW
+           "mt_ao_probe: the Metal backend is not active; this will not "
+           "fire.\n" TEXTCOLOR_NORMAL);
+
   gProbeArmed = true;
   gProbeFramesLeft = 10;
   if (argv.argc() > 1) {
