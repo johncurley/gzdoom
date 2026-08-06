@@ -54,6 +54,19 @@ void MtRenderBuffers::BeginFrame(int width, int height, int sceneWidth,
   }
 }
 
+// Name a render target so it is identifiable in a GPU frame capture. Without
+// this every texture shows in Xcode as an anonymous MTLTexture-<n>, and reading
+// a specific buffer's contents out of a trace means guessing among forty
+// numbered blobs. Added 2026-08-06 alongside the PP encoder labels, for the
+// same reason: the AO composite investigation needs a readable capture. Costs
+// one string per target at allocation, which is never in a hot path.
+static void LabelTexture(MTL::Texture *texture, const char *name) {
+  if (!texture || !name)
+    return;
+  texture->setLabel(
+      NS::String::string(name, NS::StringEncoding::UTF8StringEncoding));
+}
+
 void MtRenderBuffers::CreatePipelineDepthStencil(int width, int height) {
   PipelineDepthStencil = std::make_unique<MtTextureImage>(fb);
 
@@ -75,6 +88,7 @@ void MtRenderBuffers::CreatePipelineDepthStencil(int width, int height) {
     Printf(PRINT_LOG,
            "Metal: Failed to create PipelineDepthStencil texture!\n");
   }
+  LabelTexture(texture, "PipelineDepthStencil");
   PipelineDepthStencil->SetTexture(texture);
   PipelineDepthStencil->SetWidth(width);
   PipelineDepthStencil->SetHeight(height);
@@ -96,6 +110,11 @@ void MtRenderBuffers::CreatePipeline(int width, int height) {
     desc->setStorageMode(MTL::StorageModePrivate);
 
     MTL::Texture *texture = fb->device->device->newTexture(desc);
+    {
+      FString n;
+      n.Format("PipelineImage[%d]", i);
+      LabelTexture(texture, n.GetChars());
+    }
     PipelineImage[i]->SetTexture(texture);
     PipelineImage[i]->SetWidth(width);
     PipelineImage[i]->SetHeight(height);
@@ -129,6 +148,7 @@ void MtRenderBuffers::CreateShadowMap() {
   if (!texture) {
     Printf(PRINT_LOG, "Metal: FAILED to create ShadowMap texture!\n");
   }
+  LabelTexture(texture, "ShadowMap");
   ShadowMap->SetTexture(texture);
   ShadowMap->SetWidth(quality);
   ShadowMap->SetHeight(1024);
@@ -154,6 +174,7 @@ void MtRenderBuffers::CreateSceneColor(int width, int height, int samples) {
     desc->setTextureType(MTL::TextureType2DMultisample);
 
   MTL::Texture *texture = fb->device->device->newTexture(desc);
+  LabelTexture(texture, "SceneColor");
   SceneColor->SetTexture(texture);
   SceneColor->SetWidth(width);
   SceneColor->SetHeight(height);
@@ -177,6 +198,7 @@ void MtRenderBuffers::CreateSceneDepthStencil(int width, int height,
     desc->setTextureType(MTL::TextureType2DMultisample);
 
   MTL::Texture *texture = fb->device->device->newTexture(desc);
+  LabelTexture(texture, "SceneDepthStencil");
   SceneDepthStencil->SetTexture(texture);
   SceneDepthStencil->SetWidth(width);
   SceneDepthStencil->SetHeight(height);
@@ -204,6 +226,7 @@ void MtRenderBuffers::CreateSceneNormal(int width, int height, int samples) {
     desc->setTextureType(MTL::TextureType2DMultisample);
 
   MTL::Texture *texture = fb->device->device->newTexture(desc);
+  LabelTexture(texture, "SceneNormal");
   SceneNormal->SetTexture(texture);
   SceneNormal->SetWidth(width);
   SceneNormal->SetHeight(height);
@@ -226,6 +249,7 @@ void MtRenderBuffers::CreateSceneFog(int width, int height, int samples) {
     desc->setTextureType(MTL::TextureType2DMultisample);
 
   MTL::Texture *texture = fb->device->device->newTexture(desc);
+  LabelTexture(texture, "SceneFog");
   SceneFog->SetTexture(texture);
   SceneFog->SetWidth(width);
   SceneFog->SetHeight(height);

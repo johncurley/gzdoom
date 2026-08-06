@@ -233,8 +233,38 @@ the trace is context.
 
 ## Status
 
-`mt_capture` was added 2026-08-06 (commit `117eb475f`) and the encoder labels
-shortly after. It builds, the CCMD is registered, and the `Info.plist` key is in
-the bundle, but **no capture had been taken at the time of writing** — the first
-run exercises this path for the first time. If it misbehaves, suspect the arming
-path first, and update this line once a capture has actually succeeded.
+`mt_capture` was added 2026-08-06 (commit `117eb475f`), with PP encoder labels
+and then render-target labels following the same day.
+
+**RUNTIME-VERIFIED 2026-08-06.** The first capture armed, fired and wrote
+`frame-20260806-133028.gputrace` (390 MB) with no intervention. The log shows
+the expected sequence:
+
+```
+Metal GPU Frame Capture Enabled
+Metal frame capture armed; it runs after 30 further rendered frames.
+Metal frame capture STARTED -> .../frame-20260806-133028.gputrace
+Metal frame capture written -> .../frame-20260806-133028.gputrace
+```
+
+That first trace also produced a finding before anyone opened it: the encoder
+labels are present and greppable straight out of the file, and
+`PP ssao: shaders/pp/ssaocombine.fp` is among them. **The AO composite pass is
+genuinely encoded** — whatever is wrong, the draw is not being skipped at the
+engine level. The full AO chain appears in order: `lineardepth`, `ssao`,
+`depthblur` ×2, `ssaocombine`.
+
+```bash
+strings -n 6 <trace>/capture | grep '^PP '
+```
+
+Useful as a cheap sanity check that a capture caught the passes you wanted
+before committing to reading it in Xcode.
+
+### What is NOT extractable outside Xcode
+
+The command stream (`capture`, `unsorted-capture`) is an undocumented binary
+format with content-addressed references. Encoder *labels* are recoverable with
+`strings`, but pipeline state, blend configuration, load actions and per-draw
+attachment contents are not — those need the Xcode viewer. This was probed and
+abandoned deliberately; do not spend time on it again.
