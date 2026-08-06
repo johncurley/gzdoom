@@ -8,8 +8,13 @@ money. Tree clean, build green.
 If you read nothing else: AO NOW REACHES THE SCREEN on the reference path, for
 the first time on this branch — root-caused, fixed and verified on 2026-08-06 by
 two independent instruments plus a screenshot pair that had been byte-identical
-for the life of the branch. Details in standing item 1. The remaining open work
-is tests (b) colormap and (c) fxaa, each one launch.
+for the life of the branch. Details in standing item 1.
+
+Colormap also passed, which closes the last broken-by-default pass that affected
+ORDINARY PLAY. THE COVERAGE HOLE IS NOW WORKED THROUGH: of the passes that had
+never been checked, four were broken and all four are fixed and confirmed on
+screen. The remaining launch-work is test (c) fxaa, plus a one-shot polarity
+check on colormap.
 
 Read CLAUDE.md's "Measuring a rendering change", "GPU frame captures" and
 "Visual A/B captures" first. Then docs/metal-postprocess-graphs.md, which is new
