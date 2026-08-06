@@ -39,7 +39,8 @@ void MtBloomDumpIfArmed(MetalRenderDevice *fb);
 bool MtAOProbeWantsPass(const char *fragShaderName);
 void MtAOProbeBefore(MetalRenderDevice *fb);
 void MtAOProbeAfter(MetalRenderDevice *fb, const FRenderStyle &blend,
-                    bool stencilTest, bool clearRequested);
+                    bool stencilTest, bool clearRequested,
+                    MTL::Texture *aoInputTex);
 void MtAOProbeCountdown();
 
 EXTERN_CVAR(Int, gl_dither_bpc)
@@ -237,6 +238,7 @@ public:
     // outside the render encoder's lifetime, which a readback requires.
     const bool aoProbe =
         Shader && MtAOProbeWantsPass(Shader->FragmentShader.GetChars());
+    MTL::Texture *aoProbeInputTex = nullptr;
     if (aoProbe)
       MtAOProbeBefore(fb);
     auto renderState = fb->GetRenderState();
@@ -415,6 +417,10 @@ public:
         }
 
         if (tex) {
+          // Input 0 of ssaocombine is Ambient0, the AO buffer whose contents
+          // decide the alpha. The probe derives the shader's own alpha from it.
+          if (aoProbe && i == 0)
+            aoProbeInputTex = tex;
           encoder->setFragmentTexture(tex, i);
 
           // Set sampler state based on input filter/wrap modes
@@ -453,7 +459,8 @@ public:
     // Read the target back now the pass is closed and report all four
     // readings. Disarms itself, so this costs one frame's hitch, once.
     if (aoProbe)
-      MtAOProbeAfter(fb, BlendMode, stencilTest, clearRequested);
+      MtAOProbeAfter(fb, BlendMode, stencilTest, clearRequested,
+                     aoProbeInputTex);
 
     // Advance pipeline index if output was Next and no custom output was used
     if (Output.Type == PPTextureType::NextPipelineTexture && !customOutputTex) {

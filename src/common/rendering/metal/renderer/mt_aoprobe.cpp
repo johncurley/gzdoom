@@ -79,14 +79,17 @@ static bool ReadTexture(MetalRenderDevice *fb, MTL::Texture *tex,
   const MTL::PixelFormat fmt = tex->pixelFormat();
   const bool halfFloat = fmt == MTL::PixelFormatRGBA16Float;
   const bool bgra8 = fmt == MTL::PixelFormatBGRA8Unorm;
-  if (!halfFloat && !bgra8) {
+  // Ambient0, the AO buffer the combine shader samples, is Rg16f: x is the
+  // occlusion attenuation, y is the linear depth the shader's gate tests.
+  const bool rg16 = fmt == MTL::PixelFormatRG16Float;
+  if (!halfFloat && !bgra8 && !rg16) {
     Printf(PRINT_HIGH, "  (probe: unhandled pixel format %d)\n", (int)fmt);
     return false;
   }
 
   w = (int)tex->width();
   h = (int)tex->height();
-  const size_t bytesPerRow = (size_t)w * (halfFloat ? 8 : 4);
+  const size_t bytesPerRow = (size_t)w * (halfFloat ? 8 : (rg16 ? 4 : 4));
   const size_t dataSize = bytesPerRow * (size_t)h;
 
   // The postprocess passes before this one may still be sitting unencoded or
@@ -114,7 +117,14 @@ static bool ReadTexture(MetalRenderDevice *fb, MTL::Texture *tex,
   cmdBuf->release();
 
   outRGB.resize((size_t)w * h * 3);
-  if (halfFloat) {
+  if (rg16) {
+    const __fp16 *pixels = (const __fp16 *)staging->contents();
+    for (int i = 0; i < w * h; i++) {
+      outRGB[i * 3 + 0] = (float)pixels[i * 2 + 0];
+      outRGB[i * 3 + 1] = (float)pixels[i * 2 + 1];
+      outRGB[i * 3 + 2] = 0.0f;
+    }
+  } else if (halfFloat) {
     const __fp16 *pixels = (const __fp16 *)staging->contents();
     for (int i = 0; i < w * h; i++) {
       outRGB[i * 3 + 0] = (float)pixels[i * 4 + 0];
@@ -170,7 +180,8 @@ static const char *AlphaName(int v) {
 
 // READINGS 1, 2, 3 and 4, reported together after the composite draw.
 void MtAOProbeAfter(MetalRenderDevice *fb, const FRenderStyle &blend,
-                    bool stencilTest, bool clearRequested) {
+                    bool stencilTest, bool clearRequested,
+                    MTL::Texture *aoInputTex) {
   if (!fb || !fb->GetBuffers())
     return;
 
@@ -238,54 +249,98 @@ void MtAOProbeAfter(MetalRenderDevice *fb, const FRenderStyle &blend,
                : "the draw DID modify SceneColor");
   }
 
-  // READING 4. Sample SceneFog against SceneColor at the darkest pixels, which
-  // is where AO should be strongest and where the dead ssaocombine patch would
-  // matter most. Equal values there mean blending fogColor over an identical
-  // destination is a no-op and the dead patch alone explains byte identity.
+  // READING 4, REVISED. The first version of this sampled the darkest 0.5% of
+  // SceneColor and compared luminance against SceneFog. That reading was
+  // DEGENERATE: the darkest pixels are pure black, fog was black there too, and
+  // "equal" was therefore guaranteed regardless of the truth. It answered a
+  // question nobody asked -- blending black over black is a no-op whatever the
+  // alpha. Whole-frame statistics instead, which cannot be gamed that way.
   std::vector<float> fog;
   int fw = 0, fh = 0;
-  if (afterValid &&
-      ReadTexture(fb, fb->GetBuffers()->SceneFog->GetTexture(), fog, fw, fh) &&
-      fw == aw && fh == ah) {
-    // Darkest 0.5% of pixels by luminance.
-    std::vector<std::pair<float, size_t>> lum;
-    lum.reserve((size_t)aw * ah);
-    for (size_t i = 0; i < (size_t)aw * ah; i++) {
-      float l = after[i * 3 + 0] * 0.299f + after[i * 3 + 1] * 0.587f +
-                after[i * 3 + 2] * 0.114f;
-      lum.push_back({l, i});
+  if (ReadTexture(fb, fb->GetBuffers()->SceneFog->GetTexture(), fog, fw, fh)) {
+    double meanFog = 0.0;
+    float maxFog = 0.0f;
+    size_t nonBlack = 0;
+    const size_t n = (size_t)fw * fh;
+    for (size_t i = 0; i < n; i++) {
+      float l = std::max(fog[i * 3 + 0], std::max(fog[i * 3 + 1], fog[i * 3 + 2]));
+      meanFog += l;
+      maxFog = std::max(maxFog, l);
+      if (l > 1.0f / 512.0f)
+        nonBlack++;
     }
-    std::sort(lum.begin(), lum.end(),
-              [](auto &a, auto &b) { return a.first < b.first; });
-    const size_t sample = std::max<size_t>(1, lum.size() / 200);
-    double meanFog = 0.0, meanCol = 0.0, meanAbsDiff = 0.0;
-    size_t equalish = 0;
-    for (size_t k = 0; k < sample; k++) {
-      size_t i = lum[k].second;
-      float fl = fog[i * 3 + 0] * 0.299f + fog[i * 3 + 1] * 0.587f +
-                 fog[i * 3 + 2] * 0.114f;
-      meanFog += fl;
-      meanCol += lum[k].first;
-      float d = std::fabs(fl - lum[k].first);
-      meanAbsDiff += d;
-      if (d < 1.0f / 512.0f)
-        equalish++;
-    }
-    meanFog /= (double)sample;
-    meanCol /= (double)sample;
-    meanAbsDiff /= (double)sample;
     Printf(PRINT_HIGH,
-           "[4] darkest %zu px:  SceneFog lum=%.5f  SceneColor lum=%.5f  "
-           "mean|diff|=%.5f  equal=%zu/%zu\n",
-           sample, meanFog, meanCol, meanAbsDiff, equalish, sample);
+           "[4] SceneFog %dx%d  mean=%.5f  max=%.5f  non-black px=%zu (%.2f%%)\n",
+           fw, fh, meanFog / (double)n, maxFog, nonBlack,
+           100.0 * (double)nonBlack / (double)n);
     Printf(PRINT_HIGH, "    -> %s\n",
-           equalish > sample / 2
-               ? "fogColor ~= destination here: the dead ssaocombine patch "
-                 "ALONE can explain byte identity"
-               : "fogColor differs from destination: the dead patch is NOT "
-                 "sufficient, something else zeroes the contribution");
+           nonBlack == 0
+               ? "fogColor is BLACK EVERYWHERE. The composite therefore blends "
+                 "black, i.e. it DARKENS by alpha. Any non-zero alpha would "
+                 "have shown in [2]."
+               : "fog has content; the composite blends a non-black colour");
   } else {
-    Printf(PRINT_HIGH, "[4] SceneFog comparison UNAVAILABLE\n");
+    Printf(PRINT_HIGH, "[4] SceneFog UNAVAILABLE\n");
+  }
+
+  // READING 5. The alpha the shader actually computes, derived from the very
+  // buffer it samples. This is what [2] being zero forces us to look at: with
+  // blending correct, load correct, and fog black, the only way to change
+  // nothing is for alpha to be zero. ssaocombine.fp computes
+  //     depthMask = clamp(1 - exp2(-ssao.y * 0.01), 0, 1)
+  //     alpha     = ssao.y > 2.0 ? (1 - ssao.x) * depthMask : 0
+  std::vector<float> ao;
+  int ax = 0, ay = 0;
+  if (aoInputTex && ReadTexture(fb, aoInputTex, ao, ax, ay)) {
+    const size_t n = (size_t)ax * ay;
+    size_t gatePass = 0, alphaNonZero = 0;
+    double meanY = 0.0, meanAtten = 0.0, meanAlpha = 0.0;
+    float maxY = 0.0f, maxAlpha = 0.0f;
+    for (size_t i = 0; i < n; i++) {
+      const float atten = ao[i * 3 + 0];
+      const float y = ao[i * 3 + 1];
+      meanAtten += atten;
+      meanY += y;
+      maxY = std::max(maxY, y);
+      float alpha = 0.0f;
+      if (y > 2.0f) {
+        gatePass++;
+        const float depthMask =
+            std::min(1.0f, std::max(0.0f, 1.0f - std::exp2(-y * 0.01f)));
+        alpha = (1.0f - atten) * depthMask;
+      }
+      meanAlpha += alpha;
+      maxAlpha = std::max(maxAlpha, alpha);
+      if (alpha > 1.0f / 512.0f)
+        alphaNonZero++;
+    }
+    Printf(PRINT_HIGH,
+           "[5] AO input %dx%d  fmt=%d  mean ssao.x=%.5f  mean ssao.y=%.3f  "
+           "max ssao.y=%.3f\n",
+           ax, ay, (int)aoInputTex->pixelFormat(), meanAtten / (double)n,
+           meanY / (double)n, maxY);
+    Printf(PRINT_HIGH,
+           "    gate ssao.y>2.0 passes: %zu/%zu (%.2f%%)   computed alpha: "
+           "mean=%.5f max=%.5f  non-zero px=%zu (%.2f%%)\n",
+           gatePass, n, 100.0 * (double)gatePass / (double)n,
+           meanAlpha / (double)n, maxAlpha, alphaNonZero,
+           100.0 * (double)alphaNonZero / (double)n);
+    if (alphaNonZero == 0 && gatePass == 0)
+      Printf(PRINT_HIGH,
+             "    -> THE GATE FAILS EVERYWHERE. ssao.y is not what the shader "
+             "expects here, so alpha is 0 and the blend is a no-op. The defect "
+             "is UPSTREAM of the composite, in what reaches ssao.y.\n");
+    else if (alphaNonZero == 0)
+      Printf(PRINT_HIGH,
+             "    -> gate passes but alpha is still 0: ssao.x is ~1 "
+             "(no occlusion) everywhere.\n");
+    else
+      Printf(PRINT_HIGH,
+             "    -> ALPHA IS NON-ZERO. The shader should be changing "
+             "SceneColor. If [2] is zero, the fragments are not landing -- "
+             "look at the stencil test.\n");
+  } else {
+    Printf(PRINT_HIGH, "[5] AO input texture UNAVAILABLE\n");
   }
 
   Printf(PRINT_HIGH, TEXTCOLOR_GOLD "=== end probe ===\n\n" TEXTCOLOR_NORMAL);
