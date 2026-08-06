@@ -206,13 +206,18 @@ public:
   MtPPRenderState(MetalRenderDevice *fb) : fb(fb) {}
   MTL::Texture *customOutputTex = nullptr;
 
-  void PushGroup(const FString &name) override {
-    // fb->GetCommands()->PushGroup(name.GetChars());
-  }
+  // The group name is recorded rather than pushed as a Metal debug group,
+  // because PushGroup is called before this pass's render command encoder
+  // exists -- BeginRenderPass happens inside Draw(). Draw() applies it as the
+  // encoder's LABEL instead, which is what Xcode's frame navigator lists each
+  // pass by, so a capture reads as "PP ssao: shaders/pp/ssaocombine.fp"
+  // rather than as a flat run of anonymous draws. These were empty stubs until
+  // 2026-08-06; the AO composite investigation needed a navigable trace.
+  FString mGroupName;
 
-  void PopGroup() override {
-    // fb->GetCommands()->PopGroup();
-  }
+  void PushGroup(const FString &name) override { mGroupName = name; }
+
+  void PopGroup() override { mGroupName = ""; }
 
   void Draw() override {
     if (!fb->GetBuffers()) return;
@@ -314,6 +319,20 @@ public:
     MtShaderProgram *program = fb->GetShaderManager()->GetPPShader(Shader);
     if (!program || !program->vert || !program->frag) {
       return;
+    }
+
+    // Name the pass for GPU frame captures. Costs a string build per PP draw,
+    // which is nothing beside the draw itself, and turns an unreadable trace
+    // into one where the pass under investigation can be found by name.
+    if (Shader) {
+      FString label;
+      if (mGroupName.IsNotEmpty())
+        label.Format("PP %s: %s", mGroupName.GetChars(),
+                     Shader->FragmentShader.GetChars());
+      else
+        label.Format("PP %s", Shader->FragmentShader.GetChars());
+      encoder->setLabel(NS::String::string(
+          label.GetChars(), NS::StringEncoding::UTF8StringEncoding));
     }
 
     auto pipeline = fb->GetPipelineStateManager()->GetPPPipelineState(

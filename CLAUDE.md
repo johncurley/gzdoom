@@ -76,6 +76,15 @@ Establish a noise floor before trusting a delta: take two readings of an *identi
 configuration. On the reference machine that is ~0.4ms, so smaller differences mean
 nothing.
 
+### GPU frame captures
+
+When the question is "what did the GPU actually do" rather than "what did the frame look like",
+take a Metal frame capture: `mt_capture` in the console, with `METAL_CAPTURE_ENABLED=1` set on the
+launch. It shows the pipeline state actually bound, blend and stencil configuration, attachment
+load actions, and every input texture — none of which a screenshot can answer. No Xcode build is
+needed, only Xcode as a viewer. **`docs/gpu-capture-protocol.md` is the runbook**; it carries the
+pre-flight (clear the PSO archive first), the prediction sheet, and the failure modes.
+
 ### Visual A/B captures
 
 `tools/pngdiff.py` (stats), `tools/localize.py` (where and in which direction), and

@@ -273,7 +273,12 @@ THE STANDING LIST
        executing, item 2 included. No amount of further reading can close that
        gap; only the capture can.
 
-   HOW TO CAPTURE — mt_capture, NEW this session, no Xcode build needed.
+   HOW TO CAPTURE — docs/gpu-capture-protocol.md is the full runbook, with the
+   pre-flight, the prediction sheet, an outcome-by-outcome interpretation table
+   and the failure modes. Summary follows; follow the doc when you actually run
+   it.
+
+   mt_capture, NEW this session, no Xcode build needed.
 
    Programmatic MTLCaptureManager capture armed from the console, so the
    existing one-launch-per-configuration protocol is unchanged. It was written
