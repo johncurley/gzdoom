@@ -4152,3 +4152,44 @@ re-deriving it dropped mean `ssao.x` from 0.86671 to 0.99924 -- AO essentially
 gone -- and it was reverted the same day (`66b0b6f64`). Its mechanism is still
 not understood: it edits only the occlusion expression yet toggling it also
 moved `FragColor.y` by three orders of magnitude, with no compile error logged.
+
+## 2026-08-07: captures are now unattended, and the determinism claim was wrong
+
+`+shotafter <frames> [name] [quit]` and `+execafter <frames> <command>`
+(`m_misc.cpp`, ticked from `D_DoomLoop` after `D_Display`) arm a countdown from
+the command line the way `mt_ao_probe` and `mt_bloom_dump` do. A whole A/B
+series now runs from a shell loop with no operator, which removes the three
+failure modes that have each cost a capture round: reversed toggle order, `;`
+chaining, and the console-pause staleness.
+
+The countdown runs **only on frames where `gamestate == GS_LEVEL` and
+`gameaction == ga_nothing`**. That is the load-bearing detail: the picker,
+title screens and savegame loading all render a run-dependent number of frames,
+so counting from process start would give each launch in a control pair a
+different amount of exposure settling — defeating the pair.
+
+**`cl_capfps 1` is required for a meaningful floor, and this corrects a standing
+claim in this file.** Two *identical* launches at capspot differ by a mean 1.7
+lum over 98% of the frame, block deltas to 174, without it — larger than the
+FXAA effect they were meant to measure. Animated content advances per **tic**,
+and the tics elapsed by rendered frame N depend on the frame rate. With capfps
+the same pair is byte-identical. The branch's "reproduces bit-exactly for the
+same elapsed frame count" was true per *tic*; frame == tic only under capfps.
+
+With that floor, both remaining coverage-hole checks closed:
+
+- **FXAA passes.** Floor byte-identical; effect 4.20% of pixels, 2.099% brighter
+  against 2.100% darker, mean signed delta +0.0044, largest block delta +1.371.
+  Edge-local and symmetric — the prediction — and unlike the earlier false
+  positive, which was a +4.12 mean signed wash over 39% of the frame (exposure).
+- **Colormap polarity passes.** `tools/polarity.py` decides inversion vs
+  desaturation by the **sign** of the luminance correlation: r = -0.546 with
+  mean scene luminance 39.85 -> 167.75. Desaturation preserves luminance and
+  would give r near +1. The untouched HUD and the nonlinear tonemap depress |r|
+  and cannot flip its sign.
+
+**The reusable method note:** both of these were previously "a test whose two
+outcomes look the same is not a test" — the recurring failure in this file. The
+fix in each case was not a better eye but a statistic whose *sign* differs
+between the hypotheses, plus a same-config control pair to establish that the
+floor is below the effect. Take the floor first, always.
