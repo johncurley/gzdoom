@@ -931,20 +931,27 @@ static void PatchPostprocessFragmentShader(std::string &source,
     // Nothing else touching the SSAO pass changed between those runs, so the
     // guard is what removed the occlusion.
     //
-    // Why it back-fires: it rejects pixels with viewPosition.z <= 0.0001 as
-    // far-plane/sky, but the same probe shows ssao.y saturating at 65504 (the
-    // half-float maximum) with a mean of 15627 -- a distribution consistent
-    // with some pixels pinned at the ceiling and REAL GEOMETRY NEAR ZERO. The
-    // guard therefore rejects the walls it was supposed to protect. Whatever
-    // viewPosition.z means on this path, it is not the world-unit view depth
-    // the guard assumed, and the depth scale is a defect in its own right --
-    // note that ac0fec5db's distance fade reads the same value and would be
-    // fully faded out at those magnitudes.
+    // The MECHANISM is not understood, and that is recorded honestly rather
+    // than guessed at. With the guard enabled the probe also reported ssao.y
+    // saturating at 65504 (the half-float maximum) with a mean of 15627; with
+    // it reverted, the same scene reports mean 64.861 and max 101.375 -- sane
+    // world units for a compact interior. The guard edits only the occlusion
+    // expression, which writes FragColor.x, and cannot explain a change in
+    // FragColor.y. So enabling it did something beyond its apparent effect --
+    // most likely the patched shader failed to translate and something
+    // degenerate was used, though no compile error appeared in the log.
     //
-    // Do not reinstate this without first fixing the depth scale and measuring
-    // ssao.x either side. The sky-dome problem it targeted is separately
-    // handled by ac0fec5db's distance fade and by the zero-normal guards in
-    // PatchVertexShader.
+    // An earlier reading of this took the 65504 saturation as evidence of a
+    // SECOND defect in the depth scale, and inferred that ac0fec5db's distance
+    // fade must be fully faded out. Both were WRONG: at the measured 65-101
+    // world units the fade barely acts, and the depth chain is fine. That
+    // inference was drawn from a run in which two things had changed at once.
+    //
+    // Do not reinstate this patch. If someone wants the sky-dome guard back,
+    // establish first what enabling it actually does to the compiled shader,
+    // and measure ssao.x AND ssao.y either side. The sky-dome problem it
+    // targeted is separately handled by ac0fec5db's distance fade and by the
+    // zero-normal guards in PatchVertexShader.
   }
 
   if (shadername.find("ssaocombine") != std::string::npos) {
