@@ -45,8 +45,16 @@ After changing anything under `wadsrc/` (shaders, menudef, other engine resource
 pk3), rebuild the pk3 explicitly — the shader/resource change will not appear otherwise:
 
 ```bash
-build/tools/zipdir/zipdir -udf build/gzdoom.pk3 wadsrc/static
+build/tools/zipdir/zipdir -udf build/gzdoom.app/Contents/MacOS/gzdoom.pk3 wadsrc/static
 ```
+
+**Use the bundle path above, not `build/gzdoom.pk3`.** There are two pk3s, and the
+running app loads the one next to the executable — check any startup log for
+`adding .../gzdoom.app/Contents/MacOS/gzdoom.pk3`. Updating `build/gzdoom.pk3` alone
+leaves the engine running the old shader with no error and no visible sign; a correct
+AO fix was measured as a failure this way on 2026-08-06. Also clear the MSL cache
+(`rm -f ~/Library/Application\ Support/zdoom/cache/*.msl`), which otherwise serves the
+previously translated shader.
 
 Other generators (Xcode for GPU frame debugging, Linux/Windows) are documented in
 `.github/copilot-instructions.md` under "Platform-Specific Builds."
