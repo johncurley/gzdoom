@@ -1,632 +1,201 @@
-Handoff — metal-audit, 2026-08-05 (evening)
+Handoff — metal-audit, 2026-08-06
 
-Supersedes the 2026-08-05 morning handoff. Seven commits, tree clean, build
-green throughout, binary at HEAD.
+Supersedes the 2026-08-05 handoff, which had accreted six layers of correction
+and become archaeology. Detail that used to live here now lives in commit
+messages; this file is open work, protocol, and the lessons that keep costing
+money. Tree clean, build green.
 
-If you read nothing else: two bugs fixed and verified on screen, the previous
-handoff's task 1 closed by measurement, and the whole postprocess surface
-enumerated for the first time. START HERE has two paste-ready five-minute tests
-at the top; everything below them is standing work.
+If you read nothing else: the AO composite defect is ROOT-CAUSED AND FIXED IN
+SOURCE but has never once executed — verifying it is the single highest-value
+thing left, and it takes one launch. START HERE has it, paste-ready.
 
-Read CLAUDE.md's "Measuring a rendering change" and "Visual A/B captures"
-first, then AGENTS.md. Everything below anchors to commits, not to docs.
+Read CLAUDE.md's "Measuring a rendering change", "GPU frame captures" and
+"Visual A/B captures" first. Then docs/metal-postprocess-graphs.md, which is new
+and is the fastest way to understand the AO chain.
 
-APPENDED 2026-08-06 — STATIC AUDIT PASS, NO GPU SPENT
+================================================================================
+START HERE — three tests, each one launch
+================================================================================
 
-Four audits (an external codex pass plus my own independent read; every claim
-kept here was re-verified against source, and the two agreed wherever they
-overlapped). No build, no launch, no capture — this was all free, which is why
-it was worth doing before the two open tests rather than after.
+(0) VERIFY THE AO FIX. Highest value on this list by a wide margin.
 
-WHAT CHANGED, in descending order of how much time it saves the next session:
+    ./build/gzdoom.app/Contents/MacOS/gzdoom \
+      -iwad DOOM2.wad \
+      -file ~/Documents/GZDoom/Ashes2063Enriched2_23.pk3 \
+      -loadgame capspot.zds \
+      +gl_exposure_speed 1 +gl_ssao 3 \
+      > /tmp/aoprobe.log 2>&1
 
-  1. TEST (a) IN START HERE WAS WRONG AND WOULD HAVE PRODUCED A FALSE PASS.
-     `give PowerInvulnerable` does not trigger the colormap pass at all. Use
-     `give InvulnerabilitySphere`. Corrected in place with the derivation.
-  2. Item 2 was undercounted. One known-dead patch is actually three live
-     dead patches plus an entire unreachable block, and one of them was
-     broken by our own commit.
-  3. Item 1's two prime suspects (PSO cache key, blend descriptor) are both
-     ELIMINATED. The next step is a GPU frame capture, not another A/B.
-  4. Two overstatements corrected: "runs by default" for bloom/SSAO, and the
-     frame-count determinism claim.
+    Console: mt_ao_probe    then CLOSE THE CONSOLE and wait.
 
-WHAT THE AUDIT CONFIRMED — worth as much as what it broke, because these are
-now closed rather than merely believed:
+    EXPECT: [5] gate passing on most pixels, max ssao.y in the hundreds,
+    computed alpha up to ~0.1-0.3; [2] a large non-zero differing-pixel count.
+    You should also SEE AO darkening corners for the first time on this branch.
 
-  - The orientation fix 5a9b53e1b is COMPLETE. Every PP pass sampling and
-    writing a texture is covered; no pass double-flips; the native AO composite
-    and the compute bloom tier-1 quad flip in their own pipelines outside
-    MtPPShader and are unaffected; present shaders are excluded deliberately
-    (present.fp carries Scale=(1,-1), Offset=(0,1)), not missed. Raw texture
-    copies (BlitCurrentToImage's normal path, screenshot readback, the bloom
-    and HDR diagnostic dumps) preserve row order and need no correction.
-  - ad35e9a52 is consistent at EVERY use site: Metal RGBA8Unorm
-    (mt_texture.cpp:699) now matches Vulkan R8G8B8A8_UNORM
-    (vk_pptexture.cpp:35) and GL GL_RGBA8 (gl_renderbuffers.cpp:805). No live
-    BGRA assumption remains in an Rgba8 path — the BGRA in the screenshot and
-    readback code refers to the swapchain's own LDR format, which is separately
-    BGRA8 and correct.
-  - All seven WHAT LANDED SHAs exist and each diff matches its description.
-  - Every cvar default and draw count in THE SWEEP re-verified (see that
-    section).
-  - PPColormap::Render's early-return really is flash == 1.f plus ordinary
-    fixedcm, with exactly one Draw (hw_postprocess.cpp:544-574), so the
-    "screen flipped every time the player got hit" claim holds.
+    If [2] is still 0 while alpha is non-zero, fragments are not landing and the
+    stencil test comes back into play (mt_postprocess.cpp:269-271).
 
-LIMITS OF THIS PASS, stated so nobody over-reads it. A static audit cannot
-check the numbers: the capture PNGs and logs are not in the tree, so every md5,
-bbox, and blob statistic in this document remains unverifiable from code and
-history alone. tools/tonemap_predict.py does implement the analysis it claims.
-"Build green, binary current" is likewise not provable after the fact — no
-build log or binary provenance is retained. None of these are known wrong; they
-are simply outside what reading source can settle.
+    This run also exercises the new shader-patch warnings. Any "Metal: shader
+    patch MISSED" line in the log is a real finding — grep for it.
 
-THE HEADLINE — every Metal postprocess pass was mirroring V, and the chain
-only worked when the pass count happened to be even
+(b) COLORMAP — the only broken-by-default path that affects ORDINARY PLAY.
 
-- The shared fullscreen triangle (flatvertices.cpp:66-68) maps UV.y with NDC.y,
-  which is correct only under OpenGL's bottom-left texture origin. Metal's is
-  top-left, so every PP pass that sampled a texture and wrote it out flipped V.
-- BlitSceneToPostprocess flipped once and the final Present flipped again, so
-  an EVEN pass count came out upright. Any effect adding an ODD number of
-  passes inverted the whole frame. Fixed 5a9b53e1b.
-- MEASURED, one variable at a time:
+    Same launch line, plus +gl_lens 0 +gl_fxaa 0 +gl_tonemap 0.
+    Console:  give InvulnerabilitySphere
+    Then CLOSE the console and type:  screenshot
 
-      gl_fxaa 1       2 draws   even   upright     <- accidentally worked
-      gl_lens 1       1 draw    odd    INVERTED
-      gl_tonemap 1-5  1 draw    odd    INVERTED
+    NOT `give invulnerability` (fails in a total conversion) and NOT
+    `give PowerInvulnerable` — that has no Powerup.Color, so InitEffect lands on
+    NOFIXEDCOLORMAP (powerups.zs:199) and PPColormap::Render early-returns
+    before its only Draw (hw_postprocess.cpp:548-551, Draw at :574). It would
+    look normal and prove nothing. The InverseMap colour is on the SPHERE
+    (doomartifacts.zs:13), which is +INVENTORY.AUTOACTIVATE and lives in base
+    gzdoom.pk3, so it works in a TC.
 
-- gl_tonemap 4 is a mathematical identity, sqrt(c*c) == c, and it inverted the
-  frame too. That is what proved the defect was in the plumbing and not in any
-  shader's maths, and it made the fix falsifiable: with orientation correct,
-  mode 4 must be byte-identical to mode 0. It is —
+    EXPECT: inverse-greyscale frame, UPRIGHT.
 
-      gl_tonemap 0   md5 326268d2e5070b81cf9f115d655011bb
-      gl_tonemap 4   md5 326268d2e5070b81cf9f115d655011bb
+(c) FXAA — unresolved. Needs a control pair; the first attempt was confounded by
+    exposure drift. THREE launches, identical settling, type only `screenshot`:
 
-Also fixed today, each verified
+        +gl_fxaa 0  -> fxaa0a.png
+        +gl_fxaa 0  -> fxaa0b.png     <- the control pair, measures drift
+        +gl_fxaa 1  -> fxaa1.png
 
-- PixelFormat::Rgba8 mapped to BGRA8Unorm (ad35e9a52). Vulkan uses
-  R8G8B8A8_UNORM, GL uses GL_RGBA8. Transposed R and B in the palette tonemap
-  LUT and in custom PP shader textures — the latter is a user-facing bug for
-  modders. Invisible until now because the other Rgba8 textures in play are
-  noise-like (dither), where a channel swap cannot be seen.
-- The handoff's task 1 is CLOSED by measurement. tools/tonemap_predict.py
-  (a103eb862) predicts the Reinhard capture from the Uncharted2 one per pixel:
-  0.925 levels of error against 12.291 levels of raw difference. That proves
-  each PPShader compiled and ran ITS OWN source with its own defines, which is
-  much stronger than "the modes differ."
-- Compute-vs-reference bloom re-measured after the orientation change and now
-  agrees to under 1% on every metric at every level (was 1.9/2.4/3.0%). L1, L2,
-  L3 extents identical; the extract matches exactly at 85x62.
-- The original diagnostic row, re-measured in clean config:
+        python3 tools/localize.py fxaa0a.png fxaa0b.png   (the floor)
+        python3 tools/localize.py fxaa0a.png fxaa1.png    (the effect)
 
-      afterH  78x41  1.90:1  px= 919
-      afterV  76x43  1.77:1  px=1105   <-- bbox MOVES (was frozen at 78x41)
+    EXPECT: the effect must clear the floor AND be edge-local and roughly
+    symmetric. A broad one-directional wash is exposure, not FXAA — that is
+    exactly how the first attempt failed.
 
-WHAT LANDED (7 commits, tree clean, build green, binary current)
-
-    ad35e9a52  metal: PixelFormat::Rgba8 is RGBA, not BGRA
-    5a9b53e1b  metal: make every postprocess pass orientation-correct
-    12cb27f97  docs: AGENTS.md -- verification and the two defects
-    a103eb862  tools: tonemap_predict.py
-    80590000b  handoff: refresh
-    8fbdbb475  handoff: AO composite is pre-existing, measured
-    5d62250fd  handoff: correct determinism claim, record the sweep
-
-START HERE
-
-FIRST — TWO ONE-LAUNCH TESTS, PASTE-READY. Neither blocks anything, both are
-about five minutes, and the first is the highest-value item on this whole list.
-
-  (a) colormap — the only broken-by-default path that affected ORDINARY PLAY.
-
-      ./build/gzdoom.app/Contents/MacOS/gzdoom -iwad DOOM2.wad \
-        -file ~/Documents/GZDoom/Ashes2063Enriched2_23.pk3 \
-        -loadgame capspot.zds \
-        +gl_exposure_speed 1 +gl_lens 0 +gl_fxaa 0 +gl_tonemap 0 \
-        > /tmp/colormap.log 2>&1
-
-      In the console:  give InvulnerabilitySphere
-      Then CLOSE the console and type:  screenshot
-      (NOT `give invulnerability` — that fails in a total conversion.
-       NOT `give PowerInvulnerable` either — see the correction below.)
-
-      CORRECTED 2026-08-06, and this correction is the reason to read this
-      block before running it. The previous handoff said `give
-      PowerInvulnerable`. That would have produced a NULL RESULT INDISTIN-
-      GUISHABLE FROM A PASS. PowerInvulnerable's Default block sets only
-      Powerup.Duration and an icon (powerups.zs:317-321) — no Powerup.Color.
-      So Powerup::InitEffect computes
-          Colormap = ((BlendColor & 0xFFFF0000) == SPECIALCOLORMAP_MASK)
-                     ? ... : PlayerInfo.NOFIXEDCOLORMAP;
-      (powerups.zs:199) and lands on NOFIXEDCOLORMAP. PPColormap::Render then
-      takes the ordinary-fixedcm branch, sees flash == 1.f, and returns before
-      its single Draw() (hw_postprocess.cpp:548-551, Draw at :574). The pass
-      never runs, the screen looks normal, and "upright" would have been
-      recorded as a pass for a pass that never executed.
-      The InverseMap colour lives on the SPHERE, not on the powerup:
-      InvulnerabilitySphere sets Powerup.Color "InverseMap"
-      (doomartifacts.zs:13) and is +INVENTORY.AUTOACTIVATE, so giving it
-      activates immediately and sets a real special colormap. It is a base
-      gzdoom.pk3 class, so it exists even in a total conversion.
-      This is the METHOD LESSON "a test whose two outcomes look the same is
-      not a test" recurring in a new place — caught by static audit, not by
-      running it.
-
-      EXPECT: inverse-greyscale frame, UPRIGHT. If it is upside down,
-      5a9b53e1b is incomplete — stop and fix that before anything else.
-
-  (b) fxaa — unresolved, needs a control pair because the first attempt was
-      confounded by exposure drift. THREE launches, identical settling routine,
-      type only `screenshot` in each:
-
-        +gl_fxaa 0   -> fxaa0a.png
-        +gl_fxaa 0   -> fxaa0b.png     <- the control pair, measures drift
-        +gl_fxaa 1   -> fxaa1.png
-
-      Then:  python3 tools/localize.py fxaa0a.png fxaa0b.png   (the floor)
-             python3 tools/localize.py fxaa0a.png fxaa1.png    (the effect)
-
-      EXPECT: the effect must clear the floor AND have the edge-local, roughly
-      symmetric shape antialiasing produces. A broad one-directional wash is
-      exposure, not FXAA — that is exactly how the first attempt failed.
-
+================================================================================
 THE STANDING LIST
+================================================================================
 
-1. **ROOT CAUSE FOUND 2026-08-06. Fix applied, awaiting one verification run.**
+1. AO COMPOSITE — root-caused, fixed, UNVERIFIED AT RUNTIME. See (0) above.
 
-   AO was computed correctly and then multiplied by zero.
+   depthblur.fp's VERTICAL pass wrote 0.0 into the depth channel while the
+   horizontal pass preserved it. ssaocombine.fp derives its whole output alpha
+   from that channel twice over — depthSignal = 1 - exp2(-ssao.y * 0.01)
+   collapses to 0, and the ssao.y > 2.0 gate fails — so the alpha blend was an
+   exact no-op. AO was computed correctly and multiplied by zero.
 
-   depthblur.fp's VERTICAL pass -- the last thing to touch Ambient0 before the
-   composite -- wrote 0.0 into the depth channel:
-
-       #if defined(BLUR_HORIZONTAL)
-           FragColor = vec4(fragAO, centerDepth, 0.0, 1.0);   // depth kept
-       #else
-           FragColor = vec4(pow(...), 0.0, 0.0, 1.0);         // depth DESTROYED
-       #endif
-
-   ssaocombine.fp derives its ENTIRE output alpha from that channel, twice over:
-   depthSignal = 1 - exp2(-ssao.y * 0.01) is 0 when y is 0, and the
-   ssao.y > 2.0 gate fails as well. Alpha is zero, so the alpha blend is an
-   exact no-op and SceneColor is unchanged to the byte.
-
-   MEASURED with mt_ao_probe, not inferred:
-
-       mean ssao.x = 0.86671   <- real occlusion, ~13%, AO generation is FINE
+   Measured, not inferred (mt_ao_probe):
+       mean ssao.x = 0.86671   <- real occlusion; AO generation was never wrong
        max  ssao.y = 0.000     <- depth channel dead
-       gate ssao.y > 2.0 passes 0 / 278640 px
+       gate passes 0 / 278640 px
        SceneColor differing px = 0 / 1113120 across the composite draw
 
-   WHY FOUR DEBUG MODES ALL POINTED THE WRONG WAY -- the durable lesson here.
-   hw_postprocess.cpp:910 wraps BOTH blur passes in `if (gl_ssao_debug < 2)`.
-   So gl_ssao_debug 3 and 7 SKIP THE BLUR and read ssao.fp's raw output, where
-   .y is still viewPosition.z and perfectly healthy. Those readings were
-   CORRECT. They were also structurally incapable of finding this bug: the only
-   modes that display the depth channel are the modes that bypass the pass which
-   destroys it. Normal mode is the sole path that runs the vertical blur.
-   The previous handoff's "Do NOT re-measure AO generation, four debug modes
-   have now cleared it" was reasonable and wrong -- four observations of a code
-   path that does not contain the defect. A debug mode that changes the pipeline
-   is not an observation of the pipeline.
+   Fixed in ebc854ebf by preserving centerDepth. NOT a Metal bug: both shaders
+   are shared, so GL and Vulkan had it too, from 595ffaf0f. master is unaffected
+   — it composites vec4(fogColor, 1.0 - attenutation) with no depth dependency
+   at all, so there is nothing to report upstream.
 
-   NOT A METAL BUG. depthblur.fp and ssaocombine.fp are shared. GL and Vulkan
-   have had this since 595ffaf0f introduced depthSignal/depthMask, which is also
-   why the pre-5a9b53e1b A/B in this handoff came back byte-identical: the bug
-   long predates the orientation work. ac0fec5db later added the redundant
-   ssao.y > 2.0 gate and, in the same commit, changed the line Metal's string
-   patch matched -- which is why items 1 and 2 share a cause.
-   VERIFY ON GL OR VULKAN before assuming the fix is Metal-only.
+   DECISION: the depth dependency was KEPT rather than reverted to master's
+   line. That means AO carries a near-field falloff — depthMask is ~0.29 at 50
+   world units, ~0.9 by 400 — so expect weaker close-range AO than stock GZDoom.
+   Intended, not a regression. Record any future "AO looks weak up close"
+   against this line.
 
-   THE FIX: preserve centerDepth through the vertical pass. Removing the gate
-   alone would NOT have worked -- depthMask would still zero the alpha, and
-   that trap is the reason the obvious one-line revert was not taken.
+2. STRING PATCHES — CLOSED (91d6e7213). Was "one is silently dead"; the audit
+   found five plus a function that could never run. PatchFragmentShader deleted
+   (unreachable by construction — it dispatched on names no stock shader has,
+   and could only ever fire on a MOD shader whose filename contained "main" or
+   "ssao", silently rewriting it). vNormal patch deleted (zero matches).
+   ssaocombine alpha patch removed rather than re-derived: it discarded fogColor
+   and its *1.85 was tuned against a composite that contributed nothing.
+   Sky-dome guard re-derived and re-anchored. Everything surviving now warns
+   once per run on a miss or an unexpected match count.
 
-   Shader change, so it needs `zipdir -udf build/gzdoom.pk3 wadsrc/static` and a
-   cleared MSL cache. Both were done; there WERE stale mt_shadersppdepthblurfp
-   *.msl files that would have masked it.
+3. STILL OPEN, UNCHANGED: Tier 2 direct-composite path has never executed ·
+   Apple Silicon completely untested (nothing on the compute path has ever run
+   there — not performance, not the read-write paths) · BlitCurrentToImage's
+   conversion branch confirmed unreachable, kept deliberately, its V-flip
+   unverified · custom PP shaders never tested, no mod to hand.
 
-   STILL TO VERIFY: one mt_ao_probe run. Expect the gate to pass on most pixels,
-   alpha ~0.1-0.3 in corners, and [2] to show a large non-zero differing count.
-   If [2] is still 0 with alpha non-zero, the fragments are not landing and the
-   stencil test comes back into play.
+================================================================================
+WHAT LANDED TODAY
+================================================================================
 
-   Original diagnosis below, kept because the eliminations in it remain valid.
+    45d558b74  handoff: static audit pass — a false-pass test caught before it ran
+    117eb475f  metal: mt_capture — programmatic GPU frame capture
+    518af860b  docs: GPU capture protocol; label PP encoders
+    ae3f5a0a8  docs: where each capture reading lives in Xcode
+    2f6d864b2  metal: label render targets
+    354b0e038  metal: mt_ao_probe — measure the composite instead of a trace
+    6e72df1f8  metal: probe the AO alpha; fix a degenerate reading
+    ebc854ebf  shaders: keep depth through the vertical AO blur   <- THE FIX
+    6fd5271d1  docs: the pk3 rebuild command targeted a file the engine never loads
+    85f5583e0  docs: postprocess pass graph for the reference AO chain
+    91d6e7213  metal: audit the shader string patches
 
-   **AO computes but never reaches the screen.** gl_ssao 0 vs gl_ssao 3
-   produce BYTE-IDENTICAL frames, yet AO is running and correct. Everything
-   below is measured, not inferred:
-     - PPCPU AO present, samples=120, at gl_ssao 3; absent at gl_ssao 0, so
-       the cvar applies and the pass really is gated off.
-     - gl_ssao_debug 1 shows a healthy occlusion buffer, aligned with the real
-       geometry (dark in the actual concave corners).
-     - gl_ssao_debug 7 (step(1e-5, ssao.y)) is white everywhere: the depth
-       channel is populated.
-     - gl_ssao_debug 3 (ssao.yyy/1000) measured min 43, median 75, max 106 —
-       correct WORLD units for this compact interior. So the shader's
-       `ssao.y > 2.0` gate PASSES, and depthMask ~= 0.38.
-     - Computed alpha should therefore reach ~0.11 in corners. An 11% blend
-       cannot produce byte-identical frames.
-   The narrowing that matters: every gl_ssao_debug mode uses SetNoBlend and
-   every one of them reaches the screen. Normal mode is the ONLY path that
-   uses SetAlphaBlend() + SetOutputSceneColor() (hw_postprocess.cpp:940-945).
-   Suspect the alpha-blend composite, NOT AO generation. Metal does plumb
-   BlendMode through PP pipeline creation (mt_postprocess.cpp:303-320), so
-   this needs a fresh look rather than another capture.
-   Do NOT re-measure AO generation. Four debug modes have now cleared it.
+Commit messages carry the reasoning. This file deliberately does not repeat it.
 
-   NARROWED 2026-08-06 BY STATIC AUDIT — every named suspect is now ELIMINATED.
-   Two independent read-throughs (mine and a codex audit) agreed, and each
-   item below was verified against the source, not accepted on report:
+================================================================================
+THE COVERAGE HOLE — still the durable finding
+================================================================================
 
-     - PSO CACHE KEY: CLEAN. This was the strongest prior, because this branch
-       has already been bitten by a cache key omitting shader defines. It does
-       not hold here. PPKey carries blendMode, operator== compares BlendOp /
-       SrcAlpha / DestAlpha explicitly, and PPKeyHash mixes blendMode.AsDWORD
-       (mt_pipelinestate.h:97-123). A no-blend PSO cannot be reused for the
-       blend case.
-     - BLEND DESCRIPTOR: CORRECT. ConfigureBlendMode (mt_pipelinestate.cpp:573)
-       maps STYLEALPHA_Src -> SourceAlpha and STYLEALPHA_InvSrc ->
-       OneMinusSourceAlpha, and the STYLEOP_Add case (:650) guards its
-       opaque-overwrite early-out on Src==One && Dest==Zero specifically so the
-       translucent style still reaches setBlendingEnabled(true) at :662. The
-       comment there shows this trap was already anticipated once.
-     - CLEAR GATE: CORRECT. mt_postprocess.cpp:303-306 clears only on the
-       One/Zero combination, i.e. for the debug modes and not for the AO
-       composite, so the blend does load existing content.
-     - OUTPUT TARGET: CORRECT. SetOutputSceneColor resolves to SceneColor
-       (mt_postprocess.cpp:266) and the later PP copy reads that same texture
-       (:600). No ping-pong mixup.
-     - LOAD ACTION: correct here, but the reasoning is CONDITIONAL, not flat.
-       mt_renderstate.cpp:1446-1449 computes
-           clear = (mClearTargets & CT_Color) || !filled
-       so a target absent from mClearedTargets gets LoadActionClear, not Load.
-       SceneColor is filled by AO time, so it loads — but do not quote this as
-       "the load action is always Load".
+This branch is validated by "build it, load a WAD, look at it", so the tested
+surface equals exactly whatever the dev config happens to enable. Passes behind
+a default-off cvar had never had a single pixel checked. Four were broken.
 
-   So the composite PATH is architecturally sound, which pushes the cause into
-   the SHADER OUTPUT. The leading candidate is now item 2's dead patch, and
-   items 1 and 2 may well be ONE BUG: the dead patch targets exactly the line
-   that produces this pass's colour and alpha (mt_shader.cpp:904-907), and was
-   meant to force RGB to black and scale alpha by 1.85. Unpatched, Metal blends
-   fogColor at unscaled alpha.
-
-   BUT DO NOT BOOK THAT AS THE ANSWER. It explains a WRONG composite; it does
-   not by itself explain a BYTE-IDENTICAL one. Blending non-black fogColor at
-   alpha ~0.11 would be plainly visible. Byte identity additionally requires
-   either alpha reaching exactly zero, or fogColor == destination at every
-   tested pixel. Establish which before claiming a fix.
-
-   Two loose ends nobody has positively confirmed:
-     - STENCIL TEST. mt_postprocess.cpp:269-271 binds depth-stencil and enables
-       a stencil test whenever output is SceneColor ("SSAO Fix ... avoid
-       bleeding through portals"). A stencil test failing everywhere discards
-       the draw entirely and yields byte-identical frames. It is NOT a clean
-       discriminator — the debug modes target SceneColor too, so they are
-       stencil-tested as well and they do reach the screen — but it is the one
-       remaining piece of state on this path never checked at runtime.
-     - STALE BINARY ARCHIVE. GetPPPipelineState feeds every PSO through
-       setBinaryArchives (mt_pipelinestate.cpp:221-226). A stale archive can
-       mask a source fix, which has bitten this branch before. If a source
-       change here appears to do nothing, suspect the archive before the code.
-
-   NEXT STEP is a GPU frame capture, not another screenshot A/B. One capture of
-   the normal ssaocombine draw shows the bound PSO's blend state, the stencil
-   result, the attachment and load action, and the actual SceneFog vs SceneColor
-   values simultaneously. Screenshot A/Bs have now taken this as far as they
-   can; four of them agreed and none of them localized it.
-
-   CAPTURE BEFORE FIXING ITEM 2. This ordering is deliberate, for two reasons,
-   and the second is the one that matters:
-
-     - The baseline is unrecoverable. Item 2's ssaocombine fix rewrites exactly
-       the line producing this pass's colour and alpha. Land it and the
-       gl_ssao 0 == gl_ssao 3 byte-identity is gone permanently. If AO then
-       starts working, you learn THAT something changed without learning WHICH
-       of the three candidates did it — a fix you cannot explain.
-     - The capture validates the premise of the whole 2026-08-06 audit.
-       Everything appended that day is a claim about SOURCE. If the running
-       binary does not match that source — stale generated MSL, stale PSO
-       archive — then every static finding describes code that is not
-       executing, item 2 included. No amount of further reading can close that
-       gap; only the capture can.
-
-   HOW TO CAPTURE — docs/gpu-capture-protocol.md is the full runbook, with the
-   pre-flight, the prediction sheet, an outcome-by-outcome interpretation table
-   and the failure modes. Summary follows; follow the doc when you actually run
-   it.
-
-   mt_capture, NEW this session, no Xcode build needed.
-
-   Programmatic MTLCaptureManager capture armed from the console, so the
-   existing one-launch-per-configuration protocol is unchanged. It was written
-   in preference to an Xcode-generator build because that build needs the
-   viewpoint-pinning arguments (-iwad, -file, -loadgame capspot.zds) retyped
-   into a scheme by hand, and a wrong viewpoint in a trace has no HUD or title
-   bar to catch it. It would also carry a SECOND PSO archive, which is the last
-   thing wanted when a stale archive is one of the hypotheses under test.
-
-       METAL_CAPTURE_ENABLED=1 ./build/gzdoom.app/Contents/MacOS/gzdoom \
-         -iwad DOOM2.wad \
-         -file ~/Documents/GZDoom/Ashes2063Enriched2_23.pk3 \
-         -loadgame capspot.zds \
-         +gl_exposure_speed 1 +gl_ssao 3 \
-         > /tmp/capture.log 2>&1
-
-   In the console type `mt_capture`, then CLOSE THE CONSOLE. The world does not
-   render while the console is open, so the countdown does not advance and the
-   capture never fires — the same constraint mt_bloom_dump has. Default is 30
-   frames; `mt_capture 60` if more settling is wanted. Frames are slow at this
-   viewpoint, so budget well over a minute. The trace lands in
-   ~/Documents/GZDoom/gputrace/frame-<timestamp>.gputrace; `open` it.
-
-   THE ENV VAR IS NOT OPTIONAL when running the binary directly, which is how
-   this protocol launches it. The bundle's Info.plist does carry
-   MetalCaptureEnabled, but that only applies to a bundle launch. Without the
-   variable, mt_capture refuses at ARMING time and prints the instructions
-   rather than failing silently a minute later, which would waste the launch.
-
-   NOT RUNTIME-VERIFIED YET. It builds, the CCMD is registered, and the plist
-   key is in the bundle, but no capture has actually been taken — the first run
-   is the test. If it misbehaves, suspect the arming path first.
-
-   CLEAR THE PSO BINARY ARCHIVE FIRST. GetPPPipelineState feeds every pipeline
-   through setBinaryArchives (mt_pipelinestate.cpp:221-226). Capturing a stale
-   PSO would look exactly like a real finding. This branch has been bitten by
-   the archive masking a fix before.
-
-   READ THESE FOUR THINGS off the normal (non-debug) ssaocombine draw:
-
-     1. Is blending ENABLED, with SourceAlpha / OneMinusSourceAlpha factors?
-        This confirms or destroys the entire static audit above.
-     2. Did the STENCIL TEST pass, or did it discard the draw? This is the only
-        piece of state on the path never checked at runtime, and a
-        discard-everywhere explains byte identity completely.
-     3. LOAD ACTION on the SceneColor attachment — Load or Clear?
-     4. The actual SceneFog.rgb vs SceneColor.rgb at a DARK CORNER pixel. This
-        is what decides whether the dead patch can explain BYTE identity, or
-        only a wrong composite. If they are equal there, the dead patch is
-        sufficient; if not, something else is zeroing the contribution.
-
-   State a prediction for each before looking, per CLAUDE.md. Mine, from source:
-   1 enabled and correct, 2 passes, 3 Load, 4 NOT equal — which would mean the
-   dead patch is NOT the whole story and item 1 stays open.
-
-   PRE-EXISTING, AND THAT IS MEASURED, NOT ASSUMED. It would have been easy to
-   assume 5a9b53e1b caused this, since every AO A/B above ran on a build that
-   already contained it, and the argument for innocence was only that a
-   coordinate flip relocates AO rather than zeroing it. So mt_shader.cpp was
-   reverted to 5a9b53e1b^, rebuilt, and the A/B repeated:
-
-       pre-fix  gl_ssao 0   md5 092337f83c455bb8827f1e7f08c8ddb3
-       pre-fix  gl_ssao 3   md5 092337f83c455bb8827f1e7f08c8ddb3
-
-   Byte-identical there too, so AO contributed nothing before the orientation
-   fix either. Do not re-run this; it is settled. (It also cost one file
-   rebuild and two launches, which is what a claim of this kind is worth on
-   this branch -- four source-reading passes once cleared the vertical blur.)
-
-2. **The string patches — AUDITED 2026-08-06. It is not one dead patch. It is
-   three live dead ones plus an entire unreachable block.**
-
-   Done, so this item is now a FIX list, not an audit task. Every count below
-   was measured by grepping the current shader sources; the routing claim was
-   verified at the call sites.
-
-   THE ROUTING DEFECT, which is the structural half. PatchFragmentShader
-   (mt_shader.cpp:804) has exactly ONE caller, :962, inside
-   MtShaderManager::LoadFragShader (:940) — the SCENE shader path. Stock
-   postprocess shaders compile through the other function,
-   PatchPostprocessFragmentShader (:873), called at :1417. Therefore every
-   PP/shadow branch sitting inside PatchFragmentShader CANNOT EXECUTE for stock
-   PP shaders at all. Not brittle — unreachable. That covers the ssao.fp
-   FetchViewPos rewrite, the normal-Z comment-out, the IGN insertion, the
-   lineardepth.fp reverse-Z fetch rewrite, and the shadowmap.fp replacement.
-
-   THREE LIVE ZERO-MATCH FAILURES (on the reachable path, silently no-op):
-     - vNormal stabilization: `vNormal\s*=` matches ZERO times in any current
-       shader.
-     - PP SSAO sky-dome guard: searches for a line containing AOStrength;
-       ssao.fp:151 now reads `... * effectiveStrength + (1.0 -
-       effectiveStrength) ...`.
-     - PP ssaocombine adjustment: as previously reported (mt_shader.cpp:904).
-
-   THE SKY-DOME ONE IS SELF-INFLICTED, AND THAT IS THE POINT. ssao.fp:149 now
-   computes `float effectiveStrength = AOStrength * distanceFade;` — that
-   distanceFade is OUR OWN AO distance fade (ac0fec5db, the Trenchfoot sky
-   work). Landing it silently killed the Metal sky-dome patch that matched the
-   old AOStrength line. The failure mode this item predicted in the abstract —
-   "an upstream shader edit breaks them invisibly" — actually arrived from
-   INSIDE the branch. Any shader edit here can silently disarm a Metal patch,
-   so the loud-failure fix below is worth more than it looks.
-
-   PARTIAL APPLICATION IS THE TRAP WHEN FIXING THIS. The routing-dead SSAO
-   block has five patterns; three of them (jitter, angle, AO-return) ALSO have
-   zero matches against current sources. Simply rerouting that block would
-   apply two of five patches — a half-patched shader, which is worse than an
-   unpatched one and much harder to diagnose. Re-derive all five patterns
-   against current source before rerouting anything.
-
-   WARNING BEHAVIOUR: only the PP V-flip added in 5a9b53e1b warns on a miss
-   (mt_shader.cpp:1394). Everything else fails silently. The world-normal guard
-   logs only when it DOES apply (:779), which is the wrong way round.
-
-   ONE MORE ROBUSTNESS NOTE from the same audit: the V-flip's present-shader
-   exemption is `strstr(FragmentShader, "present")`, not an allow-list
-   (mt_shader.cpp:1388). A custom effect whose lump path merely contains
-   "present" would silently skip the correction. No current shader hits this.
-
-   Original text follows.
-
-   **Audit the remaining string patches — one is already silently dead.**
-   PatchPostprocessFragmentShader searches ssaocombine for
-
-       FragColor = vec4(fogColor, (1.0 - attenutation) * depthMask);
-
-   but the shader now reads `..., ssao.y > 2.0 ? (...) : 0.0);`. Exact-match
-   count is ZERO, so `find()` returns npos, the `if` quietly fails, and that
-   Metal-specific adjustment has been doing nothing. The other regex/find
-   patches in mt_shader.cpp have no protection against the same thing — an
-   upstream shader edit breaks them invisibly. The vertex patch added in
-   5a9b53e1b logs a warning naming the shader when its pattern misses; the rest
-   should do likewise, or better, fail loudly.
-
-3. Still open from before: Tier 2 direct-composite path has never executed ·
-   Apple Silicon completely untested · BlitCurrentToImage's conversion branch
-   confirmed unreachable, kept deliberately, its V-flip unverified.
-
-4. SKIPPED DELIBERATELY: the morning handoff's task-1 step 2 (rebuild at
-   b017e7c92^ to show the tonemap modes were byte-identical BEFORE the fix).
-   The cache-collision mechanism was already proven by direct measurement on
-   blur.fp (the frozen 78x41 bbox), the key demonstrably excluded the defines,
-   and tonemap.fp's five variants sit in the same code path. It would confirm a
-   mechanism already confirmed. Reinstate it only if you want the record
-   airtight.
-
-THE COVERAGE HOLE — the durable finding
-
-gl_tonemap defaults to 0 and mode 0 early-returns; gl_lens defaults to false.
-**Neither pass had ever executed on Metal.** Same for custom PP shader
-textures. This branch is validated by "build it, load a WAD, look at it", so
-the tested surface equals exactly whatever the dev config happens to enable.
-Passes that run by default (bloom, SSAO, present) have been debugged hard;
-passes behind a default-off cvar had never had a single pixel checked.
-
-WORDING CORRECTION 2026-08-06: "passes that run by default (bloom, SSAO,
-present)" is loose and a fact-check flagged it. Only PRESENT runs by default.
-gl_bloom is false and gl_ssao is 0 in a FRESH config
-(hw_postprocess_cvars.cpp:30, :61); they run by default IN THIS INI, which is
-not the same claim. Exposure inherits this — it returns immediately when
-!gl_bloom (hw_postprocess.cpp:441), so its SWEEP "default: on" means "on in
-this ini" too. The argument is unaffected — the tested surface still equals
-whatever the dev config enables, which is exactly the point — but the two
-senses of "default" must not be blurred in a document this one is measured
-against.
-
-Assume every default-off postprocess setting on Metal is untested until
-someone turns it on and looks. Three of them were broken; the fourth (AO
-composite) is item 1 above.
-
-THE SWEEP — the whole postprocess surface, enumerated
+Assume every default-off postprocess setting is untested until someone turns it
+on and looks.
 
   pass        gate                     default        draws  status
   present     always                   on             1      exercised constantly
-  exposure    with bloom               on             many   exercised
-  bloom       gl_bloom                 false          many   on in this ini; sub-1%
+  exposure    with bloom               off (fresh)    many    on in this ini
+  bloom       gl_bloom                 false          many    on in this ini; sub-1%
   tonemap     gl_tonemap               0 = off        1      WAS BROKEN -> fixed
   lens        gl_lens                  false          1      WAS BROKEN -> fixed
-  fxaa        gl_fxaa                  0 = off        2      UNRESOLVED, see below
-  ssao        gl_ssao                  0 = off        many   composite broken, item 1
-  colormap    GAMEPLAY (fixedcm/flash) fires in play  1      NEVER TESTED
+  fxaa        gl_fxaa                  0 = off        2      UNRESOLVED, test (c)
+  ssao        gl_ssao                  0 = off        many   FIXED, verify with (0)
+  colormap    GAMEPLAY (fixedcm/flash) fires in play  1      NEVER TESTED, test (b)
   menu blur   gl_menu_blur / gameinfo  -1 = mod's     many   runs, output sane
-  custom PP   gl_custompost + a mod    true           N      NEVER TESTED, no mod to hand
+  custom PP   gl_custompost + a mod    true           N      NEVER TESTED
 
-The DEFAULT column above means "in this ini" for bloom, exposure and ssao; see
-the wording correction above. Every cvar default and every draw count in this
-table was re-verified against source 2026-08-06 and is otherwise correct:
-gl_bloom false, gl_tonemap 0, gl_lens false, gl_fxaa 0, gl_ssao 0,
-gl_menu_blur -1.0 (hw_postprocess_cvars.cpp:30,41,47,53,61,99), gl_custompost
-true (hw_postprocess.cpp:997); fxaa 2 draws (:380, :392), lens 1 (:350),
-tonemap 1 (:632), colormap 1 (:565). The even/odd pass-parity argument that
-drove the headline fix therefore rests on confirmed counts.
+"Default" means "in this ini" for bloom, exposure and ssao; in a FRESH config
+only present runs. Cvar defaults and draw counts verified 2026-08-06
+(hw_postprocess_cvars.cpp:30,41,47,53,61,99; hw_postprocess.cpp:997; fxaa 2
+draws at :380/:392, lens 1 at :350, tonemap 1 at :632, colormap 1 at :565).
 
-The GATE column is abbreviated, not complete. Three gates it omits, none of
-which changes a conclusion here but any of which could confound a future A/B:
-bloom also requires the default fixed colormap, no SSAO debug mode, and
-positive scene dimensions (hw_postprocess.cpp:78); tonemap can be forced on by
-a LEVEL OVERRIDE even at gl_tonemap 0 (:610); ssao also returns early on zero
-scene dimensions or zero effective strength (:788).
+Gates the table omits, any of which could confound a future A/B: bloom also
+needs the default fixed colormap, no SSAO debug mode, and positive scene
+dimensions (:78); tonemap can be forced on by a LEVEL OVERRIDE at gl_tonemap 0
+(:610); ssao also returns early on zero dimensions or zero effective strength
+(:788).
 
-**colormap is the one that matters and it is not a cvar at all.**
-PPColormap::Render returns early only when `flash == 1.f` and fixedcm is not a
-special colormap. A palette flash — taking damage, picking up an item — or a
-special colormap makes it run ONE draw. Pre-5a9b53e1b that means the screen
-flipped upside down every time the player got hit. It survived unnoticed
-because all testing happens standing still at a pinned savegame where nothing
-ever flashes. Every other item on this list required opting in via a cvar;
-this one did not.
+**colormap is the one that matters and it is not a cvar at all.** A palette
+flash — taking damage, picking up an item — makes it run one draw. Pre-5a9b53e1b
+that means the screen flipped upside down every time the player got hit. It
+survived unnoticed because all testing happens standing still at a pinned
+savegame where nothing ever flashes.
 
-Still untested. `give invulnerability` FAILS in Ashes 2063 ("Unknown item") —
-it is a total conversion and the Doom item does not exist. Use the powerup
-CLASS instead, which lives in the base gzdoom.pk3 zscript and sets
-player.fixedcolormap directly (powerups.zs:221):
-
-    give PowerInvulnerable
-
-That gives a SUSTAINED special colormap for ~30s, so the pass runs every frame
-and can be screenshotted at leisure rather than racing a few-tic flash.
-
-fxaa is unresolved, not passing. The one A/B taken was confounded by exposure
-drift (see the determinism section). Redo it with a same-config control pair:
-gl_fxaa 0 twice and gl_fxaa 1 once, all captured after the same settling
-routine. Only a difference clearing the control pair counts, and it must have
-the EDGE-LOCAL, roughly symmetric shape antialiasing produces.
-
-menu blur was captured with gl_menu_blur 4 forced (the -1 default defers to the
-mod's gameinfo, and then "blur is fine" cannot be told from "the mod never
-asked for blur"). It executes and the output is sane, but at that blur radius
-orientation is not rigorously determinable. Treat as weak evidence.
-
-NEW: THIS VIEWPOINT CAN REPRODUCE BIT-EXACTLY — BUT ONLY ONE DIRECTION OF THE
-RESULT IS TRUSTWORTHY
-
-Two launches of an identical config produced byte-identical PNGs
-(ssao3a == ssao3b, md5 af8e771f...), and so did the pre-fix AO pair
-(092337f8...). So md5 CAN settle a question here, far more cheaply than the
-blob statistics used up to now.
-
-**The asymmetry is the whole point, and an earlier draft of this handoff got it
-wrong by claiming a zero noise floor outright:**
-
-  - BYTE-IDENTICAL is strong. It means no drift occurred AND the change under
-    test did nothing. Both at once. tonemap 0 == 4 and the pre-fix AO pair are
-    solid on this basis.
-  - BYTE-DIFFERENT is AMBIGUOUS. It is equally consistent with a real effect
-    and with exposure drift between launches, and it needs a same-config
-    control pair before it means anything.
-
-MEASURED counterexample, so this is not theoretical. gl_fxaa 0 vs gl_fxaa 1,
-captured in two launches with gl_exposure_speed 1 set in both:
-
-    mean signed delta +4.12   brighter 279948 px (39.3%)   darker 6650 (0.9%)
-
-FXAA is edge antialiasing; its difference must be thin, edge-local and roughly
-symmetric. A broad one-directional BRIGHTENING over 39% of the frame,
-concentrated on the lantern and crate, is exposure adaptation — the exact shape
-tools/localize.py's docstring warns about. The FXAA question is still open
-because of it.
-
-SCOPE CORRECTION 2026-08-06. The frame-count sentence below is stated more
-confidently than the retained evidence supports — the same overreach the
-determinism claim was already corrected for once. What is actually retained is
-TWO same-config byte-identical pairs described as captured at "comparable
-elapsed times". No frame-count-controlled capture or log survives, so
-frame-count determinism is a PLAUSIBLE MECHANISM, not a measured result. The
-asymmetric rule above (byte-identical is strong, byte-different needs a control
-pair) is unaffected and stands; only the explanation of WHY is unproven. Treat
-the next paragraph as a working hypothesis.
-
-Determinism holds for the same elapsed FRAME COUNT, not the same wall clock.
-Exposure adapts over frames, so a screenshot taken sooner or later after load
-converges differently even with gl_exposure_speed 1. ssao3a/ssao3b happened to
-be captured at comparable elapsed times; the fxaa pair was not.
-
-Anything with animation, RNG, or a moving viewpoint will not reproduce at all.
-
+================================================================================
 TOOLS
+================================================================================
 
-- tools/tonemap_predict.py (NEW) — predicts the Reinhard capture from the
-  Uncharted2 one per pixel, by inverting the tonemap curves. Validated against
-  a synthetic ramp: 0.309 levels on a true pair vs 28.122 on a collapsed pair.
-  Its docstring carries the rules that cost time this session.
-- mt_bloom_dump [frames] — per-level pyramid stats plus PNGs. NOTE: it dumps
-  only the path that ACTUALLY RAN last frame; the other prints <unavailable>.
-  Comparing compute against reference takes TWO launches, one per config.
-- tools/blobstats.py, pngdiff.py, localize.py, cluster.py as before.
+- mt_ao_probe [frames] (NEW) — reports the AO composite numerically: the blend
+  style actually handed to PSO creation, SceneColor read back before AND after
+  the draw with a differing-pixel count, the stencil/clear decisions, whole-frame
+  SceneFog stats, and the shader's own alpha derived from Ambient0. Needs
+  gl_ssao != 0 and gl_ssao_debug 0.
+- mt_capture [frames] (NEW) — programmatic Metal GPU frame capture, no Xcode
+  build needed. Needs METAL_CAPTURE_ENABLED=1 on the launch. See
+  docs/gpu-capture-protocol.md. Encoder labels are greppable straight out of the
+  trace: `strings -n 6 <trace>/capture | grep '^PP '`.
+- mt_bloom_dump [frames] — per-level pyramid stats plus PNGs. Dumps only the path
+  that ACTUALLY RAN last frame; comparing compute against reference takes two
+  launches.
+- tools/tonemap_predict.py — predicts the Reinhard capture from the Uncharted2
+  one by inverting the curves. Checks tonemap modes by curve RELATION, not by
+  difference.
+- tools/blobstats.py, pngdiff.py, localize.py, cluster.py as before. Each
+  docstring encodes rules that cost a session.
 
-CAPTURE PROTOCOL — unchanged, and it was violated again today at a cost
+================================================================================
+CAPTURE PROTOCOL — screenshots
+================================================================================
 
 1. Pin the viewpoint with capspot.zds (MAP51 lantern).
 2. ONE LAUNCH PER CONFIGURATION, cvars on the command line. The operator types
@@ -634,64 +203,82 @@ CAPTURE PROTOCOL — unchanged, and it was violated again today at a cost
 3. Never chain console commands with `;`.
 4. The console pauses the game and GetScreenshotBuffer only re-presents, so a
    shot taken with the console open reflects the last frame rendered with it
-   CLOSED. This applies to the ENGINE's screenshot command. macOS Cmd+Shift+4
-   sidesteps it entirely by capturing the live window.
+   CLOSED. macOS Cmd+Shift+4 sidesteps this by capturing the live window.
 5. -exec runs before `Init complete.` and +screenshot never fires.
+6. +mt_caps on the command line prints viewport numbers from before the first
+   frame. The format line is valid; the viewport lines are not.
 
-What went wrong today: cvars were typed into a running console instead of one
-launch per config. `gl_lens 1` was set and never set back, so it silently
-applied to four later captures INCLUDING an mt_bloom_dump, and the whole batch
-had to be redone. Setting a cvar on the command line also means the frame
-before you open the console already has the right config, which is what makes
-rule 4 safe.
+Determinism: this viewpoint reproduces BIT-EXACTLY for the same elapsed frame
+count, and byte-identical pairs have been observed repeatedly. The asymmetry is
+the point:
+  - BYTE-IDENTICAL is strong: no drift occurred AND the change did nothing.
+  - BYTE-DIFFERENT is AMBIGUOUS: equally consistent with a real effect and with
+    exposure drift. It needs a same-config control pair before it means
+    anything. Measured counterexample: gl_fxaa 0 vs 1 gave +4.12 mean signed
+    delta over 39% of the frame, which was exposure, not FXAA.
+The frame-count explanation is a plausible mechanism, not a measured result —
+no frame-count-controlled artifact is retained.
 
-Note +mt_caps on the command line prints viewport numbers from before the first
-frame (it reported `Scene viewport: 0,386 0x773`). The format line is valid;
-the viewport lines are not. Type it in the console if you need those.
-
+================================================================================
 THE METHOD LESSONS — the expensive ones
+================================================================================
 
-- **A test whose two outcomes look the same is not a test.** gl_fxaa 1 was
-  designed to prove the pass-parity theory and came back upright, apparently
-  falsifying it. FXAA is TWO draws, so an even count was the theory's own
-  prediction. Count the draws before predicting the parity.
-- **Prefer an effect whose application is self-evident.** gl_lens was the test
-  that worked, partly because barrel distortion is unmistakable: a null result
-  could not masquerade as a pass. FXAA's subtlety made its null undetectable.
-- **A mathematical identity is the strongest available probe.** gl_tonemap 4
-  removed the shader maths as a variable entirely.
-- **Byte-identical captures are ambiguous, ALWAYS.** They mean "perfect
-  identity" and "the pass never ran" equally well. What distinguished them for
-  tonemap 4 was the PRE-fix observation that mode 4 visibly broke the frame.
-  What distinguished them for AO was the PPCPU AO metric label.
+- **A DEBUG MODE THAT CHANGES THE PIPELINE IS NOT AN OBSERVATION OF THE
+  PIPELINE.** This is the big one from today, and it cost four sessions.
+  hw_postprocess.cpp:910 wraps both AO blur passes in `if (gl_ssao_debug < 2)`,
+  so every debug mode that displays depth SKIPS the pass that destroys it. Four
+  correct debug-mode readings all pointed away from the bug. Before trusting a
+  debug view, check what it changes besides the display.
+- **A test whose two outcomes look the same is not a test.** Recurred twice
+  today: `give PowerInvulnerable` would have passed a colormap test that never
+  ran, and a probe reading sampled the darkest pixels — where fog and scene are
+  both black and "equal" is guaranteed. Both were caught by asking what the
+  negative result would look like.
+- **Match the minimum, not the sentence.** Every dead string patch died because
+  it spelled out a whole statement and someone edited part of it — including our
+  own commits. Anchor on the smallest thing that must be true.
+- **Verify the artifact you changed is the one being loaded.** There are TWO
+  gzdoom.pk3 files; the engine loads the one in the app bundle. Updating
+  build/gzdoom.pk3 alone left the engine running a six-week-old shader and made
+  a correct fix measure as a total failure. Also clear the MSL cache.
 - **Measure the magnitude, do not eyeball the image.** gl_ssao_debug 3 looked
-  "near-black, so the depth must be normalised" — the obvious reading, and
-  wrong. Sampling the actual pixels gave 43-106 world units and overturned the
-  diagnosis. The launch was worth it precisely because it could overturn it.
+  "near-black, so depth must be normalised" — the obvious reading, and wrong.
+- **A mathematical identity is the strongest available probe.** gl_tonemap 4 is
+  sqrt(c*c) == c, which removed shader maths as a variable entirely.
+- **Byte-identical captures are ambiguous, ALWAYS.** They mean "perfect
+  identity" and "the pass never ran" equally well.
+- **State a numeric prediction before looking.** Every real defect on this branch
+  was caught this way; several confident readings of the code were not.
+- **Check gzdoom.ini before diagnosing a renderer bug.** An entire AO
+  investigation once resolved to config.
 
-Config at session end: gl_tonemap=0, gl_lens=false, gl_fxaa=0, gl_ssao=3,
-gl_bloom=true, gl_bloom_amount=1.4, gl_exposure_base=0.35,
-gl_exposure_speed=1, mt_compute_bloom=false, mt_compute_ao=false,
-mt_hdr_pipeline=true, vid_preferbackend=3, r_drawfuzz=1.
-Window 1440x801, scene viewport 1440x773.
-
+================================================================================
 RUNNING THE GAME
+================================================================================
 
     ./build/gzdoom.app/Contents/MacOS/gzdoom \
       -iwad DOOM2.wad \
       -file ~/Documents/GZDoom/Ashes2063Enriched2_23.pk3 \
       -loadgame capspot.zds \
-      +gl_exposure_speed 1 \
-      "+mt_bloom_dump 60"          # optional; quote it, the arg is part of it
+      +gl_exposure_speed 1
 
 - -loadgame takes a BARE filename. capspot.zds lives in
   ~/Documents/GZDoom/Savegames/doom.id.doom2.commercial/, OUTSIDE the repo and
   NOT covered by git. Do not delete it; it is what makes captures comparable
   across builds.
-- Redirect stdout to a log. That log is how you prove which config a screenshot
-  belongs to — and today it is also what revealed the console-typed cvars.
+- Redirect stdout to a log. That log proves which config a screenshot belongs to.
 - Engine screenshots land in ~/Documents/GZDoom/Screenshots. Use these rather
-  than Cmd+Shift+4 for anything involving pixel maths: they are exact, with no
-  window chrome and consistent dimensions.
-- Frames render at only a few fps at this viewpoint, so a dump armed for N
-  frames can take well over a minute. Budget for it.
+  than Cmd+Shift+4 for anything involving pixel maths.
+- After ANY change under wadsrc/:
+      build/tools/zipdir/zipdir -udf \
+        build/gzdoom.app/Contents/MacOS/gzdoom.pk3 wadsrc/static
+      rm -f ~/Library/Application\ Support/zdoom/cache/*.msl
+  Note the BUNDLE path. See the method lesson above.
+- Frames render at only a few fps at this viewpoint. Budget over a minute for
+  anything armed for N frames.
+
+Config at session end: gl_tonemap=0, gl_lens=false, gl_fxaa=0, gl_ssao=3,
+gl_bloom=true, gl_bloom_amount=1.4, gl_exposure_base=0.35, gl_exposure_speed=1,
+mt_compute_bloom=false, mt_compute_ao=false, mt_hdr_pipeline=true,
+vid_preferbackend=3, r_drawfuzz=1.
+Window 1440x801, scene viewport 1440x773.
