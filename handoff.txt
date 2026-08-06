@@ -40,7 +40,26 @@ START HERE — three tests, each one launch
     This run also exercises the new shader-patch warnings. Any "Metal: shader
     patch MISSED" line in the log is a real finding — grep for it.
 
-(b) COLORMAP — the only broken-by-default path that affects ORDINARY PLAY.
+(b) COLORMAP — PASSED 2026-08-06. Kept as the regression check.
+
+    RESULT: scene renders greyscale (colormap applied) with the HUD still in
+    colour (correct -- PPColormap runs on the scene before 2D), and the frame is
+    UPRIGHT. Pre-5a9b53e1b this pass flipped the whole screen, and it fires
+    every time the player takes damage, so this closes the only broken-by-
+    default path that affected ordinary play.
+    Screenshot_Doom_20260806_231319.png.
+
+    STILL OPEN, minor: POLARITY not verified. InverseMap maps ColorizeStart
+    {1,1,1} to ColorizeEnd {0,0,0}, so it should read as a photographic
+    NEGATIVE in luminance, not merely desaturated. The capture is consistent
+    with either. To close it, take the same viewpoint WITHOUT the sphere and
+    run tools/pngdiff.py on the pair -- inverted luminance is unmistakable
+    there. Orientation, which is what this test existed for, is settled.
+
+    NOTE the capture was taken at a different viewpoint, not capspot.zds. Fine
+    for an orientation test; not comparable to the AO captures.
+
+    ORIGINAL INSTRUCTIONS follow, for re-running.
 
     Same launch line, plus +gl_lens 0 +gl_fxaa 0 +gl_tonemap 0.
     Console:  give InvulnerabilitySphere
