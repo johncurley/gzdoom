@@ -919,10 +919,32 @@ static void PatchPostprocessFragmentShader(std::string &source,
     // branches are written, so the next edit to that line does not disarm it.
     // This is the general lesson from the audit -- match the minimum, not the
     // sentence.
-    std::regex occlusionRegex(R"(viewNormal != vec3\(0\.0\) \?)");
-    PatchRegex(source, occlusionRegex,
-               "(viewPosition.z > 0.0001 && viewNormal != vec3(0.0)) ?",
-               "ssao sky-dome far-plane guard", shadername, 1);
+    // REVERTED 2026-08-06, same day it was re-derived. Re-enabling this guard
+    // was a mistake and it is measured, not suspected.
+    //
+    // The patch had matched zero times since ac0fec5db, so "restoring" it was a
+    // BEHAVIOUR CHANGE dressed up as a repair. mt_ao_probe, one run either side:
+    //
+    //     guard off:  mean ssao.x = 0.86671   (~13% occlusion)
+    //     guard on:   mean ssao.x = 0.99924   (~0.08% occlusion)
+    //
+    // Nothing else touching the SSAO pass changed between those runs, so the
+    // guard is what removed the occlusion.
+    //
+    // Why it back-fires: it rejects pixels with viewPosition.z <= 0.0001 as
+    // far-plane/sky, but the same probe shows ssao.y saturating at 65504 (the
+    // half-float maximum) with a mean of 15627 -- a distribution consistent
+    // with some pixels pinned at the ceiling and REAL GEOMETRY NEAR ZERO. The
+    // guard therefore rejects the walls it was supposed to protect. Whatever
+    // viewPosition.z means on this path, it is not the world-unit view depth
+    // the guard assumed, and the depth scale is a defect in its own right --
+    // note that ac0fec5db's distance fade reads the same value and would be
+    // fully faded out at those magnitudes.
+    //
+    // Do not reinstate this without first fixing the depth scale and measuring
+    // ssao.x either side. The sky-dome problem it targeted is separately
+    // handled by ac0fec5db's distance fade and by the zero-normal guards in
+    // PatchVertexShader.
   }
 
   if (shadername.find("ssaocombine") != std::string::npos) {
