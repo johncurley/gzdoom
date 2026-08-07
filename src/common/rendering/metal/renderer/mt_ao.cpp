@@ -99,7 +99,33 @@ struct SSAOParams {
     // Weight of the screen-space decorrelation term mixed into the
     // world-cell jitter (see AoNoise). 0 = pure world-locked noise.
     float screenNoiseMix;
+    // screen->stencilValue for this frame. Samples whose stencil differs
+    // belong to a different portal layer and are rejected.
+    uint stencilRef;
 };
+
+// Portal-layer coverage, read straight out of the scene stencil buffer.
+//
+// This replaces a full-screen render pass (RenderCoverageMask) that existed
+// only because compute kernels cannot run a stencil test: it materialized
+// "stencil == ref" into an R8 texture so the kernels could sample it. That pass
+// cost 3.12ms/frame on the reference Intel machine -- MORE than the entire AO
+// computation -- because it cleared and stored a screen-sized target and loaded
+// both depth and stencil attachments every frame, all independent of AO
+// resolution. See AGENTS.md 2026-08-07.
+//
+// A stencil texture VIEW (X32_Stencil8 over the Depth32Float_Stencil8 scene
+// buffer) gives the kernel the same information for free. read() takes integer
+// texel coordinates and has no sampler, so the clamp the old nearestClampSampler
+// provided has to be done by hand -- sampleSceneUV routinely goes out of range
+// at screen edges, and an unclamped read() is undefined rather than merely wrong.
+inline bool StencilPasses(texture2d<uint, access::read> stencilTex, float2 uv, uint ref) {
+    uint2 dim = uint2(stencilTex.get_width(), stencilTex.get_height());
+    if (dim.x == 0 || dim.y == 0) return true;
+    float2 c = clamp(uv, 0.0, 1.0) * float2(dim);
+    uint2 p = min(uint2(c), dim - uint2(1));
+    return stencilTex.read(p).r == ref;
+}
 
 struct AOFlags {
     int flipY;
@@ -290,7 +316,7 @@ kernel void ssao_compute(
     texture2d<float, access::write> aoOutput [[texture(2)]],
     texture2d<float, access::sample> normalTexture [[texture(3)]],
     texture2d<float, access::sample> sceneColorTexture [[texture(4)]],
-    texture2d<float, access::sample> coverageMask [[texture(5)]])
+    texture2d<uint, access::read> stencilTexture [[texture(5)]])
 {
     float2 outSize = float2((float)aoOutput.get_width(), (float)aoOutput.get_height());
     if (gid.x >= outSize.x || gid.y >= outSize.y) return;
@@ -404,12 +430,8 @@ kernel void ssao_compute(
                 continue;
             }
 
-            // Stencil coverage guard: skip samples from different portal layers.
-            // Sampled with sampleSceneUV, not sampleUV: the mask is allocated at
-            // the stencil attachment's resolution, so it shares the scene
-            // textures' coordinate space, not the AO-local one.
-            float sampleCov = coverageMask.sample(nearestClampSampler, sampleSceneUV).r;
-            if (sampleCov < 0.5) continue;
+            // Portal-layer guard, read from the stencil buffer directly.
+            if (!StencilPasses(stencilTexture, sampleSceneUV, params.stencilRef)) continue;
 
             float sampleRawDepth = depthTexture.sample(nearestClampSampler, sampleSceneUV).r;
             if (sampleRawDepth <= 0.0001) {
@@ -473,7 +495,7 @@ kernel void ssao_compute_alchemy(
     texture2d<float, access::write> aoOutput [[texture(2)]],
     texture2d<float, access::sample> normalTexture [[texture(3)]],
     texture2d<float, access::sample> sceneColorTexture [[texture(4)]],
-    texture2d<float, access::sample> coverageMask [[texture(5)]])
+    texture2d<uint, access::read> stencilTexture [[texture(5)]])
 {
     float2 outSize = float2((float)aoOutput.get_width(), (float)aoOutput.get_height());
     if (gid.x >= outSize.x || gid.y >= outSize.y) return;
@@ -589,12 +611,8 @@ kernel void ssao_compute_alchemy(
             continue;
         }
 
-        // Stencil coverage guard: skip samples from different portal layers.
-        // Sampled with sampleSceneUV, not sampleUV: the mask is allocated at
-        // the stencil attachment's resolution, so it shares the scene
-        // textures' coordinate space, not the AO-local one.
-        float sampleCov = coverageMask.sample(nearestClampSampler, sampleSceneUV).r;
-        if (sampleCov < 0.5) continue;
+        // Portal-layer guard, read from the stencil buffer directly.
+        if (!StencilPasses(stencilTexture, sampleSceneUV, params.stencilRef)) continue;
 
         float sampleRawDepth = depthTexture.sample(nearestClampSampler, sampleSceneUV).r;
         if (sampleRawDepth <= 0.0001) {
@@ -695,7 +713,7 @@ kernel void ssao_compute_mip(
     texture2d<float, access::write> aoOutput [[texture(2)]],
     texture2d<float, access::sample> normalTexture [[texture(3)]],
     texture2d<float, access::sample> sceneColorTexture [[texture(4)]],
-    texture2d<float, access::sample> coverageMask [[texture(5)]],
+    texture2d<uint, access::read> stencilTexture [[texture(5)]],
     texture2d<float, access::sample> depthPyramid [[texture(6)]])
 {
     float2 outSize = float2((float)aoOutput.get_width(), (float)aoOutput.get_height());
@@ -809,12 +827,8 @@ kernel void ssao_compute_mip(
                 continue;
             }
 
-            // Stencil coverage guard: skip samples from different portal layers.
-            // Sampled with sampleSceneUV, not sampleUV: the mask is allocated at
-            // the stencil attachment's resolution, so it shares the scene
-            // textures' coordinate space, not the AO-local one.
-            float sampleCov = coverageMask.sample(nearestClampSampler, sampleSceneUV).r;
-            if (sampleCov < 0.5) continue;
+            // Portal-layer guard, read from the stencil buffer directly.
+            if (!StencilPasses(stencilTexture, sampleSceneUV, params.stencilRef)) continue;
 
             // Mip-selected depth fetch: distant steps read a coarser,
             // cache-friendlier level of the pre-linearized depth pyramid
@@ -1245,20 +1259,6 @@ static const char* COVERAGE_MASK_SOURCE = R"(
 #include <metal_stdlib>
 using namespace metal;
 
-struct CoverageVSOut {
-    float4 position [[position]];
-};
-
-vertex CoverageVSOut coverage_mask_vs(uint vid [[vertex_id]]) {
-    CoverageVSOut out;
-    float2 pos[3] = { float2(-1.0, -1.0), float2(3.0, -1.0), float2(-1.0, 3.0) };
-    out.position = float4(pos[vid], 0.0, 1.0);
-    return out;
-}
-
-fragment float4 coverage_mask_fs(CoverageVSOut in [[stage_in]]) {
-    return float4(1.0, 0.0, 0.0, 1.0);
-}
 )";
 
 MTL::RenderPipelineState* MtAOModule::BuildCombinePipeline(MTL::Library* library,
@@ -1355,7 +1355,6 @@ MtAOModule::MtAOModule(MetalRenderDevice* device) : fb(device) {
         }
     }
 
-    CreateCoverageMaskPipeline();
 }
 
 MtAOModule::~MtAOModule() {
@@ -1368,12 +1367,11 @@ MtAOModule::~MtAOModule() {
     if (atrousPSO) atrousPSO->release();
     if (combineRenderPSO) combineRenderPSO->release();
     if (combineLibrary) combineLibrary->release();
-    if (coverageMaskPSO) coverageMaskPSO->release();
     if (mAOTexture) mAOTexture->release();
     if (mBlurTexture) mBlurTexture->release();
     if (mFullresAOTexture) mFullresAOTexture->release();
     if (mFullresTempTexture) mFullresTempTexture->release();
-    if (mCoverageMask) mCoverageMask->release();
+    if (mStencilView) mStencilView->release();
     if (mDepthPyramidTexture) mDepthPyramidTexture->release();
 }
 
@@ -1407,38 +1405,59 @@ void MtAOModule::EnsureTextures(int width, int height) {
     mAOHeight = height;
 }
 
-// Stencil coverage mask: R8Unorm at *scene* resolution, render target for a
-// stencil-tested fullscreen triangle.
+// A stencil texture view over the scene depth/stencil buffer.
 //
-// It used to be allocated at AO resolution alongside mAOTexture, which cannot
-// work: a stencil test compares at the fragment's own framebuffer coordinate,
-// and the stencil attachment is the full-res SceneDepthStencil. A quarter-res
-// render target therefore rasterized quarter-res fragments that stencil-tested
-// against full-res stencil pixels (x,y) -- so the mask encoded the top-left
-// quarter of the screen's stencil state, addressed as if it were the whole
-// screen. No viewport or scissor setting can fix that; the sizes have to
-// match. Harmless whenever the stencil buffer is uniform (mask comes back
-// all-1), so it only ever manifested across portal boundaries.
-void MtAOModule::EnsureCoverageMask(int width, int height) {
-    width = std::max(width, 1);
-    height = std::max(height, 1);
+// This replaces MtAOModule::RenderCoverageMask, a full-screen render pass that
+// existed only because a compute kernel cannot run a stencil test: it drew a
+// stencil-tested fullscreen triangle to materialize "stencil == ref" into an
+// R8 texture for the kernels to sample. MEASURED at 3.12ms/frame on the
+// reference Intel machine -- more than the whole AO computation -- because it
+// cleared and stored a screen-sized target and loaded both depth and stencil
+// attachments every frame, none of which scales with AO resolution. Removing
+// it made compute AO 0.36ms FASTER than the reference PP path. See AGENTS.md
+// 2026-08-07.
+//
+// Metal exposes the stencil half of a combined Depth32Float_Stencil8 texture
+// through a view in the X32_Stencil8 format, which the kernels read as
+// texture2d<uint>. No copy, no pass, and it cannot go stale relative to the
+// stencil buffer because it IS the stencil buffer.
+//
+// The old size-matching hazard is gone with it. That mask had to be allocated
+// at the stencil attachment's resolution, because a stencil test compares at
+// the fragment's own framebuffer coordinate -- a quarter-res render target
+// stencil-tested against full-res stencil pixels and silently encoded the
+// top-left quarter of the screen. A view has no such freedom to get wrong.
+MTL::Texture* MtAOModule::EnsureStencilView(MTL::Texture* depthStencilTex) {
+    if (!depthStencilTex)
+        return nullptr;
 
-    if (mCoverageMask && mCoverageWidth == width && mCoverageHeight == height)
-        return;
+    // Rebuilt whenever the underlying texture changes -- resolution changes
+    // recreate SceneDepthStencil, and a view of a released texture is a
+    // dangling read that would show up as garbage portal rejection.
+    if (mStencilView && mStencilViewSource == depthStencilTex)
+        return mStencilView;
 
-    if (mCoverageMask) { mCoverageMask->release(); mCoverageMask = nullptr; }
+    if (mStencilView) { mStencilView->release(); mStencilView = nullptr; }
+    mStencilViewSource = nullptr;
 
-    auto covDesc = MTL::TextureDescriptor::alloc()->init();
-    covDesc->setWidth(width);
-    covDesc->setHeight(height);
-    covDesc->setPixelFormat(MTL::PixelFormatR8Unorm);
-    covDesc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
-    covDesc->setStorageMode(MTL::StorageModePrivate);
-    mCoverageMask = fb->device->device->newTexture(covDesc);
-    covDesc->release();
+    if (depthStencilTex->pixelFormat() != MTL::PixelFormatDepth32Float_Stencil8) {
+        // Not a combined format: no stencil to read. The kernels fall back to
+        // "everything passes", which is the correct behaviour when there is no
+        // portal stencil to reject against.
+        Printf(PRINT_LOG, "Metal: AO stencil view unavailable, depth format %d has no stencil.\n",
+               (int)depthStencilTex->pixelFormat());
+        return nullptr;
+    }
 
-    mCoverageWidth = width;
-    mCoverageHeight = height;
+    mStencilView = depthStencilTex->newTextureView(MTL::PixelFormatX32_Stencil8);
+    if (!mStencilView) {
+        Printf(PRINT_HIGH, TEXTCOLOR_YELLOW
+               "Metal: could not create AO stencil view; portal rejection disabled.\n"
+               TEXTCOLOR_NORMAL);
+        return nullptr;
+    }
+    mStencilViewSource = depthStencilTex;
+    return mStencilView;
 }
 
 void MtAOModule::EnsureFullresTextures(int width, int height) {
@@ -1722,6 +1741,11 @@ bool MtAOModule::Render(float m5, int sceneWidth, int sceneHeight, const HWViewp
         ? (float)mt_compute_ao_noise_pixels * 2.0f * invFocalLenY / (float)mAOHeight
         : 0.0f;
     params.screenNoiseMix = clamp((float)mt_compute_ao_noise_screenmix, 0.0f, 1.0f);
+    // Same value the old coverage-mask pass used as its stencil reference, and
+    // the same one the reference PP path sets on its composite draw
+    // (vk_pprenderstate.cpp:134) -- the kernels now do the comparison the
+    // fixed-function stencil test used to do for them.
+    params.stencilRef = (uint32_t)screen->stencilValue;
 
     auto cmdBuf = fb->GetCommands()->GetRenderCommandBuffer();
     if (!cmdBuf)
@@ -1731,15 +1755,14 @@ bool MtAOModule::Render(float m5, int sceneWidth, int sceneHeight, const HWViewp
     const bool blurAO = gl_ssao_debug < 2;
     auto aoStart = std::chrono::high_resolution_clock::now();
 
-    // Render stencil coverage mask: white where stencil == screen->stencilValue
-    // Used by compute kernel to reject samples crossing portal boundaries.
-    // Sized from the stencil attachment inside RenderCoverageMask -- see
-    // EnsureCoverageMask.
-    RenderCoverageMask(buffers->SceneDepthStencil->GetTexture(), screen->stencilValue);
+    // Portal rejection reads the stencil buffer directly. This used to be a
+    // full-screen render pass materializing the same test into a mask texture,
+    // measured at 3.12ms/frame -- see EnsureStencilView.
+    MTL::Texture* stencilView = EnsureStencilView(buffers->SceneDepthStencil->GetTexture());
 
     Execute(cmdBuf, buffers->SceneDepthStencil->GetTexture(),
             buffers->SceneNormal->GetTexture(), buffers->SceneColor->GetTexture(),
-            mAOTexture, mCoverageMask, params, blurAO,
+            mAOTexture, stencilView, params, blurAO,
             useFullresCleanup, algorithm);
     MTL::Texture *combineAO = (useFullresCleanup && mFullresResultTexture) ? mFullresResultTexture :
         (mLowresResultTexture ? mLowresResultTexture : mAOTexture);
@@ -1827,7 +1850,7 @@ void MtAOModule::Combine(MTL::Texture* aoTex, int sceneWidth, int sceneHeight, b
                             (NS::UInteger)3);
 }
 
-void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL::Texture* normalTex, MTL::Texture* sceneColorTex, MTL::Texture* aoTex, MTL::Texture* coverageTex, const SSAOParams& params, bool blurAO, bool useFullresCleanup, int algorithm) {
+void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL::Texture* normalTex, MTL::Texture* sceneColorTex, MTL::Texture* aoTex, MTL::Texture* stencilTex, const SSAOParams& params, bool blurAO, bool useFullresCleanup, int algorithm) {
     if (!ssaoPSO || (blurAO && (!blurPSO || !mBlurTexture)) || !depthTex || !normalTex || !sceneColorTex || !aoTex) return;
     mFullresResultTexture = nullptr;
     mLowresResultTexture = aoTex;
@@ -1883,7 +1906,7 @@ void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL
     encoder->setTexture(aoTex, 2);
     encoder->setTexture(normalTex, 3);
     encoder->setTexture(sceneColorTex, 4);
-    if (coverageTex) encoder->setTexture(coverageTex, 5);
+    if (stencilTex) encoder->setTexture(stencilTex, 5);
     if (useMipAlgorithm) encoder->setTexture(mDepthPyramidTexture, 6);
 
     struct AOFlags { int flipY; float invBackingScale; } aoFlags;
@@ -2007,91 +2030,3 @@ void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL
     encoder->endEncoding();
 }
 
-void MtAOModule::CreateCoverageMaskPipeline() {
-    if (coverageMaskPSO)
-        return;
-
-    auto sourceString = NS::String::string(COVERAGE_MASK_SOURCE, NS::UTF8StringEncoding);
-    auto compileOptions = MTL::CompileOptions::alloc()->init();
-    compileOptions->setLanguageVersion(MTL::LanguageVersion2_0);
-    NS::Error* error = nullptr;
-    auto library = fb->device->device->newLibrary(sourceString, compileOptions, &error);
-    compileOptions->release();
-    if (!library) {
-        if (error) {
-            Printf(PRINT_LOG, "Metal: Failed to compile coverage mask library: %s\n",
-                   error->localizedDescription()->utf8String());
-            error->release();
-        }
-        return;
-    }
-
-    auto vert = library->newFunction(NS::String::string("coverage_mask_vs", NS::UTF8StringEncoding));
-    auto frag = library->newFunction(NS::String::string("coverage_mask_fs", NS::UTF8StringEncoding));
-    library->release();
-    if (!vert || !frag) {
-        if (vert) vert->release();
-        if (frag) frag->release();
-        return;
-    }
-
-    auto desc = MTL::RenderPipelineDescriptor::alloc()->init();
-    desc->setVertexFunction(vert);
-    desc->setFragmentFunction(frag);
-    desc->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormatR8Unorm);
-    desc->setDepthAttachmentPixelFormat(MTL::PixelFormatDepth32Float_Stencil8);
-    desc->setStencilAttachmentPixelFormat(MTL::PixelFormatDepth32Float_Stencil8);
-
-    NS::Error* psoError = nullptr;
-    coverageMaskPSO = fb->device->device->newRenderPipelineState(desc, &psoError);
-    if (!coverageMaskPSO && psoError) {
-        Printf(PRINT_LOG, "Metal: Failed to create coverage mask pipeline: %s\n",
-               psoError->localizedDescription()->utf8String());
-        psoError->release();
-    }
-    desc->release();
-    vert->release();
-    frag->release();
-}
-
-void MtAOModule::RenderCoverageMask(MTL::Texture* depthStencilTex, int stencilValue) {
-    if (!coverageMaskPSO || !depthStencilTex)
-        return;
-
-    // Size the mask from the stencil attachment itself, so the two can never
-    // drift out of sync: the mask's pixel grid *is* the stencil buffer's pixel
-    // grid. Note this is the full attachment (screen-sized), not the scene
-    // viewport sub-rect, which is why the kernels sample it with the same
-    // scene-scaled UV they use for scene colour/depth/normal.
-    EnsureCoverageMask((int)depthStencilTex->width(), (int)depthStencilTex->height());
-    if (!mCoverageMask)
-        return;
-
-    auto cmdBuf = fb->GetCommands()->GetRenderCommandBuffer();
-    if (!cmdBuf)
-        return;
-
-    auto desc = MTL::RenderPassDescriptor::alloc()->init();
-    desc->colorAttachments()->object(0)->setTexture(mCoverageMask);
-    desc->colorAttachments()->object(0)->setLoadAction(MTL::LoadActionClear);
-    desc->colorAttachments()->object(0)->setClearColor(MTL::ClearColor(0.0, 0.0, 0.0, 0.0));
-    desc->colorAttachments()->object(0)->setStoreAction(MTL::StoreActionStore);
-    desc->depthAttachment()->setTexture(depthStencilTex);
-    desc->depthAttachment()->setLoadAction(MTL::LoadActionLoad);
-    desc->depthAttachment()->setStoreAction(MTL::StoreActionDontCare);
-    desc->stencilAttachment()->setTexture(depthStencilTex);
-    desc->stencilAttachment()->setLoadAction(MTL::LoadActionLoad);
-    desc->stencilAttachment()->setStoreAction(MTL::StoreActionDontCare);
-
-    auto encoder = cmdBuf->renderCommandEncoder(desc);
-    desc->release();
-    if (!encoder)
-        return;
-
-    encoder->setRenderPipelineState(coverageMaskPSO);
-    encoder->setDepthStencilState(fb->GetPipelineStateManager()->GetPPStencilState());
-    encoder->setStencilReferenceValue((uint32_t)stencilValue);
-    encoder->setCullMode(MTL::CullModeNone);
-    encoder->drawPrimitives(MTL::PrimitiveTypeTriangle, (NS::UInteger)0, (NS::UInteger)3);
-    encoder->endEncoding();
-}

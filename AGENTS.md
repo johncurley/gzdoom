@@ -28,14 +28,15 @@
      The `TextureUploadCPU` timer fired for the first time, confirming the
      2026-08-04 async-path fix. Do not optimize; see "the texture-upload
      cold-load test" below for the numbers and the lever if it ever matters.
-  4. **continue the broader compute-shader postprocess conversion — and the
-     first job is a 3.1ms fix, not a conversion.** CORRECTED 2026-08-07 (see
-     "CORRECTION — compute AO is NOT slower" below): compute AO is 0.36ms
-     FASTER than the reference PP path once `RenderCoverageMask` is removed,
-     and that single full-screen pass costs 3.12ms — about 33% of frame time at
-     the reference viewpoint. Fixing it is the highest-value known item on this
-     branch. Compute bloom's ~39% deficit is separate, unexplained, and needs
-     the same elimination treatment.
+  4. **continue the broader compute-shader postprocess conversion.** Status
+     after 2026-08-07, which went through two wrong answers before landing —
+     read the RETRACTION section below before trusting any AO cost number in
+     this file. Settled: compute AO's cost is its SAMPLE LOOP, as the
+     2026-07-14 bisection already said. It beats the reference PP path at <=4
+     samples (6.27-6.40ms vs 6.73ms) and loses at the gl_ssao 3 default of 12
+     (9.22ms). Open question is visual, not architectural: is 4-sample
+     AlchemyAO good enough? Nobody has looked. Compute bloom's ~39% deficit is
+     separate and still unexplained.
      SUPERSEDED, kept only so the reasoning is traceable: **the earlier claim
      that compute postprocess is a NET LOSS on this GPU.** Compute AO is 6-8x more expensive than the reference PP path
      (every algorithm, even handicapped in compute's favour at quarter-res);
@@ -4672,3 +4673,89 @@ Also: **interleave A/B across a long session.** The absolute numbers drifted
 than several of the effects under test. The 0.056ms noise floor measured
 back-to-back at session start did NOT hold hours later. Every conclusion above
 is from runs interleaved with a reference config measured in the same series.
+
+## 2026-08-07 (final): RETRACTION — the 3.12ms coverage-mask finding was an artifact. Compute AO's cost is the sample loop after all.
+
+**This retracts the previous section's headline. `RenderCoverageMask` was not
+costing 3.12ms; it was costing ~0.1ms. Three separate measurement errors, all
+the same underlying mistake.**
+
+### Error 1: the "coverage mask costs 3.12ms" result disabled AO
+
+The temporary experiment skipped `RenderCoverageMask` — which also skipped
+`EnsureCoverageMask` inside it, leaving `mCoverageMask` **null**. The bind is
+guarded (`if (coverageTex) setTexture(..., 5)`), so nothing was bound at
+texture(5); an unbound sample returns 0; and the guard `if (sampleCov < 0.5)
+continue;` therefore rejected **every sample in every kernel**. The AO loop did
+no work at all.
+
+Proven after the fact: that capture is pixel-identical to a `gl_ssao 0` capture
+(max_delta 1, zero pixels differing by >2), while real compute AO differs from
+no-AO by max_delta 26 over 35.7% of pixels. **I measured the cost of AO doing
+nothing and reported it as the cost of one render pass.**
+
+### Errors 2 and 3: both "flat" sweeps varied knobs that do nothing
+
+- **Resolution.** `aoScale = clamp(aoScale, 1, 4)` caps the divisor at 4, so the
+  `mt_compute_ao_scale 4 / 8 / 16` sweep resolved to 4, 4, 4. Identical configs
+  measured three times.
+- **Sample count.** Algorithm 1 (AlchemyAO) takes its count from
+  `mt_compute_ao_alchemy_samples`; `mt_compute_ao_directions`/`_steps` are
+  GTAO's and it ignores them (`mt_ao.cpp:1677-1685`). The 1x1-vs-8x8 sweep
+  varied nothing.
+
+So "flat against a 64x work range" and "flat against a 16x pixel range" were
+both **the same config measured repeatedly**. The flatness was real; it just
+described the instrument, not the renderer.
+
+### The corrected measurement
+
+With knobs that actually take effect, interleaved with a reference baseline:
+
+    reference PP AO                     6.730
+    compute, alchemy_samples 1          6.272     <- FASTER than reference
+    compute, alchemy_samples 4          6.403     <- still faster
+    compute, alchemy_samples 16         9.638
+    compute, default (12 @ gl_ssao 3)   9.22
+    compute, scale 1 (full res)        15.104
+
+Cost tracks sample count and resolution, exactly as the 2026-07-14 bisection
+recorded in `mt_ao.cpp:1687-1693` already said: **the sample loop's dependent
+texture fetches are the cost driver.** That comment was right the whole time and
+this session spent hours re-deriving it wrongly before arriving back at it.
+
+**The real finding, such as it is:** compute AO is competitive with the
+reference path at <=4 samples and loses at the gl_ssao 3 default of 12. That is
+a quality/performance trade, not an architectural defect. Whether 4 samples
+looks acceptable is a visual question nobody has answered.
+
+### The stencil-view change was KEPT, and it is not a performance win
+
+`RenderCoverageMask` is gone, replaced by an `X32_Stencil8` texture view the
+kernels read directly (`EnsureStencilView`). Honest accounting:
+
+- **Output is pixel-identical** to the pre-change build at the reference
+  viewpoint (max_delta 0), so it is correctness-neutral where the stencil is
+  uniform.
+- **Performance-neutral**: 9.22 vs 9.29-9.38ms, inside run-to-run spread.
+- It is still worth keeping: it deletes a full-screen render pass, an R8 target,
+  a PSO and two shaders, and it removes an entire hazard class — the old mask
+  HAD to match the stencil attachment's resolution, and the file already records
+  a bug where it did not.
+- **Portal-boundary behaviour is unverified on screen.** No map with a portal in
+  view was tested. The comparison is equivalent by construction (same stencil,
+  same reference value) but that is a source claim.
+
+### The one lesson, which covers all three errors
+
+**Every wrong result this session came from a knob that did not do what its name
+said, and in no case did I check.** The unifying fix is cheap and mechanical:
+
+> Before trusting the TIMING of an A/B, confirm the two configs produce
+> different PIXELS. If a "faster" config renders identically to a disabled
+> feature, you disabled the feature. If a "no change" config renders identically
+> to the baseline, the knob did nothing.
+
+This branch already had the rule for screenshots ("byte-identical means the
+setting did not apply") and it applies verbatim to performance work, where it is
+easier to skip because the number moved and the number was what you wanted.

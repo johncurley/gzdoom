@@ -60,22 +60,23 @@ public:
         // Weight of the screen-space decorrelation term mixed into the
         // world-cell jitter (see AoNoise). 0 = pure world-locked noise.
         float screenNoiseMix;
+        // screen->stencilValue for this frame. The kernels reject samples
+        // whose stencil differs, i.e. samples from another portal layer.
+        uint32_t stencilRef;
     };
     bool Render(float m5, int sceneWidth, int sceneHeight, const HWViewpointUniforms* currentViewpoint);
-    void Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL::Texture* normalTex, MTL::Texture* sceneColorTex, MTL::Texture* aoTex, MTL::Texture* coverageTex, const SSAOParams& params, bool blurAO, bool useFullresCleanup, int algorithm);
+    void Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL::Texture* normalTex, MTL::Texture* sceneColorTex, MTL::Texture* aoTex, MTL::Texture* stencilTex, const SSAOParams& params, bool blurAO, bool useFullresCleanup, int algorithm);
 
 private:
     void EnsureTextures(int width, int height);
-    // The coverage mask lives at *scene* resolution, not AO resolution: a
-    // stencil test always compares at the fragment's own framebuffer
-    // coordinate, so a smaller render target cannot downsample a full-res
-    // stencil buffer -- it just reads the top-left corner of it. See
-    // RenderCoverageMask.
-    void EnsureCoverageMask(int width, int height);
+    // A stencil texture VIEW (X32_Stencil8) over the scene depth/stencil
+    // buffer, so the kernels can test portal layers themselves. This replaced
+    // a full-screen render pass that materialized the same information into an
+    // R8 texture and cost 3.12ms/frame -- more than the AO itself. Cached
+    // because newTextureView allocates; rebuilt when the source changes.
+    MTL::Texture* EnsureStencilView(MTL::Texture* depthStencilTex);
     void EnsureFullresTextures(int width, int height);
     void EnsureDepthPyramid(int width, int height);
-    void CreateCoverageMaskPipeline();
-    void RenderCoverageMask(MTL::Texture* depthStencilTex, int stencilValue);
     void Combine(MTL::Texture* aoTex, int sceneWidth, int sceneHeight, bool fullresAO);
 
     MetalRenderDevice* fb;
@@ -95,19 +96,17 @@ private:
     MTL::RenderPipelineState* BuildCombinePipeline(MTL::Library* library,
                                                    MTL::PixelFormat colorFormat);
     bool EnsureCombinePSOFormat(int colorFormat);
-    MTL::RenderPipelineState* coverageMaskPSO = nullptr;
     MTL::Texture* mAOTexture = nullptr;
     MTL::Texture* mBlurTexture = nullptr;
     MTL::Texture* mLowresResultTexture = nullptr;
     MTL::Texture* mFullresAOTexture = nullptr;
     MTL::Texture* mFullresTempTexture = nullptr;
     MTL::Texture* mFullresResultTexture = nullptr;
-    MTL::Texture* mCoverageMask = nullptr;
+    MTL::Texture* mStencilView = nullptr;
+    MTL::Texture* mStencilViewSource = nullptr;
     MTL::Texture* mDepthPyramidTexture = nullptr;
     int mAOWidth = 0;
     int mAOHeight = 0;
-    int mCoverageWidth = 0;
-    int mCoverageHeight = 0;
     int mFullresWidth = 0;
     int mFullresHeight = 0;
     int mDepthPyramidWidth = 0;

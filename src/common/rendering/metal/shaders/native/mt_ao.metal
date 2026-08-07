@@ -59,7 +59,33 @@ struct SSAOParams {
     // Weight of the screen-space decorrelation term mixed into the
     // world-cell jitter (see AoNoise). 0 = pure world-locked noise.
     float screenNoiseMix;
+    // screen->stencilValue for this frame. Samples whose stencil differs
+    // belong to a different portal layer and are rejected.
+    uint stencilRef;
 };
+
+// Portal-layer coverage, read straight out of the scene stencil buffer.
+//
+// This replaces a full-screen render pass (RenderCoverageMask) that existed
+// only because compute kernels cannot run a stencil test: it materialized
+// "stencil == ref" into an R8 texture so the kernels could sample it. That pass
+// cost 3.12ms/frame on the reference Intel machine -- MORE than the entire AO
+// computation -- because it cleared and stored a screen-sized target and loaded
+// both depth and stencil attachments every frame, all independent of AO
+// resolution. See AGENTS.md 2026-08-07.
+//
+// A stencil texture VIEW (X32_Stencil8 over the Depth32Float_Stencil8 scene
+// buffer) gives the kernel the same information for free. read() takes integer
+// texel coordinates and has no sampler, so the clamp the old nearestClampSampler
+// provided has to be done by hand -- sampleSceneUV routinely goes out of range
+// at screen edges, and an unclamped read() is undefined rather than merely wrong.
+inline bool StencilPasses(texture2d<uint, access::read> stencilTex, float2 uv, uint ref) {
+    uint2 dim = uint2(stencilTex.get_width(), stencilTex.get_height());
+    if (dim.x == 0 || dim.y == 0) return true;
+    float2 c = clamp(uv, 0.0, 1.0) * float2(dim);
+    uint2 p = min(uint2(c), dim - uint2(1));
+    return stencilTex.read(p).r == ref;
+}
 
 struct AOFlags {
     int flipY;
@@ -250,7 +276,7 @@ kernel void ssao_compute(
     texture2d<float, access::write> aoOutput [[texture(2)]],
     texture2d<float, access::sample> normalTexture [[texture(3)]],
     texture2d<float, access::sample> sceneColorTexture [[texture(4)]],
-    texture2d<float, access::sample> coverageMask [[texture(5)]])
+    texture2d<uint, access::read> stencilTexture [[texture(5)]])
 {
     float2 outSize = float2((float)aoOutput.get_width(), (float)aoOutput.get_height());
     if (gid.x >= outSize.x || gid.y >= outSize.y) return;
@@ -364,12 +390,8 @@ kernel void ssao_compute(
                 continue;
             }
 
-            // Stencil coverage guard: skip samples from different portal layers.
-            // Sampled with sampleSceneUV, not sampleUV: the mask is allocated at
-            // the stencil attachment's resolution, so it shares the scene
-            // textures' coordinate space, not the AO-local one.
-            float sampleCov = coverageMask.sample(nearestClampSampler, sampleSceneUV).r;
-            if (sampleCov < 0.5) continue;
+            // Portal-layer guard, read from the stencil buffer directly.
+            if (!StencilPasses(stencilTexture, sampleSceneUV, params.stencilRef)) continue;
 
             float sampleRawDepth = depthTexture.sample(nearestClampSampler, sampleSceneUV).r;
             if (sampleRawDepth <= 0.0001) {
@@ -432,7 +454,7 @@ kernel void ssao_compute_alchemy(
     texture2d<float, access::write> aoOutput [[texture(2)]],
     texture2d<float, access::sample> normalTexture [[texture(3)]],
     texture2d<float, access::sample> sceneColorTexture [[texture(4)]],
-    texture2d<float, access::sample> coverageMask [[texture(5)]])
+    texture2d<uint, access::read> stencilTexture [[texture(5)]])
 {
     float2 outSize = float2((float)aoOutput.get_width(), (float)aoOutput.get_height());
     if (gid.x >= outSize.x || gid.y >= outSize.y) return;
@@ -548,12 +570,8 @@ kernel void ssao_compute_alchemy(
             continue;
         }
 
-        // Stencil coverage guard: skip samples from different portal layers.
-        // Sampled with sampleSceneUV, not sampleUV: the mask is allocated at
-        // the stencil attachment's resolution, so it shares the scene
-        // textures' coordinate space, not the AO-local one.
-        float sampleCov = coverageMask.sample(nearestClampSampler, sampleSceneUV).r;
-        if (sampleCov < 0.5) continue;
+        // Portal-layer guard, read from the stencil buffer directly.
+        if (!StencilPasses(stencilTexture, sampleSceneUV, params.stencilRef)) continue;
 
         float sampleRawDepth = depthTexture.sample(nearestClampSampler, sampleSceneUV).r;
         if (sampleRawDepth <= 0.0001) {
@@ -653,7 +671,7 @@ kernel void ssao_compute_mip(
     texture2d<float, access::write> aoOutput [[texture(2)]],
     texture2d<float, access::sample> normalTexture [[texture(3)]],
     texture2d<float, access::sample> sceneColorTexture [[texture(4)]],
-    texture2d<float, access::sample> coverageMask [[texture(5)]],
+    texture2d<uint, access::read> stencilTexture [[texture(5)]],
     texture2d<float, access::sample> depthPyramid [[texture(6)]])
 {
     float2 outSize = float2((float)aoOutput.get_width(), (float)aoOutput.get_height());
@@ -767,12 +785,8 @@ kernel void ssao_compute_mip(
                 continue;
             }
 
-            // Stencil coverage guard: skip samples from different portal layers.
-            // Sampled with sampleSceneUV, not sampleUV: the mask is allocated at
-            // the stencil attachment's resolution, so it shares the scene
-            // textures' coordinate space, not the AO-local one.
-            float sampleCov = coverageMask.sample(nearestClampSampler, sampleSceneUV).r;
-            if (sampleCov < 0.5) continue;
+            // Portal-layer guard, read from the stencil buffer directly.
+            if (!StencilPasses(stencilTexture, sampleSceneUV, params.stencilRef)) continue;
 
             // Mip-selected depth fetch: distant steps read a coarser,
             // cache-friendlier level of the pre-linearized depth pyramid
