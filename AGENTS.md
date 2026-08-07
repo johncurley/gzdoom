@@ -28,10 +28,16 @@
      The `TextureUploadCPU` timer fired for the first time, confirming the
      2026-08-04 async-path fix. Do not optimize; see "the texture-upload
      cold-load test" below for the numbers and the lever if it ever matters.
-  4. ~~continue the broader compute-shader postprocess conversion~~
-     **RE-SCOPED 2026-08-07 — the validation this item demanded was run on the
-     two ALREADY-converted passes, and compute postprocess is a NET LOSS on
-     this GPU.** Compute AO is 6-8x more expensive than the reference PP path
+  4. **continue the broader compute-shader postprocess conversion — and the
+     first job is a 3.1ms fix, not a conversion.** CORRECTED 2026-08-07 (see
+     "CORRECTION — compute AO is NOT slower" below): compute AO is 0.36ms
+     FASTER than the reference PP path once `RenderCoverageMask` is removed,
+     and that single full-screen pass costs 3.12ms — about 33% of frame time at
+     the reference viewpoint. Fixing it is the highest-value known item on this
+     branch. Compute bloom's ~39% deficit is separate, unexplained, and needs
+     the same elimination treatment.
+     SUPERSEDED, kept only so the reasoning is traceable: **the earlier claim
+     that compute postprocess is a NET LOSS on this GPU.** Compute AO is 6-8x more expensive than the reference PP path
      (every algorithm, even handicapped in compute's favour at quarter-res);
      compute bloom is 39% more expensive. Noise floor 0.056-0.075ms, so these
      are 25-250x the floor. Do NOT convert further passes on Intel-class
@@ -4585,3 +4591,84 @@ first compute-AO measurement above was nearly published against algorithm 0
 while the recorded claim under test concerned algorithm 1, and the two differ by
 ~10%. `mt_caps` now prints the resolved algorithm and flags it as archived —
 exactly the class of trap the rest of that dump already existed to close.
+
+## 2026-08-07 (later): CORRECTION — compute AO is NOT slower. A coverage-mask render pass costs 3.1ms.
+
+**This supersedes the section above ("compute postprocess is a NET LOSS on this
+GPU") on cause, and partly on conclusion. That section's measurements were real
+but its diagnosis was wrong, and the roadmap entry derived from it was wrong.**
+
+### What the elimination series showed
+
+Compute AO's extra cost is **completely flat** against every knob that changes
+how much work the AO kernels do:
+
+    sample count   1x1 / 2x2 / 8x8 dirs x steps    28.9 / 28.0 / 28.5 ms   (64x work range)
+    AO resolution  scale 4 / 8 / 16                28.3 / 28.4 / 28.3 ms   (16x pixel range)
+    blur passes    1 / 2 / 3 / 4                   9.76 / 9.55 / 9.93 / 9.52 ms CPU
+    fullres cleanup + normal upsample off          9.24 vs 9.78 ms CPU
+
+A cost that does not move when the work moves by 64x is not the work.
+
+### The cause, isolated and reproduced
+
+Temporarily skipping `RenderCoverageMask` (since reverted):
+
+                                run 1     run 2
+    reference PP AO             6.570     6.567     <- repeats to 0.003ms
+    compute AO + coverage mask  9.380     9.285
+    compute AO, NO coverage     6.176     6.241
+
+**The coverage mask costs 3.12ms — more than the entire AO computation.**
+And with it gone, **compute AO is 0.36ms FASTER than the reference PP path.**
+
+`MtAOModule::RenderCoverageMask` is a full-screen render pass, every frame:
+clear + store a screen-sized mask texture, with `LoadActionLoad` on BOTH the
+depth and stencil attachments, to run one fullscreen triangle whose only job is
+to record where `stencil == screen->stencilValue`. Fixed bandwidth, independent
+of AO resolution — which is exactly the flat signature above.
+
+It exists because **compute kernels cannot do a stencil test.** The reference
+path gets this for free: Vulkan and the Metal raster composite set
+`stencilReference` on the composite draw itself
+(`vk_pprenderstate.cpp:134`), so the portal rejection costs nothing extra. The
+compute path has to materialize the same information as a texture first.
+
+### What this changes
+
+- **Compute AO is viable on this hardware after all**, and marginally better
+  than reference. The "6-8x more expensive" figure was almost entirely one
+  render pass that has nothing to do with compute AO's algorithm.
+- Roadmap priority 4 should NOT have been re-scoped to "do not convert further
+  passes" on this evidence. Corrected again above.
+- **The compute-bloom result is NOT re-explained by this** — bloom has no
+  coverage mask. Compute bloom being ~39% more expensive than reference bloom
+  stands as measured and is still unexplained. It deserves the same elimination
+  treatment before anyone concludes anything about it.
+
+### The fix, not yet implemented, prize 3.1ms (~33% of frame here)
+
+Ranked:
+1. **Skip the pass when no portal is in play.** With no portals the entire
+   scene has `stencil == stencilValue`, so the mask is all-ones and the kernels
+   can take an "unmasked" branch. Needs a reliable "portals were rendered this
+   frame" signal; `screen->stencilValue` alone is not obviously it.
+2. **Sample the stencil directly in the kernel** via a stencil texture view,
+   removing the materialization entirely. Cleanest if `Depth32Float_Stencil8`
+   supports a readable stencil view here.
+3. Render the mask at AO resolution. Blocked as stated: Metal requires colour
+   and depth/stencil attachment sizes to match, and the stencil source is
+   full-res.
+
+### Method note — the one that actually mattered
+
+**Every knob I could turn came back flat, and that flatness WAS the finding.**
+The instinct after three flat results is that the measurement is broken. It was
+the measurement working: flat against work means fixed cost, and fixed cost
+means look for a pass, not a loop.
+
+Also: **interleave A/B across a long session.** The absolute numbers drifted
+~1.2-2ms upward over ~50 launches on this thermally-limited MacBook Air — larger
+than several of the effects under test. The 0.056ms noise floor measured
+back-to-back at session start did NOT hold hours later. Every conclusion above
+is from runs interleaved with a reference config measured in the same series.
