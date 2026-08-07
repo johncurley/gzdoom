@@ -4806,3 +4806,68 @@ reported a spurious DIFF. It now hashes decoded pixels. Left in, it would have
 trained the reader to ignore the output — the worst failure mode a regression
 suite can have, and the same mistake this session already made twice in other
 places.
+
+## 2026-08-07: FrameGPU is NOT GPU busy time — CLAUDE.md's guidance on it is wrong as written
+
+CLAUDE.md says: "Read the **`FrameGPU`** line from `mt_metrics` for cost. It is
+real `GPUStartTime()/GPUEndTime()`." The second sentence is true and the first
+does not follow.
+
+Measured today, same run, `mt_metrics`:
+
+    config                     wall frame    FrameGPU active_avg
+    no AO, no bloom              4.008ms          5.586ms
+    reference AO, no bloom      10.542ms        234.780ms   <-- impossible
+    compute AO (alg 1)           7.588ms         30.835ms
+
+**A 234ms GPU span cannot coexist with a 10.5ms frame interval**, and a 30.8ms
+one cannot coexist with 7.6ms. GPU work on a single queue is serialized, so real
+per-frame GPU busy time of 30ms would cap the frame rate at ~33fps; the run
+reported 131fps.
+
+The reason is what the metric spans. A frame submits several command buffers
+(render, present, plus blits for uploads/mip regen). Taking the FIRST buffer's
+`GPUStartTime` to the LAST buffer's `GPUEndTime` includes every CPU gap between
+them. It is a wall-clock envelope containing GPU work, not a sum of GPU work.
+
+**Consequences for anything measured on this branch:**
+
+- Every absolute FrameGPU number in this file is an envelope, not a cost. The
+  compute-AO "17.6ms" and compute-bloom "+1.9ms" figures are inflated by an
+  unknown amount of CPU gap.
+- **Relative comparisons at a fixed config shape survive** — the AO series
+  ordering (compute > reference > none) is confirmed independently by wall-clock
+  frame interval, which is what the corrected sections used.
+- Use the **`Frame ... avg=` wall-clock interval** for cost. It is the number
+  that cannot lie about whether a change made the game slower.
+
+Fixing the metric means either summing per-command-buffer `(end - start)` rather
+than spanning, or, better, per-pass stage-boundary counter sampling — which this
+GPU does not support (`mt_caps`: "Stage counter sampling: no"). So the cheap fix
+is the sum, and it should be done before anyone quotes FrameGPU again.
+
+### The measurement environment degrades over a long session — badly
+
+Also recorded because it ended the day's measurements. Identical configs
+repeated to **0.003ms** early in the session and to **±4ms** after ~80
+GPU-heavy launches (13.000 then 16.857ms for the same 1440x801 config). That is
+thermal saturation on a fanless-class Intel MacBook Air, and it is larger than
+most effects this branch cares about.
+
+**Practical rule: do performance A/Bs early in a session, interleaved, and
+re-run a control config at the end. If the bracketing controls disagree by more
+than the effect, the whole series is void** — do not publish it, and do not try
+to correct for drift analytically.
+
+### Still unanswered: is the Intel build CPU- or GPU-bound?
+
+Partial evidence, from measurements taken while the machine was still cold and
+therefore trustworthy: varying ONLY shader work moved wall-clock frame time
+nearly 1:1 (AlchemyAO 4 samples 6.403ms -> 16 samples 9.638ms; full-resolution
+AO 15.104ms). That is GPU-bound behaviour under AO-heavy configurations.
+
+The clean experiment is a resolution sweep at a fixed scene -- same draw calls,
+fewer pixels -- and it was attempted and **failed to thermal drift**, producing
+non-monotonic garbage (1440: 13.0ms, 960: 10.8ms, 640: 15.2ms, 1440 again:
+16.9ms). Re-run it on a cold machine. It is one launch per resolution and it
+settles the question.
