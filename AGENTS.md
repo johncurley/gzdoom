@@ -4342,3 +4342,79 @@ derivable.
 The branch remains unreachable in normal play. That is fine and deliberate; it
 is now a guarded conversion path that is known to work rather than one that is
 merely hoped to.
+
+## 2026-08-07: custom PP shaders — FOUR defects, and the pass had never run at all
+
+The last never-tested item on the standing list, and the one with the worst
+ratio of "looks fine in review" to "does nothing at runtime". Fixed in
+`25fbdc24b`.
+
+### No mod needed — build a two-sided one
+
+The obvious move is to download a mod that ships a postprocess shader. A better
+one is `tools/pptest/make.py`, which builds a minimal mod DESIGNED as a test,
+which no real mod is:
+
+- `pptest_scale` is a CVARINFO cvar bound with `cvar_uniform`, so behaviour is
+  set from the command line and the matrix runs unattended.
+- At `1.0` the shader is a mathematical identity: the frame must be
+  byte-identical to no shader. **That single result proves three things — the
+  pass runs, its maths is exact, and it is upright**, since a V flip would show
+  as a huge delta rather than a null.
+- At any other value it must differ. Without this half the identity result is
+  worthless, being equally consistent with "the pass never ran".
+- The bound texture is pure red, so a channel-order bug renders BLUE. The null
+  cannot masquerade as a pass.
+
+### The four defects
+
+Three prevented the shader from compiling at all, each independently fatal:
+
+1. **`layout(location=...)` only under `IsVulkan()`** (`hw_postprocess.cpp`).
+   Metal runs glslang under SPIR-V semantics exactly as Vulkan does, so every
+   custom shader was rejected with *"SPIR-V requires location for user
+   input/output"*. Stock PP shaders declare locations in the lump; only the
+   custom path builds its in/out declarations in C++.
+2. **Metal prepended the prolog to the VERTEX stage.** Vulkan passes `""` there
+   (`vk_ppshader.cpp:39` vs `:48`). For a custom shader the prolog carries the
+   sampler and in/out declarations, so `layout(location=0) in vec2 TexCoord`
+   landed in `screenquad.vp` and collided with its own `PositionInProjection` at
+   location 0. Invisible for stock shaders, whose prolog is only a uniform block
+   that the vertex stage ignores.
+3. **`LoadPrivateShaderLump` searched only the engine pk3** — it used the
+   `int wadfile` overload with `0`. A MOD's shader lump was never found and the
+   fragment source came back empty. Now unrestricted, matching Vulkan.
+
+And one that survives compilation:
+
+4. **The `screen` target was never dispatched on Metal.** Shared `Pass1`/`Pass2`
+   run only `beforebloom` and `scene`; Vulkan (`vk_postprocess.cpp:190`) and
+   OpenGL (`gl_postprocess.cpp:150`) each run `screen` from their own present
+   path, and Metal did not. GLDEFS accepted it, `listshaders` listed it,
+   `shaderenable` enabled it, and nothing executed it.
+
+### Measured, all three targets
+
+    identity (scale 1.0) vs no shader   max_delta 0          exact, and upright
+    scale 0.5, scene and screen         39.8 -> 20.2 mean lum, 89.2% of px
+    scale 0.5, beforebloom              mean delta 26.83
+    hardcoded channel rotate            72.3% of px changed
+    custom PP texture, pure red         renders RED, not blue
+
+`beforebloom` differing from the other two (26.83 vs 26.36) is a result, not
+noise: it runs before bloom, so bloom re-adds energy from the darkened image.
+The insertion point is real and distinguishable.
+
+### The trap that hid it, twice in one session
+
+**The engine printed the exact glslang error the whole time — via `PRINT_LOG`,
+which does not reach stdout.** Every launch log looked clean while every custom
+shader failed to compile. The same trap had just cost time on the wipe probe,
+where a missing `PRINT_LOG` marker was nearly read as evidence the branch had
+not run.
+
+`PRINT_LOG` is invisible under `> log 2>&1`; it needs `+logfile`. Shader
+parse/link failures and missing shader lumps are now `PRINT_HIGH` in red,
+because a pass that cannot build is not a debug detail. **When a path
+"silently does nothing", run it once with `+logfile` before concluding it is
+silent.**

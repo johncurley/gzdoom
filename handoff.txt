@@ -281,7 +281,29 @@ THE STANDING LIST
    PerformWipe runs to completion inside one D_Display call, so no frame hook
    can catch a frame mid-wipe. Re-run mt_wipe_probe after touching either leg.
 
-5. STILL OPEN: custom PP shaders never tested, no mod to hand.
+5. CUSTOM PP SHADERS — FOUR DEFECTS FOUND AND FIXED 2026-08-07 (25fbdc24b).
+   They had never run AT ALL on Metal. No mod download was needed:
+   tools/pptest/make.py builds a minimal one designed as a two-sided test.
+
+     python3 tools/pptest/make.py
+     ./build/gzdoom.app/Contents/MacOS/gzdoom -iwad DOOM2.wad \
+       -file ~/Documents/GZDoom/Ashes2063Enriched2_23.pk3 -file /tmp/pptest.pk3 \
+       -loadgame capspot.zds +cl_capfps 1 \
+       +pptest_scale 1.0 +execafter 60 shaderenable pptest 1 +shotafter 120 quit
+
+   At scale 1.0 the shader is an identity and the frame MUST be byte-identical
+   to no shader -- which proves the pass runs, is exact, and is upright all at
+   once. At 0.5 it must differ, and that half is what makes the first mean
+   anything. Verified on all three targets; details in AGENTS.md.
+
+   THE STANDING LIST IS NOW EMPTY of never-tested passes.
+
+6. NEW STANDING TRAP: PRINT_LOG DOES NOT REACH STDOUT. The engine printed the
+   exact glslang error behind the custom-shader failure all along, and every
+   redirected launch log looked clean. It also nearly caused a wrong reading in
+   the wipe probe the same day. Use +logfile before concluding anything is
+   silent, and never read a missing PRINT_LOG line as evidence. Metal shader
+   parse/link failures and missing shader lumps are now PRINT_HIGH in red.
 
 ================================================================================
 WHAT LANDED TODAY
@@ -337,7 +359,7 @@ on and looks.
   ssao        gl_ssao                  0 = off        many   FIXED, verify with (0)
   colormap    GAMEPLAY (fixedcm/flash) fires in play  1      FIXED, passed + polarity
   menu blur   gl_menu_blur / gameinfo  -1 = mod's     many   runs, output sane
-  custom PP   gl_custompost + a mod    true           N      NEVER TESTED
+  custom PP   gl_custompost + a mod    true           N      WAS TOTALLY BROKEN -> fixed
 
 "Default" means "in this ini" for bloom, exposure and ssao; in a FRESH config
 only present runs. Cvar defaults and draw counts verified 2026-08-06
