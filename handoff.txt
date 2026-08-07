@@ -1,24 +1,31 @@
 Handoff — metal-audit, 2026-08-07
 
-Supersedes the 2026-08-05 handoff, which had accreted six layers of correction
-and become archaeology. Detail that used to live here now lives in commit
-messages; this file is open work, protocol, and the lessons that keep costing
-money. Tree clean, build green.
+Detail lives in commit messages; this file is open work, protocol, and the
+lessons that keep costing money. Tree clean, build green, binary at HEAD.
 
-If you read nothing else: AO NOW REACHES THE SCREEN on the reference path, for
-the first time on this branch — root-caused, fixed and verified on 2026-08-06 by
-two independent instruments plus a screenshot pair that had been byte-identical
-for the life of the branch. Details in standing item 1.
+IF YOU READ NOTHING ELSE: THE COVERAGE HOLE IS CLOSED. Every postprocess pass on
+the Metal backend has now been executed and checked on screen at least once.
+FIVE were broken — tonemap, lens, colormap, ssao and custom PP. All five are
+fixed and confirmed. The standing list no longer contains a single never-tested
+pass, for the first time on this branch.
 
-THE COVERAGE HOLE IS NOW CLOSED (2026-08-07). Of the passes that had never been
-checked, four were broken; all four are fixed and confirmed on screen, and the
-last two open checks — fxaa and colormap polarity — both PASSED. No launch-work
-is outstanding. The standing list is item 3 only.
+The last four items, all closed 2026-08-07:
+  - fxaa PASSED and colormap polarity PASSED (items b and c)
+  - Tier 2 direct composite is BLOCKED BY HARDWARE, not by missing work; every
+    reachable branch around it passes (item 3)
+  - BlitCurrentToImage's V flip VERIFIED, the dead branch executed (item 4)
+  - custom PP shaders had FOUR defects and had never run at all (item 5)
 
-Captures are now UNATTENDED: +shotafter / +execafter arm a countdown from the
-command line, and +cl_capfps 1 makes the frames bit-reproducible. A control pair
-at capspot now comes back byte-identical, i.e. a zero noise floor, so an A/B is
-worth taking without an operator at the keyboard. See CAPTURE PROTOCOL.
+CAPTURES ARE NOW UNATTENDED, which is what made that possible. +shotafter and
++execafter arm countdowns from the command line and +cl_capfps 1 makes frames
+bit-reproducible, so a control pair at capspot comes back BYTE-IDENTICAL — a
+zero noise floor, with nobody at the keyboard. Roughly forty capture launches
+were run this session without an operator. See CAPTURE PROTOCOL.
+
+WHAT TO DO NEXT is no longer a verification queue. The roadmap items parked
+during the audit are now the front of the line: AGENTS.md's priority 3 (the
+texture-upload cold-load test, still never observed firing) and priority 4 (the
+broader compute-postprocess conversion). See AGENTS.md "Active Roadmap".
 
 Read CLAUDE.md's "Measuring a rendering change", "GPU frame captures" and
 "Visual A/B captures" first. Then docs/metal-postprocess-graphs.md, which is new
@@ -35,10 +42,13 @@ as regression checks, each one launch and each unattended.
       -iwad DOOM2.wad \
       -file ~/Documents/GZDoom/Ashes2063Enriched2_23.pk3 \
       -loadgame capspot.zds \
-      +gl_exposure_speed 1 +gl_ssao 3 \
+      +cl_capfps 1 +gl_exposure_speed 1 +gl_ssao 3 \
+      +mt_ao_probe 900 \
       > /tmp/aoprobe.log 2>&1
 
-    Console: mt_ao_probe    then CLOSE THE CONSOLE and wait.
+    No console typing -- the probe arms from the command line. The original
+    instructions were "type mt_ao_probe, then CLOSE THE CONSOLE and wait",
+    which is exactly the operator step the countdown now removes.
 
     EXPECT: [5] gate passing on most pixels, max ssao.y in the hundreds,
     computed alpha up to ~0.1-0.3; [2] a large non-zero differing-pixel count.
@@ -306,35 +316,43 @@ THE STANDING LIST
    parse/link failures and missing shader lumps are now PRINT_HIGH in red.
 
 ================================================================================
-WHAT LANDED TODAY
+WHAT LANDED TODAY (2026-08-07)
 ================================================================================
 
-19 commits. Build green throughout, tree clean, binary at HEAD.
+8 commits. Build green throughout, tree clean, binary at HEAD. The previous
+session's 19 commits are in git log; they are not repeated here.
 
-  Instruments (most of the session's lasting value)
-    117eb475f  mt_capture -- programmatic GPU frame capture, no Xcode build
-    518af860b  GPU capture protocol doc; label PP encoders
-    ae3f5a0a8  where each capture reading lives in Xcode
-    2f6d864b2  label render targets, so a capture names them
-    354b0e038  mt_ao_probe -- measure the composite instead of reading a trace
-    6e72df1f8  probe the AO alpha; fix a degenerate reading of my own
-    07aa0740f  let mt_ao_probe arm from the command line
+  Instruments and capture infrastructure
+    627febacb  shotafter/execafter -- unattended, deterministic capture series
+    3703c6c24  execafter queues instead of replacing (found within the hour)
+    ea0ab7f43  mt_wipe_probe, and BlitCurrentToImage's V flip VERIFIED
 
-  The fix
-    ebc854ebf  keep depth through the vertical AO blur   <- THE FIX
-    66b0b6f64  revert the ssao sky-dome guard -- re-enabling it removed the AO
+  Fixes
+    25fbdc24b  custom PP shaders: four defects, the pass had never run at all
+               (3 in shader compilation, 1 a target Metal never dispatched;
+                shader failures now PRINT_HIGH instead of invisible)
 
-  Cleanup and documentation
-    45d558b74  static audit pass -- a false-pass test caught before it ran
-    6fd5271d1  the pk3 rebuild command targeted a file the engine never loads
-    85f5583e0  postprocess pass graph for the reference AO chain
-    91d6e7213  audit the shader string patches -- delete the dead, warn on rest
-    142d68a04  handoff rewritten for the current state
-    d6f80a0ed  AO verified; correct an overstated depth-scale claim
-    09e53ca10  AO closed, verified on screen; probe now warns it poisons metrics
-    939b73f6b  AGENTS.md: record the failure, fence the reasoning that hid it
-    33c07ea22  colormap PASSES
-    5ce1bb59f  header refresh -- the coverage hole is worked through
+  Findings that closed items without a code change
+    4276a4de7  Tier 2 direct composite is blocked by hardware; all reachable
+               branches around it pass, and compute-vs-reference bloom is now
+               whole-frame identical (max_delta 1)
+
+  Documentation and corrections
+    2f0a76633  fxaa and colormap polarity both PASS
+    c39f9f240  correct the determinism claim -- it is per TIC, not per frame
+    c5a899d19  custom PP write-up; PRINT_LOG promoted to a standing trap
+
+Two claims this file had been carrying were WRONG and are corrected in place:
+the viewpoint reproduces per tic and not per rendered frame (cl_capfps is
+load-bearing), and "Tier 2 has never executed" was a hardware ceiling rather
+than an untested path.
+
+REGRESSION CHECKS RUN AT SESSION END, after the shader-compilation changes,
+which touch EVERY Metal PP shader and not just custom ones:
+  - default config at capspot, post-fix vs pre-fix baseline:  max_delta 0
+  - gl_tonemap 4 (sqrt(c*c) identity) vs gl_tonemap 0:        max_delta 0
+  - gl_tonemap 1 vs 0, the necessary other half:              86.7% of px
+Both halves each time. An identity that matches proves nothing on its own.
 
 Commit messages carry the reasoning. This file deliberately does not repeat it.
 
@@ -360,6 +378,13 @@ on and looks.
   colormap    GAMEPLAY (fixedcm/flash) fires in play  1      FIXED, passed + polarity
   menu blur   gl_menu_blur / gameinfo  -1 = mod's     many   runs, output sane
   custom PP   gl_custompost + a mod    true           N      WAS TOTALLY BROKEN -> fixed
+
+FINAL TALLY: of the ten passes above, FIVE were broken and none of the breakage
+was visible in review. tonemap, lens and colormap were inverted (one root cause,
+three passes); ssao composited nothing; custom PP never ran at all (four
+separate defects in one pass). fxaa, bloom, exposure, present and menu blur were
+fine. The prediction the table encoded — that a pass behind a default-off cvar
+has never had a single pixel checked — held every time it was tested.
 
 "Default" means "in this ini" for bloom, exposure and ssao; in a FRESH config
 only present runs. Cvar defaults and draw counts verified 2026-08-06
