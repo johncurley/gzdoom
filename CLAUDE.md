@@ -74,15 +74,31 @@ There is no unit test suite. Validation is manual:
 
 ### Measuring a rendering change
 
-Read the **`FrameGPU`** line from `mt_metrics` for cost. It is real
-`GPUStartTime()/GPUEndTime()`. The `ComputeCPU` / `PPCPU` lines are *encode* time and
-are useless for cost — but their **presence and label** is the best available proof of
-which code path actually ran. Per-pass GPU timing needs stage-boundary counter sampling,
-which `mt_caps` reports and which older Intel GPUs lack.
+Read the **`Frame ... avg=`** wall-clock interval from `mt_metrics` for cost. It is
+the number that cannot lie about whether a change made the game slower.
+
+**Do not use `FrameGPU` as a cost figure.** It is real
+`GPUStartTime()/GPUEndTime()`, but that does not make it GPU busy time, and it
+routinely reports spans that cannot coexist with the measured frame interval
+(~220ms against 7ms frames, observed 2026-08-07). The cause is unresolved — see
+the FrameGPU section and its correction in `AGENTS.md` before quoting or
+"fixing" the metric, including the note that the obvious fix is a no-op.
+
+The `ComputeCPU` / `PPCPU` lines are *encode* time and are useless for cost — but
+their **presence and label** is the best available proof of which code path actually
+ran. Treat a **missing** label as the pass-fail gate when verifying that a feature is
+off: a cvar set in the console does not survive a restart, and an ini value silently
+restores it. Pass cvars on the launch command line, one launch per configuration.
+
+For real per-pass GPU cost, take an Xcode GPU frame capture and read its per-encoder
+timing (see below). That is currently the only trustworthy per-pass figure on this
+hardware — native stage-boundary counter sampling is what `mt_caps` reports, and older
+Intel GPUs lack it.
 
 Establish a noise floor before trusting a delta: take two readings of an *identical*
 configuration. On the reference machine that is ~0.4ms, so smaller differences mean
-nothing.
+nothing. Let the machine cool between configurations — sustained load on the reference
+MacBookAir7,2 throttles, and identical configs drift measurably over a long session.
 
 ### GPU frame captures
 
