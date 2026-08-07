@@ -20,12 +20,14 @@
      run-to-run noise of baseline GTAO — deprioritized, left available but
      not pursued further. See "AlchemyAO/SAO and depth-mip-pyramid
      algorithms" below for full history.
-  3. **NEW (2026-07-15):** investigating whether Intel's texture upload path
-     is a CPU/GPU-race bottleneck — instrumentation added (`TextureUploadCPU`
-     metric, `extraCommandBuffers` count), see "Texture upload
-     instrumentation" below. **Not yet measured in-game** — the one check so
-     far never triggered an actual upload; still need a genuine cold-load
-     test (map transition or noclip into new territory).
+  3. ~~investigating whether Intel's texture upload path is a CPU/GPU-race
+     bottleneck~~ **CLOSED 2026-08-07 — measured, and it is NOT a bottleneck.**
+     Steady-state uploads are exactly zero; a cold load is a single-frame burst
+     of ~0.15ms per new texture (54 uploads / 9.6ms / 55 command buffers on a
+     map transition) that lands inside a load the player already waits through.
+     The `TextureUploadCPU` timer fired for the first time, confirming the
+     2026-08-04 async-path fix. Do not optimize; see "the texture-upload
+     cold-load test" below for the numbers and the lever if it ever matters.
   4. Once the texture-upload question is settled, continue the broader
      compute-shader postprocess conversion — re-validate any future compute
      pass with real GPU timing, not just CPU-encode timing, before calling
@@ -4418,3 +4420,69 @@ parse/link failures and missing shader lumps are now `PRINT_HIGH` in red,
 because a pass that cannot build is not a debug detail. **When a path
 "silently does nothing", run it once with `+logfile` before concluding it is
 silent.**
+
+## 2026-08-07: the texture-upload cold-load test — MEASURED, and it is NOT a bottleneck
+
+Roadmap priority 3, open since 2026-07-15, whose one previous check "never
+triggered an actual upload". It triggers now, and the investigation closes.
+
+### The timer fires — the 2026-08-04 async fix is confirmed
+
+`TextureUploadCPU` had never been observed non-zero. Audit round three found why
+(it instrumented only the synchronous `CreateImage` path while precaching uses
+`PerformAsyncGPUUpload`) and fixed it, but the fix itself had never been seen
+working. It works. **That closes both the metric and the long-standing "the
+upload timer has never fired" item.**
+
+Method: `+mt_debug 1` prints a per-frame line that includes `TexUpload` only
+when non-zero, so a burst is visible frame by frame. `mt_metrics`' rolling
+120-frame average is the wrong instrument here and would have washed it out —
+the AGENTS note that made `extraCommandBuffers` a raw per-frame count rather
+than an average was right, and for exactly this reason.
+
+Cold loads driven unattended with `+execafter 150 map map01`.
+
+### The numbers
+
+    phase                              uploads   CPU ms   extra CBs   ms/upload
+    startup, savegame load of MAP51        0      0.00        1          --
+    steady state, standing still           0      0.00        0          --
+    -> map01 (cold)                       54      9.59       55        0.178
+    -> map07 (after map01, warm)          27      3.73       28        0.138
+    mid-play streaming, per event        1-2   0.17-0.33     1-2       ~0.17
+
+Reproducible: the map01 burst measured 54 uploads at 9.63 / 9.12 / 9.59 ms
+across three runs, ~5% spread.
+
+### What it means
+
+- **Not a steady-state cost at all.** Standing still, uploads are exactly zero.
+  The original hypothesis — that Intel's texture path is a CPU/GPU race adding
+  overhead during play — is **not supported**.
+- **The whole cold load lands in ONE frame**, and that frame is the first one
+  after a map transition, i.e. inside a load the player already waits through.
+- **Cost is linear in new-texture count at ~0.15ms each**, and there is always
+  **exactly one command buffer per texture** (54 uploads / 55 CBs). That
+  one-CB-per-texture structure is the per-submission-overhead pattern this file
+  flagged as the suspected cost class — it is real, it is just small.
+- The timed span is staging alloc + row-wise memcpy + blit encode + commit, with
+  **no `waitUntilCompleted`**, so this is pure CPU and does not block the GPU.
+  The split between memcpy and submission is NOT measured; it was not worth
+  instrumenting for a one-frame 9ms cost.
+
+**Recommendation: do not optimize this.** For scale, script parsing at startup
+takes 2867ms. If a several-hundred-texture cold load ever does matter, the lever
+is batching the uploads into one command buffer, and the per-upload constant
+above makes that win predictable in advance rather than speculative.
+
+### A single dramatic reading that was WRONG, caught by repeating it
+
+The first run showed `Stalls: 9 (51.27ms, max 46.75ms)` on the very burst frame
+— an apparently enormous hitch, and a tempting causal story: 55 command buffer
+submissions stalling the queue. **It did not reproduce.** The same frame in two
+further runs read 3.28ms and 3.34ms total. It was first-run cost (disk, PSO
+compile), not the uploads.
+
+One reading on the frame you are already looking at, pointing the way you
+already suspect, is the easiest wrong result to publish. Repeating it cost one
+launch.

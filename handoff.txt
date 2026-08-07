@@ -22,10 +22,11 @@ bit-reproducible, so a control pair at capspot comes back BYTE-IDENTICAL — a
 zero noise floor, with nobody at the keyboard. Roughly forty capture launches
 were run this session without an operator. See CAPTURE PROTOCOL.
 
-WHAT TO DO NEXT is no longer a verification queue. The roadmap items parked
-during the audit are now the front of the line: AGENTS.md's priority 3 (the
-texture-upload cold-load test, still never observed firing) and priority 4 (the
-broader compute-postprocess conversion). See AGENTS.md "Active Roadmap".
+WHAT TO DO NEXT: roadmap priority 3 (texture-upload cold load) also CLOSED
+2026-08-07 — measured, not a bottleneck, numbers in AGENTS.md. That leaves
+priority 4, the broader compute-postprocess conversion, as the front of the
+line, with priority 5 (per-OS optimization, the ARM64 JIT gap) behind it. See
+AGENTS.md "Active Roadmap".
 
 Read CLAUDE.md's "Measuring a rendering change", "GPU frame captures" and
 "Visual A/B captures" first. Then docs/metal-postprocess-graphs.md, which is new
@@ -308,7 +309,22 @@ THE STANDING LIST
 
    THE STANDING LIST IS NOW EMPTY of never-tested passes.
 
-6. NEW STANDING TRAP: PRINT_LOG DOES NOT REACH STDOUT. The engine printed the
+6. TEXTURE UPLOAD — CLOSED 2026-08-07, measured and NOT a bottleneck.
+   Steady state is exactly zero uploads. A cold load is ONE frame: 54 uploads,
+   9.6ms, 55 command buffers on a map transition, i.e. ~0.15ms per new texture
+   and exactly one command buffer each. It lands inside a transition the player
+   already waits through. The TextureUploadCPU timer fired for the first time,
+   which also confirms the 2026-08-04 async-path fix.
+
+   Drive it unattended with +mt_debug 1 and +execafter 150 map map01, and read
+   the per-frame lines -- mt_metrics' 120-frame rolling average is the WRONG
+   instrument and washes the burst out.
+
+   One reading in the first run showed a 46.75ms stall on the burst frame and
+   did NOT reproduce (3.3ms in two further runs). It was first-run cost, not the
+   uploads. Repeating it cost one launch and would have cost a session.
+
+7. NEW STANDING TRAP: PRINT_LOG DOES NOT REACH STDOUT. The engine printed the
    exact glslang error behind the custom-shader failure all along, and every
    redirected launch log looked clean. It also nearly caused a wrong reading in
    the wipe probe the same day. Use +logfile before concluding anything is
