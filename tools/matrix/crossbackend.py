@@ -84,6 +84,10 @@ BAND_MAX_DELTA_FLAG = 24
 # is modest. This is what catches a displaced pass.
 BAND_OUTLIER_RATIO = 4.0
 
+# Beyond this global brightness ratio between the two captures, the row is
+# treated as INVALID rather than normalised. See gain_match().
+MAX_TONE_RATIO = 4.0
+
 
 def launch_backend(cfg, spec, backend, verbose):
     """Run one config on one backend. Returns (png_path, log_path)."""
@@ -136,8 +140,16 @@ def gain_match(apx, bpx):
     """
     asum = sum(apx); bsum = sum(bpx)
     if bsum == 0:
-        return bpx, 1.0
+        return None, 0.0
     g = asum / bsum
+    # REFUSE to normalise an extreme ratio. Bring-up 2026-08-07: the GL captures
+    # came back black (mean_lum 1.0, max 1) for every config that did not enable
+    # ssao, and gain-matching happily scaled them up and reported "uniform
+    # backend noise" -- 26 of 33 rows in the first sweep were green because of
+    # this. A ratio this large never means "slightly different exposure"; it
+    # means one capture is broken and the row carries no information.
+    if not (1.0 / MAX_TONE_RATIO) <= g <= MAX_TONE_RATIO:
+        return None, g
     return bytes(min(255, int(v * g + 0.5)) for v in bpx), g
 
 
@@ -317,6 +329,16 @@ def main():
             # analysis can see structure. These are two separate questions and
             # conflating them makes both unanswerable.
             matched, gain = gain_match(gpx, mpx)
+            if matched is None:
+                gl_mean = sum(gpx) / len(gpx)
+                mt_mean = sum(mpx) / len(mpx)
+                print(f"  {c['name']:28s} INVALID  capture unusable: "
+                      f"gl mean {gl_mean:.3f}, metal mean {mt_mean:.3f} "
+                      f"(ratio {1.0/gain if gain else float('inf'):.1f}x) -- "
+                      f"one backend produced no image; fix that before reading "
+                      f"any verdict for this config")
+                failures += 1
+                continue
             bands, err = band_report(imgs["gl"], (mw, mh, mnch, matched))
             if err:
                 print(f"  {c['name']:28s} ERROR {err}")
