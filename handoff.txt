@@ -423,6 +423,20 @@ savegame where nothing ever flashes.
 TOOLS
 ================================================================================
 
+- tools/matrix/run.py (NEW, 2026-08-07) -- THE GOLDEN-IMAGE REGRESSION MATRIX.
+  Run this before and after any rendering change:
+
+      python3 tools/pptest/make.py      # once, enables the custom-PP configs
+      python3 tools/matrix/run.py
+
+  Eleven configurations, one unattended launch each, ~4 minutes. Every one of
+  the five passes this branch found broken is covered. It is not just a hash
+  comparison: configs declare `must_differ_from` / `must_match`, because a
+  golden image alone cannot tell "correct" from "never ran", and
+  --update-baseline REFUSES to record while a relation is failing, so a broken
+  pass cannot be enshrined as the baseline. Add a config to
+  tools/matrix/configs.json whenever a new pass or path becomes reachable.
+
 - mt_ao_probe [frames] (NEW) — reports the AO composite numerically: the blend
   style actually handed to PSO creation, SceneColor read back before AND after
   the draw with a differing-pixel count, the stencil/clear decisions, whole-frame

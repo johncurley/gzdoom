@@ -4759,3 +4759,50 @@ said, and in no case did I check.** The unifying fix is cheap and mechanical:
 This branch already had the rule for screenshots ("byte-identical means the
 setting did not apply") and it applies verbatim to performance work, where it is
 easier to skip because the number moved and the number was what you wanted.
+
+## 2026-08-07: the golden-image matrix runner — the coverage hole is now closed BY A TOOL
+
+`tools/matrix/run.py`. Eleven configurations, one unattended launch each, ~4
+minutes, no operator. Run it before and after any rendering change.
+
+This closes the branch's most expensive standing finding structurally rather
+than by vigilance. "The tested surface equals whatever the dev config happens to
+enable" was true because testing was manual; it is now "the tested surface is
+the matrix."
+
+**It only became possible today.** It needs `+shotafter`/`+execafter` for
+unattended capture and `+cl_capfps 1` for a reproducible viewpoint, both of
+which landed this session. Before those, this script could not have been
+written.
+
+### The design point worth reusing
+
+A golden image cannot separate "the pass is correct" from "the pass never ran" —
+both reproduce the baseline exactly. That ambiguity is the bug class this branch
+keeps hitting, so it is encoded as a declared relation per config:
+
+    must_differ_from   the config it must NOT be pixel-identical to
+    must_match         for identities (gl_tonemap 4 == sqrt(c*c)), the config
+                       it must reproduce exactly
+
+and **`--update-baseline` refuses to record while any relation fails.** A
+baseline taken while ssao was silently a no-op would have made that regression
+permanent and invisible. This makes enshrining a broken pass impossible.
+
+### Demonstrated, not assumed
+
+Reintroducing the custom-PP defect produced exactly the intended split:
+
+    ok   custom_pp_identity reproduces baseline exactly (identity holds)
+    FAIL custom_pp_half is PIXEL-IDENTICAL to baseline. The effect is not taking effect.
+
+The identity **passed** — a shader that never runs is indistinguishable from a
+correct identity — and the relation caught it. That single run is the whole
+argument for the design.
+
+That exercise also caught a real defect in the runner: it hashed FILE bytes, and
+GZDoom's PNG writer embeds a timestamp, so every capture of an identical frame
+reported a spurious DIFF. It now hashes decoded pixels. Left in, it would have
+trained the reader to ignore the output — the worst failure mode a regression
+suite can have, and the same mistake this session already made twice in other
+places.
