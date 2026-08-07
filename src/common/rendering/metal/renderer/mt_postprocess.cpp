@@ -47,6 +47,17 @@ void MtAOProbeCountdown();
 EXTERN_CVAR(Int, gl_dither_bpc)
 CVAR(Bool, mt_compute_ao, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Bool, mt_compute_bloom, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+// Use the compute bloom path on Intel integrated GPUs. Default false, matching
+// mt_compute_ao_intel: on an HD 6000 a GPU frame capture on 2026-08-07 showed
+// the compute encoders dominating GPU frame time, and disabling compute AO and
+// bloom together restored playable frame pacing. Unlike the AO gate this is not
+// backed by an isolated A/B of bloom alone -- it is the conservative default for
+// a path measured as expensive on that hardware, not a precise cost figure.
+//
+// Non-Intel behaviour is unchanged (compute stays the default), for the same
+// reason given at mt_compute_ao_intel: nothing on this path has run on Apple
+// Silicon. Do not promote it to a stated policy without measuring.
+CVAR(Bool, mt_compute_bloom_intel, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CUSTOM_CVAR(Int, mt_compute_bloom_composite, 0, 0)
 {
   if (self < 0) self = 0;
@@ -573,7 +584,13 @@ void MtPostprocess::PostProcessScene(
     const bool bloomEligible = gl_bloom && fixedcm == CM_DEFAULT &&
                                gl_ssao_debug == 0 &&
                                sceneWidth > 0 && sceneHeight > 0;
-    const bool useComputeBloom = bloomEligible && mt_compute_bloom && fb->mBloomModule;
+    // Intel integrated GPUs default to the reference PP bloom path, mirroring
+    // the compute AO gate above. See mt_compute_bloom_intel.
+    const bool computeBloomAllowed =
+        mt_compute_bloom &&
+        (mt_compute_bloom_intel ||
+         fb->mVersionManager.architecture != MtGPUArchitecture::Intel);
+    const bool useComputeBloom = bloomEligible && computeBloomAllowed && fb->mBloomModule;
 
     hw_postprocess.Pass1(&renderstate, fixedcm, sceneWidth, sceneHeight, bloomEligible);
 

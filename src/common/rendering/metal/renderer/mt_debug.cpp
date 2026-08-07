@@ -38,6 +38,7 @@ EXTERN_CVAR(Bool, mt_debug)
 EXTERN_CVAR(Bool, mt_compute_ao)
 EXTERN_CVAR(Bool, mt_compute_ao_intel)
 EXTERN_CVAR(Bool, mt_compute_bloom)
+EXTERN_CVAR(Bool, mt_compute_bloom_intel)
 EXTERN_CVAR(Int, mt_compute_bloom_composite)
 EXTERN_CVAR(Int, mt_compute_ao_worldpos_debug)
 EXTERN_CVAR(Int, mt_compute_ao_algorithm)
@@ -536,12 +537,22 @@ CCMD(mt_caps)
   // the A/B silently reverts to the default path. They are tagged
   // "not archived" below; do not assume a restart preserved them.
   {
-    const bool computeBloomOn = mt_compute_bloom && fb->mBloomModule != nullptr;
+    // Same reasoning as the AO gate below: on Intel the cvar can read "on"
+    // while mt_postprocess.cpp's architecture gate routes the frame to the
+    // reference PP bloom, so report the RESOLVED path, not the cvar.
+    const bool bloomIntelGated = mt_compute_bloom && !mt_compute_bloom_intel &&
+                                 v.architecture == MtGPUArchitecture::Intel;
+    const bool computeBloomOn =
+        mt_compute_bloom && !bloomIntelGated && fb->mBloomModule != nullptr;
     const bool tier2 = v.supportsReadWriteBGRA8;
     Printf(PRINT_HIGH, "Effective postprocess configuration:\n");
     Printf(PRINT_HIGH, "  gl_bloom:                %s\n", gl_bloom ? "on" : "OFF (no bloom at all)");
-    Printf(PRINT_HIGH, "  mt_compute_bloom:        %s\n",
-           computeBloomOn ? "on" : "OFF -> falls back to hw_postprocess bloom");
+    Printf(PRINT_HIGH, "  mt_compute_bloom:        %s\n", mt_compute_bloom ? "on" : "OFF");
+    Printf(PRINT_HIGH, "  bloom path in use:       %s\n",
+           !mt_compute_bloom ? "hw_postprocess bloom -- compute bloom off"
+           : bloomIntelGated ? "hw_postprocess bloom <- Intel gate, compute bloom "
+                               "overridden (set mt_compute_bloom_intel 1 to force compute)"
+                             : "Metal compute (MtBloomModule)");
     if (computeBloomOn) {
       const int mode = mt_compute_bloom_composite;
       const char *path = (mode == 2 && !tier2) ? "hw_postprocess fallback (Tier 2 required but unsupported)"
