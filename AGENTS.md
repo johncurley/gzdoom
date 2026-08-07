@@ -4809,6 +4809,12 @@ places.
 
 ## 2026-08-07: FrameGPU is NOT GPU busy time — CLAUDE.md's guidance on it is wrong as written
 
+> **Partly superseded — read the correction at the end of this section before
+> acting on it.** The conclusion (FrameGPU is not GPU busy time; use the
+> wall-clock `Frame ... avg=`) holds. The stated *mechanism* — spanning from the
+> first command buffer's start to the last one's end — does not match the code,
+> and the fix it prescribes is a no-op.
+
 CLAUDE.md says: "Read the **`FrameGPU`** line from `mt_metrics` for cost. It is
 real `GPUStartTime()/GPUEndTime()`." The second sentence is true and the first
 does not follow.
@@ -4845,6 +4851,52 @@ Fixing the metric means either summing per-command-buffer `(end - start)` rather
 than spanning, or, better, per-pass stage-boundary counter sampling — which this
 GPU does not support (`mt_caps`: "Stage counter sampling: no"). So the cheap fix
 is the sum, and it should be done before anyone quotes FrameGPU again.
+
+### CORRECTION (2026-08-07, later the same day): the mechanism above is wrong
+
+The observation stands. The explanation does not, and neither does the fix.
+
+**What the code actually measures** (`mt_commandbuffer.cpp:99-121`,
+`MtCommandBufferManager::EndFrame`): a completion handler is attached to a
+*single* command buffer and records that one buffer's own span.
+
+```cpp
+double gpuSeconds = buffer->GPUEndTime() - buffer->GPUStartTime();
+```
+
+`RecordGPUFrameTimeAsync` then **stores** it into an atomic
+(`mt_debug.cpp:228-230`) — it does not accumulate — and the render thread
+exchanges the value out once per frame (`mt_debug.cpp:121`). The in-code comment
+is explicit: "this is normally the only command buffer per frame."
+
+So there is **no spanning across buffers**, and no "CPU gaps between buffers"
+being included. The prescribed cheap fix — summing per-buffer `(end - start)`
+instead of spanning — would change nothing, because a per-buffer span is already
+what is recorded. Anyone implementing it would see identical numbers and
+reasonably conclude the metric was fine.
+
+**The contradiction is therefore still unexplained.** Reproduced 2026-08-07 on
+the HD 6000 while diagnosing stutter: `mt_debug` reported `GPU: ~220ms` on
+essentially every frame while `Frame: 7ms` with zero recorded stalls and a
+`maxDrawableCount`-bounded in-flight semaphore that should forbid that much
+queuing. The number is not constant overhead — on a trivial frame (`Draws: 1`,
+startup screen) it fell to `4.43ms` — so it does track real work somehow.
+
+Candidates, none verified:
+
+- `GPUStartTime`/`GPUEndTime` may not mean what the docs say on this Intel
+  driver (e.g. start recorded at enqueue rather than at GPU begin).
+- The frame's command buffer calls `presentDrawable`
+  (`mt_renderdevice.cpp:418`), so its completion is tied to presentation; end
+  time may be pushed out by display scheduling. This does not obviously account
+  for a span ~13x the 16.7ms refresh interval.
+
+**Until someone resolves this, the practical guidance is unchanged and is the
+part of the original entry to trust:** use the wall-clock `Frame ... avg=` for
+cost. Do not quote absolute FrameGPU figures. Per-encoder timing from an Xcode
+GPU capture is currently the only trustworthy per-pass GPU cost on this
+hardware — that is what identified compute AO/bloom as the stutter cause on
+2026-08-07, after four theories built on healthy-looking frame metrics failed.
 
 ### The measurement environment degrades over a long session — badly
 
