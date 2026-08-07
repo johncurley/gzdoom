@@ -28,10 +28,23 @@
      The `TextureUploadCPU` timer fired for the first time, confirming the
      2026-08-04 async-path fix. Do not optimize; see "the texture-upload
      cold-load test" below for the numbers and the lever if it ever matters.
-  4. Once the texture-upload question is settled, continue the broader
-     compute-shader postprocess conversion — re-validate any future compute
-     pass with real GPU timing, not just CPU-encode timing, before calling
-     it a win.
+  4. ~~continue the broader compute-shader postprocess conversion~~
+     **RE-SCOPED 2026-08-07 — the validation this item demanded was run on the
+     two ALREADY-converted passes, and compute postprocess is a NET LOSS on
+     this GPU.** Compute AO is 6-8x more expensive than the reference PP path
+     (every algorithm, even handicapped in compute's favour at quarter-res);
+     compute bloom is 39% more expensive. Noise floor 0.056-0.075ms, so these
+     are 25-250x the floor. Do NOT convert further passes on Intel-class
+     hardware. See "compute postprocess is a NET LOSS on this GPU" below for
+     the numbers, for what it does and does not overturn (the AlchemyAO
+     compute-vs-compute win still stands), and for the one remaining candidate
+     — exposure, whose ~1.0ms cost is pass-count OVERHEAD rather than ALU
+     throughput, which is a different argument and may survive. Any attempt
+     needs a kill criterion stated first.
+     **The real blocker is that this is one GPU.** Apple Silicon is TBDR with
+     full compute features and completely untested; the answer could invert
+     there. Getting a single Apple Silicon data point is now worth more than
+     any further conversion work on this machine.
   5. After that, per-operating-system engine optimizations, including the
      ARM64/AArch64 JIT gap noted below.
 - Opaque batching is recorded as a deferred investigation. Benchmark the
@@ -4486,3 +4499,89 @@ compile), not the uploads.
 One reading on the frame you are already looking at, pointing the way you
 already suspect, is the easiest wrong result to publish. Repeating it cost one
 launch.
+
+## 2026-08-07: compute postprocess is a NET LOSS on this GPU — measured, and it inverts roadmap priority 4
+
+Roadmap priority 4 says "continue the broader compute-shader postprocess
+conversion — re-validate any future compute pass with real GPU timing, not just
+CPU-encode timing, before calling it a win." Doing that validation FIRST, on the
+two passes already converted, says the direction is wrong on this hardware.
+
+All figures are `FrameGPU active_avg` over 120 frames at capspot, `cl_capfps 1`,
+one launch per configuration. **The noise floor is tiny and was measured, not
+assumed:** identical configs came back 15.883 vs 15.827ms (AO series, 0.056ms)
+and 11.354 vs 11.279ms (bloom series, 0.075ms). Every delta below is 25-250x
+that floor.
+
+### Ambient occlusion
+
+    no AO                          13.193
+    reference PP AO                15.883 / 15.827      -> AO costs  2.7ms
+    compute AO, algorithm 0        34.070
+    compute AO, algorithm 1        30.835               -> AO costs 17.6ms
+    compute AO, algorithm 2        33.226
+
+**Compute AO is 6-8x more expensive than the reference PP path**, in every
+algorithm. And the compute path is running at QUARTER RESOLUTION (the Intel
+force-clamp at `mt_ao.cpp` aoScale>=4) against a reference path at `gl_ssao 3`,
+so the comparison is already handicapped in compute's favour.
+
+### Bloom
+
+    no bloom                        6.398
+    reference PP bloom             11.354 / 11.279      -> bloom costs 4.9ms
+    compute bloom                  13.218               -> bloom costs 6.8ms
+
+**Compute bloom is 39% more expensive** than the reference raster path.
+
+### What this does and does not overturn
+
+- It does **NOT** overturn the AlchemyAO result. That was compute-vs-COMPUTE
+  (algorithm 1 against algorithm 0) and it reproduces here: 30.835 vs 34.070, a
+  9.5% win, squarely in the recorded 10-14% range.
+- It **does** overturn every implied compute-vs-reference performance claim.
+  Those could not have been valid before 2026-08-06, because until that day the
+  reference AO path **composited nothing** — it was being compared against a
+  blank that also skipped its own composite work.
+- The shipped defaults are already the fast ones (`mt_compute_ao` is Intel-gated
+  off by `2cf256d13`, `mt_compute_bloom` false in this ini). So this is not a
+  live regression; it is a correction to the ROADMAP.
+
+### Why, and why it may invert on other hardware
+
+`mt_caps` on this machine: Intel HD 6000, IMR (not TBDR), Metal 2.0, **SIMD-group
+operations: no, non-uniform threadgroups: no**. The compute paths here are
+ALU- and bandwidth-bound work on a GPU whose compute lacks the primitives that
+make compute postprocess fast, while the raster path gets fixed-function
+blending and scheduling for free. **Do not generalize this to Apple Silicon**,
+which is TBDR with full compute features and remains completely untested.
+
+### The one candidate still worth trying, and it is a DIFFERENT argument
+
+Exposure, measured the same way with a temporary skip (since reverted):
+
+    bloom on, exposure on          11.526 / 11.316      floor 0.21ms
+    bloom on, exposure off         10.424               -> exposure costs 1.0ms
+
+`PPCameraExposure::Render` is **~12 draws, each its own render pass**, walking a
+reduction chain from 720x386 down to 1x1 to produce ONE float, every frame.
+That cost is **pass-count overhead, not ALU throughput** — the opposite of why
+AO and bloom lost. A compute reduction would replace ~12 render passes with ~2
+dispatches.
+
+Prize ~1.0ms of an 11.4ms frame (~9%), against a 0.21ms floor, so a conversion
+would be **verifiable at ~5x the floor** — which is the criterion that matters
+and the one AO and bloom would also have passed.
+
+**But it is an experiment with a real chance of losing, not a continuation.**
+Two of two conversions on this GPU came out slower. If it is attempted, state
+the kill criterion first: if the converted pass is not at least 0.4ms cheaper
+than 1.0ms, revert it.
+
+### Instrument gap closed along the way
+
+`mt_caps` did not print `mt_compute_ao_algorithm`, which is CVAR_ARCHIVE. The
+first compute-AO measurement above was nearly published against algorithm 0
+while the recorded claim under test concerned algorithm 1, and the two differ by
+~10%. `mt_caps` now prints the resolved algorithm and flags it as archived —
+exactly the class of trap the rest of that dump already existed to close.

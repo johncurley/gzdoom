@@ -40,6 +40,7 @@ EXTERN_CVAR(Bool, mt_compute_ao_intel)
 EXTERN_CVAR(Bool, mt_compute_bloom)
 EXTERN_CVAR(Int, mt_compute_bloom_composite)
 EXTERN_CVAR(Int, mt_compute_ao_worldpos_debug)
+EXTERN_CVAR(Int, mt_compute_ao_algorithm)
 EXTERN_CVAR(Int, mt_compute_ao_directions)
 EXTERN_CVAR(Int, mt_compute_ao_steps)
 EXTERN_CVAR(Bool, gl_bloom)
@@ -562,6 +563,19 @@ CCMD(mt_caps)
            : intelGated     ? "reference PP (hw_postprocess.ssao) <- Intel gate, "
                               "compute AO overridden (set mt_compute_ao_intel 1 to force compute)"
                             : "Metal compute (MtAOModule)");
+    // The ALGORITHM is archived and was missing from this dump, which is exactly
+    // the trap this whole block exists to close: a compute-vs-reference AO
+    // measurement was nearly published against algorithm 0 while the recorded
+    // claim being checked was about algorithm 1. The resolved cost differs by
+    // ~10% between them.
+    if (mt_compute_ao) {
+      const int alg = clamp((int)mt_compute_ao_algorithm, 0, 2);
+      Printf(PRINT_HIGH, "  AO algorithm:            %d (%s)   <- ARCHIVED, persists across runs\n",
+             alg,
+             alg == 0 ? "GTAO horizon search"
+             : alg == 1 ? "AlchemyAO/SAO"
+                        : "depth-mip-pyramid");
+    }
     Printf(PRINT_HIGH, "  gl_ssao / debug:         %d / %d%s\n", (int)gl_ssao, (int)gl_ssao_debug,
            gl_ssao_debug != 0 ? "  <- debug view active, not the shaded result (not archived)" : "");
     if (mt_compute_ao_worldpos_debug != 0)
