@@ -770,6 +770,19 @@ void MtPostprocess::BlitCurrentToImage(MTL::Texture *dstimage) {
 void MtPostprocess::DrawPresentTexture(IntRect box, bool applyGamma,
                                        bool screenshot) {
   MtPPRenderState renderstate(fb);
+
+  // The "screen" custom-shader target runs here, matching Vulkan
+  // (vk_postprocess.cpp:190) and OpenGL (gl_postprocess.cpp:150). Metal never
+  // ran it at all: GLDEFS accepts `HardwareShader postprocess screen`, the
+  // shader parses, lists and enables, and then nothing executes it, because
+  // Pass1/Pass2 in shared code only dispatch "beforebloom" and "scene".
+  //
+  // The screenshot guard is the reference's and the reason is the reference's:
+  // GetScreenshotBuffer is called after the swap, so the pass has already been
+  // applied to the frame being copied and running it again would double it.
+  if (!screenshot)
+    hw_postprocess.customShaders.Run(&renderstate, "screen");
+
   PresentUniforms uniforms;
 
   if (!applyGamma) {

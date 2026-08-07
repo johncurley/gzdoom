@@ -1,0 +1,3 @@
+// Drives the identity test's departure from identity from the command line, so
+// the whole A/B runs unattended with no console typing.
+user float pptest_scale = 1.0;

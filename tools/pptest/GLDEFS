@@ -1,0 +1,14 @@
+// Minimal custom postprocess shader, written as a two-sided test.
+//
+// At pptest_scale 1.0 the shader is a mathematical IDENTITY: it must produce a
+// byte-identical frame to having no shader at all. At any other value it must
+// differ. Both halves are needed -- "identical" alone is equally consistent
+// with "the shader never ran", which is exactly how the tonemap pass hid a
+// total failure on this backend for months.
+HardwareShader postprocess scene
+{
+	shader "shaders/pptest.fp" 330
+	name "pptest"
+	uniform float TestScale = cvar pptest_scale
+	texture TestTexture "PPTESTTX"
+}

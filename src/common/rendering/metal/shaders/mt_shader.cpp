@@ -1103,11 +1103,23 @@ std::string MtShaderManager::LoadPublicShaderLump(const char *lumpname) {
 }
 
 std::string MtShaderManager::LoadPrivateShaderLump(const char *lumpname) {
-  int lump = fileSystem.CheckNumForFullName(lumpname, 0);
+  // Unrestricted lookup, matching Vulkan (vk_ppshader.cpp:74). This used to
+  // pass the `int wadfile` overload with 0, which searches ONLY the engine's
+  // own gzdoom.pk3 -- so a shader lump belonging to a MOD was never found, and
+  // every custom postprocess shader got an empty fragment source. The name is
+  // now a misnomer; the lookup is no more "private" than the reference's.
+  //
+  // Restricting it to file 0 would also be a Metal-only behaviour difference:
+  // on GL and Vulkan a mod CAN override a stock shader lump, and the whole
+  // point of this audit is to not have quiet per-backend divergences.
+  int lump = fileSystem.CheckNumForFullName(lumpname);
   if (lump == -1) {
-    if (mt_debug)
-      Printf(PRINT_LOG, "Metal: WARNING - Private shader lump not found: %s\n",
-             lumpname);
+    // Deliberately PRINT_HIGH and not gated on mt_debug. An empty source here
+    // always becomes a compile failure downstream, and this exact message
+    // being invisible is what hid the broken custom-shader path.
+    Printf(PRINT_HIGH, TEXTCOLOR_RED
+           "Metal: shader lump not found: %s -- this pass will not run.\n"
+           TEXTCOLOR_NORMAL, lumpname);
     return "";
   }
   auto data = fileSystem.ReadFile(lump);
@@ -1304,8 +1316,12 @@ MtShaderManager::CompileGLSLToSPIRV(const std::string &source,
   bool parseSuccess = shader.parse(&resources, 450, false,
                                    EShMsgVulkanRules); // Use EShMsgVulkanRules
   if (!parseSuccess) {
-    Printf(PRINT_LOG, "Metal: Shader parse failed for %s:\n%s\n", name.c_str(),
-           shader.getInfoLog());
+    // PRINT_HIGH, not PRINT_LOG. PRINT_LOG never reaches stdout, so a redirected
+    // launch log showed nothing at all while every custom postprocess shader
+    // silently failed to compile. A shader that does not build is a failure the
+    // operator needs to see, not a debug detail.
+    Printf(PRINT_HIGH, TEXTCOLOR_RED "Metal: shader parse FAILED for %s:\n%s\n"
+           TEXTCOLOR_NORMAL, name.c_str(), shader.getInfoLog());
     return std::vector<uint32_t>();
   }
 
@@ -1314,8 +1330,8 @@ MtShaderManager::CompileGLSLToSPIRV(const std::string &source,
   program.addShader(&shader);
   bool linkSuccess = program.link(EShMsgDefault);
   if (!linkSuccess) {
-    Printf(PRINT_LOG, "Metal: Shader link failed for %s:\n%s\n", name.c_str(),
-           program.getInfoLog());
+    Printf(PRINT_HIGH, TEXTCOLOR_RED "Metal: shader link FAILED for %s:\n%s\n"
+           TEXTCOLOR_NORMAL, name.c_str(), program.getInfoLog());
     return std::vector<uint32_t>();
   }
 
@@ -1427,12 +1443,22 @@ MtPPShader::MtPPShader(MetalRenderDevice *fb, PPShader *shader) : fb(fb) {
   }
   prolog += shader->Defines;
 
-  // Compile vertex shader
+  // Compile vertex shader.
+  //
+  // The prolog is deliberately NOT prepended here. Vulkan passes "" as the
+  // vertex stage's prolog and the real one only to the fragment stage
+  // (vk_ppshader.cpp:39 vs :48), and Metal must match: for a CUSTOM
+  // postprocess shader the prolog carries the sampler and in/out declarations
+  // that PPCustomShaderInstance builds, and injecting
+  // `layout(location=0) in vec2 TexCoord;` into screenquad.vp collides with its
+  // own `layout(location = 0) in vec4 PositionInProjection`, which glslang
+  // rejects as "overlapping use of location 0".
+  //
+  // This never showed on the stock PP shaders because their prolog is only a
+  // uniform block plus defines, and an unused uniform block in the vertex stage
+  // is harmless. It is fatal exactly and only on the custom path.
   std::string vertCode = "#version 450\n";
   vertCode += "#extension GL_GOOGLE_include_directive : enable\n";
-  // For PP shaders, we don't necessarily need all the scene bindings,
-  // but we do need the prolog.
-  vertCode += prolog.GetChars();
   vertCode += "\n#line 1\n";
 
   std::string vertSource = fb->GetShaderManager()->LoadPrivateShaderLump(

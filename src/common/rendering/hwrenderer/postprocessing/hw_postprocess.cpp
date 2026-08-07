@@ -1064,7 +1064,15 @@ PPCustomShaderInstance::PPCustomShaderInstance(PostProcessShader *desc) : Desc(d
 
 	// Setup pipeline
 	FString pipelineInOut;
-	if (screen->IsVulkan())
+	// Metal belongs on the Vulkan side of this branch. It compiles GLSL through
+	// glslang under SPIR-V semantics exactly as Vulkan does, and SPIR-V requires
+	// an explicit location on every user input/output. Without these qualifiers
+	// glslang rejected both the custom fragment shader AND the screenquad vertex
+	// shader it is prepended to, so every custom postprocess shader silently did
+	// nothing on Metal -- it parsed, it listed, it enabled, and it never ran.
+	// Every stock PP shader (present.fp and friends) declares its locations in
+	// the lump, which is why only the custom path was affected.
+	if (screen->IsVulkan() || screen->IsMetal())
 	{
 		pipelineInOut += "layout(location=0) in vec2 TexCoord;\n";
 		pipelineInOut += "layout(location=0) out vec4 FragColor;\n";
