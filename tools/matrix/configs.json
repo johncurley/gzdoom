@@ -1,0 +1,85 @@
+{
+  "launch": {
+    "binary": "build/gzdoom.app/Contents/MacOS/gzdoom",
+    "iwad": "DOOM2.wad",
+    "files": ["~/Documents/GZDoom/Ashes2063Enriched2_23.pk3"],
+    "savegame": "capspot.zds",
+    "settle_frames": 120,
+    "always": ["+cl_capfps 1", "+gl_exposure_speed 1"]
+  },
+
+  "configs": [
+    {
+      "name": "baseline",
+      "note": "Every optional pass off. The thing everything else is measured against.",
+      "cvars": ["+gl_bloom 0", "+gl_ssao 0", "+gl_tonemap 0", "+gl_lens 0", "+gl_fxaa 0"]
+    },
+    {
+      "name": "ssao",
+      "note": "Reference PP AO. Composited nothing at all until 2026-08-06.",
+      "cvars": ["+gl_bloom 0", "+gl_ssao 3", "+gl_tonemap 0", "+gl_lens 0", "+gl_fxaa 0"],
+      "must_differ_from": "baseline"
+    },
+    {
+      "name": "bloom_ref",
+      "note": "Reference PP bloom.",
+      "cvars": ["+gl_bloom 1", "+mt_compute_bloom 0", "+gl_ssao 0", "+gl_tonemap 0", "+gl_lens 0", "+gl_fxaa 0"],
+      "must_differ_from": "baseline"
+    },
+    {
+      "name": "bloom_compute",
+      "note": "Metal compute bloom. Agreed with bloom_ref to max_delta 1 on 2026-08-07, so it is NOT declared must_differ_from bloom_ref -- see tolerance.",
+      "cvars": ["+gl_bloom 1", "+mt_compute_bloom 1", "+gl_ssao 0", "+gl_tonemap 0", "+gl_lens 0", "+gl_fxaa 0"],
+      "must_differ_from": "baseline"
+    },
+    {
+      "name": "tonemap_uncharted",
+      "note": "gl_tonemap 1. Rendered upside down until 5a9b53e1b.",
+      "cvars": ["+gl_bloom 0", "+gl_ssao 0", "+gl_tonemap 1", "+gl_lens 0", "+gl_fxaa 0"],
+      "must_differ_from": "baseline"
+    },
+    {
+      "name": "tonemap_identity",
+      "note": "gl_tonemap 4 is sqrt(c*c) == c, a mathematical identity. It MUST reproduce the baseline exactly, and tonemap_uncharted proves the pass is capable of changing pixels -- both halves are required.",
+      "cvars": ["+gl_bloom 0", "+gl_ssao 0", "+gl_tonemap 4", "+gl_lens 0", "+gl_fxaa 0"],
+      "must_match": "baseline"
+    },
+    {
+      "name": "lens",
+      "note": "gl_lens 1, one draw. Rendered upside down until 5a9b53e1b.",
+      "cvars": ["+gl_bloom 0", "+gl_ssao 0", "+gl_tonemap 0", "+gl_lens 1", "+gl_fxaa 0"],
+      "must_differ_from": "baseline"
+    },
+    {
+      "name": "fxaa",
+      "note": "gl_fxaa 1, two draws. Its evenness is why it accidentally survived the V-flip bug.",
+      "cvars": ["+gl_bloom 0", "+gl_ssao 0", "+gl_tonemap 0", "+gl_lens 0", "+gl_fxaa 1"],
+      "must_differ_from": "baseline"
+    },
+    {
+      "name": "colormap",
+      "note": "Not a cvar -- a palette flash from an item pickup. Fires in ordinary play and flipped the whole screen until 5a9b53e1b.",
+      "cvars": ["+gl_bloom 0", "+gl_ssao 0", "+gl_tonemap 0", "+gl_lens 0", "+gl_fxaa 0"],
+      "exec": [[60, "give InvulnerabilitySphere"]],
+      "must_differ_from": "baseline"
+    },
+    {
+      "name": "custom_pp_identity",
+      "note": "Custom postprocess shader at pptest_scale 1.0 is an identity, so it must reproduce the baseline. Requires tools/pptest/make.py to have been run. Never executed AT ALL on Metal until 25fbdc24b.",
+      "extra_files": ["/tmp/pptest.pk3"],
+      "cvars": ["+gl_bloom 0", "+gl_ssao 0", "+gl_tonemap 0", "+gl_lens 0", "+gl_fxaa 0", "+pptest_scale 1.0"],
+      "exec": [[60, "shaderenable pptest 1"]],
+      "must_match": "baseline",
+      "optional": true
+    },
+    {
+      "name": "custom_pp_half",
+      "note": "The other half of custom_pp_identity: at 0.5 the same shader must visibly darken, or the identity above is just 'the pass never ran'.",
+      "extra_files": ["/tmp/pptest.pk3"],
+      "cvars": ["+gl_bloom 0", "+gl_ssao 0", "+gl_tonemap 0", "+gl_lens 0", "+gl_fxaa 0", "+pptest_scale 0.5"],
+      "exec": [[60, "shaderenable pptest 1"]],
+      "must_differ_from": "baseline",
+      "optional": true
+    }
+  ]
+}

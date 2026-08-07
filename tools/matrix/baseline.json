@@ -1,0 +1,72 @@
+{
+  "configs": {
+    "baseline": {
+      "h": 773,
+      "mean_lum": 37.0175,
+      "pixels_md5": "85ba777974a9e42d225a4030306f237a",
+      "w": 1440
+    },
+    "bloom_compute": {
+      "h": 773,
+      "mean_lum": 38.0403,
+      "pixels_md5": "4adf6e41f86c049bf72cf92e1a59ae34",
+      "w": 1440
+    },
+    "bloom_ref": {
+      "h": 773,
+      "mean_lum": 38.0433,
+      "pixels_md5": "2911af66a0240e892eda5b68f1135d57",
+      "w": 1440
+    },
+    "colormap": {
+      "h": 773,
+      "mean_lum": 160.7036,
+      "pixels_md5": "4d29dc7ca2c466a77d4cc0e3640a7531",
+      "w": 1440
+    },
+    "custom_pp_half": {
+      "h": 773,
+      "mean_lum": 19.2845,
+      "pixels_md5": "5c52e9d220b1bc2fc4008c12484701d4",
+      "w": 1440
+    },
+    "custom_pp_identity": {
+      "h": 773,
+      "mean_lum": 37.0175,
+      "pixels_md5": "85ba777974a9e42d225a4030306f237a",
+      "w": 1440
+    },
+    "fxaa": {
+      "h": 773,
+      "mean_lum": 37.0125,
+      "pixels_md5": "07f22899e0ca9a4a421892efa642b5ba",
+      "w": 1440
+    },
+    "lens": {
+      "h": 773,
+      "mean_lum": 37.1041,
+      "pixels_md5": "da2297f7b1b2e33d25188f9fcdfffff2",
+      "w": 1440
+    },
+    "ssao": {
+      "h": 773,
+      "mean_lum": 35.1301,
+      "pixels_md5": "6d08f047e163b17919f3449a4321521f",
+      "w": 1440
+    },
+    "tonemap_identity": {
+      "h": 773,
+      "mean_lum": 37.0175,
+      "pixels_md5": "85ba777974a9e42d225a4030306f237a",
+      "w": 1440
+    },
+    "tonemap_uncharted": {
+      "h": 773,
+      "mean_lum": 23.3647,
+      "pixels_md5": "f522b6a1f6f8a89f68a02d8f0f147bd8",
+      "w": 1440
+    }
+  },
+  "note": "Golden-image signatures. See tools/matrix/run.py.",
+  "recorded": "2026-08-07 19:31"
+}
