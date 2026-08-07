@@ -22,11 +22,26 @@ bit-reproducible, so a control pair at capspot comes back BYTE-IDENTICAL — a
 zero noise floor, with nobody at the keyboard. Roughly forty capture launches
 were run this session without an operator. See CAPTURE PROTOCOL.
 
-WHAT TO DO NEXT: roadmap priority 3 (texture-upload cold load) also CLOSED
-2026-08-07 — measured, not a bottleneck, numbers in AGENTS.md. That leaves
-priority 4, the broader compute-postprocess conversion, as the front of the
-line, with priority 5 (per-OS optimization, the ARM64 JIT gap) behind it. See
-AGENTS.md "Active Roadmap".
+WHAT TO DO NEXT — the queue changed shape today. Roadmap priorities 3 and 4 are
+both resolved-by-measurement rather than by code, and the honest position is
+that **the two biggest questions left need hardware this project does not have
+yet.** In order:
+
+  1. RUN THE MATRIX before and after any rendering change. It is four minutes
+     and it covers every pass this branch found broken. See TOOLS.
+  2. FIX THE FrameGPU METRIC (sum per-command-buffer end-start instead of
+     spanning first-start to last-end). Until then no absolute GPU cost number
+     on this branch can be quoted. Small, self-contained, unblocks all
+     performance work.
+  3. COLD-MACHINE RESOLUTION SWEEP to settle CPU- vs GPU-bound. Four launches,
+     first thing in a session, before anything heats the machine.
+  4. Apple Silicon, when it exists: compute AO's cost, compute bloom's
+     unexplained 39% deficit, and the Tier 2 direct-composite path that cannot
+     execute here at all. One afternoon settles three standing items.
+  5. Meanwhile: the Linux port on origin/native-platform-expansion. NOTE the
+     known blocker — ZWidget is VENDORED on metal-audit and a SUBTREE on that
+     branch, and that has to be resolved before either can merge. The macOS
+     launcher swap is a one-call-site change.
 
 Read CLAUDE.md's "Measuring a rendering change", "GPU frame captures" and
 "Visual A/B captures" first. Then docs/metal-postprocess-graphs.md, which is new
@@ -324,7 +339,22 @@ THE STANDING LIST
    did NOT reproduce (3.3ms in two further runs). It was first-run cost, not the
    uploads. Repeating it cost one launch and would have cost a session.
 
-7. NEW STANDING TRAP: PRINT_LOG DOES NOT REACH STDOUT. The engine printed the
+7. NEW STANDING TRAP: MEASUREMENT INSTRUMENTS THAT DO NOTHING. Three wrong
+   results today came from knobs that did not do what their names said:
+   mt_compute_ao_scale is clamp(1,4) so a 4/8/16 sweep was one config three
+   times; algorithm 1 ignores mt_compute_ao_directions/_steps in favour of
+   mt_compute_ao_alchemy_samples; and skipping RenderCoverageMask silently left
+   the AO kernels rejecting every sample, which measured as a 3.1ms "win" that
+   was really AO switched off.
+
+   THE RULE, which covers all three: before trusting the TIMING of an A/B,
+   confirm the two configs produce different PIXELS. A "faster" config that
+   renders identically to the feature disabled IS the feature disabled. This is
+   the same rule this file already applies to screenshots, and it is easier to
+   skip in performance work because the number moved and the number was what you
+   wanted.
+
+8. NEW STANDING TRAP: PRINT_LOG DOES NOT REACH STDOUT. The engine printed the
    exact glslang error behind the custom-shader failure all along, and every
    redirected launch log looked clean. It also nearly caused a wrong reading in
    the wipe probe the same day. Use +logfile before concluding anything is
@@ -335,40 +365,41 @@ THE STANDING LIST
 WHAT LANDED TODAY (2026-08-07)
 ================================================================================
 
-8 commits. Build green throughout, tree clean, binary at HEAD. The previous
-session's 19 commits are in git log; they are not repeated here.
+16 commits. Build green throughout, tree clean, binary at HEAD.
 
-  Instruments and capture infrastructure
-    627febacb  shotafter/execafter -- unattended, deterministic capture series
-    3703c6c24  execafter queues instead of replacing (found within the hour)
-    ea0ab7f43  mt_wipe_probe, and BlitCurrentToImage's V flip VERIFIED
+  Infrastructure -- the session's lasting value
+    627febacb  shotafter/execafter: unattended, deterministic capture series
+    3703c6c24  execafter queues instead of replacing
+    ecd0cb3d8  THE GOLDEN-IMAGE MATRIX RUNNER -- 11 configs, 4 min, no operator
+    72229d506  point the docs at it
 
   Fixes
-    25fbdc24b  custom PP shaders: four defects, the pass had never run at all
-               (3 in shader compilation, 1 a target Metal never dispatched;
-                shader failures now PRINT_HIGH instead of invisible)
+    25fbdc24b  custom PP shaders: 4 defects, the pass had NEVER run on Metal
+    fc59f391f  AO reads the stencil directly; RenderCoverageMask deleted
 
-  Findings that closed items without a code change
-    4276a4de7  Tier 2 direct composite is blocked by hardware; all reachable
-               branches around it pass, and compute-vs-reference bloom is now
-               whole-frame identical (max_delta 1)
+  Closed by measurement, no code change needed
+    4276a4de7  Tier 2 direct composite: blocked by HARDWARE, not missing work
+    ea0ab7f43  BlitCurrentToImage's V flip VERIFIED, dead branch executed
+    5bde9a5b4  texture upload cold load: measured, NOT a bottleneck
 
-  Documentation and corrections
+  Corrections -- three claims in this tree were wrong and are now right
+    c39f9f240  determinism is per TIC, not per rendered frame (cl_capfps)
+    97ec7ae3f  compute postprocess "net loss"        <- SUPERSEDED, see below
+    e94738e3d  "coverage mask costs 3.1ms"           <- SUPERSEDED, see below
+    c6f58729e  FrameGPU is an ENVELOPE, not GPU busy time
+
+  Documentation
     2f0a76633  fxaa and colormap polarity both PASS
-    c39f9f240  correct the determinism claim -- it is per TIC, not per frame
     c5a899d19  custom PP write-up; PRINT_LOG promoted to a standing trap
+    e8e070b41  mid-session handoff
 
-Two claims this file had been carrying were WRONG and are corrected in place:
-the viewpoint reproduces per tic and not per rendered frame (cl_capfps is
-load-bearing), and "Tier 2 has never executed" was a hardware ceiling rather
-than an untested path.
-
-REGRESSION CHECKS RUN AT SESSION END, after the shader-compilation changes,
-which touch EVERY Metal PP shader and not just custom ones:
-  - default config at capspot, post-fix vs pre-fix baseline:  max_delta 0
-  - gl_tonemap 4 (sqrt(c*c) identity) vs gl_tonemap 0:        max_delta 0
-  - gl_tonemap 1 vs 0, the necessary other half:              86.7% of px
-Both halves each time. An identity that matches proves nothing on its own.
+READ THE CORRECTIONS BEFORE ANY AO PERFORMANCE NUMBER. The chain went: "compute
+postprocess is a net loss" -> "no, a coverage pass costs 3.1ms" -> "no, both
+were measurement artifacts; the cost is the sample loop, exactly as the
+2026-07-14 bisection already said." Settled position: compute AO BEATS the
+reference path at <=4 samples (6.27-6.40ms vs 6.73ms) and loses at the gl_ssao 3
+default of 12 (9.22ms). The open question there is visual -- is 4-sample
+AlchemyAO good enough? -- and nobody has looked.
 
 Commit messages carry the reasoning. This file deliberately does not repeat it.
 
