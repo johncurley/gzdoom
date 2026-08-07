@@ -259,9 +259,29 @@ THE STANDING LIST
    leaves texture order, so it needs none). Details in AGENTS.md. Nothing is
    known to be wrong with it; it is simply unexecuted.
 
-   STILL OPEN, UNCHANGED: BlitCurrentToImage's conversion branch confirmed
-   unreachable, kept deliberately, its V-flip unverified · custom PP shaders
-   never tested, no mod to hand.
+4. BlitCurrentToImage's V FLIP — VERIFIED CORRECT 2026-08-07 by mt_wipe_probe.
+   The branch is still unreachable in play (CreateWipeTexture always matches the
+   pipeline format) but it has now been EXECUTED on hardware, which it never had
+   been. Both halves:
+
+     as shipped     r(convert, copy) = +0.9986  r(convert, copy REV) = +0.0967
+     flip removed   r(convert, copy) = +0.0967  r(convert, copy REV) = +0.9986
+
+   Same frame in both runs, so that is an exact swap of one pair of numbers,
+   not two loosely comparable readings.
+
+   The falsification half is what makes this a result: "AGREE" alone is also
+   what a probe that cannot detect inversion would print, and what a silently
+   failed blit would print. It also proves the branch runs, which the source's
+   own PRINT_LOG marker cannot — PRINT_LOG does not reach stdout, so its absence
+   from a redirected log means nothing. Do not read anything into a missing
+   PRINT_LOG line.
+
+   The source recipe (force BGRA8Unorm, trigger a wipe, look) was unusable:
+   PerformWipe runs to completion inside one D_Display call, so no frame hook
+   can catch a frame mid-wipe. Re-run mt_wipe_probe after touching either leg.
+
+5. STILL OPEN: custom PP shaders never tested, no mod to hand.
 
 ================================================================================
 WHAT LANDED TODAY
@@ -345,6 +365,10 @@ TOOLS
   the draw with a differing-pixel count, the stencil/clear decisions, whole-frame
   SceneFog stats, and the shader's own alpha derived from Ambient0. Needs
   gl_ssao != 0 and gl_ssao_debug 0.
+- mt_wipe_probe [frames] (NEW) — runs BOTH legs of BlitCurrentToImage on the
+  same pipeline image and compares their vertical luminance profiles, forwards
+  and reversed. Reports its own discriminating power, so a symmetric source
+  cannot produce a confident wrong answer.
 - mt_capture [frames] (NEW) — programmatic Metal GPU frame capture, no Xcode
   build needed. Needs METAL_CAPTURE_ENABLED=1 on the launch. See
   docs/gpu-capture-protocol.md. Encoder labels are greppable straight out of the

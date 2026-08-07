@@ -793,6 +793,7 @@ set (METAL_SOURCES
 	common/rendering/metal/renderer/mt_bloom.cpp
 	common/rendering/metal/renderer/mt_bloomdump.cpp
 	common/rendering/metal/renderer/mt_aoprobe.cpp
+	common/rendering/metal/renderer/mt_wipeprobe.cpp
 	common/rendering/metal/renderer/mt_capture.cpp
 	common/rendering/metal/renderer/mt_compute.cpp
 	common/rendering/metal/renderer/mt_metrics.cpp

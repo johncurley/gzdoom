@@ -6,6 +6,7 @@
 #include "mt_postprocess.h"
 
 void MtBloomDumpIfArmed(MetalRenderDevice *fb);
+void MtWipeProbeIfArmed(MetalRenderDevice *fb);
 
 #include "i_time.h"
 #include <Metal/Metal.hpp>
@@ -563,6 +564,7 @@ void MtPostprocess::PostProcessScene(
   // levels the previous frame left behind -- see mt_bloomdump.cpp on why it
   // cannot read this frame's.
   MtBloomDumpIfArmed(fb);
+  MtWipeProbeIfArmed(fb);
   MtAOProbeCountdown();
 
   MtPPRenderState renderstate(fb);
@@ -714,13 +716,24 @@ void MtPostprocess::BlitCurrentToImage(MTL::Texture *dstimage) {
     // pipeline images RGBA16Float while CreateWipeTexture still asked for
     // BGRA8Unorm. present.fp samples at TexCoord * UVScale + UVOffset.
     //
-    // UNVERIFIED. This branch currently has no reachable caller --
-    // CreateWipeTexture is the only caller of BlitCurrentToImage and now
-    // always matches the pipeline format, so the copy path is always taken.
-    // The flip direction is derived from the reported symptom, not observed.
-    // To verify: temporarily make CreateWipeTexture request BGRA8Unorm
-    // unconditionally, run a level-exit wipe under mt_hdr_pipeline 1, confirm
-    // the wipe is upright, then revert.
+    // VERIFIED 2026-08-07 by mt_wipe_probe, which blits the same pipeline
+    // image down both legs and correlates their per-row luminance profiles:
+    //   r(convert, copy) = +0.9986   r(convert, copy REVERSED) = +0.0967
+    // and the falsification half, with this flip removed, reports the exact
+    // mirror on the SAME frame (+0.0967 / +0.9986, VERDICT INVERTED). Both
+    // halves were needed:
+    // the AGREE result alone is also what a probe that cannot detect inversion
+    // would print.
+    //
+    // The flip is correct because the present shader is excluded from
+    // PatchVertexShader's PP V-flip (mt_shader.cpp), so it carries an IMPLICIT
+    // flip on Metal -- the same one the chain used to survive by cancellation.
+    // This explicit flip is the second one, and the two cancel, matching the
+    // copyFromTexture leg above.
+    //
+    // The branch still has no reachable caller: CreateWipeTexture is the only
+    // caller of BlitCurrentToImage and always matches the pipeline format.
+    // Re-run `mt_wipe_probe` after touching either leg.
     uniforms.Scale = {1.0f, -1.0f};
     uniforms.Offset = {0.0f, 1.0f};
     uniforms.HdrMode = 0;

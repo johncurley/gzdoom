@@ -4280,3 +4280,65 @@ the setting did not apply. What made it cheap to catch was `+execafter 100
 mt_caps` printing the RESOLVED path in every log: the contradiction was visible
 in the log rather than inferable from pixels. **Put a state dump in every
 capture launch.** In zsh use `${=VAR}` when splitting is wanted.
+
+## 2026-08-07: BlitCurrentToImage's V flip — VERIFIED CORRECT, by executing the dead branch
+
+The standing item was "BlitCurrentToImage's conversion branch confirmed
+unreachable, kept deliberately, its V-flip unverified". The flip is now
+verified, and the branch has been executed on hardware for the first time.
+
+### Why the recipe in the source could not work
+
+The comment there proposed forcing `CreateWipeTexture` to BGRA8Unorm, running a
+level-exit wipe and looking at it. That cannot be done unattended, and it cannot
+be done at all with a frame hook: `PerformWipe` runs to completion inside a
+single `D_Display` call (`d_main.cpp:1193`), so there is no frame boundary
+during the wipe to capture on. A screenshot after it shows the destination
+screen.
+
+### `mt_wipe_probe`, and why it asks a different question
+
+The wipe was never the question — the question is whether the conversion leg
+produces the same orientation as the copy leg. So the probe blits the SAME
+pipeline image down both legs into two textures, one in the pipeline format
+(copy leg, and ground truth since that is what wipes use today) and one in the
+other format (conversion leg), and compares them.
+
+They are different formats and precisions, so it compares the SHAPE of their
+vertical profile: per-row mean luminance, correlated against the other's
+profile and against that profile REVERSED. It also reports
+`r(copy, copy REVERSED)` as an explicit statement of discriminating power — a
+vertically symmetric source would correlate equally both ways and make the
+verdict meaningless. Reporting that instead of assuming it is the direct answer
+to this file's recurring "a test whose two outcomes look the same is not a test".
+
+### The result, both halves
+
+    as shipped        r(convert, copy) = +0.9986   r(convert, copy REV) = +0.0967   AGREE
+    flip removed      r(convert, copy) = +0.0967   r(convert, copy REV) = +0.9986   INVERTED
+
+Those two runs landed on the SAME frame, so the pair is an exact swap of the
+same two numbers rather than two loosely comparable readings. Discriminating
+power was +0.0988 -- far from the +1 that would mean a symmetric, useless
+source. An earlier run at a different frame agreed (+0.9985 / -0.2582).
+
+**The falsification half was necessary, not decorative.** "AGREE" on its own is
+exactly what a probe unable to detect inversion would print, and it is also what
+would appear if `BlitCurrentToImage` had silently failed and left both textures
+holding the same thing. The mirrored second result rules out both at once and
+additionally proves the conversion branch really executes — which the source's
+own `PRINT_LOG` marker could NOT prove, because PRINT_LOG does not reach stdout
+and its absence from a redirected log means nothing.
+
+### Why it is correct, now that it is known to be
+
+The present shader is deliberately excluded from `PatchVertexShader`'s PP V-flip
+(`mt_shader.cpp:1470`), so on Metal it carries an IMPLICIT flip — the same one
+the chain used to survive by cancellation before `5a9b53e1b`. The explicit
+`Scale.y = -1, Offset.y = +1` is the second flip, and the two cancel, matching
+`copyFromTexture`. The direction that shipped from a bug report turns out to be
+derivable.
+
+The branch remains unreachable in normal play. That is fine and deliberate; it
+is now a guarded conversion path that is known to work rather than one that is
+merely hoped to.
