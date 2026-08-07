@@ -673,10 +673,25 @@ void MetalRenderDevice::SetViewportRects(IntRect *bounds) {
   mScreenViewport.width = logicalWidth;
   mScreenViewport.height = logicalHeight;
 
-  if (sysCallbacks.GetSceneRect)
+  if (sysCallbacks.GetSceneRect) {
     mSceneViewport = sysCallbacks.GetSceneRect();
-  else
+    // System_GetSceneRect (d_main.cpp) builds `top` in GL convention -- origin
+    // bottom-left, hence its `screen->GetHeight() - (...)`. Every Metal
+    // consumer treats mSceneViewport as top-left: MtPPRenderState::SetViewport,
+    // mt_ao.cpp, mt_bloom.cpp, and SceneOffset() as fed to the PP shaders. Flip
+    // Y once here so the whole backend sees one convention.
+    //
+    // Symptom when this was missing: with a visible status bar (screenblocks
+    // < 11) the scene viewport is inset, so SceneOffset().Y is nonzero and the
+    // SSAO combine landed vertically displaced -- AO covering only part of the
+    // screen. At screenblocks 11+ the inset is zero and the mismatch cancels,
+    // which is why it went unnoticed. Found 2026-08-07, once the Intel gate
+    // routed this machine onto the reference PP AO path for the first time.
+    mSceneViewport.top =
+        logicalHeight - (mSceneViewport.top + mSceneViewport.height);
+  } else {
     mSceneViewport = mScreenViewport;
+  }
 }
 
 void MetalRenderDevice::SetMode(bool fullscreen, bool hiDPI) {
