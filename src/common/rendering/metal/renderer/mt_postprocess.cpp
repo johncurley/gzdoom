@@ -509,13 +509,14 @@ void MtPostprocess::BlurScene(float amount) {
 void MtPostprocess::AmbientOccludeScene(float m5, const HWViewpointUniforms* currentViewpoint) {
   if (!fb->mAOModule) return;
 
-  auto depthTex = fb->GetBuffers()->SceneDepthStencil.get();
+  // Use the scene size, as VkPostprocess::AmbientOccludeScene does. This used
+  // to override both with SceneDepthStencil's texture size, which feeds
+  // AmbientWidth/Height and hence RadiusToScreen -- i.e. the AO radius in
+  // pixels. Measured equal (1024x820 both) in the aobug repro, so this is an
+  // alignment with the reference backend, not a fix for anything observed;
+  // it only matters if the depth texture is ever padded past the scene.
   int sceneWidth = fb->GetBuffers()->GetSceneWidth();
   int sceneHeight = fb->GetBuffers()->GetSceneHeight();
-  if (depthTex) {
-    sceneWidth = depthTex->GetWidth();
-    sceneHeight = depthTex->GetHeight();
-  }
 
   // Set Z planes from the last scene viewpoint for correct linearization
   fb->mZNear = fb->mLastSceneViewpoint.mProjectionMatrix.get()[14] / (fb->mLastSceneViewpoint.mProjectionMatrix.get()[10] - 1.0f);
@@ -533,6 +534,7 @@ void MtPostprocess::AmbientOccludeScene(float m5, const HWViewpointUniforms* cur
   }
 
   if (useComputeAO && fb->mAOModule->Render(m5, sceneWidth, sceneHeight, currentViewpoint)) {
+    RestoreSceneRenderTargetAfterAO();
     return;
   }
 
@@ -547,6 +549,28 @@ void MtPostprocess::AmbientOccludeScene(float m5, const HWViewpointUniforms* cur
     float ms = std::chrono::duration<float, std::milli>(aoEnd - aoStart).count();
     fb->GetDebugManager()->RecordMetric(MtMetric::PPAO, ms);
   }
+
+  RestoreSceneRenderTargetAfterAO();
+}
+
+// AmbientOccludeScene runs in the MIDDLE of the scene -- hw_drawinfo.cpp:1071,
+// after the opaque pass and before portals and translucents -- and unlike
+// Vulkan, whose VkPPRenderState is a separate object, Metal's MtPPRenderState
+// drives the *main* render state. Every PP pass therefore points that state at
+// a postprocess target and forces a single colour attachment
+// (MtPPRenderState::Draw, EnableDrawBuffers(1, false)), and nothing put it back.
+//
+// The consequence was silent and expensive: MtPipelineStateManager selects the
+// shader variant with `DrawBufferCount > 1 ? GBUFFER_PASS : NORMAL_PASS`, and
+// FragNormal only exists under GBUFFER_PASS, so every surface drawn after the
+// AO pass was compiled against a shader with no normal output. Colour and depth
+// still landed in attachment 0, so nothing looked wrong -- but the scene normal
+// G-buffer stayed empty (134 of 135 wall draws, measured), which is what broke
+// SSAO on Metal.
+void MtPostprocess::RestoreSceneRenderTargetAfterAO() {
+  auto *renderState = fb->GetRenderState();
+  SetSceneRenderTarget(gl_ssao != 0);
+  renderState->EnableDrawBuffers(renderState->GetPassDrawBufferCount(), false);
 }
 
 void MtPostprocess::UpdateShadowMap() {

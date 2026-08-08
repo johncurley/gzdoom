@@ -26,6 +26,9 @@ public:
   void BlitSceneToPostprocess();
   void BlitCurrentToImage(MTL::Texture *dstimage);
   void SetSceneRenderTarget(bool useSSAO);
+  // Undo the render-target and draw-buffer state that the mid-scene AO
+  // postprocess passes leave behind. See the definition for why this matters.
+  void RestoreSceneRenderTargetAfterAO();
 
   // Scene rendering
   void SetActiveRenderTarget();
