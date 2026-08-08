@@ -573,6 +573,10 @@ void MtPostprocess::RestoreSceneRenderTargetAfterAO() {
   renderState->EnableDrawBuffers(renderState->GetPassDrawBufferCount(), false);
 }
 
+void MtPostprocess::ClearTonemapPalette() {
+  hw_postprocess.tonemap.ClearTonemapPalette();
+}
+
 void MtPostprocess::UpdateShadowMap() {
   if (screen->mShadowMap.PerformUpdate()) {
     MtPPRenderState renderstate(fb);

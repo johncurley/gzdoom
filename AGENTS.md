@@ -5804,3 +5804,54 @@ Note the raw magnitude looks small because `fogColor` is dark in this map
 has alpha, so a max delta of 25 in the fog colour is a visible tint error in
 occluded regions, and it applied to every surface drawn after the mid-scene AO
 pass -- which was almost the whole frame.
+
+### UpdatePalette implemented on Metal (palette tonemap LUT invalidation)
+
+`MetalRenderDevice::UpdatePalette()` was an empty stub. It exists to drop the
+cached palette-tonemap lookup texture (`gl_tonemap 5`, `PaletteTexture` in
+hw_postprocess) so it is rebuilt from the current game palette. It fires on a
+game **restart** -- i.e. when a different IWAD or mod supplies a different
+PLAYPAL -- and when `gl_paltonemap_powtable` or `gl_paltonemap_reverselookup`
+change. Not involved in ordinary palette handling; only palette-tonemap mode.
+
+**Confirmed broken before fixing**, with a must-differ test. `gl_paltonemap_powtable`
+is `CVAR_NOINITCALL`, so setting it on the command line does not fire the
+callback -- the LUT would just be built lazily with the new value and both
+backends would agree. The bug only appears when the CVAR changes at *runtime*,
+after the LUT exists, so the test drives it with `+execafter 60 "gl_paltonemap_powtable 8"`.
+Scene rows changed (the console band, rows 0-19, is excluded because `execafter`
+prints a message that would otherwise register as a difference):
+
+    Metal BEFORE fix     0/748 rows   mean 0.000   max  0
+    Metal AFTER  fix   453/748 rows   mean 0.068   max 40
+    OpenGL reference   418/748 rows   mean 0.063   max 40
+
+Metal now responds with the same magnitude as the reference. The absolute
+Metal-vs-OpenGL difference in palette-tonemap output is unchanged by the fix
+(mean 0.356 before the CVAR change, 0.360 after), i.e. a pre-existing backend
+difference rather than anything this introduced.
+
+Also confirmed the mode works at all on Metal: `gl_tonemap 5` differs from
+`gl_tonemap 0` across all 768 rows.
+
+Fix mirrors `VkPostprocess::ClearTonemapPalette` exactly. Note Metal's own
+`mPaletteTextures` translation cache (mt_texture.cpp:780) is *also* never
+invalidated and `UpdatePalette` would be its natural home -- deliberately not
+bundled, since nothing has been shown to go stale there.
+
+### The matrix baseline keeps dying to display changes -- pin it or stop trusting it
+
+Third occurrence. Captures were 1440x773 (laptop panel), then 1024x820, now
+1024x768, with `vid_fullscreen=true` throughout. Under fullscreen the render
+size is just the display mode, and `vid_defwidth`/`vid_defheight` are ignored,
+so nothing in the harness controls it. Every such change fails all 11 configs at
+once with a uniform mean_lum shift -- an obvious signature once recognised, and
+NOT a code regression.
+
+`gl_dither_bpc` also drifted to 0 in the ini, which alters the present pass for
+every config.
+
+Before re-recording again, try pinning `+vid_fullscreen 0` alongside
+`+vid_defwidth`/`+vid_defheight` in `configs.json` `always` and confirm the
+capture size is stable across runs. A baseline that cannot survive a display
+change is a check nobody will trust.

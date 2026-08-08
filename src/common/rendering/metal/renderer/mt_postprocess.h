@@ -26,6 +26,9 @@ public:
   void BlitSceneToPostprocess();
   void BlitCurrentToImage(MTL::Texture *dstimage);
   void SetSceneRenderTarget(bool useSSAO);
+  // Drop the cached palette-tonemap lookup texture so it is rebuilt from the
+  // current game palette. Mirrors VkPostprocess::ClearTonemapPalette.
+  void ClearTonemapPalette();
   // Undo the render-target and draw-buffer state that the mid-scene AO
   // postprocess passes leave behind. See the definition for why this matters.
   void RestoreSceneRenderTargetAfterAO();
