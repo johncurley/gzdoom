@@ -1,20 +1,18 @@
 #pragma once
 
-#include <list>
 #include <unordered_map>
 #include <zwidget/window/window.h>
-#include <zwidget/window/sdl2nativehandle.h>
+#include <zwidget/window/sdlnativehandle.h>
 #include <SDL2/SDL.h>
 
 class SDL2DisplayWindow : public DisplayWindow
 {
 public:
-	SDL2DisplayWindow(DisplayWindowHost* windowHost, bool popupWindow, SDL2DisplayWindow* owner, RenderAPI renderAPI, double uiscale);
+	SDL2DisplayWindow(DisplayWindowHost* windowHost, WidgetType type, SDL2DisplayWindow* owner, RenderAPI renderAPI, double uiscale);
 	~SDL2DisplayWindow();
 
 	void SetWindowTitle(const std::string& text) override;
 	void SetWindowIcon(const std::vector<std::shared_ptr<Image>>& images) override;
-	void SetWindowFrame(const Rect& box) override;
 	void SetClientFrame(const Rect& box) override;
 	void Show() override;
 	void ShowFullscreen() override;
@@ -25,15 +23,17 @@ public:
 	void Hide() override;
 	void Activate() override;
 	void ShowCursor(bool enable) override;
+	void LockKeyboard() override;
+	void UnlockKeyboard() override;
 	void LockCursor() override;
 	void UnlockCursor() override;
 	void CaptureMouse() override;
 	void ReleaseMouseCapture() override;
 	void Update() override;
 	bool GetKeyState(InputKey key) override;
-	void SetCursor(StandardCursor cursor) override;
+	void SetCursor(StandardCursor cursor, std::shared_ptr<CustomCursor> custom) override;
 
-	Rect GetWindowFrame() const override;
+	Rect GetClientFrame() const override;
 	Size GetClientSize() const override;
 	int GetPixelWidth() const override;
 	int GetPixelHeight() const override;
@@ -67,12 +67,15 @@ public:
 	void OnMouseButtonDown(const SDL_MouseButtonEvent& event);
 	void OnMouseWheel(const SDL_MouseWheelEvent& event);
 	void OnMouseMotion(const SDL_MouseMotionEvent& event);
+	void OnJoyButtonUp(const SDL_ControllerButtonEvent& event);
+	void OnJoyButtonDown(const SDL_ControllerButtonEvent& event);
 	void OnPaintEvent();
 	static void OnTimerEvent(const SDL_UserEvent& event);
 
 	InputKey GetMouseButtonKey(const SDL_MouseButtonEvent& event);
 
 	static InputKey ScancodeToInputKey(SDL_Scancode keycode);
+	static InputKey GameControllerButtonToInputKey(SDL_GameControllerButton button);
 	static SDL_Scancode InputKeyToScancode(InputKey inputkey);
 
 	template<typename T>
@@ -91,7 +94,7 @@ public:
 	static Uint32 ExecTimer(Uint32 interval, void* id);
 
 	DisplayWindowHost* WindowHost = nullptr;
-	SDL2NativeHandle Handle;
+	SDLNativeHandle Handle;
 	SDL_Renderer* RendererHandle = nullptr;
 	SDL_Texture* BackBufferTexture = nullptr;
 	int BackBufferWidth = 0;

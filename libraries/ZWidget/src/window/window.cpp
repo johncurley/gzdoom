@@ -3,13 +3,15 @@
 #include "window/stub/stub_open_folder_dialog.h"
 #include "window/stub/stub_open_file_dialog.h"
 #include "window/stub/stub_save_file_dialog.h"
-#include "window/sdl2nativehandle.h"
+#include "window/sdlnativehandle.h"
 #include "core/widget.h"
 #include <stdexcept>
 
-std::unique_ptr<DisplayWindow> DisplayWindow::Create(DisplayWindowHost* windowHost, bool popupWindow, DisplayWindow* owner, RenderAPI renderAPI)
+std::unique_ptr<DisplayWindow> DisplayWindow::Create(DisplayWindowHost* windowHost, WidgetType type, DisplayWindow* owner, RenderAPI renderAPI)
 {
-	return DisplayBackend::Get()->Create(windowHost, popupWindow, owner, renderAPI);
+	if (type == WidgetType::Child)
+		throw std::runtime_error("WidgetType.Child not allowed for DisplayWindow");
+	return DisplayBackend::Get()->Create(windowHost, type, owner, renderAPI);
 }
 
 void DisplayWindow::ProcessEvents()
@@ -93,27 +95,37 @@ std::unique_ptr<DisplayBackend> DisplayBackend::TryCreateBackend()
 		{
 			backend = TryCreateWin32();
 		}
+		else if (backendSelectionStr == "Cocoa")
+		{
+			backend = TryCreateCocoa();
+		}
 		else if (backendSelectionStr == "X11")
 		{
 			backend = TryCreateX11();
+		}
+		else if (backendSelectionStr == "SDL3")
+		{
+			backend = TryCreateSDL3();
 		}
 		else if (backendSelectionStr == "SDL2")
 		{
 			backend = TryCreateSDL2();
 		}
-		else if (backendSelectionStr == "Cocoa")
+		else if (backendSelectionStr == "Haiku")
 		{
-			backend = TryCreateCocoa();
+			backend = TryCreateHaiku();
 		}
 	}
 
 	if (!backend)
 	{
-		backend = TryCreateWin32();
-		if (!backend) backend = TryCreateCocoa();
-		if (!backend) backend = TryCreateWayland();
-		if (!backend) backend = TryCreateX11();
-		if (!backend) backend = TryCreateSDL2();
+		if (!backend) { backend = TryCreateWin32(); }
+		if (!backend) { backend = TryCreateCocoa(); }
+		if (!backend) { backend = TryCreateHaiku(); }
+		if (!backend) { backend = TryCreateWayland(); }
+		if (!backend) { backend = TryCreateX11(); }
+		if (!backend) { backend = TryCreateSDL3(); }
+		if (!backend) { backend = TryCreateSDL2(); }
 	}
 
 	return backend;
@@ -149,6 +161,24 @@ std::unique_ptr<DisplayBackend> DisplayBackend::TryCreateSDL2()
 #else
 
 std::unique_ptr<DisplayBackend> DisplayBackend::TryCreateSDL2()
+{
+	return nullptr;
+}
+
+#endif
+
+#ifdef USE_SDL3
+
+#include "sdl3/sdl3_display_backend.h"
+
+std::unique_ptr<DisplayBackend> DisplayBackend::TryCreateSDL3()
+{
+	return std::make_unique<SDL3DisplayBackend>();
+}
+
+#else
+
+std::unique_ptr<DisplayBackend> DisplayBackend::TryCreateSDL3()
 {
 	return nullptr;
 }
@@ -209,14 +239,36 @@ std::unique_ptr<DisplayBackend> DisplayBackend::TryCreateWayland()
 
 #include "cocoa/cocoa_display_backend.h"
 
-std::unique_ptr<DisplayBackend> DisplayBackend::TryCreateCocoa()
-{
-	return std::make_unique<CocoaDisplayBackend>();
-}
+// DisplayBackend::TryCreateCocoa() is defined in cocoa_display_backend.mm
 
 #else
 
 std::unique_ptr<DisplayBackend> DisplayBackend::TryCreateCocoa()
+{
+	return nullptr;
+}
+
+#endif
+
+#ifdef __HAIKU__
+
+#include "haiku/haiku_display_backend.h"
+
+std::unique_ptr<DisplayBackend> DisplayBackend::TryCreateHaiku()
+{
+	try
+	{
+		return std::make_unique<HaikuDisplayBackend>();
+	}
+	catch (...)
+	{
+		return nullptr;
+	}
+}
+
+#else
+
+std::unique_ptr<DisplayBackend> DisplayBackend::TryCreateHaiku()
 {
 	return nullptr;
 }

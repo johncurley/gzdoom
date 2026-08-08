@@ -16,6 +16,7 @@ public:
 	bool SetResolution();
 
 	virtual void DumpAdapters();
+	virtual void SetWindowTitle(const char* title) {}
 };
 
 void I_InitGraphics();

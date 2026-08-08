@@ -96,6 +96,17 @@ OpenGLFrameBuffer::OpenGLFrameBuffer(void *hMonitor, bool fullscreen) :
 	GLRenderer = nullptr;
 }
 
+#ifdef GZDOOM_NATIVE_LINUX
+OpenGLFrameBuffer::OpenGLFrameBuffer(void* display, void* surface, bool wayland) : 
+	Super(display, surface, wayland) 
+{
+	Super::SetVSync(vid_vsync);
+	FHardwareTexture::InitGlobalState();
+	gl_RenderState.Reset();
+	GLRenderer = nullptr;
+}
+#endif
+
 OpenGLFrameBuffer::~OpenGLFrameBuffer()
 {
 	PPResource::ResetAll();
@@ -126,7 +137,7 @@ void OpenGLFrameBuffer::InitializeState()
 
 	if (first)
 	{
-		if (ogl_LoadFunctions() == ogl_LOAD_FAILED)
+		if (!gladLoadGL())
 		{
 			I_FatalError("Failed to load OpenGL functions.");
 		}

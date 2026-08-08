@@ -1,7 +1,7 @@
 #pragma once
 
 #include "buffers.h"
-#include "gl_load.h"
+#include <glad/glad.h>
 
 #ifdef _MSC_VER
 // silence bogus warning C4250: 'GLVertexBuffer': inherits 'GLBuffer::GLBuffer::SetData' via dominance

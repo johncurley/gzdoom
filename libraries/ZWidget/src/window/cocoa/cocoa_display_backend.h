@@ -8,7 +8,7 @@ public:
     CocoaDisplayBackend();
     ~CocoaDisplayBackend();
 
-    std::unique_ptr<DisplayWindow> Create(DisplayWindowHost* windowHost, bool popupWindow, DisplayWindow* owner, RenderAPI renderAPI) override;
+    std::unique_ptr<DisplayWindow> Create(DisplayWindowHost* windowHost, WidgetType type, DisplayWindow* owner, RenderAPI renderAPI) override;
 
     void ProcessEvents() override;
     void RunLoop() override;
@@ -24,4 +24,6 @@ public:
     std::unique_ptr<OpenFileDialog> CreateOpenFileDialog(DisplayWindow* owner) override;
     std::unique_ptr<SaveFileDialog> CreateSaveFileDialog(DisplayWindow* owner) override;
     std::unique_ptr<OpenFolderDialog> CreateOpenFolderDialog(DisplayWindow* owner) override;
+
+    static std::unique_ptr<DisplayBackend> TryCreateCocoa();
 };

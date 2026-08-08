@@ -32,40 +32,40 @@ jobs:
         - name: Linux GCC 9 # oldest version available
           os: ubuntu-22.04
           extra_options: -DCMAKE_C_COMPILER=gcc-9 -DCMAKE_CXX_COMPILER=g++-9
-          deps_cmdline: sudo apt-get update && sudo apt-get install gcc-9 g++-9 libsdl2-dev libvpx-dev libgtk2.0-dev libwebp-dev
+          deps_cmdline: sudo apt-get update && sudo apt-get install gcc-9 g++-9 libinput-dev libudev-dev libwayland-dev libxkbcommon-dev libx11-dev libxi-dev libgl1-mesa-dev libegl-dev libdbus-1-dev libfontconfig1-dev libvpx-dev libgtk2.0-dev libwebp-dev
           build_type: RelWithDebInfo
 
         - name: Linux GCC 12 # last known good
           os: ubuntu-22.04
           extra_options: -DCMAKE_C_COMPILER=gcc-12 -DCMAKE_CXX_COMPILER=g++-12
-          deps_cmdline: sudo apt-get update && sudo apt-get install libsdl2-dev libvpx-dev libgtk-3-dev libwebp-dev
+          deps_cmdline: sudo apt-get update && sudo apt-get install libinput-dev libudev-dev libwayland-dev libxkbcommon-dev libx11-dev libxi-dev libgl1-mesa-dev libegl-dev libdbus-1-dev libfontconfig1-dev libvpx-dev libgtk-3-dev libwebp-dev
           build_type: MinSizeRel
           export_appimage: true
 
         - name: Linux GCC Latest # rolling default, not actually latest
           os: ubuntu-latest
           extra_options: -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
-          deps_cmdline: sudo apt-get update && sudo apt-get install libsdl2-dev libvpx-dev libwebp-dev
+          deps_cmdline: sudo apt-get update && sudo apt-get install libinput-dev libudev-dev libwayland-dev libxkbcommon-dev libx11-dev libxi-dev libgl1-mesa-dev libegl-dev libdbus-1-dev libfontconfig1-dev libvpx-dev libwebp-dev
           build_type: Release
           export_appimage: true
 
         - name: Linux Clang 11 # oldest version available
           os: ubuntu-22.04
           extra_options: -DCMAKE_C_COMPILER=clang-11 -DCMAKE_CXX_COMPILER=clang++-11 -DDYN_OPENAL=OFF
-          deps_cmdline: sudo apt-get update && sudo apt-get install clang-11 libsdl2-dev libvpx-dev libopenal-dev libwebp-dev
+          deps_cmdline: sudo apt-get update && sudo apt-get install clang-11 libinput-dev libudev-dev libwayland-dev libxkbcommon-dev libx11-dev libxi-dev libgl1-mesa-dev libegl-dev libdbus-1-dev libfontconfig1-dev libvpx-dev libopenal-dev libwebp-dev
           build_type: Debug
 
         - name: Linux Clang 15 # last known good
           os: ubuntu-22.04
           extra_options: -DCMAKE_C_COMPILER=clang-15 -DCMAKE_CXX_COMPILER=clang++-15
-          deps_cmdline: sudo apt-get update && sudo apt-get install clang-15 libsdl2-dev libvpx-dev libwebp-dev
+          deps_cmdline: sudo apt-get update && sudo apt-get install clang-15 libinput-dev libudev-dev libwayland-dev libxkbcommon-dev libx11-dev libxi-dev libgl1-mesa-dev libegl-dev libdbus-1-dev libfontconfig1-dev libvpx-dev libwebp-dev
           build_type: Release
           export_appimage: true
 
         - name: Linux Clang Latest # rolling default, not actually latest
           os: ubuntu-latest
           extra_options: -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
-          deps_cmdline: sudo apt-get update && sudo apt-get install libsdl2-dev libvpx-dev libwebp-dev
+          deps_cmdline: sudo apt-get update && sudo apt-get install libinput-dev libudev-dev libwayland-dev libxkbcommon-dev libx11-dev libxi-dev libgl1-mesa-dev libegl-dev libdbus-1-dev libfontconfig1-dev libvpx-dev libwebp-dev
           build_type: Release
           export_appimage: true
 
@@ -95,6 +95,39 @@ jobs:
         export GIT_DESCRIBE="${{ steps.ghd.outputs.describe }}"
         export MAKEFLAGS=--keep-going
         cmake --build build --config ${{ matrix.config.build_type }} --parallel 3
+
+    # Compiling and linking says nothing about whether the binary starts.
+    # Covers startup as far as +quit reaches: display backend, widget resources
+    # and fonts, and the WAD filesystem. It stops short of full game init --
+    # script parsing, the texture manager, rendering a frame -- because +quit
+    # short-circuits before a map can load.
+    # 8b4746558 passed every job in this workflow while dying on startup with
+    # "Unable to find widgets/font/system.ttf", because nothing here had ever
+    # launched it. This runs the real binary through full initialisation --
+    # video backend, widget resources, fonts, IWAD load -- and quits.
+    #
+    # Linux only: this is where the native Wayland/X11 backend lives, and it is
+    # the configuration with no other coverage. Runs under Xvfb with the X11
+    # backend forced, since the runners have no compositor.
+    #
+    # Blocking: the step passed on all six Linux jobs on its first run, headless
+    # Xvfb and libinput-without-a-seat included, which were the parts that could
+    # not be checked locally. A binary that will not start should fail the build.
+    - name: Smoke test (start and quit)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get install -y xvfb
+        curl -sSL -o freedoom.zip https://github.com/freedoom/freedoom/releases/download/v0.13.0/freedoom-0.13.0.zip
+        unzip -q -j freedoom.zip '*/freedoom2.wad' -d build
+        cd build
+        export ZWIDGET_DISPLAY_BACKEND=X11
+        timeout 120 xvfb-run -a ./gzdoom -iwad freedoom2.wad -nosound +quit 2>&1 | tee startup.log
+        # Exit status alone would also be satisfied by bailing out before doing
+        # anything, so require evidence that startup actually got somewhere.
+        grep -q "W_Init: Init WADfiles" startup.log
+        grep -q "GL_VERSION" startup.log
+        echo "startup smoke test passed"
 
     - name: Create Package
       shell: bash

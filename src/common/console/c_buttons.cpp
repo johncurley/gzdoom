@@ -208,6 +208,7 @@ bool FButtonStatus::PressKey (int keynum)
 	}
 	uint8_t wasdown = bDown;
 	bDown = bWentDown = true;
+
 	// Returns true if this key caused the button to go down.
 	return !wasdown;
 }
@@ -258,6 +259,7 @@ bool FButtonStatus::ReleaseKey (int keynum)
 			bDown = false;
 		}
 	}
+
 	// Returns true if releasing this key caused the button to go up.
 	return wasdown && !bDown;
 }

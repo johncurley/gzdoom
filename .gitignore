@@ -29,6 +29,29 @@ fmodapi*linux/
 *.local
 *.log
 
+# local scratch: debug logs, ad-hoc test programs, saved diffs
+/log*.txt
+/output.txt
+/backtrace.txt
+/gdb_crash_log.txt
+/startup_log.txt
+/perf_log.txt
+/error.log
+/test*.cpp
+/test*.o
+/*.patch
+/.codex
+
+# built binaries and game data must never be committed
+/gzdoom
+/gzdoom.pk3
+/*.WAD
+/*.wad
+/doom.wad
+
+# local clone of upstream ZWidget, kept alongside for diffing
+/ZWidget/
+
 # other / unknown
 *.ncb
 *.suo

@@ -33,7 +33,7 @@
 **/
 
 #include <algorithm>
-#include "gl_load.h"
+#include <glad/glad.h>
 #include "gl_buffers.h"
 #include "gl_renderstate.h"
 #include "v_video.h"

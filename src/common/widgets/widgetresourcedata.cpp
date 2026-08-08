@@ -1,5 +1,6 @@
 
 #include <zwidget/core/resourcedata.h>
+#include <memory>
 #include <zwidget/core/theme.h>
 #include "c_cvars.h"
 #include "filesystem.h"
@@ -12,10 +13,18 @@
 #include <windows.h>
 #endif
 
-CUSTOM_CVARD(Int, ui_theme, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG, "launcher theme. 0: auto, 1: dark, 2: light")
+// 0 is deliberately the most integrated option the platform offers rather than
+// a plain dark/light guess: on Unix it takes the desktop's own colours, which is
+// what makes the launcher look like a native application instead of a game menu.
+// 3 exists because that extraction is partly inferred -- desktops only report a
+// background and foreground, so the remaining shades are derived -- and a user
+// on a desktop where the inference looks wrong still wants to follow the system
+// light/dark preference. Values are not renumbered: ui_theme is archived, so
+// changing what 0 means would silently alter the appearance for existing users.
+CUSTOM_CVARD(Int, ui_theme, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG, "launcher theme. 0: auto (native where available), 1: dark, 2: light, 3: follow system light/dark")
 {
 	if (self < 0) self = 0;
-	if (self > 2) self = 2;
+	if (self > 3) self = 3;
 }
 
 FResourceFile* WidgetResources;
@@ -25,17 +34,51 @@ bool IsZWidgetAvailable()
 	return WidgetResources;
 }
 
+static std::vector<SingleFontData> LoadWidgetFontData(const std::string& name);
+static std::vector<uint8_t> LoadWidgetData(const std::string& name);
+// ZWidget resolves fonts and resources through an installed ResourceLoader
+// rather than free functions, so the engine supplies one backed by its own
+// filesystem -- widget assets live in the pk3, not on disk.
+class GZDoomResourceLoader : public ResourceLoader
+{
+public:
+	std::vector<SingleFontData> LoadFont(const std::string& name) override
+	{
+		// ZWidget's themes ask for the abstract families "system" and
+		// "monospace". The stock loaders resolve those against the desktop's
+		// fonts, but the engine ships its own so the launcher looks the same
+		// everywhere and works on a machine with no fonts installed at all.
+		if (name == "system" || name == "monospace")
+			return LoadWidgetFontData("notosans");
+		return LoadWidgetFontData(name);
+	}
+
+	std::vector<uint8_t> ReadAllBytes(const std::string& filename) override { return LoadWidgetData(filename); }
+};
+
 void InitWidgetResources(const char* filename)
 {
 	WidgetResources = FResourceFile::OpenResourceFile(filename);
 	if (!WidgetResources)
 		I_FatalError("Unable to open %s", filename);
 
-	bool use_dark = ui_theme == 1 || (ui_theme == 0 && I_IsDarkMode());
+	ResourceLoader::Set(std::make_unique<GZDoomResourceLoader>());
+
+#if defined(__unix__) && !defined(__APPLE__)
+	if (ui_theme == 0)
+	{
+		WidgetTheme::SetTheme(std::unique_ptr<WidgetTheme>(new POSIXNativeTheme()));
+		return;
+	}
+#endif
+
+	// 3 asks for the system's light/dark preference with the built-in palette,
+	// which is also what 0 falls back to on platforms with no native theme.
+	bool use_dark = ui_theme == 1 || ((ui_theme == 0 || ui_theme == 3) && I_IsDarkMode());
 
 	if (use_dark)
 	{
-		WidgetTheme::SetTheme(std::unique_ptr<WidgetTheme>(new WidgetTheme{{
+		WidgetTheme::SetTheme(std::unique_ptr<WidgetTheme>(new SimpleTheme{{
 			Colorf::fromRgb(0x2A2A2A), // background
 			Colorf::fromRgb(0xE2DFDB), //
 			Colorf::fromRgb(0x212121), // headers / inputs
@@ -52,7 +95,7 @@ void InitWidgetResources(const char* filename)
 	}
 	else
 	{
-		WidgetTheme::SetTheme(std::unique_ptr<WidgetTheme>(new WidgetTheme{{
+		WidgetTheme::SetTheme(std::unique_ptr<WidgetTheme>(new SimpleTheme{{
 			Colorf::fromRgb(0xeee8d5), // background
 			Colorf::fromRgb(0x000000), // text
 			Colorf::fromRgb(0xfdf6e3), // headers / inputs
@@ -103,8 +146,7 @@ static std::vector<uint8_t> LoadDiskFile(const char* name)
 	return buffer;
 }
 
-// This interface will later require some significant redesign.
-std::vector<SingleFontData> LoadWidgetFontData(const std::string& name)
+static std::vector<SingleFontData> LoadWidgetFontData(const std::string& name)
 {
 	std::vector<SingleFontData> returnv;
 	if (!stricmp(name.c_str(), "notosans"))
@@ -137,7 +179,8 @@ std::vector<SingleFontData> LoadWidgetFontData(const std::string& name)
 	return returnv;
 }
 
-std::vector<uint8_t> LoadWidgetData(const std::string& name)
+static std::vector<uint8_t> LoadWidgetData(const std::string& name)
 {
 	return LoadFile(name.c_str());
 }
+

@@ -41,6 +41,11 @@ struct CocoaTimerData
 }
 @end
 
+std::unique_ptr<DisplayBackend> DisplayBackend::TryCreateCocoa()
+{
+    return std::make_unique<CocoaDisplayBackend>();
+}
+
 CocoaDisplayBackend::CocoaDisplayBackend()
 {
     // Initialize NSApp if not already done
@@ -60,16 +65,14 @@ CocoaDisplayBackend::~CocoaDisplayBackend()
 {
 }
 
-std::unique_ptr<DisplayWindow> CocoaDisplayBackend::Create(DisplayWindowHost* windowHost, bool popupWindow, DisplayWindow* owner, RenderAPI renderAPI)
+std::unique_ptr<DisplayWindow> CocoaDisplayBackend::Create(DisplayWindowHost* windowHost, WidgetType type, DisplayWindow* owner, RenderAPI renderAPI)
 {
-    return std::make_unique<CocoaDisplayWindow>(windowHost, popupWindow, owner, renderAPI);
+    return std::make_unique<CocoaDisplayWindow>(windowHost, type, owner, renderAPI);
 }
 
 void CocoaDisplayBackend::ProcessEvents()
 {
-    NSString* mode = [[NSRunLoop currentRunLoop] currentMode];
-    if (mode == nil) mode = NSDefaultRunLoopMode;
-    NSEvent* event = [NSApp nextEventMatchingMask:NSEventMaskAny untilDate:[NSDate distantPast] inMode:mode dequeue:YES];
+    NSEvent* event = [NSApp nextEventMatchingMask:NSEventMaskAny untilDate:[NSDate distantPast] inMode:NSDefaultRunLoopMode dequeue:YES];
     if (event)
     {
         [NSApp sendEvent:event];
@@ -104,13 +107,11 @@ void* CocoaDisplayBackend::StartTimer(int timeoutMilliseconds, std::function<voi
     timerData->callback = onTimer;
 
     ZWidgetTimerTarget* target = [[ZWidgetTimerTarget alloc] initWithTimerData:timerData];
-    NSTimer* nstimer = [NSTimer timerWithTimeInterval:timeoutMilliseconds / 1000.0
-                                               target:target
-                                             selector:@selector(timerFired:)
-                                             userInfo:nil
-                                              repeats:YES];
-    [[NSRunLoop currentRunLoop] addTimer:nstimer forMode:NSRunLoopCommonModes];
-    [[NSRunLoop currentRunLoop] addTimer:nstimer forMode:NSModalPanelRunLoopMode];
+    NSTimer* nstimer = [NSTimer scheduledTimerWithTimeInterval:timeoutMilliseconds / 1000.0
+                                                        target:target
+                                                      selector:@selector(timerFired:)
+                                                      userInfo:nil
+                                                       repeats:YES];
     timerData->nstimer = nstimer;
 
     return timerData;

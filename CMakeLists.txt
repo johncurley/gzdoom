@@ -261,7 +261,7 @@ if( APPLE )
 	option (HAVE_GLES2 "Enable GLES2 support" OFF)
 	option (HAVE_METAL "Enable Metal support" ON) # Enable Metal by default
 else()
-	option (HAVE_GLES2 "Enable GLES2 support" ON)
+	option (HAVE_GLES2 "Enable GLES2 support" OFF)
 endif()
 
 
@@ -383,6 +383,7 @@ option(FORCE_INTERNAL_BZIP2 "Use internal bzip2")
 option(FORCE_INTERNAL_ZMUSIC "Use internal zmusic")
 option(FORCE_INTERNAL_ASMJIT "Use internal asmjit" ON)
 option(FORCE_INTERNAL_CPPDAP "Use internal cppdap" ON)
+option(GZDOOM_NATIVE_LINUX "Use native windowing/input on Linux and BSD" ON)
 
 mark_as_advanced( FORCE_INTERNAL_ASMJIT )
 
@@ -397,6 +398,12 @@ if (HAVE_METAL AND APPLE)
 endif()
 
 set(ZWIDGET_BUILD_EXAMPLE OFF CACHE INTERNAL "" FORCE)
+# ZWidget picks its SDL backends with ENABLE_SDL2/ENABLE_SDL3, which default ON
+# for non-Windows. The native backend supersedes them, and leaving them on would
+# quietly link SDL back into the build. These must be set before the
+# add_subdirectory below, or ZWidget is already configured by the time they land.
+set(ENABLE_SDL2 OFF CACHE INTERNAL "" FORCE)
+set(ENABLE_SDL3 OFF CACHE INTERNAL "" FORCE)
 add_subdirectory( libraries/ZWidget )
 
 add_subdirectory( libraries/webp )
