@@ -5,7 +5,7 @@
     "files": ["~/Documents/GZDoom/Ashes2063Enriched2_23.pk3"],
     "savegame": "capspot.zds",
     "settle_frames": 120,
-    "always": ["+cl_capfps 1", "+gl_exposure_speed 1"]
+    "always": ["+vid_preferbackend 3", "+cl_capfps 1", "+gl_exposure_speed 1"]
   },
 
   "configs": [
