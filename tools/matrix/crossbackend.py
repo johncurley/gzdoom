@@ -271,6 +271,19 @@ def main():
 
     spec = matrix.load_configs()
 
+    # Optional scene override, used ONLY by this tool. OpenGL captures the
+    # matrix's default scene (Ashes2063 + capspot.zds) as a fully black frame,
+    # which makes every cross-backend verdict INVALID -- see the scene-specific
+    # GL capture bug in AGENTS.md. The golden baseline's scene must not change
+    # (that would invalidate baseline.json), so the oracle gets its own.
+    xb = spec.get("crossbackend_launch")
+    if xb:
+        spec = dict(spec)
+        spec["launch"] = {**spec["launch"], **xb}
+        print(f"using crossbackend scene override: "
+              f"{xb.get('files', spec['launch'].get('files'))} "
+              f"{xb.get('savegame', spec['launch'].get('savegame'))}\n")
+
     configs = spec["configs"]
     if args.only:
         wanted = set(args.only.split(","))
@@ -279,6 +292,18 @@ def main():
             sys.exit("no configs matched --only")
 
     os.makedirs(matrix.WORKDIR, exist_ok=True)
+    # One throwaway launch PER BACKEND before anything is measured. The
+    # docstring has always said to do this; the tool never did, so the first
+    # GL launch of a sweep carried cold shader/PSO compilation into its settle
+    # and the self-check failed on whichever config happened to run first
+    # (measured: gl baseline 22.400 then 21.304, while every later gl config
+    # reproduced exactly). Metal warms up too, cheaply, rather than relying on
+    # it being the stable one -- that asymmetry is not guaranteed.
+    warm = dict(configs[0])
+    warm["name"] = warm["name"] + "__warmup"
+    for backend in ("gl", "metal"):
+        launch_backend(warm, spec, backend, args.verbose)
+
     if args.selfcheck:
         rc = selfcheck(configs, spec, args.verbose)
         if not args.keep:

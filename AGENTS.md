@@ -6002,3 +6002,48 @@ capture (AshesHardReset/save01 works today, and needs a launch-spec override so
 the golden baseline's scene is not disturbed); or fix the GL capture path, which
 the 2026-08-08 entry already tried three times at the readback layer and failed.
 The scene swap is the cheap one and unblocks the oracle immediately.
+
+### crossbackend.py is running again -- and its first sweep flags colormap
+
+Two changes were needed.
+
+**A scene override, used only by this tool.** `crossbackend_launch` in
+configs.json overrides `files`/`savegame` for the oracle only. The default scene
+(Ashes2063 + capspot.zds) is the one OpenGL captures as pure black, so every
+verdict came back INVALID; the golden baseline's scene cannot be changed without
+invalidating baseline.json, so the oracle gets its own. It now uses
+AshesHardReset + save01.zds, which GL captures normally.
+
+**A warmup launch per backend.** The docstring has always said to discard the
+first launch after a build; the tool never did it. So the first GL launch of a
+sweep carried cold shader/PSO compilation into its settle and the self-check
+failed on whichever config ran first -- measured, `gl baseline` gave 22.400 then
+21.304 while every later GL config reproduced exactly. Both backends are warmed,
+rather than trusting Metal to be the stable one, since that asymmetry is not
+guaranteed.
+
+Self-check now passes on both backends. Full sweep:
+
+    10 of 11 configs   OK      tone x0.92-0.99, uniform backend noise
+    colormap           SUSPECT bands [2,3] exceed max_delta 24 (worst 72)
+
+    colormap per-band (top -> bottom)
+      band 0  mean 0.269  max  2   differing>2  0.00%
+      band 1  mean 0.323  max 11   differing>2  0.28%
+      band 2  mean 0.478  max 72   differing>2  1.38%
+      band 3  mean 0.397  max 66   differing>2  0.74%
+      band 4  mean 0.318  max  2   differing>2  0.00%
+      band 5  mean 0.317  max  2   differing>2  0.00%
+
+**Read the shape before chasing it.** This is NOT the signature the tool was
+built to catch. A displaced pass gives a band with a high *mean*; here the means
+are flat (0.27-0.48 across all six bands) and only the *max* spikes, on 1.38% of
+pixels. That is sparse, not structural.
+
+The plausible benign explanation is quantisation amplification: colormap is a
+palette-indexed transform, so sub-LSB backend noise that lands near a palette
+boundary flips to an adjacent entry and shows up as a large output delta on a
+few pixels. **Unverified** -- it is equally consistent with a real defect
+affecting a thin feature. `tools/localize.py` on the two captures is the next
+step, and would say immediately whether the differing pixels are scattered
+(quantisation) or concentrated on an edge or object (a defect).

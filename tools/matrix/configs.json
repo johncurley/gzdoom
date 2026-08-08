@@ -8,6 +8,11 @@
     "always": ["+vid_preferbackend 3", "+vid_fullscreen 0", "+win_w 800", "+win_h 600", "+cl_capfps 1", "+gl_exposure_speed 1"]
   },
 
+  "crossbackend_launch": {
+    "files": ["~/Documents/GZDoom/AshesHardReset_105.pk3"],
+    "savegame": "save01.zds"
+  },
+
   "configs": [
     {
       "name": "baseline",
