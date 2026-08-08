@@ -5713,3 +5713,65 @@ The next honest step is not another hypothesis: it is to re-measure the raw
 divergence with an unclipped statistic (as above) and see whether 12.52 survives
 its own instrument, since the clamping artifact identified here affects the
 debug-2 attenuation readback in the same way it affected the noise readback.
+
+### The 12.52 is real, uniforms are bit-identical, fast math is not the cause
+
+**Re-measured with an unclipped statistic, and the divergence survives.** Made
+`ComputeAO` return the raw unclamped `1.0 - ao * AO_VISIBILITY_STRENGTH` and
+emitted it through `occlusion * 0.25 + 0.5` (maps [-2,2] into range, so almost
+nothing clips):
+
+    clamped   metric 12.52/255  -> 0.0491 in occlusion units
+    unclamped metric  2.96/255  -> 0.0465 in occlusion units   (ratio 0.95)
+
+So the previous entry's worry does **not** apply to this measurement -- and the
+reason is worth keeping: `occlusion` is already unsigned [0,1], unlike the
+signed noise that motivated the retraction. `ComputeAO`'s internal
+`clamp(...,0,1)` saturates rather than amplifies. **The AO divergence is a real
+difference in the computed occlusion, not an artifact of the readback.**
+
+**Every SSAO uniform is bit-identical between backends.** Dumped the whole
+struct from `PPAmbientOcclusion::Render` -- shared code, so one Printf serves
+both backends and the comparison is exact:
+
+    UVToViewA=2.000000,1.601563  UVToViewB=-1.000000,-0.800781
+    InvFullRes=0.001953,0.002439 NDotVBias=0.200000 NegInvR2=-0.000156
+    RadiusToScreen=20479.996094  AOMultiplier=1.250000 AOStrength=0.805000
+    Fade=100/500  Scale=1,1  Offset=0,0
+    Ambient=512x410 scene=1024x820 LinA=-0.19998474 LinB=0.20000000
+
+identical on Metal and OpenGL, the only difference being the expected
+`InvDepth=-1.000/1.000` vs `1.000/0.000`. That also confirms Metal's ZNear/ZFar
+override lands on the same values GL uses. This dump is cheap and should be the
+*first* step next time, not the last.
+
+**Fast math ruled out.** Metal defaults `fastMathEnabled` to YES and the main
+MSL compile path (`mt_shader.cpp`, MSLToLibrary) passed `nullptr` options, so
+every shader was built with it. Forcing it off changes a handful of pixels but
+leaves the divergence at exactly 2.96 -- not the cause. Reverted, since it would
+cost performance on a GPU-bound Intel part for no correctness gain.
+
+**Trap:** the first fast-math test came back byte-identical because
+`mt_pipelines.bin` (the PSO binary archive) served the previously compiled
+pipelines. Clearing `~/Library/Application Support/zdoom/cache/mt_pipelines.bin`
+*and* the `.msl` files makes the test live -- and the capture then did change,
+which is how it was confirmed live rather than assumed.
+
+### The most useful remaining signal: the divergence has a gradient
+
+It is not uniform. Along the left strip, in occlusion units:
+
+    row 180  -0.0273     row 420  -0.0437
+    row 340  -0.0400     row 500  -0.0902   <- floor, nearest geometry
+    row 380  -0.0401     row 620  -0.0272
+
+It grows toward the floor, where view-space z is smallest and therefore
+`radiusPixels = RadiusToScreen / z` is largest. **The divergence scales with the
+sampling radius**, which points at what happens to samples that reach far from
+the centre: the `clamp(sampleUV, InvFullResolution*0.5, 1 - InvFullResolution*0.5)`
+guard in `ComputeSampleHorizon`, and the sampler state on `LinearDepthTexture`
+(`SetInputTexture(0, &LinearDepthTexture)` takes the default filter and wrap).
+
+Next test: compare the filter/wrap Metal binds for AO input 0 against what GL
+binds, and emit `texture(DepthTexture, uv)` at a deliberately out-of-range uv to
+see whether the two backends clamp identically.
