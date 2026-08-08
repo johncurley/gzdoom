@@ -1335,6 +1335,13 @@ void MtRenderState::EnableDrawBuffers(int count, bool apply) {
   if (mRenderTarget.DrawBuffers != count) {
     EndRenderPass();
     mRenderTarget.DrawBuffers = count;
+    // EndRenderPass() cleared mEncoder, and the attachment count is part of the
+    // pipeline key, so the next draw MUST go through Apply() to reopen the pass
+    // and rebuild the pipeline. Without this a draw arriving with apply=false
+    // and mNeedApply already false falls straight through Draw()'s
+    // `if (!mEncoder ...) return` and is silently dropped. Vulkan has no
+    // equivalent line because VkRenderState::Draw always applies.
+    mNeedApply = true;
   }
 }
 
