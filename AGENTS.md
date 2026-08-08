@@ -6132,3 +6132,38 @@ immediately after `--update-baseline` FAILED and the two runs after it PASSED --
 consistent with shader/PSO recompilation after the CVAR change bleeding into one
 launch despite the warmup. If that recurs, the warmup may need to be two
 launches, or the PSO archive cleared before recording.
+
+### Coverage floor applied to the band verdict -- and regression-tested
+
+`BAND_MIN_HOT_PIXELS = 100` in crossbackend.py. The max-delta rule now fires
+only if at least that many pixels in the band exceed `BAND_MAX_DELTA_FLAG`.
+`pngdiff.diff()` gained an optional `hot=` argument returning `px_over_hot`
+(backward compatible; `run.py` verified PASS afterwards).
+
+**Sparse bands are reported, not suppressed.** A band loud enough to trip the
+max but under the floor still prints, so a genuine defect on a small feature
+stays visible to a reader even though it no longer raises the verdict:
+
+    colormap  OK  ... [sparse: band 2 max 73 on 28px, band 3 max 66 on 9px
+                       -- under the 100px coverage floor]
+
+**Regression-tested against a real defect, not just against the config that
+motivated it.** Re-ran `band_report`/`classify` over the captures of the empty
+normal-G-buffer bug from earlier in this session (Metal pre-fix vs OpenGL):
+
+    band 0  mean  1.706  max 29  px>24    260
+    band 1  mean 10.783  max 43  px>24  11988
+    band 2  mean 10.513  max 47  px>24  10803
+    band 3  mean 28.631  max 70  px>24  43414
+    band 4  mean 21.916  max 66  px>24  34844
+    band 5  mean 12.151  max 52  px>24  14239
+
+    verdict with the floor applied: SUSPECT, bands [0,1,2,3,4,5]
+
+Still caught on every band. The separation is wide: the quietest band of a real
+defect is 260px, 2.6x the floor and 9x the loudest benign case (28px). 100 sits
+in a genuine gap rather than being fitted to either side.
+
+Full sweep is now **11 of 11 OK**. If a real bug is ever missed here, lower the
+floor rather than deleting the check, and record the case so the gap can be
+re-measured.

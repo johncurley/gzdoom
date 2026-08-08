@@ -76,9 +76,16 @@ def stats(w, h, nch, px, box=None):
     return {'mean': total/n, 'max': mx, 'n': n,
             'bright_frac': (hist[2]+hist[3])/n}
 
-def diff(a, b, w, h, nch, box=None):
+def diff(a, b, w, h, nch, box=None, hot=None):
+    """Per-pixel max-channel delta over a box.
+
+    `hot`, if given, additionally counts pixels whose delta exceeds it and
+    returns that as 'px_over_hot'. Callers use it to ask "how MUCH of this
+    region is badly wrong", which max_channel_delta alone cannot answer -- a
+    single stray pixel and a displaced pass both report a large maximum.
+    """
     x0, y0, x1, y1 = box or (0, 0, w, h)
-    worst = 0; ndiff = 0; total = 0; n = 0
+    worst = 0; ndiff = 0; total = 0; n = 0; nhot = 0
     for y in range(y0, y1):
         row = y * w * nch
         for x in range(x0, x1):
@@ -86,8 +93,10 @@ def diff(a, b, w, h, nch, box=None):
             d = max(abs(a[i]-b[i]), abs(a[i+1]-b[i+1]), abs(a[i+2]-b[i+2]))
             worst = max(worst, d); total += d; n += 1
             if d > 2: ndiff += 1
+            if hot is not None and d > hot: nhot += 1
     return {'max_channel_delta': worst, 'mean_delta': total/n,
-            'px_differing_gt2': ndiff, 'frac_differing': ndiff/n}
+            'px_differing_gt2': ndiff, 'frac_differing': ndiff/n,
+            'px_over_hot': nhot}
 
 if __name__ == '__main__':
     paths = sys.argv[1:]
