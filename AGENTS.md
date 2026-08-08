@@ -5855,3 +5855,38 @@ Before re-recording again, try pinning `+vid_fullscreen 0` alongside
 `+vid_defwidth`/`+vid_defheight` in `configs.json` `always` and confirm the
 capture size is stable across runs. A baseline that cannot survive a display
 change is a check nobody will trust.
+
+### Matrix harness: its own config file, a pinned window, and a warmup launch
+
+The baseline had died to environment drift three times. Fixed structurally.
+
+**The harness now runs with `-config /tmp/gzdoom-matrix/matrix.ini`.** Every
+launch previously read and rewrote the user's `gzdoom.ini`, so an archived CVAR
+set by one config leaked into every later run *and into their actual game*. That
+is the single most expensive trap on this branch: it silently switched a
+"Metal" comparison to OpenGL (caught only because the result was a suspiciously
+perfect 0.00), and it left the user playing with `gl_bloom` disabled and
+`gl_ssao` dropped, which was then mistaken for a performance win from the code
+changes. **Verified: the user's ini is byte-identical (md5) across two full
+12-launch runs.**
+
+**The window is pinned** with `+vid_fullscreen 0 +win_w 800 +win_h 600`.
+`vid_defwidth`/`vid_defheight` do NOT work for this -- they only seed the very
+first window creation (`i_video.mm:351`); the live windowed size comes from
+`win_w`/`win_h` (`i_video.mm:736`). Under fullscreen the size is just the
+display mode, which is why captures wandered 1440x773 -> 1024x820 -> 1024x768 as
+the machine's display changed. Captures are now a stable 800x572 (600 minus the
+title bar), byte-identical across runs.
+
+**A warmup launch was needed** and is now built in. With a fresh config file the
+first launch sizes its window before the pinned `win_w`/`win_h` apply, so
+*only the first config* came out at a different size -- which surfaced as
+`image geometry differs` on `baseline` alone. The `--update-baseline` guard
+correctly refused to record that, which is exactly what it is for. The warmup
+also absorbs the cold-shader-compile settle after a rebuild.
+
+**Correction to the previous entry:** `gl_dither_bpc = 0` is the *default*
+(gl_postprocess.cpp:42), not drift. That entry was wrong to list it as a cause.
+
+Baseline re-recorded at 800x572; all 10 relations pass and a clean re-run is
+PASS.

@@ -61,6 +61,13 @@ from pngdiff import read_png, stats, diff  # noqa: E402
 
 BASELINE = os.path.join(HERE, "baseline.json")
 WORKDIR = "/tmp/gzdoom-matrix"
+# The harness gets its OWN config file. Without this every launch reads and
+# rewrites the user's gzdoom.ini, so an archived CVAR set by one config leaks
+# into every later run -- and into their actual game. That silently invalidated
+# a Metal-vs-OpenGL comparison and disabled the user's bloom during this
+# branch's history. All settings that matter are pinned in configs.json
+# "always", so this file starting empty is fine.
+CONFIG = os.path.join(WORKDIR, "matrix.ini")
 SHOTS = os.path.expanduser("~/Documents/GZDoom/Screenshots")
 
 
@@ -76,7 +83,7 @@ def launch(cfg, spec, verbose):
     if not os.path.exists(binary):
         sys.exit(f"binary not found: {binary}\nBuild first: cmake --build build --target zdoom -j 8")
 
-    argv = [binary, "-iwad", L["iwad"]]
+    argv = [binary, "-iwad", L["iwad"], "-config", CONFIG]
     for f in L.get("files", []) + cfg.get("extra_files", []):
         argv += ["-file", os.path.expanduser(f)]
     if L.get("savegame"):
@@ -187,6 +194,16 @@ def main():
     os.makedirs(WORKDIR, exist_ok=True)
 
     images, sigs = {}, {}
+
+    # One throwaway launch before the real ones. It settles two things that
+    # otherwise corrupt the FIRST config only, which is the hardest kind of
+    # failure to read: the harness config file (created fresh, so the window
+    # is sized before the pinned win_w/win_h are applied -- this showed up as
+    # "image geometry differs" on baseline alone), and cold shader compilation,
+    # which perturbs the exposure settle for one launch after a rebuild.
+    print("warmup launch (discarded)")
+    launch(configs[0], spec, args.verbose)
+
     print(f"running {len(configs)} configurations, one launch each\n")
     for i, cfg in enumerate(configs, 1):
         name = cfg["name"]
