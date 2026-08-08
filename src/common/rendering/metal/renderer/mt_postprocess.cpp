@@ -58,6 +58,10 @@ CVAR(Bool, mt_compute_bloom, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 // reason given at mt_compute_ao_intel: nothing on this path has run on Apple
 // Silicon. Do not promote it to a stated policy without measuring.
 CVAR(Bool, mt_compute_bloom_intel, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+// Diagnostic switch for the Metal-only PP stencil test on SceneColor targets.
+// Not archived: this is for A/B runs, and an archived value silently surviving
+// a restart is the exact trap that cost a session on 2026-08-07.
+CVAR(Bool, mt_pp_stencil, true, 0)
 CUSTOM_CVAR(Int, mt_compute_bloom_composite, 0, 0)
 {
   if (self < 0) self = 0;
@@ -305,7 +309,12 @@ public:
       format = (MTL::PixelFormat)fb->GetBuffers()->GetSceneColorFormat();
       // SSAO Fix: Enable Stencil Test when targeting SceneColor to avoid bleeding through portals
       depthStencil = fb->GetBuffers()->SceneDepthStencil->GetTexture();
-      stencilTest = true;
+      // DIAGNOSTIC (2026-08-08): this stencil test is Metal-only -- the shared
+      // hw_postprocess AO combine has no stencil concept at all, so GL writes
+      // AO everywhere. Metal renders spurious occlusion below ~row 360 of 768
+      // on AshesHardReset MAP01 where GL is clean. Set mt_pp_stencil 0 to take
+      // the GL-equivalent path and isolate whether this test is responsible.
+      stencilTest = mt_pp_stencil;
     } else if (Output.Type == PPTextureType::SceneFog) {
       outputTex = fb->GetBuffers()->SceneFog->GetTexture();
       format = (MTL::PixelFormat)fb->GetBuffers()->GetSceneFogFormat();

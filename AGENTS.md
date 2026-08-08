@@ -4923,3 +4923,141 @@ fewer pixels -- and it was attempted and **failed to thermal drift**, producing
 non-monotonic garbage (1440: 13.0ms, 960: 10.8ms, 640: 15.2ms, 1440 again:
 16.9ms). Re-run it on a cold machine. It is one launch per resolution and it
 settles the question.
+
+---
+
+## 2026-08-08: Intel compute gates, a GetSceneRect origin fix, and an AO bug that is still open
+
+Session started from "the game is slow on my CRT" and ended somewhere else
+entirely. Recording the route because most of it was wrong turns, and the wrong
+turns are the reusable part.
+
+### Landed
+
+- `07f69bc8e` **bloom: Intel gate.** New `mt_compute_bloom_intel` (default
+  false), mirroring `mt_compute_ao_intel`. On Intel integrated GPUs compute
+  bloom now falls back to the hw_postprocess path. Uses the runtime
+  `MtGPUArchitecture::Intel` check, not a compile-time ifdef, so it stays
+  correct in a universal binary. `mt_debug` now prints the RESOLVED bloom path.
+- `d20468d88` **AGENTS.md: FrameGPU mechanism corrected.** The earlier entry's
+  conclusion holds; its stated cause (spanning first buffer start to last buffer
+  end) does not match the code, and the fix it prescribed is a no-op.
+- `bdb77307c` **metal: GetSceneRect converted to top-left origin.**
+  `System_GetSceneRect` (d_main.cpp:2876) builds `top` bottom-left; every Metal
+  consumer reads it top-left. Fixed at the backend boundary.
+- `76a8f624e` **CLAUDE.md: stop recommending FrameGPU as the cost metric.**
+- `7ef56157e`, `76a2c6966` **tools/matrix/crossbackend.py**, a Metal-vs-GL
+  correctness oracle with a `--selfcheck` determinism gate.
+
+### The performance problem, resolved
+
+Compute AO + bloom dominated GPU time on the HD 6000. Xcode per-encoder timing
+found it, after four theories built on healthy-looking frame metrics failed
+(vsync not applying, `vid_scalemode` resize churn, semaphore backpressure,
+oversized drawable). The machine's ini had `mt_compute_ao_intel=true`,
+overriding a default that already existed to prevent exactly this.
+
+Reference PP AO now runs maxed AO + bloom fluidly where compute could not.
+Fans no longer spin up, which should also remove the session-drift recorded in
+the previous entry.
+
+### STILL OPEN: AO wrong on Metal, AshesHardReset MAP01
+
+**Reproduction:** `save01.zds` (title "aobug", AshesHardReset_105.pk3, MAP01
+Night School), `gl_ssao 3`, `gl_ssao_debug 1`, `screenblocks 10`, 1024x768.
+
+**Signature**, left strip x 0.03-0.33, Metal vs an OpenGL capture of the same
+viewpoint:
+
+    row    GL     Metal    diff
+    150   245.1   253.2    +8.1
+    330   231.4   241.2    +9.8
+    375   240.0   202.4   -37.6   <-- discontinuity
+    465   239.8   218.4   -21.4
+    645   253.9   252.5    -1.4
+
+Metal is uniformly ~+8/+10 above row ~330 and 21-38 DARKER below ~375. GL shows
+no boundary at all. The transition is a ~16-row ramp centred near row 360 --
+not 384 (h/2), and not any scene-viewport inset.
+
+**Ruled out, each by measurement not argument:**
+
+- Distance fade. `gl_ssao_fade_start/end` are stock 100/500 and GL runs the
+  same values with no boundary.
+- The mod. Same map, same save, GL is clean. Cold `map01` launches on
+  ashes2063/afterglow/hardreset all show AO across the full frame.
+- The Metal-only PP stencil test. Added `mt_pp_stencil` (not archived) to gate
+  it; ON and OFF are byte-identical. The shared hw_postprocess AO combine has
+  no stencil concept at all, so this remains a real Metal/GL divergence -- just
+  not this bug.
+- `GetSceneRect` origin. `bdb77307c` is in the binary and the bug persists.
+- SceneColor format (BGRA8Unorm/RGBA16Float, alpha exists), clear alpha (1.0,
+  shared with GL and Vulkan), blend factors and write mask (opaque disables
+  blending, alpha written verbatim, `ColorWriteMaskAll`).
+
+**Leading hypothesis, unproven: SceneColor alpha is 0 over much of the frame.**
+
+`lineardepth.fp` selects the sky fallback with
+`texelFetch(ColorTexture, ipos, 0).a != 0.0`. A separate, genuine bug lives in
+that same line: the `1.0` sentinel is fed THROUGH `normalizeDepth`, and under
+reverse-Z (`IsReverseZ()`, Metal only, `hw_postprocess.cpp:834` sets
+InverseDepthRange -1/+1) raw 1.0 maps to 0.0 -- the NEAR plane. Sky therefore
+reads as directly in front of the camera.
+
+Patching the sentinel to bypass the remap was tried and **reverted**: it did not
+fix the bug, it moved it. Rows 195-465 went to a flat 255 (AO gone entirely) and
+the dark band relocated to rows 510-645, worse than before. A flat 255 over that
+large a region means those pixels were all taking the sentinel branch -- which
+implies alpha is 0 far beyond the sky, and that the CONDITION, not the sentinel
+value, is what is wrong.
+
+**Next step:** a GPU frame capture (`docs/gpu-capture-protocol.md`) reading
+SceneColor's alpha channel directly, with the prediction stated first: alpha
+reads 0 across the region below the horizon where GL and Metal diverge. This
+was promised in-session and not done.
+
+### ALSO OPEN: OpenGL screenshots capture black
+
+Blocks crossbackend.py, which is the whole point of having a reference backend.
+
+GL captures come back black (mean_lum 1.0, max 1) for every config EXCEPT those
+enabling ssao -- `BindSceneFB(useSSAO)` (gl_framebuffer.cpp:435) leaves a
+different FBO bound when SSAO is on, which happens to still hold an image. 26 of
+33 rows in the first screenblocks sweep were affected.
+
+`G_ScreenShot` -> `M_ScreenShot` runs synchronously from the `shotafter` tick,
+which fires after the frame has been swapped. Three fixes were tried in
+`GetScreenshotBuffer` and **all failed; all reverted**:
+
+1. `glBindFramebuffer(GL_FRAMEBUFFER, 0)` + `glReadBuffer(GL_BACK)` -- still 1.0
+2. `glReadBuffer(GL_FRONT)` -- still 1.0
+3. `CopyToBackbuffer(nullptr,false)` + `glFinish()` -- WORSE, 0.0
+
+Patching the readback is evidently the wrong layer. The capture probably has to
+happen before the swap, which is a change in the frame loop -- trace where the
+shotafter tick is called from `D_Display` before touching it again.
+
+Where GL does capture (`ssao`), Metal and GL agree closely at the matrix
+viewpoint: tone x1.00, band means 1.1-2.7, worst max_delta 26 against a
+threshold of 24. `BAND_MAX_DELTA_FLAG` is probably a touch tight.
+
+### Tool traps worth keeping
+
+- **Discard the first launch after a build.** The first GL capture after a
+  rebuild came back mean_lum 17.6 (max 183) and every later one ~47.7 (max 255).
+  Cold shader compilation perturbs the settle. It was briefly read as a 2.6x
+  tone difference between backends -- a finding that did not exist. Metal was
+  stable from run one, so this is asymmetric and cannot be inferred from one
+  backend looking clean. `--selfcheck` gates it now.
+- **Normalisation can manufacture false passes.** crossbackend.py's gain-match
+  scaled black GL captures up 43x and reported "uniform backend noise". Now
+  refused above `MAX_TONE_RATIO` and reported INVALID.
+- **A cvar set in the console does not survive a restart.** An "effects off,
+  still slow" false negative caused by this cost most of 2026-08-07. Pass cvars
+  on the command line and verify the pass label DISAPPEARS.
+
+### Uncommitted
+
+`mt_pp_stencil` in mt_postprocess.cpp -- the diagnostic gate for the Metal-only
+PP stencil test. Kept because that divergence from the reference is real and
+will want re-testing.
