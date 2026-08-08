@@ -268,7 +268,9 @@ Linux jobs install `libinput-dev libudev-dev libwayland-dev libxkbcommon-dev lib
 ## Other AI-agent docs
 
 - `.github/copilot-instructions.md` — Metal renderer field guide: Y-flip patching, ring buffers, sampler key values, culling winding. macOS-centric build commands.
-- `GEMINI.md` — one page on the native POSIX backend strategy.
+- `GEMINI_POSIX.md` — one page on the native POSIX backend strategy. Renamed from
+  `GEMINI.md` on merge: it collided with `gemini.md` on case-insensitive
+  filesystems (macOS, Windows), where only one of the two can exist on disk.
 - `gemini.md` — Vulkan architecture audit and Vulkan↔Metal parity table. Background, not a roadmap.
 - `AGENTS.md` — Metal compute state, benchmark workflow, and the session-by-session
   log. Most up-to-date source of truth for the Metal renderer.
