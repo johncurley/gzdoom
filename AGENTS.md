@@ -5577,3 +5577,55 @@ clean re-run afterwards is **PASS**. Before recording, `gl_ssao_strength` was
 restored from 1 to its 0.7 default -- it is `CVAR_ARCHIVE`, and the strength
 experiments above had persisted into the ini. Baking that into the golden images
 would have silently changed what every future run is compared against.
+
+### gl_FragCoord ruled out; the random texture is the remaining suspect
+
+**gl_FragCoord is NOT the cause.** Rendering `gl_FragCoord.y / 512.0` from the
+SSAO pass gives identical values on both backends at every row, same direction
+(165 at row 160 falling to 46 at row 640 on both; the two +1 rows are
+upscale-boundary noise). Metal's fragment origin behaves the same as OpenGL's
+here. Do not retry this.
+
+That was the last cheap lead, and it closes out every input to `ssao.fp` except
+one:
+
+    TexCoord          verified identical
+    gl_FragCoord      verified identical  (this test)
+    linear depth      mean |diff| 0.18
+    scene normals     within 1/255
+    uniforms          shared C++; radius A/B proves they reach the shader
+    random texture    *** differs ***
+
+**The random texture samples differ systematically.** Comparing regional means
+of `texture(RandomTexture, gl_FragCoord.xy / 64.0).x` -- a statistic that
+survives the half-res upscale, unlike the per-pixel comparison that misled this
+session earlier:
+
+    upper-left   Metal 44.38  GL 38.92  +5.45
+    upper-right  Metal 47.09  GL 41.96  +5.13
+    lower-left   Metal 49.12  GL 43.52  +5.61
+    lower-right  Metal 53.93  GL 50.01  +3.91
+    OVERALL      Metal 48.90  GL 43.94  +4.96
+
+Consistent across the frame, ~11% relative on a quantity whose mean is ~44. That
+is a real difference in an input that feeds `GetJitter()`, whose `rand.xy` is
+used directly as the (cos, sin) rotation pair in `RotateDirection` -- a biased
+rotation skews the sampling directions, which is the shape of defect that
+produces a uniform occlusion bias.
+
+Ruled out already: the upload is correct (`PixelFormat::Rgba16_snorm` ->
+`MTL::PixelFormatRGBA16Snorm`, `replaceRegion` with `bytesPerRow = width * 8`
+against `int16_t[64*64*4]`, mt_texture.cpp:810). Sampling repeats correctly
+(247 distinct values sampled, so `PPWrapMode::Repeat` is applied), and the
+filter mode is provably irrelevant here: `gl_FragCoord.xy / 64.0` lands exactly
+on texel centres, where linear and nearest agree.
+
+**Next step:** check *which* of the three `AmbientRandomTexture[quality]` Metal
+binds (`randomTexture = clamp(gl_ssao - 1, 0, 2)`; the three differ only by RNG
+sequence, so binding the wrong one gives similar-looking noise with a different
+mean), then verify the snorm decode end to end by uploading a known constant.
+
+**Keep in perspective.** The trustworthy impact figure remains the isolated
+AO-contribution measurement, mean 0.392/255 with max 11 on under 1% of pixels at
+maximum AO strength -- that comparison cancels the present path and any other
+backend-general difference, which the raw 12.52 figure does not.
