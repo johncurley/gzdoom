@@ -5775,3 +5775,32 @@ guard in `ComputeSampleHorizon`, and the sampler state on `LinearDepthTexture`
 Next test: compare the filter/wrap Metal binds for AO input 0 against what GL
 binds, and emit `texture(DepthTexture, uv)` at a deliberately out-of-range uv to
 see whether the two backends clamp identically.
+
+### SceneFog on the shipping path: was broken, now verified correct
+
+`ssaocombine.fp`'s DebugMode 0 branch -- the one that ships -- is
+`vec4(fogColor, ...)`, i.e. the AO composite tints the frame with `SceneFog`.
+That attachment collapsed alongside the normals (locations 1 and 2 both exist
+only under `GBUFFER_PASS`), so it needed checking, and none of this session's
+earlier captures touched it.
+
+Added `gl_ssao_debug 10` to render `fogColor` directly -- there was previously no
+way to see that buffer, which is why this went unnoticed for so long. Kept, on
+the same footing as the existing modes 5-8.
+
+Measured with a sensitivity control, i.e. the same capture with
+`RestoreSceneRenderTargetAfterAO()` disabled:
+
+    Metal WITH fix vs OpenGL    mean 0.175  max  1  differing 17.5%
+    Metal NO fix   vs OpenGL    mean 2.039  max 25  differing 91.4%
+    fix vs no-fix (sensitivity) mean 1.870  max 25  differing 76.4%
+
+**Verified.** SceneFog now matches OpenGL to within one LSB, and the control
+proves the measurement can detect the defect it is claiming to have fixed --
+without it, 91.4% of pixels differed from the reference with a max delta of 25.
+
+Note the raw magnitude looks small because `fogColor` is dark in this map
+(mean_lum ~7). It is not cosmetic: it multiplies into the composite wherever AO
+has alpha, so a max delta of 25 in the fog colour is a visible tint error in
+occluded regions, and it applied to every surface drawn after the mid-scene AO
+pass -- which was almost the whole frame.

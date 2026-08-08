@@ -47,6 +47,8 @@ void main()
 		FragColor = vec4(vec3(step(1e-5, ssao.y)), 1.0);
 	else if (DebugMode == 8)
 		FragColor = vec4(vec3(depthMask), 1.0);
+	else if (DebugMode == 10)
+		FragColor = vec4(fogColor, 1.0); // SceneFog (the G-buffer fog colour the composite tints with)
 	else
 		FragColor = vec4(ssao.xyz, 1.0);
 }
