@@ -5629,3 +5629,44 @@ mean), then verify the snorm decode end to end by uploading a known constant.
 AO-contribution measurement, mean 0.392/255 with max 11 on under 1% of pixels at
 maximum AO strength -- that comparison cancels the present path and any other
 backend-general difference, which the raw 12.52 figure does not.
+
+### Random texture: index, decode and negatives all CORRECT
+
+Tagged each `AmbientRandomTexture[quality]` with a distinct constant in its x
+channel (0.25 / 0.50 / 0.75) and read it back through `ssao.fp`. `gl_ssao` N
+selects index N-1, so the value identifies the bound texture:
+
+    expected              idx0 = 64   idx1 = 128   idx2 = 191
+    Metal gl_ssao 1         65
+    Metal gl_ssao 2                     128
+    Metal gl_ssao 3                                  192
+    GL    gl_ssao 3                                  192
+
+**Metal binds the correct index, and with constant content the two backends
+agree exactly (192 vs 192).** That rules out both a wrong index and a broken
+Rgba16_snorm decode.
+
+Negative values are fine too: with the texel set to -0.5 and the shader emitting
+`x * 0.5 + 0.5`, both backends read 65/64 -- the negative half survives the
+snorm texture, the Rg16f Ambient0 buffer and the upscale identically. So the
+"Metal loses negatives, raising its mean" idea is also dead.
+
+**Where that leaves it.** Constant content matches exactly; only *varying*
+content diverges (+4.96 mean). Everything that would show up with a constant --
+index, format, decode, sign, wrap -- is verified good. What survives is a
+difference in *which texels* get sampled, i.e. a sub-pixel phase difference in
+the `gl_FragCoord.xy / 64.0` lookup. With nearest filtering, an offset of half a
+pixel selects entirely different texels, which changes the clamped mean while
+leaving a constant texture untouched.
+
+Note the earlier `gl_FragCoord.y / 512.0` ramp test **cannot** exclude this: half
+a pixel is 0.5/512 of the ramp, about 0.25/255 at 8-bit, well inside the noise
+of that measurement. It ruled out an inverted or grossly shifted origin, not a
+half-texel offset.
+
+**Next test, and it is precise:** emit `fract(gl_FragCoord.y)` (and `.x`) from
+the SSAO pass. Both backends should read exactly 0.5 at every pixel. Anything
+else is the offset, and it would explain the whole residual.
+
+Impact unchanged: mean 0.392/255 on the isolated AO contribution, max 11 on
+under 1% of pixels at maximum strength.
