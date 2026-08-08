@@ -5931,3 +5931,45 @@ is not a trade this data supports.
 
 **Caveat:** one map, one viewpoint, one machine. A heavier scene will be worse,
 and the 60Hz cliff means "fine" and "juddering" are ~0.5ms apart here.
+
+### CLOSED: "OpenGL screenshots capture black" no longer reproduces
+
+The 2026-08-08 handoff listed this as open, blocking `crossbackend.py`: GL
+captures allegedly returned mean_lum 1.0 / max 1 for every config except those
+enabling ssao, blamed on `BindSceneFB(useSSAO)` (gl_framebuffer.cpp:435).
+
+**It does not reproduce.** OpenGL, `gl_ssao 0`, bloom/tonemap/debug all off:
+mean_lum 20.86, max 254 -- a normal image. Confirmed twice, once under the
+user's own ini and once under an isolated `-config`, so it is not a config
+artifact of either. Dozens of OpenGL captures across this session at
+`gl_ssao 0` were all fine.
+
+Why it went away is not established -- the GL path was not touched. Treat the
+original diagnosis as unproven rather than fixed. **`crossbackend.py` should be
+usable as a Metal-vs-OpenGL oracle again**, which is worth having in place
+*before* the Linux merge rather than after.
+
+### Pre-merge state, macOS side (for the native-platform-expansion merge)
+
+Branches have diverged: metal-audit +152, native-platform-expansion +27.
+
+**The blocker is ZWidget, not Metal.** `git diff` between the branches over
+`libraries/ZWidget` is 154 files, +29803/-5682 -- the Linux branch carries a far
+newer tree including the X11 backend. Vendored-here vs subtree-there has to be
+settled before anything else touches that directory, or every later change
+multiplies the conflict surface.
+
+**The macOS launcher swap is a POST-merge task.** `src/launcher/` and
+`LauncherWindow` exist only on native-platform-expansion; this branch has
+neither. Once merged it is roughly one call site -- `I_PickIWad`
+(i_system.mm:134) currently calls `I_PickIWad_Cocoa`. Note the Cocoa picker has
+had crash, argument-concatenation and dropped-argument fixes; if it is swapped
+out rather than kept as a fallback, make sure those cases are covered by
+whatever replaces it.
+
+**Not a blocker:** the residual SSAO divergence (mean 0.392/255 on the isolated
+AO contribution). Bounded and documented.
+
+**Will need redoing after the merge:** the matrix golden baseline. It is pinned
+to a windowed 800x572 now, so it is portable in principle, but it still encodes
+this machine's GPU and drivers.
