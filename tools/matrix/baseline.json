@@ -2,71 +2,71 @@
   "configs": {
     "baseline": {
       "h": 572,
-      "mean_lum": 49.8012,
-      "pixels_md5": "9cbf5cd6848aa783a2b9f6ff4ec955ce",
+      "mean_lum": 49.5415,
+      "pixels_md5": "59257362a77cc6732b8607d027021598",
       "w": 800
     },
     "bloom_compute": {
       "h": 572,
-      "mean_lum": 50.2767,
-      "pixels_md5": "f7d3c2c2bc46002a1a6568c7cb3a725c",
+      "mean_lum": 50.017,
+      "pixels_md5": "a6de4a614caada2eb2621323d22409cd",
       "w": 800
     },
     "bloom_ref": {
       "h": 572,
-      "mean_lum": 50.2767,
-      "pixels_md5": "f7d3c2c2bc46002a1a6568c7cb3a725c",
+      "mean_lum": 50.017,
+      "pixels_md5": "a6de4a614caada2eb2621323d22409cd",
       "w": 800
     },
     "colormap": {
       "h": 572,
-      "mean_lum": 151.3401,
-      "pixels_md5": "a690cd0ab0736c70c0320bc8777e2f0c",
+      "mean_lum": 151.5416,
+      "pixels_md5": "0b47a64bf5ac18327d4238d80fadcbcb",
       "w": 800
     },
     "custom_pp_half": {
       "h": 572,
-      "mean_lum": 25.8176,
-      "pixels_md5": "99ab6f1e6e6005a97c2fc811cd771b0d",
+      "mean_lum": 25.5256,
+      "pixels_md5": "3d3e38a366b347ff1e09f221fa7531b8",
       "w": 800
     },
     "custom_pp_identity": {
       "h": 572,
-      "mean_lum": 49.8012,
-      "pixels_md5": "9cbf5cd6848aa783a2b9f6ff4ec955ce",
+      "mean_lum": 49.5415,
+      "pixels_md5": "59257362a77cc6732b8607d027021598",
       "w": 800
     },
     "fxaa": {
       "h": 572,
-      "mean_lum": 49.8,
-      "pixels_md5": "8b9f7591f5d09a9aa2775d0e718c4f39",
+      "mean_lum": 49.5403,
+      "pixels_md5": "c90143611452a815f74797d8d2a2cf62",
       "w": 800
     },
     "lens": {
       "h": 572,
-      "mean_lum": 50.1015,
-      "pixels_md5": "0b36e44116b8b964c9a04abe43b0f8a8",
+      "mean_lum": 49.8409,
+      "pixels_md5": "06216d961e93fab18250a3fd6b6bff9d",
       "w": 800
     },
     "ssao": {
       "h": 572,
-      "mean_lum": 47.6812,
-      "pixels_md5": "2d9aaf74b091e474700913ec5e9867f5",
+      "mean_lum": 47.4215,
+      "pixels_md5": "d2701aaf1f5640816415d401a3b49241",
       "w": 800
     },
     "tonemap_identity": {
       "h": 572,
-      "mean_lum": 49.8012,
-      "pixels_md5": "9cbf5cd6848aa783a2b9f6ff4ec955ce",
+      "mean_lum": 49.5415,
+      "pixels_md5": "59257362a77cc6732b8607d027021598",
       "w": 800
     },
     "tonemap_uncharted": {
       "h": 572,
-      "mean_lum": 31.3862,
-      "pixels_md5": "0ac6e1e4b0b983f26b1855886fcc30b2",
+      "mean_lum": 31.1024,
+      "pixels_md5": "b10eda96ca901f29db8aa547be30086f",
       "w": 800
     }
   },
   "note": "Golden-image signatures. See tools/matrix/run.py.",
-  "recorded": "2026-08-09 09:07"
+  "recorded": "2026-08-09 10:23"
 }

@@ -6087,3 +6087,48 @@ one localize.py run resolved it in a minute. That is the workflow functioning.
 If the recurring flag becomes annoying, the honest fix is to exclude the console
 overlay from the comparison region (it is a harness artifact), not to raise the
 threshold until the scene stops being checked too.
+
+### The console overlay was ALREADY excluded -- correcting the previous entry
+
+`band_report` (crossbackend.py:156) crops before banding: **x 5-95%, y 9-80%**,
+explicitly to drop window chrome and the HUD strip. On an 800x572 capture that
+is x 40..760, y 51..457. The console overlay and the status bar were therefore
+never in the compared region, and the previous entry's zone breakdown -- "52.3%
+console, 47.0% HUD, 0.6% scene" -- was measured over the **full frame** and says
+nothing about the verdict. That analysis was not wrong, it was answering a
+question the tool never asked.
+
+**Inside the compared region there are 37 diverging pixels (|delta| > 24),
+0.0127% of it.** They sit in 16 connected blobs of at most 6 pixels, all within
+a single 97x85 patch around the doorway (x 300..397, y 188..273), mixed
+direction (15 Metal-brighter, 22 Metal-darker). That is the entire basis for
+`colormap SUSPECT`.
+
+`BAND_MAX_DELTA_FLAG` is a **max**-delta criterion with no coverage
+requirement, so 37 pixels out of 292320 flag the config permanently. A displaced
+pass -- the bug class this tool exists for -- moves thousands.
+
+**Suggested fix, deliberately NOT applied:** require a minimum count of pixels
+over the threshold (order 100) before the max criterion fires. That is a
+coverage requirement rather than a threshold retune, so it does not run into the
+docstring's warning about tuning on the config under test. It is left undone
+because weakening an oracle should be a deliberate choice by the person who
+relies on it, not a side effect of investigating one flag.
+
+### con_notifylines 0 -- kept, for a different reason
+
+Added `+con_notifylines 0 +con_notifytime 0` to `always`. This does **not** fix
+the colormap flag (the console was already outside the compared region), but it
+removes a real nondeterminism source from full-frame work: console notify text
+was the *only* difference between otherwise-identical captures several times
+during this session, and every such pair had to be re-analysed with the top rows
+excluded by hand.
+
+Band means dropped as a side effect (band 0 mean 0.269 -> 0.150, max 2 -> 1),
+because the crop's 9% top margin did not fully clear four lines of notify text.
+
+Baseline re-recorded for the changed `always`. Note the first verify run
+immediately after `--update-baseline` FAILED and the two runs after it PASSED --
+consistent with shader/PSO recompilation after the CVAR change bleeding into one
+launch despite the warmup. If that recurs, the warmup may need to be two
+launches, or the PSO archive cleared before recording.
