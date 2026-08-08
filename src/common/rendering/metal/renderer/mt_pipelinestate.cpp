@@ -398,7 +398,13 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
         mtlFormat = MTL::VertexFormatUChar4Normalized;
         break;
       case VFmt_Packed_A2R10G10B10:
-        mtlFormat = MTL::VertexFormatUInt1010102Normalized;
+        // SIGNED. This format carries model vertex normals
+        // (FModelVertex::packedNormal, hw_modelvertexbuffer.cpp:48), and the
+        // reference backend reads them as GL_INT_2_10_10_10_REV
+        // (gl_buffers.cpp:214) -- components in [-1, 1]. The unsigned variant
+        // decodes the same bits to [0, 1], so a model normal could never point
+        // in a negative direction on Metal.
+        mtlFormat = MTL::VertexFormatInt1010102Normalized;
         break;
       case VFmt_Byte4_UInt:
         mtlFormat = MTL::VertexFormatUChar4;
