@@ -5061,3 +5061,519 @@ threshold of 24. `BAND_MAX_DELTA_FLAG` is probably a touch tight.
 `mt_pp_stencil` in mt_postprocess.cpp -- the diagnostic gate for the Metal-only
 PP stencil test. Kept because that divergence from the reference is real and
 will want re-testing.
+
+---
+
+## 2026-08-08 (later): the AO bug is real and orientation-keyed; two hypotheses killed
+
+Session goal was "fix the AO". It is not fixed. But the previous entry's leading
+hypothesis is now disproven, a second one was raised and disproven, and the bug
+has a much sharper signature than "darkening below row ~360".
+
+### The signature, correctly characterised
+
+Reproduced at 1024x820 (`save01.zds`, `gl_ssao 3`, `gl_ssao_debug 1`), Metal vs
+an OpenGL capture of the same viewpoint. Left strip x30-338:
+
+    row    GL     Metal   diff
+    180  243.6   253.4   +9.8
+    340  229.1   240.5  +11.5
+    380  229.9   200.8  -29.1   <- horizon
+    420  241.0   206.5  -34.5
+    620  245.5   230.7  -14.8
+
+**The row ~360-380 "discontinuity" is just the scene horizon.** It is not a
+viewport edge, not h/2, not an inset. A per-pixel difference map (RED = Metal
+darker, GREEN = Metal brighter) shows the real structure:
+
+- **Every horizontal surface is red** -- the ground plane, every stair tread.
+- **Every vertical surface is green** -- the building facade, every stair riser.
+
+The stairs alternate red/green tread-by-riser. Metal over-occludes floors and
+under-occludes walls. **The error is keyed to surface orientation**, which is
+what any further work should be explaining. Mean |diff| vs GL over rows 180-660
+is ~17.
+
+### Killed: "SceneColor alpha is 0, so lineardepth's sky test misfires"
+
+The previous entry's leading hypothesis. Disproven directly.
+
+`lineardepth.fp` was fixed so the sky sentinel bypasses the reverse-Z inversion
+(see "Landed" below) and the result was **byte-identical output, zero pixels
+changed**, with the translated MSL confirmed to contain the new code. If any
+pixel took the sky branch, that change would have moved it from the near plane
+to the far plane. So no pixel takes it: SceneColor alpha is never 0 here, and
+the `.a != 0.0` test is not involved in this bug at all.
+
+This also explains the previous entry's confusing datum that patching the
+sentinel "moved the artifact rather than fixing it" -- that patch must have
+altered the geometry path too, not just the sentinel.
+
+### Killed: "Metal's screen-space Y is inverted relative to the G-buffer normals"
+
+The orientation-keyed signature is exactly what a Y-sign disagreement between
+`FetchViewPos` (reconstructed from screen UV) and `FetchNormal` (true eye space)
+would produce: it cancels for walls, inverts for floors. It is a good
+hypothesis. **It is wrong.**
+
+Negating the Y half of `UVToViewA`/`UVToViewB` on Metal does not improve the
+match -- mean |diff| vs GL goes 17.06 -> 18.27, worse in places. Tried and
+reverted. Do not re-try this without new evidence.
+
+Also confirmed along the way, all ruled out as causes:
+
+- **Linear depth is correct on Metal.** `gl_ssao_debug 3` agrees with OpenGL to
+  within ~4 world units at every row (Metal reads a consistent +3.9). Depths are
+  genuinely 90-197 units -- it is a small courtyard, so `gl_ssao_fade_start` 100
+  legitimately puts the whole scene in the fade band on both backends.
+- **The depth blur is fine.** It changes only rows 370-747, which looks like a
+  clip and is not: it is simply where AO is non-flat (the ground). Above the
+  horizon AO is uniformly 1 and blurring it is a genuine no-op.
+- **The dark "tree" blob is not an AO artifact.** It has an identical silhouette
+  in `gl_ssao_debug` 1, 3 and 4, so it is a translucent sprite drawn *after*
+  postprocess, sitting on top of the debug visualisation. It cost an hour.
+
+### Landed
+
+- `wadsrc/static/shaders/pp/lineardepth.fp` -- `normalizeDepth` split into
+  `normalizeDepth` (raw device depth -> [0,1]) and `linearizeDepth` ([0,1] ->
+  world units), so the sky sentinel enters as a *normalized* 1.0 and bypasses
+  the reverse-Z inversion. Under reverse-Z the old code mapped sky to 0.0, the
+  NEAR plane. OpenGL and Vulkan are bit-identical (A=1, B=0). **This is a real
+  latent bug fix with zero measured effect today** -- it only bites once
+  something does write alpha 0 to SceneColor. Keep it; do not read it as the
+  AO fix.
+
+### Next step
+
+Explain why AO error tracks surface orientation when depth is correct and the
+naive Y-flip is not the cause. The untested half is the **normal buffer** --
+`gl_ssao_debug 4` renders it, and Metal vs GL have not been compared on that
+view. Sky reads grey (0.5 = zero normal) and floors read green (+Y) on Metal,
+which is plausible, but "plausible" is what the last two hypotheses were.
+Diff it against OpenGL before theorising.
+
+### Two traps that cost most of this session
+
+- **`vid_preferbackend` is `CVAR_ARCHIVE | CVAR_GLOBALCONFIG`.** A launch that
+  does not pass it inherits whatever the last launch wrote. After one OpenGL
+  capture, every later "Metal" launch silently rendered OpenGL, and a
+  Metal-vs-GL comparison came back a perfect 0.00 -- which is what exposed it.
+  **Pass `+vid_preferbackend` explicitly on every launch**, and verify from the
+  log (`GL_RENDERER` present => OpenGL) rather than trusting the intent.
+  This is the same class as the console-cvar trap already recorded, but it
+  survives *across* launches and silently invalidates the reference backend.
+- **Reverting a shader edit in the working tree does nothing until `zipdir`
+  runs again.** A diagnostic edit to `ssao.fp` was reverted in the tree but left
+  live in the pk3, so a subsequent C++ uniform change appeared to have no effect
+  -- shader and uniform were negating each other. Grep the *cached MSL* to see
+  what actually ran: `~/Library/Application Support/zdoom/cache/*ssao*.msl`.
+
+### FOUND: Metal's SceneNormal buffer is empty for walls (root cause of the AO divergence)
+
+`gl_ssao_debug 4` renders the scene normal G-buffer. Diffed Metal vs OpenGL at
+the aobug viewpoint, backend pinned per launch:
+
+- **OpenGL:** a fully populated normal buffer -- facade violet, stair risers and
+  treads distinct, side walls red/cyan, ground green.
+- **Metal:** exactly **two values in the entire frame** -- (0,1,0) below the
+  horizon and (0,0,0) above it. No facade, no stairs, no side walls.
+
+This is the cause of the orientation-keyed AO signature, and the mechanism is
+exact. `FetchNormal` in `ssao.fp` rejects normals with `length(normal) > 0.1`;
+Metal's wall pixels decode to ~0.087, just under it, so `FetchNormal` returns
+vec3(0), `ssao.fp` forces `occlusion = 1.0`, and **walls get no AO at all** ->
+Metal brighter. Floors keep a valid (0,1,0) but every vertical occluder around
+them has no normal -> Metal over-occluded. Both halves of the signature, from
+one defect.
+
+**Narrowed to the uniform, not the matrices.** Two shader diagnostics, each one
+pk3 rebuild (both reverted):
+
+1. Emit `bones.Normal` (pre-matrix) instead of `vEyeNormal` -- Metal still
+   two-tone, GL still fully populated. So it is not `NormalModelMatrix` /
+   `NormalViewMatrix`, and not the Metal zero-world-normal guard.
+2. Emit `uVertexNormal.xyz` directly, bypassing `GetAttrNormal`'s
+   `useVertexData & 2` branch -- Metal's dominant encoded values are
+   (129,255,129) = (0,1,0) and (129,129,129) = **(0,0,0)**. So it is not
+   `useVertexData` / `HasNormal()` either.
+
+**`uVertexNormal` itself arrives at the Metal shader as (0,0,0) for wall draws
+and (0,1,0) for flats.** `HWWall::DrawWall` (hw_walls.cpp:375) calls
+`state.SetNormal(glseg.Normal())` unconditionally, on both backends, and
+`HWFlat` (hw_flats.cpp:323) does the same -- so the shared C++ sets it and only
+the Metal upload loses it. Note the shape: `glseg.Normal()` returns `(x, 0, z)`
+(walls are vertical, Y always 0) and Metal keeps the zero Y while losing X and Z;
+flats pass `(X, Z, Y)` with a nonzero middle component and survive intact.
+
+Not yet identified: which part of `MtRenderState`'s stream-data path drops it.
+`ApplyStreamData` (mt_renderstate.cpp:881) writes the whole `mStreamData`, and
+`UpdateSubDrawState` (mt_renderstate.cpp:393) does break a sub-draw on a stream
+offset change, so neither is obviously at fault -- start by checking whether
+`mStreamBufferWriter.Write()`'s same-data dedupe is collapsing distinct wall
+normals onto one offset, and whether a `SetNormal(0,0,0)` caller
+(hw_skyportal.cpp:63, hw_sprites.cpp:285) is the value walls are inheriting.
+
+**Separate real bug found in passing, not fixed:** `VFmt_Packed_A2R10G10B10`
+maps to `MTL::VertexFormatUInt1010102Normalized` (mt_pipelinestate.cpp:401) --
+**unsigned**, giving components in [0,1] and no negatives. OpenGL uses
+`GL_INT_2_10_10_10_REV` (gl_buffers.cpp:214), which is **signed**, [-1,1].
+Metal has `Int1010102Normalized`. This format is used only for model vertex
+normals (hw_modelvertexbuffer.cpp:48), so it is not the wall bug, but model
+lighting/AO on Metal is wrong until it is fixed.
+
+### Chasing the wall normal through MtRenderState: what is NOT broken
+
+Instrumented `MtRenderState` (logging in `ApplyStreamData`, `Draw`,
+`UpdateSubDrawState` and the `FlushBatch` emit loop, behind a temporary
+`mt_nrmlog` CCMD; all reverted). Everything below was checked against a live
+frame at the aobug viewpoint, not read off the source:
+
+- **The CPU sets the right normals.** Wall normals of the expected `(x, 0, z)`
+  shape arrive in `mStreamData` and are written by `ApplyStreamData`:
+  `(0,0,-1)` x64, `(-1,0,0)` x28, `(1,0,0)` x22, plus many oblique ones. Flat
+  normals `(0,±1,0)` appear too (via `DrawIndexed`, so they never reach
+  `Draw`). `SetNormal` is doing its job on Metal.
+- **The stream ring is fine.** Each distinct normal gets its own `mDataIndex`;
+  repeats only occur where `Write()`'s memcmp dedupe correctly sees identical
+  data. Every draw in the frame sits in block `off=0`, so `uDataIndex` alone
+  distinguishes draws.
+- **`PushConstants::operator==` is a full memcmp** and does cover `group4`,
+  where `uDataIndex` lives, so an index change does break a sub-draw.
+- **Apply()-skipping is real but innocent.** `Draw()` runs `Apply()` only when
+  `apply || mNeedApply`, and `SetNormal` sets neither -- so a normal-only change
+  can be skipped. It happens 40 times a frame, but **in zero of those cases did
+  the normal differ** from the one already uploaded. Not this bug.
+- **Batch flushing is correct.** Every `FlushBatch` emits its sub-draws with the
+  right per-sub-draw `uDataIndex` and index count.
+- **The riser geometry is rasterised.** Linear depth along the staircase column
+  x=380 is stepped identically on Metal and OpenGL (a constant +3.9 world-unit
+  offset, plateau-for-plateau). Metal is not dropping the stair walls.
+
+### Where it actually goes wrong, and the next step
+
+Rendering `uDataIndex` itself into the G-buffer (`vEyeNormal =
+vec4(float(uDataIndex)/16.0, 0, 0, 1)`) shows **`uDataIndex` is constant 11
+across the entire staircase**, treads and risers alike, while taking 182
+distinct values elsewhere in the frame. The stream entry at index 11 holds
+`(0,1,0)` -- a flat normal. So the riser pixels are being shaded with a *flat's*
+stream data even though the riser geometry is what wrote their depth.
+
+Confirmed from three directions that this is not a shader-side decode issue:
+emitting `uVertexNormal.xyz` directly, emitting `bones.Normal` (bypassing the
+matrices), and the stock path all give the identical tread normal on every
+staircase row -- while OpenGL alternates riser `(0.06,-0.06,1.0)` / tread
+`(0,1,0)` at the same pixels.
+
+**Next step:** find which draw call rasterises the riser pixels. The instrument
+to add is a per-draw ID written into an unused G-buffer channel (or reuse the
+`uDataIndex` trick and log the normal alongside every `FB`/sub-draw emission,
+which this session did not correlate). The open question is narrow and
+concrete: *the stair risers write correct depth but are shaded from a flat's
+stream-data entry -- which draw owns those fragments?* Do not re-derive the
+six negative results above.
+
+### ROOT CAUSE FOUND: the postprocess render state leaves DrawBuffers at 1 for the rest of the scene
+
+Added a per-draw serial to the G-buffer (`group4.w` in PushConstants, unused
+padding; encoded base-16 one digit per channel so the present pass's gamma and
+dither cannot corrupt a digit) plus an `mt_skipdraw` CCMD. All reverted.
+
+**Which draw owns the staircase:** draw 33, `DrawIndexed dt=2 cnt=90
+n=(0,1,0)` -- a *flat*. Confirmed independently of the encoding by
+`mt_skipdraw 33`, which blanks the whole staircase column to the clear value
+(129,129,129) and removes 344,528 pixels, 42% of the frame. So no other draw
+covers those pixels: **the stair riser walls write nothing to the G-buffer.**
+
+**Why.** Logging `mRenderTarget.DrawBuffers` per draw:
+
+    draw 33  DrawIndexed n=(0,1,0)     drawbuffers=3
+    draw 37  Draw        n=(0,0,-1)    drawbuffers=3
+    draw 38  Draw        n=(0,0,-1)    drawbuffers=1   <-- and never recovers
+
+Over the frame: **134 of 135 wall draws and 89 of 93 flat draws render with
+DrawBufferCount=1.** `MtPipelineStateManager` selects the shader variant with
+`key.DrawBufferCount > 1 ? GBUFFER_PASS : NORMAL_PASS` (mt_pipelinestate.cpp:346),
+and `FragNormal` only exists under `GBUFFER_PASS` (main.fp:927). So almost every
+surface in the frame is drawn by a shader that has no normal output at all.
+Colour and depth are unaffected -- attachment 0 is still written -- which is why
+this never showed up as a visible artifact, only as broken AO.
+
+**The unpaired call.** Logging every `EnableDrawBuffers` with its pass type:
+
+    [EDB] serial=0   count=3  passType=1 passCount=3   <- scene start, correct
+    [EDB] serial=37  count=1  passType=1 passCount=3   <- 3 -> 1
+    [EDB] serial=37  count=1  ...                      <- no restore
+    [EDB] serial=37  count=1  ...
+    [EDB] serial=257 ...                               <- 220 draws later
+
+Three consecutive `EnableDrawBuffers(1)` with no draws between them and no
+restore, while `mPassType` is GBUFFER_PASS and `GetPassDrawBufferCount()` is 3
+throughout -- so a restore would have worked; none is issued. Those three are
+the SSAO chain's own fullscreen passes: **`MtPPRenderState::Draw()` calls
+`EnableDrawBuffers(1, false)` for every postprocess pass
+(mt_postprocess.cpp:341, and `MtPostprocess::SetActiveRenderTarget` at :567) and
+nothing ever puts it back.** `AmbientOccludeScene` runs *mid-scene*
+(hw_drawinfo.cpp:1071, after the opaque pass and before portals/translucent), so
+every draw after it in that frame loses its normal output.
+
+For contrast, `VkPostprocess::AmbientOccludeScene` (vk_postprocess.cpp:244)
+never touches the draw-buffer count at all. This is a Metal-only regression.
+
+**Fix direction:** make the PP render state save and restore the count, or
+restore `EnableDrawBuffers(GetPassDrawBufferCount())` after the PP chain.
+Note `MtRenderState::EnableDrawBuffers` (mt_renderstate.cpp:1359) also ignores
+its `apply` argument and never sets `mNeedApply`, which is worth fixing at the
+same time.
+
+**Caveat to settle when fixing:** the G-buffer comparisons above were read at
+end of frame, whereas the AO pass consumes the normal buffer *at* the mid-scene
+point where it runs. Geometry drawn after AO cannot contribute to that frame's
+AO on either backend. So this defect certainly empties the normal buffer, but
+whether it accounts for the *entire* AO delta measured against OpenGL has to be
+confirmed by applying the fix and re-running the Metal-vs-GL AO comparison
+(mean |diff| was 17.06; the noise floor is ~0.4).
+
+### The DrawBuffers fix: landed, verified, and it exposes a second defect
+
+`MtPostprocess::RestoreSceneRenderTargetAfterAO()` -- restores the scene render
+target and `EnableDrawBuffers(GetPassDrawBufferCount())` on both exits of
+`AmbientOccludeScene` (the compute path returns early, so it needs it too).
+
+**Verified fixed.** The scene normal G-buffer now matches OpenGL. Staircase
+column x=380, which was a constant `(129,255,137)` on Metal for every row:
+
+    row    Metal fixed      OpenGL
+    430   136 120 255     135 120 255   <- riser, was missing entirely
+    450   129 255 137     129 255 137   <- tread
+    470   136 120 255     135 120 255
+
+Risers and treads both, within 1/255. That defect is closed.
+
+**But the AO comparison got worse, not better: mean |diff| vs OpenGL 17.06 ->
+21.56.** What changed is the *shape* of the error, and that is the useful part:
+
+    row     GL     before   after
+    180  243.55   +9.83   -14.02
+    340  229.08  +11.47   -18.64
+    420  241.04  -34.54   -21.33
+    500  234.03  -13.74   -39.00
+
+The orientation-keyed split at the horizon is **gone** -- before, Metal was
+brighter above and darker below; now it is uniformly darker everywhere. Walls
+finally receive AO at all, and Metal over-occludes across the whole frame by a
+roughly uniform 11-39. So the empty normal buffer was a real defect and its
+removal has uncovered a second, independent one. Do not read 21.56 as a
+regression from the fix; read it as the first honest measurement of the
+remaining bug, taken with a G-buffer that is finally correct.
+
+**This invalidates an earlier negative result.** The "screen-space Y inversion"
+hypothesis (negating the Y half of `UVToViewA`/`UVToViewB`) was tested and
+rejected on a frame where the normal buffer was empty for every wall -- so it
+could not possibly have helped, whatever its merit. `FetchNormal` was returning
+vec3(0) and `ssao.fp` was forcing `occlusion = 1.0` for those pixels regardless
+of what the reconstructed position said. **Re-test it now**, along with the
+`normal.z = -normal.z` handedness line in `ssao.fp`, against the corrected
+G-buffer. A uniform over-occlusion is exactly what a normal/position handedness
+mismatch produces once the normals actually exist.
+
+### Also lost with the normals, and not yet re-checked: SceneFog
+
+The same collapse to `DrawBufferCount = 1` dropped attachment **1** as well, not
+just attachment 2. Under `GBUFFER_PASS` main.fp writes `FragFog` (location 1)
+and `FragNormal` (location 2); the NORMAL_PASS variant writes neither. So
+`SceneFog` was equally empty for everything drawn after the mid-scene AO pass,
+and `ssaocombine.fp` samples `SceneFogTexture` for the fog colour on the **real
+(DebugMode 0) composite path** -- the one that ships, which none of this
+session's `gl_ssao_debug` captures exercised. Worth an A/B in normal gameplay
+now that the attachment is populated again.
+
+### Model vertex normals: signed/unsigned packing fixed (reasoned, NOT measured)
+
+`VFmt_Packed_A2R10G10B10` mapped to `MTL::VertexFormatUInt1010102Normalized`
+(mt_pipelinestate.cpp:400) -- **unsigned**, decoding to [0, 1]. OpenGL reads the
+same bytes as `GL_INT_2_10_10_10_REV` (gl_buffers.cpp:214) -- **signed**,
+[-1, 1]. A model normal could therefore never point in a negative direction on
+Metal. Changed to `MTL::VertexFormatInt1010102Normalized` (value 40, present in
+libraries/metal-cpp/Metal/MTLVertexDescriptor.hpp:76).
+
+The format is used for exactly one thing: `FModelVertex::packedNormal`
+(hw_modelvertexbuffer.cpp:48), i.e. **model** vertex normals -- so it is not
+related to the wall-normal bug above, despite surfacing during the same hunt.
+
+**Verification status: incomplete, and it matters.** The AshesHardReset MAP01
+repro contains no model geometry -- the normal-buffer capture is byte-identical
+before and after the change (md5 f3a147d6...). That confirms the change is
+confined to models and does not regress this scene; it does **not** confirm the
+fix is correct at runtime. To actually verify, capture `gl_ssao_debug 4` on a
+scene with visible models and check that model normals span negative directions
+and match OpenGL. Until someone does that, this is a reasoned change backed by
+a format-mismatch argument and an enum lookup, nothing more.
+
+### 2026-08-08 (cont.): over-occlusion narrowed, not root-caused; remaining fixes landed
+
+**The headline: on the shipping composite Metal and OpenGL now agree.**
+`gl_ssao_debug 0` -- the path that actually ships, which none of the earlier
+captures in this session exercised -- left strip, after all fixes:
+
+    row 180  Metal 10.91  GL 11.00  -0.09
+    row 340  Metal 10.19  GL 10.34  -0.16
+    row 500  Metal 20.81  GL 22.67  -1.86
+    row 580  Metal 13.46  GL 14.39  -0.94
+    mean |diff| = 0.57      (full-frame mean_lum 17.53 vs 17.63)
+
+Captures on this branch are byte-deterministic for a fixed config (verified:
+two identical launches are md5-identical), so the pixel noise floor is **0**,
+not the 0.4ms frame-time floor quoted elsewhere in this file. 0.57 mean with a
+1.86 worst row is therefore a real residual, just a small one.
+
+**Why the debug view still shows 12.52 and the shipped frame shows 0.57.**
+`gl_ssao_debug 1/2` displays `attenuation` directly as luminance. The real
+composite is `vec4(fogColor, (1.0 - attenuation) * depthMask)` blended over a
+dark, foggy scene (mean_lum ~17.5), so a ~5% attenuation error lands as well
+under one LSB of output. **Caveat: this map is dark and foggy.** A bright,
+high-contrast scene would show more of the residual, so do not read 0.57 as
+"AO is correct on Metal" -- read it as "the remaining error is not visible
+here".
+
+**Over-occlusion: NOT root-caused.** Raw AO (debug 2, pre-blur) still differs
+from OpenGL by mean 12.52. Eliminated by measurement this session, do not
+re-test without new evidence:
+
+- **Screen-space Y inversion -- definitively disproven.** Rendering `TexCoord.y`
+  from the SSAO pass gives identical values on both backends at every row
+  (195/194, 132/132, 86/85...). Metal's PP screen space is NOT Y-inverted, so
+  `IsScreenSpaceYInverted()` was wrong; the 12.52 -> 10.78 it produced was
+  coincidence. Reverted. This hypothesis is now closed twice over.
+- **Linear depth** -- mean |diff| 0.18. Not a factor.
+- **Scene normals** -- match OpenGL within 1/255 after the DrawBuffers fix.
+- **AO scene size** -- Metal overrode it with the depth-texture size; measured
+  `scene=1024x820 depthTex=1024x820`, identical, and the AO output was
+  byte-identical with and without. Aligned to the reference anyway.
+- **Shader defines and ini CVARs** -- shared code and a shared ini, so neither
+  can produce a backend *divergence* at all.
+
+Remaining leads, in order: `gl_FragCoord` origin (Metal's is top-left, GL's
+bottom-left) feeding `GetJitter()`; the half-res `Ambient0` -> screen linear
+upscale in the combine.
+
+**A measurement trap worth recording:** comparing the random texture by
+rendering `noise.x` into `Ambient0` cannot work -- that buffer is half-res and
+the combine bilinearly upscales it 2x, so "Metal looks smoothed, GL looks sharp"
+is an artifact of upscale alignment, not evidence about the sampler. Sample
+something that survives the upscale, or read at half-res.
+
+**Also landed:**
+- `MtRenderState::EnableDrawBuffers` now sets `mNeedApply`. `EndRenderPass()`
+  clears `mEncoder` and the attachment count is part of the pipeline key, so
+  the next draw must go through `Apply()`; without it a draw arriving with
+  `apply=false` and `mNeedApply` already false falls through Draw()'s
+  `if (!mEncoder ...) return` and is silently dropped. Verified no pixel change
+  in the repro (raw AO byte-identical).
+- **SceneFog confirmed restored.** It was collapsing with the normals
+  (attachment 1 vs 2), and `ssaocombine.fp` reads it on the DebugMode 0 path.
+  The shipping-composite agreement above is that path, so this is verified end
+  to end rather than by inspection.
+
+**And the trap I fell into again:** reverting `ssao.fp` in the tree without
+re-running `zipdir` produced a measurement of 195.28 -- the diagnostic shader
+was still live in the pk3. This is the second time in one session. Re-zip
+immediately after any shader revert, before launching anything.
+
+### Verification pass: what the regression matrix does and does not prove
+
+Ran `tools/matrix/run.py` (11 configs) against the current build.
+
+**All 10 relations passed** -- every `must_differ_from` and `must_match` holds:
+ssao, bloom_ref, bloom_compute, tonemap_uncharted, lens, fxaa, colormap and
+custom_pp_half all still change pixels, and tonemap_identity and
+custom_pp_identity still reproduce baseline exactly. That is the check a hash
+comparison cannot make, and it is the one that matters here: **no postprocess
+pass was killed by the DrawBuffers change**, including the identity
+mathematical invariants.
+
+**All 11 configs also differ from the stored baseline, and that is NOT a
+regression.** The baseline was recorded 2026-08-07 at 1440x773; today's captures
+are 1024x820. `vid_fullscreen=true` and `vid_scalemode=0`, so the render size is
+just the display -- 1440x900 laptop panel then, the 1024x768 CRT now. Every
+config shifted by a uniform ~+5.5 mean_lum, which is a display change, not code.
+**The stored baseline is unreproducible on the current display** and should be
+re-recorded when someone is happy to discard the pre-change reference
+(`--update-baseline` is guarded: it refuses to record while any relation fails,
+and none do).
+
+Harness fix while here: `configs.json` `always` now pins
+`+vid_preferbackend 3`. It had none, so the matrix silently ran on whichever
+backend the ini last held -- the archived-cvar trap, which this session hit
+twice. (`vid_defwidth/height` were tried too and removed again: they are ignored
+under `vid_fullscreen`, so resolution cannot be pinned that way.)
+
+### Still unverified, and exactly what would verify it
+
+**Model normal packing.** The aobug frame does contain a model actor
+(`Prop_Bush_2` -> `DeadBush1.md3`, Bushes.txt), but its silhouette reads as the
+unwritten clear value in the normal buffer on **both** Metal and OpenGL, so that
+frame never exercises model normal writing -- consistent with the packing change
+being byte-identical there. A real test needs a frame where a model writes
+normals: confirm with `gl_ssao_debug 4` that the model's pixels carry varied
+normals at all, then check Metal spans negative components and matches OpenGL.
+`FN-TrenchFoot.pk3` (`laser.md2`, `BloodSpot.md3`) is the other candidate.
+Until then the change rests on a format-mismatch argument, not a measurement.
+
+**Whether the residual AO error is ever visible.** Shipping-composite parity was
+measured at mean |diff| 0.57 on a dark, foggy map. Re-run the same
+Metal-vs-OpenGL `gl_ssao_debug 0` comparison on a bright, high-contrast scene;
+that is what would show whether the remaining ~5% raw-attenuation difference
+matters anywhere.
+
+### 2026-08-09: verification pass -- model packing CONFIRMED, AO residual quantified
+
+**Model normal packing: verified, and the old code was badly wrong.**
+`summon Prop_Bush_2` (`+sv_cheats 1 +execafter N "summon Prop_Bush_2"`) puts a
+model actor in frame on demand -- much easier than hunting for one in the map,
+and worth reusing. With a model present, A/B of the vertex format against
+OpenGL as ground truth (`gl_ssao_debug 4`):
+
+    Metal signed   (Int1010102Normalized, the fix)   mean delta vs GL   0.626
+    Metal unsigned (UInt..., the old code)           mean delta vs GL  31.216
+
+A 50x difference. The fix is correct and the old mapping was substantially
+wrong for every model in the game. Note the earlier "byte-identical, so this
+scene has no models" reasoning was right about the frame but wrong as a test:
+the repro frame *does* contain `Prop_Bush_2`, but its pixels never write model
+normals there, so only a summoned instance exercises the path.
+
+**AO residual: quantified properly, after two bad instruments.**
+
+The shipping-composite comparison used earlier is NOT a valid instrument for AO
+parity, and the number quoted in the previous entry (0.57) should not be read as
+evidence. The control proves it:
+
+    DOOM2 MAP01     Metal AO-on vs AO-off  mean 0.33   Metal vs GL  mean 0.66
+    aobug, str 1.0  Metal AO-on vs AO-off  mean 0.63   Metal vs GL  mean 0.89
+
+In both scenes the **backend difference is larger than the entire effect of AO**
+(141% of it at maximum strength). The comparison is dominated by general
+Metal-vs-OpenGL rendering differences that have nothing to do with SSAO, so it
+can neither confirm nor deny AO parity. **Always run the AO-on/AO-off control
+before quoting a shipping-path AO comparison.**
+
+The valid instrument isolates AO's *contribution* on each backend and compares
+those, cancelling everything unrelated:
+
+    delta_metal = (Metal AO-on) - (Metal AO-off)
+    delta_gl    = (GL    AO-on) - (GL    AO-off)
+    mean |delta_metal - delta_gl| = 0.392   max 11   samples >4: 0.72%
+
+at `gl_ssao_strength 1.0`. So the residual raw-attenuation divergence (12.52 in
+the AO buffer) reaches the shipped frame as a mean 0.39/255 with a worst case of
+11/255 on under 1% of pixels. Real, small, and localized -- not "fixed", but
+bounded, and bounded with an instrument that survives its own control.
+
+**Golden baseline re-recorded.** The old one was from the 1440x900 laptop panel
+and unreproducible on the CRT, so it failed permanently -- worse than no check.
+All 10 relations passed before recording (the `--update-baseline` guard), and a
+clean re-run afterwards is **PASS**. Before recording, `gl_ssao_strength` was
+restored from 1 to its 0.7 default -- it is `CVAR_ARCHIVE`, and the strength
+experiments above had persisted into the ini. Baking that into the golden images
+would have silently changed what every future run is compared against.
