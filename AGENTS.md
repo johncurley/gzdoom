@@ -5890,3 +5890,44 @@ also absorbs the cold-shader-compile settle after a rebuild.
 
 Baseline re-recorded at 800x572; all 10 relations pass and a clean re-run is
 PASS.
+
+## 2026-08-09: measured settings for the reference machine (TrenchFoot)
+
+**Method.** `FN-TrenchFoot.pk3`, MAP01, Metal, `mt_metrics` **`Frame ... avg=`**
+(not `FrameGPU` -- see above). Three flags matter and are easy to forget:
+`+vid_vsync 0 +vid_maxfps 0 +cl_capfps 0`. With the ini's normal
+`vid_vsync=true` / `vid_maxfps=60`, every config that clears 60fps reports
+identically and the comparison says nothing. Runs used `-config
+/tmp/gzdoom-perf.ini` so nothing leaked into the real ini, and were interleaved
+(off, on, off, on) so thermal drift loads both configs equally. Two repeats per
+config give the noise floor directly.
+
+    no AO,  no bloom   12.67ms   78.9 fps    spread 0.87
+    SSAO 3, no bloom   14.25ms   70.2 fps    spread 0.45
+    SSAO 3, bloom on   16.69ms   59.9 fps    spread 0.72
+
+    cost of gl_ssao 3 : +1.58ms
+    cost of gl_bloom  : +2.44ms
+    60Hz frame budget :  16.67ms
+
+Both deltas clear the ~0.5ms spread comfortably, so both are real.
+
+**The bloom result is a cliff, not a slope.** SSAO 3 + bloom lands at 16.69ms
+against a 16.67ms budget -- *exactly* on the 60Hz line. With vsync on, a frame
+that drifts a hair over budget waits a whole refresh, so this presents as
+intermittent judder rather than a gradual slowdown. Bloom off leaves 2.4ms of
+headroom.
+
+**Settings in use on the reference machine:** `gl_ssao 3`, `gl_bloom 0`,
+`gl_ssao_strength 0.7` (default), `mt_compute_ao_intel false`,
+`mt_compute_bloom_intel false`. If bloom is wanted, the honest trade is
+`gl_ssao 1` to buy back the budget.
+
+These are **documented, not enforced.** No ini is tracked in this repo, and the
+engine defaults are `gl_ssao 0` / `gl_bloom false` (hw_postprocess_cvars.cpp:30,
+61). Changing the `gl_ssao` default to 3 in source would impose +1.58ms on every
+machine running this fork on the strength of one measurement on one map, which
+is not a trade this data supports.
+
+**Caveat:** one map, one viewpoint, one machine. A heavier scene will be worse,
+and the 60Hz cliff means "fine" and "juddering" are ~0.5ms apart here.
