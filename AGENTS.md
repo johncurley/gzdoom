@@ -5973,3 +5973,32 @@ AO contribution). Bounded and documented.
 **Will need redoing after the merge:** the matrix golden baseline. It is pinned
 to a windowed 800x572 now, so it is portable in principle, but it still encodes
 this machine's GPU and drivers.
+
+### CORRECTION: the GL black-capture item is NOT closed -- it is scene-specific
+
+The entry above closing it was **wrong**, and the error is instructive: it
+generalised from one mod. Bisected properly, holding everything else fixed and
+swapping only the scene:
+
+    matrix config file + AshesHardReset/save01   819x656  mean 21.742  fine
+    perf   config file + Ashes2063/capspot       800x572  mean  0.000  BLACK
+
+**The trigger is the mod/savegame, not the config file, the CVARs, or ssao.**
+OpenGL captures Ashes2063Enriched + capspot.zds as a fully black frame
+(mean 0.000, max 0) and captures AshesHardReset + save01.zds normally. Every
+"OpenGL is fine now" observation earlier in this session was made on
+AshesHardReset, which is why it looked closed.
+
+`Ashes2063 + capspot.zds` is exactly the scene `configs.json` uses, so
+**crossbackend.py is still blocked for the default config set** -- its GL side
+is black for every config. `run.py` is unaffected because it now pins Metal.
+
+Also retracted: the guess that 819x656 vs 800x572 was a GL-vs-Metal framebuffer
+sizing difference. It tracks the config *file*, not the backend -- both sizes
+appear on GL. Whatever drives it, it is not a backend divergence.
+
+**Two ways forward**, in order of cost: point crossbackend at a scene GL can
+capture (AshesHardReset/save01 works today, and needs a launch-spec override so
+the golden baseline's scene is not disturbed); or fix the GL capture path, which
+the 2026-08-08 entry already tried three times at the readback layer and failed.
+The scene swap is the cheap one and unblocks the oracle immediately.
