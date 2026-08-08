@@ -5670,3 +5670,46 @@ else is the offset, and it would explain the whole residual.
 
 Impact unchanged: mean 0.392/255 on the isolated AO contribution, max 11 on
 under 1% of pixels at maximum strength.
+
+### fract(gl_FragCoord) is 0.5 on both -- and the "+4.96" evidence is weaker than it looked
+
+    Metal   fract.x -> 129    fract.y -> 129
+    OpenGL  fract.x -> 128    fract.y -> 128
+
+Both are 0.5. A half-pixel offset would read 0 against 128, not 129 against 128;
+the 1 LSB is present-path rounding on a value that sits exactly on a quantisation
+boundary (0.5 -> 127.5). **No sub-pixel phase difference in the AO pass.** That
+was the last hypothesis standing from the previous entry, and it is dead.
+
+**Correction to the previous entry.** The "+4.96 mean" that made the random
+texture a suspect is a much weaker signal than it was presented as, and the
+reason matters for whoever picks this up.
+
+The diagnostic wrote `noise.x` -- a SIGNED value, cos(angle) in [-1, 1] -- into
+Ambient0 and read it back through a path that clamps at 0. So the statistic
+being compared is E[max(noise, 0)], not E[noise]. That is acutely sensitive to
+tiny perturbations near zero: roughly half the texels sit just either side of 0,
+so a sub-LSB shift in the bilinear upscale flips a large number of samples
+between "0" and "small positive", moving the clamped mean far more than the
+underlying signal moved. A constant texture is immune to exactly this, which is
+why the constant tests came back identical.
+
+So "+4.96 on the clamped mean" is consistent with a difference far smaller than
+5/255 in the noise as the shader actually consumes it -- and `ComputeAO` never
+clamps it: `rand.xy` goes straight into `RotateDirection` as a (cos, sin) pair.
+**Do not treat the random texture as a confirmed defect.** To measure it
+honestly, emit `noise.x * 0.5 + 0.5` (unsigned, no clipping) and compare that.
+
+### State of the residual
+
+Every input to `ssao.fp` has now been checked and none is a confirmed defect:
+TexCoord, gl_FragCoord (origin and phase), linear depth, scene normals, the
+uniforms, and the random texture (index, format, snorm decode, sign, wrap,
+filter). The remaining divergence is ~12.5/255 on the raw attenuation buffer and
+mean 0.392/255 on the isolated AO contribution, max 11 on under 1% of pixels at
+maximum AO strength.
+
+The next honest step is not another hypothesis: it is to re-measure the raw
+divergence with an unclipped statistic (as above) and see whether 12.52 survives
+its own instrument, since the clamping artifact identified here affects the
+debug-2 attenuation readback in the same way it affected the noise readback.
