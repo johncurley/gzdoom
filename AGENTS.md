@@ -6047,3 +6047,43 @@ few pixels. **Unverified** -- it is equally consistent with a real defect
 affecting a thin feature. `tools/localize.py` on the two captures is the next
 step, and would say immediately whether the differing pixels are scattered
 (quantisation) or concentrated on an edge or object (a defect).
+
+### colormap SUSPECT resolved: it is the 2D layer, not the scene
+
+`tools/localize.py` plus a zone breakdown of the diverging pixels
+(`|delta| > 24`, 5834 of them):
+
+    console text (top 40 rows)      3054   52.3%
+    HUD / status bar (bottom 100)   2743   47.0%
+    3D scene (everything between)     37    0.6%
+
+The 3D scene diverges on **37 pixels, 0.011% of the scene area**. Essentially
+all of the flagged difference is the console overlay and the status bar.
+
+localize.py's global read agrees: mean signed delta +0.041, with 28746 pixels
+brighter and 16941 darker -- **bidirectional**, which its docstring identifies
+as noise rather than a real effect (a genuine effect is overwhelmingly
+one-directional).
+
+**So the band heuristic fired correctly and the finding is real, but it is not
+in the renderer's 3D output.** Under a fixed colormap the saturated, hard-edged
+2D artwork -- red HUD digits, blue panels, console text -- is exactly where a
+palette-indexed transform is most sensitive, so a sub-LSB difference flips whole
+glyphs to an adjacent entry. Worth noting the *console text* is over half of it,
+and the console overlay is a test artifact, not gameplay.
+
+**Corrections to the previous entry**, both from looking rather than reasoning:
+
+- "sparse, not structural" was wrong. Only 2.8% of hot pixels are isolated;
+  97.2% have a hot 8-neighbour. They are clustered -- into glyphs and HUD
+  elements, which is why.
+- The implied concern that this might be "a real defect affecting a thin
+  feature" is answered: the thin features are letterforms and HUD icons.
+
+**Recommendation: do not retune `BAND_MAX_DELTA_FLAG` for this.** The tool's own
+docstring warns against tuning thresholds on the config under test, and the
+threshold behaved correctly -- it drew attention to a genuine difference, and
+one localize.py run resolved it in a minute. That is the workflow functioning.
+If the recurring flag becomes annoying, the honest fix is to exclude the console
+overlay from the comparison region (it is a harness artifact), not to raise the
+threshold until the scene stops being checked too.
