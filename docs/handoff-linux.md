@@ -77,6 +77,23 @@ endif()
 This is the first time Vulkan can be used here at all; the RX 550 makes it
 possible.
 
+**`HAVE_VULKAN` defaults to OFF** (CMakeLists.txt:259). The Vulkan backend is not
+in an ordinary build, so `--backends gl,vulkan` cannot work until you rebuild:
+
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DPK3_QUIET_ZIPDIR=ON -DHAVE_VULKAN=ON .
+cmake --build build --parallel $(nproc)
+```
+
+**The harness's mod and savegame are macOS-side.** `configs.json` points at
+`~/Documents/GZDoom/*.pk3` with saves named `capspot.zds` and `save01.zds`
+(`crossbackend_launch`). Neither path nor save is likely to exist on a Linux box.
+Edit `launch.files` / `launch.savegame` and `crossbackend_launch` to a mod and
+save you actually have — any scene works, provided **both backends can capture
+it**, which is the one property that matters. Note OpenGL captures the Ashes2063
++ capspot scene as a black frame (see open items), which is why crossbackend has
+its own scene override in the first place.
+
 ```bash
 python3 tools/matrix/crossbackend.py --selfcheck --backends gl,vulkan
 python3 tools/matrix/crossbackend.py --backends gl,vulkan

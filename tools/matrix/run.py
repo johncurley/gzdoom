@@ -68,7 +68,12 @@ WORKDIR = "/tmp/gzdoom-matrix"
 # branch's history. All settings that matter are pinned in configs.json
 # "always", so this file starting empty is fine.
 CONFIG = os.path.join(WORKDIR, "matrix.ini")
-SHOTS = os.path.expanduser("~/Documents/GZDoom/Screenshots")
+# Captures land here, not in the engine's default screenshot directory. That
+# default is platform-specific (~/Documents/GZDoom/Screenshots on macOS, the XDG
+# config dir on Linux), and hardcoding either means the harness reports
+# NO CAPTURE for every config on the other platform. `screenshot_dir` is a CVAR,
+# so the launch pins it and both platforms behave identically.
+SHOTS = os.path.join(WORKDIR, "shots")
 
 
 def load_configs():
@@ -83,7 +88,9 @@ def launch(cfg, spec, verbose):
     if not os.path.exists(binary):
         sys.exit(f"binary not found: {binary}\nBuild first: cmake --build build --target zdoom -j 8")
 
-    argv = [binary, "-iwad", L["iwad"], "-config", CONFIG]
+    os.makedirs(SHOTS, exist_ok=True)
+    argv = [binary, "-iwad", L["iwad"], "-config", CONFIG,
+            "+screenshot_dir", SHOTS]
     for f in L.get("files", []) + cfg.get("extra_files", []):
         argv += ["-file", os.path.expanduser(f)]
     if L.get("savegame"):
