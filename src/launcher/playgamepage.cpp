@@ -72,8 +72,7 @@ void PlayGamePage::UpdateLanguage()
 	versionText.Substitute("%s", GetVersionString());
 	VersionLabel->SetText(versionText.GetChars());
 	SaveArgsCheckbox->SetText(GStrings.GetString("PICKER_REMPARM"));
-	// No PICKER_* string exists for this yet; add one before translating.
-	AddFilesButton->SetText("Add Files...");
+	AddFilesButton->SetText(GStrings.GetString("PICKER_ADDFILES"));
 }
 
 void PlayGamePage::OnAddFilesButtonClicked()

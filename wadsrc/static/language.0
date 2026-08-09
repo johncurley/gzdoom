@@ -947,6 +947,7 @@ Last Saved Time,OPTVAL_LASTSAVEDTIME,,,,Час апошняга захаванн
 Host Game,PICKER_PLAYHOST,,,,,Hostovat hru,,,,Gastigi ludon,,,,,,,,ゲームホスト,,,,,Hospedar jogo,,Găzduire Joc,Создать игру,,,,,,
 Join Game,PICKER_PLAYJOIN,,,,,Připojit se ke hře,,,,Aliĝi al ludo,,,,,,,,ゲーム参加,,,,,Entrar no jogo,,Alătură-te unui Joc,Присоединиться к игре,,,,,,
 Remember Parameters,PICKER_REMPARM,,,,,Zapamatovat si nastavení,,,,Memori parametrojn,,,,,,,,パラメーターを記憶,,,,,Lembrar de parâmetros,,Reține Parametri,Запомнить параметры,,,,,,
+Add Files...,PICKER_ADDFILES,Browse button beside the additional-parameters field.,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 Load Support WADs,PICKER_SUPPORTWADS,For stuff like id24.,,,,Načíst podpůrné WADy,,,,Ŝargi subteno-WADojn,,,,,,,,サポートWADsをロード,,,,,Carregar WADs de apoio,,Încarcă Fișiere WAD Ajutătoare,Поддержка загрузки WAD,,,,,,
 Multiplayer,PICKER_TAB_MULTI,,,,,,,,,Plurludanta,,,,,,,,マルチプレイヤー,,,,,Lembrar de parâmetros,,Joc Online,Сетевая игра,,,,,,
 Load Save File:,PICKER_LOADSAVE,,,,,Načíst uloženou hru:,,,,Ŝargi konservitan dosieron,,,,,,,,セーブファイルのロード:,,,,,Carregar arquivo de jogo salvo:,,Încarcă Salvarea,Загрузить файл сохранения:,,,,,,
