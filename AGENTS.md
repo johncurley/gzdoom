@@ -6167,3 +6167,70 @@ in a genuine gap rather than being fitted to either side.
 Full sweep is now **11 of 11 OK**. If a real bug is ever missed here, lower the
 floor rather than deleting the check, and record the case so the gap can be
 re-measured.
+
+## 2026-08-09: merged native-platform-expansion; launcher parity BLOCKED in ZWidget
+
+**The merge went in** (`abb70f086`). 214 files, +57188/-27488, two conflicts.
+It was far cheaper than the handoff predicted, because the premise was wrong:
+the Linux line had **already** done the vendored -> subtree conversion
+(`f495357cf`, `20a24ef6e`), and metal-audit had made **zero** ZWidget commits
+since the April base. There was nothing to reconcile.
+
+- `src/CMakeLists.txt` -- kept the Metal native-shader block; dropped the
+  `if (HAVE_GLES2)` block, because the Linux line lists GLES sources
+  unconditionally in the main source list and keeping both compiles them twice.
+- `CLAUDE.md` -- merged, not picked. Linux version as the repo-wide base plus
+  the macOS build, the bundle-pk3 trap, and the measurement discipline.
+- `GEMINI.md` -> `GEMINI_POSIX.md` (`1a9da5b59`). It collided with the existing
+  `gemini.md` on case-insensitive filesystems; git tracked both, but only one
+  can exist on disk, so a clean merge left `gemini.md` "modified" with the wrong
+  content. Restoring either just flips which name is wrong.
+
+Validated: configures, builds all targets, initialises Metal, loads a savegame
+and renders (800x572, mean_lum 19.83). Note `--target zdoom` does **not** build
+the pk3s -- the first smoke test failed on missing assets, not on the merge.
+
+### Launcher parity: attempted, reverted, blocked on a ZWidget bug
+
+macOS is the only platform still on its own IWAD picker. win32
+(i_system.cpp:376), native POSIX (native/i_system.cpp:137) and SDL POSIX
+(sdl/i_system.cpp:360) all call `LauncherWindow::ExecModal(info)`.
+
+Swapping `I_PickIWad` (cocoa/i_system.mm) over **compiles and runs, but the
+launcher draws and then ignores all input.** Reverted -- that is a regression
+against the working Cocoa picker.
+
+**Root cause, confirmed by reading both loops.** GZDoom's Cocoa entry point runs
+`[NSApp run]` (i_main.mm:541) and *defers* game startup out of
+`applicationDidFinishLaunching` (i_main.mm:333) onto a `processEvents:` timer.
+So `GameMain` -> `I_PickIWad` -> `ExecModal` runs **inside an already-running
+NSApp**, and `CocoaDisplayBackend::RunLoop()` (cocoa_display_backend.mm:82)
+calls `[NSApp run]` again. AppKit does not support a nested run loop: the window
+appears, but events stay with the outer loop and the timer, so nothing reaches
+the launcher.
+
+**Fix belongs in ZWidget, not here.** `RunLoop()` should detect
+`[NSApp isRunning]` and pump manually instead of nesting:
+
+    while (!exitRunLoop) {
+        NSEvent* e = [NSApp nextEventMatchingMask:NSEventMaskAny
+                                        untilDate:[NSDate distantFuture]
+                                           inMode:NSDefaultRunLoopMode dequeue:YES];
+        if (e) [NSApp sendEvent:e];
+    }
+
+with `ExitLoop()` setting the flag rather than only `[NSApp stop:nil]`.
+`libraries/ZWidget` is a subtree and CLAUDE.md forbids hand-editing it without
+pushing back; the `zwidget` remote is not configured in this checkout, so this
+needs doing in `johncurley/ZWidget` (branch `wayland-c-bindings`) and pulling
+through. It affects **every** ZWidget app that hosts its own NSApp, so it is
+worth reporting to dpjudas alongside the stuck-key and use-after-free fixes.
+
+**Header trap worth keeping.** Including `launcherwindow.h` in a Cocoa .mm fails
+with "redefinition of 'Point'" -- Carbon's MacTypes.h typedefs `Point`, `Size`
+and `Rect`, which ZWidget also declares. No include ordering fixes it. ZWidget
+solves this internally in `src/window/cocoa/AppKitWrapper.h` by renaming the
+Carbon types across the AppKit import and undefining them after; that header is
+private (only `libraries/ZWidget/include` is on our path), so gzdoom needs the
+same three lines locally. This is the macOS counterpart of the X11 GC/None
+pollution already documented.
