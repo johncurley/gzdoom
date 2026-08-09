@@ -95,8 +95,25 @@ that understanding rather than on a false assurance.
 leave it there — fixes that are not specific to this fork should go upstream:
 
 ```bash
+# Pulling upstream changes DOWN works normally:
 git subtree pull --prefix=libraries/ZWidget zwidget <branch> --squash
-git subtree push --prefix=libraries/ZWidget zwidget <branch>
+```
+
+**`git subtree push` does NOT work for this repository. Do not use it.** ZWidget
+was originally a plain vendored copy and only became a subtree later, so
+`subtree split` has to synthesise ZWidget history out of gzdoom's entire log:
+measured 2026-08-09, it produced **22,906 commits**, of which **2** touched the
+files actually being published. Note `git merge-base --is-ancestor` reports that
+as a clean fast-forward, which is true and completely misleading — it is a
+fast-forward onto 22,906 rewritten commits.
+
+To publish changes UP, cherry-pick onto a branch off the fork instead:
+
+```bash
+git subtree split --prefix=libraries/ZWidget -b zwidget-split   # for the SHAs only
+git checkout -b zwidget-fork zwidget/wayland-c-bindings
+git cherry-pick <split SHAs>
+git push zwidget zwidget-fork:wayland-c-bindings
 ```
 
 A previous plain-directory copy let three lineages drift until eight API
