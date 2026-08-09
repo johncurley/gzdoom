@@ -5,6 +5,7 @@
     python3 tools/matrix/crossbackend.py --only ssao      # a subset
     python3 tools/matrix/crossbackend.py --screenblocks 8,10,11
     python3 tools/matrix/crossbackend.py --keep           # keep the PNGs
+    python3 tools/matrix/crossbackend.py --backends gl,vulkan   # on Linux
 
 WHY THIS EXISTS, SEPARATELY FROM run.py
 ---------------------------------------
@@ -51,6 +52,24 @@ Metal was byte-identical from its first run, so this is not symmetrical and you
 cannot infer it from one backend looking stable. Always do a throwaway warm-up
 launch after building, and run --selfcheck before believing a sweep.
 
+THREE BACKENDS, TWO AT A TIME -- AND WHY VULKAN IS WORTH RUNNING
+----------------------------------------------------------------
+OpenGL is the reference in every pair. Vulkan is not a porting target here; it
+earns its place as a TIEBREAKER. Metal mirrors the Vulkan backend file-for-file,
+so when Metal disagrees with OpenGL the question that matters is "is this a
+Metal bug, or is this how the deferred-buffer backends behave?" -- and only a
+third implementation answers it.
+
+Worked example: the 2026-08-08 empty scene-normal G-buffer came from the
+DrawBufferCount -> GBUFFER_PASS shader selection, whose logic is identical in
+vk_renderpass.cpp:251. Running gl,vulkan on Linux would have shown Vulkan
+matching OpenGL, isolating the fault to Metal in a single sweep. It was instead
+found by encoding a per-draw ID into the G-buffer, which took considerably
+longer.
+
+Also note CONTRIBUTING.md asks that shared-code changes leave GL and Vulkan
+bit-identical. Until Vulkan could be run, that was assumed rather than checked.
+
 WHAT IT CANNOT TELL YOU
 -----------------------
 A config where BOTH backends are broken the same way looks clean here. This
@@ -68,7 +87,21 @@ sys.path.insert(0, HERE)
 import run as matrix                                    # noqa: E402
 from pngdiff import read_png, diff                      # noqa: E402
 
-BACKENDS = {"gl": 0, "metal": 3}    # vid_preferbackend; see V_GetBackend()
+BACKENDS = {"gl": 0, "vulkan": 1, "metal": 3}   # vid_preferbackend; see V_GetBackend()
+
+# Which pair to compare. OpenGL is the reference in both: it is the
+# implementation the other backends were written against, and it has no Y-flip
+# patching, no reverse-Z and no top-left viewport convention, so a divergence
+# against it is a real finding rather than a convention difference.
+#
+# Vulkan earns its place as a TIEBREAKER rather than a target. Metal mirrors the
+# Vulkan backend file-for-file, so when Metal disagrees with OpenGL the useful
+# question is "is this a Metal bug, or is this how the deferred-buffer backends
+# behave?" -- and only Vulkan answers it. Concretely: the 2026-08-08 empty
+# normal G-buffer came from the DrawBufferCount -> GBUFFER_PASS selection, whose
+# logic is identical in vk_renderpass.cpp:251. A gl,vulkan sweep would have shown
+# Vulkan matching OpenGL and isolated it to Metal in one run.
+DEFAULT_BACKENDS = ("gl", "metal")
 
 # Bands run top -> bottom of the frame. Enough to localise a half-frame or
 # status-bar-sized displacement without drowning the output.
@@ -133,6 +166,8 @@ def confirm_backend(log_path, backend):
         return None
     if "Metal renderer initialized successfully" in text:
         return "metal"
+    if "Vulkan device: " in text:
+        return "vulkan"
     if "Initializing OpenGL backend" in text:
         return "gl"
     if "Initializing OpenGLES2 backend" in text:
@@ -228,7 +263,7 @@ def classify(bands):
                        f"(worst {worst['max_channel_delta']})")
 
 
-def selfcheck(configs, spec, verbose):
+def selfcheck(configs, spec, backends, verbose):
     """Does each backend reproduce ITSELF? Run this before trusting a sweep.
 
     Measured 2026-08-07 during bring-up: Metal reproduced byte for byte across
@@ -247,7 +282,7 @@ def selfcheck(configs, spec, verbose):
     print("Self-check: two identical runs per backend. Both must be identical.\n")
     bad = 0
     for cfg in configs:
-        for backend in ("gl", "metal"):
+        for backend in backends:
             sigs, means = [], []
             for i in (1, 2):
                 c = dict(cfg)
@@ -296,9 +331,24 @@ def main():
                     help="Run each backend TWICE on the same config and report "
                          "whether it reproduces itself. Do this before trusting "
                          "any cross-backend result -- see the determinism note.")
+    ap.add_argument("--backends", default=",".join(DEFAULT_BACKENDS),
+                    help="comma-separated PAIR to compare, reference first "
+                         "(default gl,metal). Use gl,vulkan on Linux -- Vulkan "
+                         "is the tiebreaker for whether a Metal divergence is a "
+                         "bug or a deferred-backend convention. Valid: "
+                         + ", ".join(sorted(BACKENDS)))
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
+
+    backends = tuple(b.strip() for b in args.backends.split(",") if b.strip())
+    if len(backends) != 2:
+        sys.exit(f"--backends needs exactly two, got {args.backends!r}")
+    for b in backends:
+        if b not in BACKENDS:
+            sys.exit(f"unknown backend {b!r}; valid: {', '.join(sorted(BACKENDS))}")
+    if backends != DEFAULT_BACKENDS:
+        print(f"comparing {backends[0]} (reference) vs {backends[1]}\n")
 
     spec = matrix.load_configs()
 
@@ -332,11 +382,11 @@ def main():
     # it being the stable one -- that asymmetry is not guaranteed.
     warm = dict(configs[0])
     warm["name"] = warm["name"] + "__warmup"
-    for backend in ("gl", "metal"):
+    for backend in backends:
         launch_backend(warm, spec, backend, args.verbose)
 
     if args.selfcheck:
-        rc = selfcheck(configs, spec, args.verbose)
+        rc = selfcheck(configs, spec, backends, args.verbose)
         if not args.keep:
             shutil.rmtree(matrix.WORKDIR, ignore_errors=True)
         return rc
@@ -355,7 +405,7 @@ def main():
                 c["cvars"] = list(cfg.get("cvars", [])) + [f"+screenblocks {sb}"]
 
             imgs, ok = {}, True
-            for backend in ("gl", "metal"):
+            for backend in backends:
                 png, log = launch_backend(c, spec, backend, args.verbose)
                 actual = confirm_backend(log, backend)
                 if actual != backend:
@@ -373,8 +423,9 @@ def main():
                 failures += 1
                 continue
 
-            gw, gh, gnch, gpx = imgs["gl"]
-            mw, mh, mnch, mpx = imgs["metal"]
+            refname, candname = backends
+            gw, gh, gnch, gpx = imgs[refname]
+            mw, mh, mnch, mpx = imgs[candname]
             if (gw, gh, gnch) != (mw, mh, mnch):
                 print(f"  {c['name']:28s} ERROR size mismatch "
                       f"{gw}x{gh} vs {mw}x{mh}")
@@ -389,13 +440,13 @@ def main():
                 gl_mean = sum(gpx) / len(gpx)
                 mt_mean = sum(mpx) / len(mpx)
                 print(f"  {c['name']:28s} INVALID  capture unusable: "
-                      f"gl mean {gl_mean:.3f}, metal mean {mt_mean:.3f} "
+                      f"{refname} mean {gl_mean:.3f}, {candname} mean {mt_mean:.3f} "
                       f"(ratio {1.0/gain if gain else float('inf'):.1f}x) -- "
                       f"one backend produced no image; fix that before reading "
                       f"any verdict for this config")
                 failures += 1
                 continue
-            bands, err = band_report(imgs["gl"], (mw, mh, mnch, matched))
+            bands, err = band_report(imgs[refname], (mw, mh, mnch, matched))
             if err:
                 print(f"  {c['name']:28s} ERROR {err}")
                 failures += 1
