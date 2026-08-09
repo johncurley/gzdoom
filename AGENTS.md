@@ -125,6 +125,31 @@ canonical API: `-[NSApplication runModalForWindow:]` handles the modal-session
 bookkeeping properly, but needs to know *which* window is modal, which
 `RunLoop()` at backend level does not. Upstream may prefer that API shape.
 
+**State the pump's limitation explicitly in the PR.** It does not disable other
+windows and does not maintain a modal session, so it is sufficient for a
+single-window host and **insufficient for a multi-window one** — an editor with
+a document window behind a modal dialog would keep accepting clicks on the
+document. GZDoom never notices because only one window exists at launcher time;
+ZWidget is a general-purpose toolkit and its other consumers may not be so
+lucky. dpjudas knows that consumer list and we do not, so give him the fact
+rather than the reassurance.
+
+If he wants it done properly, the change is additive and smaller than it looks:
+
+- `virtual void RunModalLoop(DisplayWindow* modal) { RunLoop(); }` on
+  `DisplayBackend` — defaulted, so **only Cocoa overrides it** and Win32, X11,
+  Wayland, SDL2/3 and Haiku compile unchanged.
+- Four call sites pass their window: `dialog.cpp`, plus GZDoom's
+  `launcherwindow.cpp`, `errorwindow.cpp`, `netstartwindow.cpp`.
+- Cocoa implements it with `runModalForWindow:`, and `ExitLoop` grows a third
+  case — modal session, manual pump, or owns the loop.
+
+Roughly half a day, nearly all of it testing the three exit paths (OK, Cancel,
+window close) across the launcher, error and net-start windows. **It replaces
+only one of the three fixes**: the use-after-free and the repaint starvation are
+independent of which loop API is used, since the view still outlives its C++
+owner and `dispatch_async` still cannot drain inside a main-queue block.
+
 ---
 
 ## Traps that have cost real sessions
