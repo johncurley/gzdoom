@@ -11,6 +11,8 @@ it is unusual).
 - **Metal field guide:** `.github/copilot-instructions.md` and
   `src/common/rendering/metal/README_METAL_RENDERER.md`
 - **GPU capture runbook:** `docs/gpu-capture-protocol.md`
+- **Linux session handoff:** `docs/handoff-linux.md` — two validation tasks that
+  only Linux hardware can perform, both pending.
 
 ---
 
@@ -97,11 +99,31 @@ along with the Tier 2 argument-buffer paths. Expect the first run to be a
 bug-finding exercise, not a benchmark. `run.py --update-baseline` is the first
 useful command there; it refuses to record if any pass is broken.
 
+**The merged tree has only been built on macOS.** The merge resolved
+`src/CMakeLists.txt` by dropping the `if (HAVE_GLES2)` block, on the reasoning
+that this branch lists the GLES sources unconditionally — decided by reading,
+not by building. See `docs/handoff-linux.md`.
+
+**Vulkan support in `crossbackend.py` has never been executed.** Written on a
+machine with no Vulkan hardware. Also untested: whether the shared-code changes
+made for Metal parity leave Vulkan bit-identical, which `CONTRIBUTING.md`
+requires and nobody has checked.
+
 **ZWidget Cocoa fixes are not upstream yet.** `libraries/ZWidget` is a subtree.
 The three Cocoa fixes sit directly on dpjudas's code (this fork has never
 touched `src/window/cocoa/`), so they cherry-pick cleanly onto a branch off
-`master` for a PR. The Wayland work does not — it is entangled with the
-waylandpp replacement.
+`master` for a PR (verified: applies clean, 3 files). The Wayland work does not
+— it is entangled with the waylandpp replacement.
+
+Note for that PR: the commit directly beneath it on `master` is *"standardized
+asynchronous Update() method to replace Repaint()"*, so the `dispatch_async` the
+Cocoa fix removes is a deliberate, recent upstream design decision rather than
+an oversight. The fix is still correct — a serial main queue starves it when the
+host owns that queue — but it argues against a standing convention and the PR
+should say so. Likewise the manual event pump is a pragmatic idiom, not the
+canonical API: `-[NSApplication runModalForWindow:]` handles the modal-session
+bookkeeping properly, but needs to know *which* window is modal, which
+`RunLoop()` at backend level does not. Upstream may prefer that API shape.
 
 ---
 
