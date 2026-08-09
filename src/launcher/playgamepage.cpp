@@ -8,6 +8,8 @@
 #include <zwidget/widgets/listview/listview.h>
 #include <zwidget/widgets/lineedit/lineedit.h>
 #include <zwidget/widgets/checkboxlabel/checkboxlabel.h>
+#include <zwidget/widgets/pushbutton/pushbutton.h>
+#include <zwidget/systemdialogs/open_file_dialog.h>
 
 PlayGamePage::PlayGamePage(LauncherWindow* launcher, const FStartupSelectionInfo& info) : Widget(nullptr), Launcher(launcher)
 {
@@ -19,6 +21,8 @@ PlayGamePage::PlayGamePage(LauncherWindow* launcher, const FStartupSelectionInfo
 	GamesList = new ListView(this);
 	ParametersEdit = new LineEdit(this);
 	SaveArgsCheckbox = new CheckboxLabel(this);
+	AddFilesButton = new PushButton(this);
+	AddFilesButton->OnClick = [=]() { OnAddFilesButtonClicked(); };
 
 	SaveArgsCheckbox->SetChecked(info.bSaveArgs);
 	if (!info.DefaultArgs.IsEmpty())
@@ -68,6 +72,41 @@ void PlayGamePage::UpdateLanguage()
 	versionText.Substitute("%s", GetVersionString());
 	VersionLabel->SetText(versionText.GetChars());
 	SaveArgsCheckbox->SetText(GStrings.GetString("PICKER_REMPARM"));
+	// No PICKER_* string exists for this yet; add one before translating.
+	AddFilesButton->SetText("Add Files...");
+}
+
+void PlayGamePage::OnAddFilesButtonClicked()
+{
+	auto dialog = OpenFileDialog::Create(this);
+	if (!dialog)
+		return;
+
+	dialog->SetTitle("Select mods to load");
+	dialog->SetMultiSelect(true);
+	dialog->AddFilter("Doom mods and maps", "*.wad;*.pk3;*.pk7;*.zip;*.7z;*.iwad;*.ipk3;*.deh;*.bex");
+	dialog->AddFilter("All files", "*.*");
+
+	if (!dialog->Show())
+		return;
+
+	// Append to whatever is already typed rather than replacing it -- the field
+	// is shared with hand-written switches and the user may have set some.
+	FString params = ParametersEdit->GetText().c_str();
+	for (const std::string& filename : dialog->Filenames())
+	{
+		if (filename.empty())
+			continue;
+
+		if (params.Len() > 0)
+			params += " ";
+
+		// Quote unconditionally: mod paths routinely contain spaces, and the
+		// parameters field is re-parsed as a command line.
+		params << "-file \"" << filename.c_str() << "\"";
+	}
+
+	ParametersEdit->SetText(params.GetChars());
 }
 
 void PlayGamePage::OnGamesListActivated()
@@ -100,7 +139,13 @@ void PlayGamePage::OnGeometryChanged()
 
 	const double editHeight = 24.0;
 	y -= editHeight + 2.0;
-	ParametersEdit->SetFrameGeometry(0.0, y, GetWidth(), editHeight);
+	// Share the row with the browse button rather than adding another line, so
+	// the games list keeps its height.
+	const double addFilesWidth = 110.0;
+	const double addFilesGap = 6.0;
+	const double editWidth = std::max(GetWidth() - addFilesWidth - addFilesGap, 0.0);
+	ParametersEdit->SetFrameGeometry(0.0, y, editWidth, editHeight);
+	AddFilesButton->SetFrameGeometry(editWidth + addFilesGap, y, addFilesWidth, editHeight);
 
 	const double labelHeight = ParametersLabel->GetPreferredHeight();
 	y -= labelHeight;

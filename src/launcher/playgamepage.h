@@ -7,6 +7,7 @@ class TextLabel;
 class ListView;
 class LineEdit;
 class CheckboxLabel;
+class PushButton;
 struct WadStuff;
 struct FStartupSelectionInfo;
 
@@ -21,6 +22,7 @@ private:
 	void OnGeometryChanged() override;
 	void OnSetFocus() override;
 	void OnGamesListActivated();
+	void OnAddFilesButtonClicked();
 
 	LauncherWindow* Launcher = nullptr;
 
@@ -31,4 +33,5 @@ private:
 	ListView* GamesList = nullptr;
 	LineEdit* ParametersEdit = nullptr;
 	CheckboxLabel* SaveArgsCheckbox = nullptr;
+	PushButton* AddFilesButton = nullptr;
 };
