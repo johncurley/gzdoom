@@ -23,7 +23,10 @@ bool LauncherWindow::ExecModal(FStartupSelectionInfo& info)
 	launcher->SetFrameGeometry((screenSize.width - windowWidth) * 0.5, (screenSize.height - windowHeight) * 0.5, windowWidth, windowHeight);
 	launcher->Show();
 
-	DisplayWindow::RunLoop();
+	// Modal: see DisplayBackend::RunModalLoop. Backends with a native modal
+	// session (Cocoa) disable the app's other windows for the duration; the
+	// rest fall back to the ordinary loop, exactly as before.
+	DisplayWindow::RunModalLoop(launcher->DisplayWindowPtr());
 
 	return launcher->ExecResult;
 }

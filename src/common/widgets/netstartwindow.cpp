@@ -143,7 +143,7 @@ bool NetStartWindow::NetLoop(bool (*loopCallback)(void*), void* data)
 	Instance->userdata = data;
 	Instance->CallbackException = {};
 
-	DisplayWindow::RunLoop();
+	DisplayWindow::RunModalLoop(Instance->DisplayWindowPtr());
 
 	Instance->timer_callback = nullptr;
 	Instance->userdata = nullptr;

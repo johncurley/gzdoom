@@ -20,7 +20,7 @@ bool ErrorWindow::ExecModal(const std::string& text, const std::string& log, std
 	window->SetFrameGeometry((screenSize.width - windowWidth) * 0.5, (screenSize.height - windowHeight) * 0.5, windowWidth, windowHeight);
 	window->Show();
 
-	DisplayWindow::RunLoop();
+	DisplayWindow::RunModalLoop(window->DisplayWindowPtr());
 
 	return window->Restart;
 }
