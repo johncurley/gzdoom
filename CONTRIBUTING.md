@@ -84,9 +84,10 @@ library only; the development machine has neither PIL nor ImageMagick.
 ## Platforms
 
 Changes are verified on what the maintainer can actually run: **macOS (Intel)**
-and **Windows 10**. Linux/BSD and Apple Silicon are covered by CI and by
-contributors. If your change touches a platform nobody here can test, say so —
-it will be merged on that understanding rather than on a false assurance.
+and **Linux**. A Windows 10 machine exists but has not been used to run the port
+yet; Apple Silicon has never run it at all, only compiled it in CI. If your
+change touches a platform nobody here can test, say so — it will be merged on
+that understanding rather than on a false assurance.
 
 ## ZWidget is a subtree
 

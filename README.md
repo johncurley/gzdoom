@@ -26,7 +26,8 @@ its contribution to the final frame, bounded and documented in `AGENTS.md`.
 **Linux/BSD** — native Wayland and X11 backends with raw keyboard input and
 desktop theme detection.
 
-**Windows** — unchanged from upstream; builds and runs, and is covered by CI.
+**Windows** — unchanged from upstream and covered by CI, but not yet run by the
+maintainer. Reports welcome.
 
 **Apple Silicon — untested.** Development is on an Intel Mac (HD 6000, Metal
 2.0). Nothing here has ever run on an M-series part, and the compute AO and

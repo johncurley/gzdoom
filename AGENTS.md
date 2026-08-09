@@ -24,9 +24,11 @@ Development machine is an **Intel MacBookAir7,2, HD 6000, Metal 2.0, macOS
 12.7.6** — GPU-bound, non-Retina. Many defaults here are tuned for it and are
 runtime-gated on `MtGPUArchitecture::Intel` rather than compiled in.
 
-Hardware available for verification: **macOS (Intel)** and **Windows 10**.
-Linux/BSD and Apple Silicon are covered by CI and contributors only — treat any
-claim about them as untested unless it cites a measurement.
+Hardware available for verification: **macOS (Intel)** and **Linux**. A Windows
+10 machine exists but the port has not been run there yet. Apple Silicon is
+covered by CI compilation only — nothing has ever *run* on an M-series part.
+Treat any claim about Windows or Apple Silicon as untested unless it cites a
+measurement.
 
 ---
 
