@@ -31,7 +31,26 @@
  **
  */
 
+// Carbon's MacTypes.h (via Cocoa) typedefs Point, Size and Rect; ZWidget
+// declares structs with those names in zwidget/core/rect.h, so the two cannot
+// share a translation unit -- whichever lands second loses, and no include
+// ordering fixes it. This is the macOS counterpart of the X11 GC/None
+// pollution documented in CLAUDE.md.
+//
+// Same treatment ZWidget applies internally in src/window/cocoa/AppKitWrapper.h:
+// rename the Carbon types across the Cocoa include, then drop the macros so the
+// ZWidget names are free below. That header is private to ZWidget (only
+// libraries/ZWidget/include is on our include path), hence the local copy.
+// Nothing in this file uses the Carbon Point/Size/Rect.
+#define Point MacPoint
+#define Rect  MacRect
+#define Size  MacSize
 #include <Cocoa/Cocoa.h>
+#undef Point
+#undef Rect
+#undef Size
+
+#include "launcherwindow.h"
 #include "i_common.h"
 #include "c_cvars.h"
 #include "i_interface.h"
@@ -140,18 +159,34 @@ bool I_PickIWad(bool showwin, FStartupSelectionInfo& info)
 
 	I_SetMainWindowVisible(false);
 
-	extern int I_PickIWad_Cocoa(WadStuff*, int, bool, int);
-	const int result = I_PickIWad_Cocoa(&(*info.Wads)[0], (int)info.Wads->Size(), showwin, info.DefaultIWAD);
+	// The same ZWidget launcher every other platform uses -- win32
+	// (i_system.cpp:376), native POSIX (native/i_system.cpp:137) and SDL POSIX
+	// (sdl/i_system.cpp:360). macOS was the last holdout on its own Cocoa
+	// picker, so the launcher's settings, autoload and network pages did not
+	// exist here.
+	//
+	// This needs CocoaDisplayBackend::RunLoop's non-nesting path: GZDoom owns
+	// [NSApp run] and defers startup onto a timer, so ExecModal runs inside an
+	// already-running NSApp. Without that fix the launcher draws and ignores
+	// every event.
+	//
+	// I_PickIWad_Cocoa (iwadpicker_cocoa.mm) is deliberately left in the tree
+	// rather than deleted: it still carries the relaunch fixes (argument
+	// concatenation, dropped arguments, the crash on re-entry) and is the
+	// fallback if the ZWidget path regresses on macOS.
+	// GZDoom's own Cocoa pump must stand down while the launcher is modal --
+	// see I_SuspendCocoaEventPump. Without this the launcher window appears but
+	// receives no input at all, because processEvents: drains the queue first.
+	extern void I_SuspendCocoaEventPump();
+	extern void I_ResumeCocoaEventPump();
+
+	I_SuspendCocoaEventPump();
+	const bool result = LauncherWindow::ExecModal(info);
+	I_ResumeCocoaEventPump();
 
 	I_SetMainWindowVisible(true);
 
-	if (result >= 0)
-	{
-		info.DefaultIWAD = result;
-		return true;
-	}
-
-	return false;
+	return result;
 }
 
 

@@ -366,10 +366,25 @@ extern bool AppActive;
   return TRUE;
 }
 
+// Set while a ZWidget modal window (the launcher) owns the event queue. The
+// timer below drains EVERY pending event with dequeue:YES and hands it to
+// I_ProcessEvent, so it and ZWidget's modal pump cannot both run: whichever
+// fires first takes the event, and the launcher ends up drawing but never
+// receiving input. The timer keeps firing during ZWidget's pump because
+// -nextEventMatchingMask: spins the run loop, so simply nesting the loops is
+// not enough -- this pump has to stand down for the duration.
+bool s_cocoaEventPumpSuspended = false;
+
+void I_SuspendCocoaEventPump() { s_cocoaEventPumpSuspended = true; }
+void I_ResumeCocoaEventPump() { s_cocoaEventPumpSuspended = false; }
+
 - (void)processEvents:(NSTimer *)timer {
   ZD_UNUSED(timer);
 
   if (Args == nullptr)
+    return;
+
+  if (s_cocoaEventPumpSuspended)
     return;
 
   @autoreleasepool {
