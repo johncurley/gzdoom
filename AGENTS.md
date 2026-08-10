@@ -290,7 +290,43 @@ So the fork's shared-code changes for Metal parity did **not** cause it, and
 neither did the native platform work. It predates all of it. Since this fork is
 now the maintained port, that makes it ours to fix rather than ours to report.
 
-**Best lead so far: opening the console makes the frame render.** Same launch,
+**It happens on macOS too** (maintainer, 2026-08-10), which agrees with the SDL
+and upstream-master controls: nothing about this is Linux-specific, so it is not
+the native platform layer and not the Wayland/X11 work.
+
+**The scene renders fine — the frame is simply never drawn.** With the console
+open the capture shows Entryway complete: geometry, weapon sprite, and the 2D
+status bar. So textures, shaders, the scene render, the 2D layer and the present
+path all work for a map that is otherwise black. With the console closed the
+frame contains nothing at all, status bar included, which is the tell: a scene
+that failed to draw would still leave the HUD. Something is skipping or
+discarding the whole frame, not failing to render it.
+
+Only the console does it. Measured, same launch, `+execafter 60 <cmd>`:
+
+| command | result |
+|---|---|
+| (none) | 0.000 |
+| `echo probe` | 0.000 |
+| `vid_setmode 640 480` | 0.000 |
+| `toggleconsole` | 27.197, scene visible |
+
+So it is not "any console command pokes it awake", and not a framebuffer
+recreate either — `vid_setmode` rebuilds the framebuffer and changes nothing.
+Whatever the console alters (pause state, `ConsoleState`, the branch `D_Display`
+takes) is the thing to look at.
+
+**Not tested: window focus.** The unattended runs never give the window focus
+and interactive play always does, which would fit. Against it: under Xvfb with
+no window manager at all, MAP12 still rendered. No window-activation tooling is
+installed here (no xdotool/wmctrl/kdotool), so this was not settled.
+
+**No known upstream report found** for this specific shape (searched 2026-08-10).
+There are many unrelated GZDoom black-screen threads; notably "open the console"
+already circulates as a folk workaround for some of them, which may be the same
+bug seen from the outside.
+
+**Earlier lead, superseded by the above:** Same launch,
 same map, `+execafter 60 toggleconsole` — mean 27.199, max 255, against 0.000
 max 0 without it. So the 2D path, the present and the capture all work; whatever
 fails is upstream of them and is disturbed by whatever opening the console
