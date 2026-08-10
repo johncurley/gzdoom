@@ -207,7 +207,31 @@ open. Separate from both the capture bug and the Wayland paint bug — it surviv
 the fixes for both, and it is GL-only: Vulkan renders every case below
 correctly.
 
-It is **map-selective**, measured 2026-08-10, same binary, only `+map` changing:
+**It is a race, not a map property — corrected 2026-08-10 after over-claiming
+it twice.** The maps below are strongly biased but not absolute: across ~38
+MAP01 runs this session, 35 were black and **3 rendered** (once at
+`shotafter 400`, once interactively, once on a config that three later pristine
+repeats then reported black). MAP12 rendered on every attempt and has never been
+seen black. So the honest statement is that some maps almost always fail and
+others always succeed, which is a biased race rather than a deterministic
+switch. It smells like a load-time or initialisation race: the maps that fail
+are the small, fast-loading ones (MAP01–04, 06, 07, 09, 10) and the ones that
+succeed are larger (05, 08, 11, 12, 20, 21).
+
+Do **not** trust a single run of this. Two conclusions were recorded here and
+later withdrawn because they rested on n=1: "bare IWAD versus loaded mod", and a
+config-based bisect that fingered `hud_vertical` — a key that is not a cvar in
+the source at all, only a stale entry in the maintainer's ini. Both were flukes
+of an ~8% success rate. Anything measured here needs repeats.
+
+Also note the harness contaminates its own control: **the engine rewrites the
+config file on exit**, so a `-config` copy is no longer the file you copied
+after its first run. Copy it fresh per launch.
+
+Interactive play renders these maps normally, which is the strongest hint that
+the trigger is in the unattended launch path rather than in map data.
+
+Map bias, measured 2026-08-10, same binary, only `+map` changing:
 
 | DOOM2 map, GL | native backend | SDL backend |
 |---|---|---|
