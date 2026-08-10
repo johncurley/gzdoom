@@ -51,6 +51,13 @@ Display *X11NativeDisplay = nullptr;
 #include <zvulkan/vulkansurface.h>
 
 static std::shared_ptr<VulkanSurface> m_vulkanSurface;
+
+// Both are defined at the bottom of this file, below their use in
+// CreateNativeWindow(). There is no POSIX header declaring them the way
+// win32vulkanvideo.h does for Windows, so without these the HAVE_VULKAN=ON
+// build does not compile at all -- which is why it never had.
+bool I_CreateVulkanSurface(VkInstance instance, VkSurfaceKHR* surface);
+bool I_GetVulkanPlatformExtensions(unsigned int* count, const char** names);
 #endif
 
 static void ApplyNativeWindowClientBounds(DisplayWindow *win)
