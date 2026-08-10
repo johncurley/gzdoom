@@ -800,7 +800,15 @@ int FIWadManager::IdentifyVersion (std::vector<std::string>&wadfiles, const char
 	int pick = 0;
 
 	// Present the IWAD selection box.
-	bool alwaysshow = (queryiwad && !Args->CheckParm("-iwad") && !foundprio);
+	//
+	// -nolauncher starts straight into the game with the IWAD that would have
+	// been preselected, without showing the launcher at all. `queryiwad 0` does
+	// the same thing but is an archived CVAR, so it is a persistent preference
+	// rather than something a single run or a script can ask for; -iwad also
+	// suppresses the launcher but only by naming a specific file. This is the
+	// switch for "just start", and it is what test harnesses want.
+	bool nolauncher = !!Args->CheckParm("-nolauncher");
+	bool alwaysshow = (queryiwad && !Args->CheckParm("-iwad") && !foundprio && !nolauncher);
 
 	if (!havepicked && (alwaysshow || picks.Size() > 1))
 	{
@@ -821,7 +829,10 @@ int FIWadManager::IdentifyVersion (std::vector<std::string>&wadfiles, const char
 		if (i_loadsupportwad) flags |= 16;
 
 		FStartupSelectionInfo info = FStartupSelectionInfo(wads, *Args, flags);
-		if (I_PickIWad(queryiwad || HoldingQueryKey(queryiwad_key), info))
+		// showwin == false makes I_PickIWad return immediately and accept the
+		// default selection, which is what -nolauncher needs: picks.Size() > 1
+		// still brings us into this block, it just must not open a window.
+		if (I_PickIWad(!nolauncher && (queryiwad || HoldingQueryKey(queryiwad_key)), info))
 		{
 			pick = info.SaveInfo();
 			disableautoload = !!(info.DefaultStartFlags & 1);
