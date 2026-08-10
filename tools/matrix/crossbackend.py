@@ -172,6 +172,18 @@ def confirm_backend(log_path, backend):
         return "gl"
     if "Initializing OpenGLES2 backend" in text:
         return "gles"
+    # Neither "Initializing ..." line is printed by the native POSIX backend --
+    # measured 2026-08-10, a Linux GL launch logs GL_RENDERER/GL_VERSION and
+    # nothing else, so every gl row came back "launch failed (log says None)"
+    # even though the backend had started correctly. GL_VERSION is the honest
+    # proof marker here: it comes from the live context, so it still cannot be
+    # faked by a backend that failed to initialise.
+    #
+    # Order matters: GLES prints GL_VERSION too, so check for an ES context
+    # first rather than reporting it as desktop GL.
+    for line in text.splitlines():
+        if line.startswith("GL_VERSION:"):
+            return "gles" if "ES" in line.split(":", 1)[1] else "gl"
     return None
 
 
@@ -357,7 +369,7 @@ def main():
     # which makes every cross-backend verdict INVALID -- see the scene-specific
     # GL capture bug in AGENTS.md. The golden baseline's scene must not change
     # (that would invalidate baseline.json), so the oracle gets its own.
-    xb = spec.get("crossbackend_launch")
+    xb = matrix.platform_launch(spec, "crossbackend_launch")
     if xb:
         spec = dict(spec)
         spec["launch"] = {**spec["launch"], **xb}

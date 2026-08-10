@@ -36,7 +36,7 @@ Change the `postprocess` target in GLDEFS to test each of `beforebloom`,
 `screen` was wired up by a different fix than the other two.
 """
 
-import os, struct, subprocess, sys, zlib
+import os, shutil, struct, sys, zipfile, zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = "/tmp/pptest.pk3"
@@ -56,7 +56,7 @@ def red_png(w=64, h=64):
 
 def main():
     build = "/tmp/pptest"
-    subprocess.run(["rm", "-rf", build], check=True)
+    shutil.rmtree(build, ignore_errors=True)
     os.makedirs(os.path.join(build, "shaders"))
     os.makedirs(os.path.join(build, "textures"))
     for name in ("GLDEFS", "CVARINFO"):
@@ -68,7 +68,14 @@ def main():
 
     if os.path.exists(OUT):
         os.remove(OUT)
-    subprocess.run(["zip", "-qr", OUT, "."], cwd=build, check=True)
+    # stdlib zipfile rather than shelling out to `zip`, which is not installed
+    # on the Linux box and is not part of a base install on any of the three
+    # platforms. Same reason tools/pngdiff.py decodes PNGs by hand.
+    with zipfile.ZipFile(OUT, "w", zipfile.ZIP_DEFLATED) as z:
+        for root, _, files in os.walk(build):
+            for name in sorted(files):
+                path = os.path.join(root, name)
+                z.write(path, os.path.relpath(path, build))
     print("wrote", OUT)
 
 

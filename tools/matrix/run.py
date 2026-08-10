@@ -68,22 +68,64 @@ WORKDIR = "/tmp/gzdoom-matrix"
 # branch's history. All settings that matter are pinned in configs.json
 # "always", so this file starting empty is fine.
 CONFIG = os.path.join(WORKDIR, "matrix.ini")
-SHOTS = os.path.expanduser("~/Documents/GZDoom/Screenshots")
+
+# Where the engine drops a screenshot, which is NOT the same directory on every
+# platform -- M_GetScreenshotsPath() is ~/Documents/GZDoom/Screenshots on macOS
+# (i_specialpaths.mm) and $HOME/.config/gzdoom/screenshots on Unix
+# (i_specialpaths.cpp). Hardcoding the macOS one made every Linux launch look
+# like "no capture", which reads as a launch failure rather than a path bug.
+# configs.json may override via launch.screenshots.
+SHOTS = os.path.expanduser(
+    "~/Documents/GZDoom/Screenshots" if sys.platform == "darwin"
+    else "~/.config/gzdoom/screenshots")
+
+# sys.platform -> the configs.json key suffix holding that platform's overrides.
+PLATFORM_KEY = "darwin" if sys.platform == "darwin" else (
+    "linux" if sys.platform.startswith("linux") else sys.platform)
+
+
+def platform_launch(spec, base="launch"):
+    """`launch` merged with any `launch_<platform>` block.
+
+    The macOS values stay the defaults so nothing about that machine changes;
+    a platform block overrides only the keys that genuinely differ (binary
+    path, mod directory, screenshot directory).
+    """
+    L = dict(spec.get(base, {}))
+    L.update(spec.get(f"{base}_{PLATFORM_KEY}", {}))
+    return L
 
 
 def load_configs():
     with open(os.path.join(HERE, "configs.json")) as f:
-        return json.load(f)
+        spec = json.load(f)
+    spec = dict(spec)
+    spec["launch"] = platform_launch(spec)
+    return spec
 
 
 def launch(cfg, spec, verbose):
     """One configuration, one process, no operator. Returns (png_path, log_path)."""
     L = spec["launch"]
-    binary = os.path.join(ROOT, L["binary"])
+    # GZDOOM_MATRIX_BINARY overrides the configured path, so a second build
+    # directory (a Vulkan-enabled one, say) can be swept without editing a
+    # file that is shared with the other platforms.
+    binary = os.path.join(ROOT, os.environ.get("GZDOOM_MATRIX_BINARY",
+                                               L["binary"]))
     if not os.path.exists(binary):
-        sys.exit(f"binary not found: {binary}\nBuild first: cmake --build build --target zdoom -j 8")
+        sys.exit(f"binary not found: {binary}\n"
+                 f"Build first: cmake --build "
+                 f"{os.path.dirname(L['binary']).split('/')[0] or 'build'} "
+                 f"--target zdoom -j {os.cpu_count()}")
+    shots = os.path.expanduser(L.get("screenshots", SHOTS))
 
-    argv = [binary, "-iwad", L["iwad"], "-config", CONFIG]
+    # -nolauncher because an unattended run must never stop at a window waiting
+    # to be clicked. -iwad already suppresses the launcher today, so this is
+    # belt and braces -- but it is the cheap kind: the launcher appears whenever
+    # more than one IWAD is installed and the -iwad name fails to resolve, and
+    # the failure mode is the harness hanging until its timeout with no output
+    # that says why.
+    argv = [binary, "-nolauncher", "-iwad", L["iwad"], "-config", CONFIG]
     for f in L.get("files", []) + cfg.get("extra_files", []):
         argv += ["-file", os.path.expanduser(f)]
     if L.get("savegame"):
@@ -112,7 +154,7 @@ def launch(cfg, spec, verbose):
     m = re.findall(r"^Captured (.+)$", text, re.M)
     if not m:
         return None, log_path
-    src = os.path.join(SHOTS, m[-1].strip())
+    src = os.path.join(shots, m[-1].strip())
     dst = os.path.join(WORKDIR, cfg["name"] + ".png")
     if not os.path.exists(src):
         return None, log_path
