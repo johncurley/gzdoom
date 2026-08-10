@@ -96,12 +96,39 @@ def platform_launch(spec, base="launch"):
     return L
 
 
-def load_configs():
+def apply_scene(spec, scene):
+    """Merge a named entry from configs.json "scenes" over spec["launch"].
+
+    A scene is what the harness points the camera at. The default one uses a
+    third-party mod, which is fine for the machines that have it and useless
+    everywhere else, so the stock-IWAD scenes exist to give the suite something
+    it can always run -- including on a machine that has only DOOM2.wad.
+    """
+    if not scene:
+        return spec
+    scenes = spec.get("scenes", {})
+    if scene not in scenes:
+        sys.exit(f"unknown scene {scene!r}; have: {', '.join(sorted(scenes))}")
+    s = dict(scenes[scene])
+    s.update(s.pop(PLATFORM_KEY, {}))     # per-platform paths inside the scene
+    spec = dict(spec)
+    L = dict(spec["launch"])
+    # A scene replaces the whole way the level is reached, so clear both routes
+    # before applying it -- otherwise the default savegame would survive into a
+    # scene that wants +map and silently win.
+    L.pop("savegame", None)
+    L.pop("map", None)
+    L.update(s)
+    spec["launch"] = L
+    return spec
+
+
+def load_configs(scene=None):
     with open(os.path.join(HERE, "configs.json")) as f:
         spec = json.load(f)
     spec = dict(spec)
     spec["launch"] = platform_launch(spec)
-    return spec
+    return apply_scene(spec, scene)
 
 
 def launch(cfg, spec, verbose):
@@ -128,8 +155,14 @@ def launch(cfg, spec, verbose):
     argv = [binary, "-nolauncher", "-iwad", L["iwad"], "-config", CONFIG]
     for f in L.get("files", []) + cfg.get("extra_files", []):
         argv += ["-file", os.path.expanduser(f)]
+    # A scene is reached either by loading a savegame or by warping to a map.
+    # `map` exists so a scene can be built from a stock IWAD alone, with no
+    # savegame file to carry between machines -- see the "scenes" block in
+    # configs.json. savegame wins if a scene somehow sets both.
     if L.get("savegame"):
         argv += ["-loadgame", L["savegame"]]
+    elif L.get("map"):
+        argv += ["+map", L["map"]]
 
     for tok in L.get("always", []):
         argv += tok.split()

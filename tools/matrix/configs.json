@@ -26,6 +26,21 @@
     "savegame": "save01.zds"
   },
 
+  "_scenes_note": "Selected with --scene. The default scene needs a third-party mod and a savegame, neither of which travels between machines -- the savegames are per-machine files and the pk3s are large downloads. The doom2/doom1 scenes need only a stock IWAD and a map name, so they run anywhere, including CI, and they cover the bare-IWAD path that the mod scenes never touch. Maps are chosen for content, not convenience: a mostly-enclosed room gives the postprocess passes something to act on. NOTE doom2 uses MAP12 rather than MAP01 deliberately -- see the GL black-frame open item in AGENTS.md; MAP01/02/03/04/06/07/09/10 currently render as an all-black frame on OpenGL and would make every config compare black to black. Switch this to MAP01 once that is fixed, since it is the better regression target.",
+
+  "scenes": {
+    "doom2": {
+      "iwad": "DOOM2.wad",
+      "files": [],
+      "map": "MAP12"
+    },
+    "doom1": {
+      "iwad": "DOOM.wad",
+      "files": [],
+      "map": "E1M1"
+    }
+  },
+
   "configs": [
     {
       "name": "baseline",

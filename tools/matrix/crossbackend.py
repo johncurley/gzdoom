@@ -137,6 +137,12 @@ BAND_OUTLIER_RATIO = 4.0
 # treated as INVALID rather than normalised. See gain_match().
 MAX_TONE_RATIO = 4.0
 
+# Below this mean the capture carries no information and no verdict taken from
+# it means anything. Real scenes here measure 13-52; a broken capture or a
+# black-rendering map measures exactly 0.000. Set well above zero so a nearly
+# blank frame is caught too, and well below the darkest real scene.
+DEGENERATE_MEAN = 1.0
+
 
 def launch_backend(cfg, spec, backend, verbose):
     """Run one config on one backend. Returns (png_path, log_path)."""
@@ -312,7 +318,20 @@ def selfcheck(configs, spec, backends, verbose):
                 means.append(sum(px) / len(px))
             if not sigs:
                 continue
-            if sigs[0] == sigs[1]:
+            if means[0] <= DEGENERATE_MEAN:
+                # Two identical black frames satisfy a reproducibility check
+                # perfectly, and that is not a pass. Measured 2026-08-10: the
+                # pre-fix OpenGL capture path reported "REPRODUCIBLE (mean
+                # 0.000)" and the self-check said it had passed, for a capture
+                # that contained nothing at all. A frame this dark is either a
+                # broken capture or a scene that renders black, and both make
+                # every later verdict meaningless -- a black frame compares
+                # clean against another black frame.
+                bad += 1
+                print(f"  {cfg['name']:20s} {backend:5s} *** DEGENERATE *** "
+                      f"mean {means[0]:.3f} -- frame is blank. Reproducible, "
+                      f"but nothing is being measured.")
+            elif sigs[0] == sigs[1]:
                 print(f"  {cfg['name']:20s} {backend:5s} REPRODUCIBLE "
                       f"(mean {means[0]:.3f})")
             else:
@@ -349,6 +368,11 @@ def main():
                          "is the tiebreaker for whether a Metal divergence is a "
                          "bug or a deferred-backend convention. Valid: "
                          + ", ".join(sorted(BACKENDS)))
+    ap.add_argument("--scene", help="named scene from configs.json \"scenes\" "
+                                    "(doom2, doom1). Default is the mod scene "
+                                    "in crossbackend_launch, which needs a "
+                                    "third-party pk3 and a local savegame; the "
+                                    "stock-IWAD scenes run anywhere.")
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
@@ -370,12 +394,20 @@ def main():
     # GL capture bug in AGENTS.md. The golden baseline's scene must not change
     # (that would invalidate baseline.json), so the oracle gets its own.
     xb = matrix.platform_launch(spec, "crossbackend_launch")
-    if xb:
+    if xb and not args.scene:
         spec = dict(spec)
         spec["launch"] = {**spec["launch"], **xb}
         print(f"using crossbackend scene override: "
               f"{xb.get('files', spec['launch'].get('files'))} "
               f"{xb.get('savegame', spec['launch'].get('savegame'))}\n")
+    elif args.scene:
+        # An explicit --scene replaces the override entirely rather than
+        # layering on top of it, or the mod's -file would survive into a scene
+        # that is meant to be a bare IWAD.
+        spec = matrix.apply_scene(spec, args.scene)
+        L = spec["launch"]
+        print(f"using scene {args.scene!r}: -iwad {L['iwad']} "
+              f"{'+map ' + L['map'] if L.get('map') else L.get('savegame','')}\n")
 
     configs = spec["configs"]
     if args.only:
