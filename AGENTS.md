@@ -316,6 +316,32 @@ recreate either — `vid_setmode` rebuilds the framebuffer and changes nothing.
 Whatever the console alters (pause state, `ConsoleState`, the branch `D_Display`
 takes) is the thing to look at.
 
+**Instrumented `D_Display`, 2026-08-10 — the frame is NOT being dropped.** This
+supersedes the "dropped frame" reading above. Env-gated `fprintf`s at three
+points (the `!AppActive` early return; entry to `D_Display`; entry to the
+`gamestate == GS_LEVEL` scene branch; and `End2DAndUpdate`), comparing a black
+run against a `toggleconsole` run:
+
+- the `!AppActive` early return is **never taken** — zero hits, so the
+  "unfocused window skips drawing" theory is dead, and `vid_activeinbackground 1`
+  correspondingly changes nothing
+- `D_Display` runs to completion and `End2DAndUpdate()` is reached on **every**
+  frame in both runs, so the frame is drawn and presented either way
+- the scene branch is entered in both, with `viewactive=1` and identical
+  viewports (`screenvp` `scenevp` `screen` all 640x480)
+- every logged variable is identical between the two runs except
+  `ConsoleState` (0 black, 1 renders)
+
+So the divergence is *below* `D_Display`, somewhere between `RenderView` and the
+final composite, and it correlates with nothing but console state. The probe
+points above are the place to start again; re-adding them is a five-minute job.
+
+Also ruled out since: `+con_notifylines 0` / `+con_notifytime 0` (the harness
+suppresses the notify overlay in every run, so an empty 2D list was a natural
+suspect — black with and without, individually and together), `vid_setmode`
+(rebuilds the framebuffer, still black), and any non-console console command
+(`echo` does nothing; only `toggleconsole` works).
+
 **Not tested: window focus.** The unattended runs never give the window focus
 and interactive play always does, which would fit. Against it: under Xvfb with
 no window manager at all, MAP12 still rendered. No window-activation tooling is
