@@ -12,7 +12,11 @@ it is unusual).
   `src/common/rendering/metal/README_METAL_RENDERER.md`
 - **GPU capture runbook:** `docs/gpu-capture-protocol.md`
 - **Linux session handoff:** `docs/handoff-linux.md` — two validation tasks that
-  only Linux hardware can perform, both pending.
+  only Linux hardware could perform. **Both done, 2026-08-10; do not re-run.**
+- **Current handoff:** `docs/handoff-gl-blackframe.md` — what that session
+  finished, the one bug still open (OpenGL renders a black frame on some maps),
+  and the traps that produced three retracted conclusions along the way. Start
+  there.
 
 ---
 
@@ -365,8 +369,14 @@ settle-dependent in a way that is not monotonic and not yet understood. Note the
 per-map results themselves are solid: MAP01 0.000 on 4 of 4 runs (plus ~8
 earlier), MAP12 51.637-51.640 on 4 of 4.
 
-The `master` worktree is left in place for bisecting; it is the cheapest way to
-find which upstream commit introduced this.
+Bisecting upstream to find where this started is **blocked on build
+dependencies**, not on the idea: every historical commit sampled (2025-07,
+2024-04, 2021-05, 2017-04) fails to configure with
+`Could NOT find ZMusic (missing: ZMUSIC_LIBRARIES ZMUSIC_INCLUDE_DIR)`. Old
+upstream needs a *system* ZMusic where this fork bundles one, and each era will
+have its own breakage against a 2026 toolchain. A bisect also needs a reliable
+pass/fail, which at an ~8% flake rate means ~10 runs per step. Recreate the
+worktree with `git worktree add --detach <path> master` if picking this up.
 
 **X11 has two loose ends, neither chased down.** The Wayland first-paint fix is
 in `xdg_surface_handle_configure`, which is xdg-shell — X11 has no equivalent
