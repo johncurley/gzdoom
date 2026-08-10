@@ -208,8 +208,33 @@ void OpenGLFrameBuffer::Update()
 	GLRenderer->Flush();
 	Flush3D.Unclock();
 
+	// Between Flush() and Swap() is the only moment the back buffer provably
+	// holds the frame about to be shown. Anything after the swap is reading a
+	// buffer the driver has already taken back.
+	if (mScreenshotArmed)
+		CaptureFrameForScreenshot();
+
 	Swap();
 	Super::Update();
+}
+
+void OpenGLFrameBuffer::CaptureFrameForScreenshot()
+{
+	mScreenshotArmed = false;
+
+	const auto &viewport = mOutputLetterbox;
+	if (viewport.width <= 0 || viewport.height <= 0)
+		return;
+
+	mScreenshotWidth = viewport.width;
+	mScreenshotHeight = viewport.height;
+	mScreenshotPixels.Resize(viewport.width * viewport.height * 3);
+
+	glFinish();
+	glPixelStorei(GL_PACK_ALIGNMENT, 1);
+	glReadPixels(viewport.left, viewport.top, viewport.width, viewport.height,
+				 GL_RGB, GL_UNSIGNED_BYTE, &mScreenshotPixels[0]);
+	glPixelStorei(GL_PACK_ALIGNMENT, 4);
 }
 
 void OpenGLFrameBuffer::CopyScreenToBuffer(int width, int height, uint8_t* scr)
@@ -512,15 +537,33 @@ void OpenGLFrameBuffer::BeginFrame()
 
 TArray<uint8_t> OpenGLFrameBuffer::GetScreenshotBuffer(int &pitch, ESSType &color_type, float &gamma)
 {
-	const auto &viewport = mOutputLetterbox;
+	IntRect viewport = mOutputLetterbox;
 
-	// Grab what is in the back buffer.
-	// We cannot rely on SCREENWIDTH/HEIGHT here because the output may have been scaled.
 	TArray<uint8_t> pixels;
-	pixels.Resize(viewport.width * viewport.height * 3);
-	glPixelStorei(GL_PACK_ALIGNMENT, 1);
-	glReadPixels(viewport.left, viewport.top, viewport.width, viewport.height, GL_RGB, GL_UNSIGNED_BYTE, &pixels[0]);
-	glPixelStorei(GL_PACK_ALIGNMENT, 4);
+
+	if (mScreenshotPixels.Size() > 0)
+	{
+		// Copied out during Update(), before the swap. Use it and drop it, so a
+		// later screenshot cannot silently be served a stale frame.
+		viewport.left = 0;
+		viewport.top = 0;
+		viewport.width = mScreenshotWidth;
+		viewport.height = mScreenshotHeight;
+		pixels = std::move(mScreenshotPixels);
+		mScreenshotPixels.Clear();
+	}
+	else
+	{
+		// Nothing armed: read the back buffer, as this has always done. Correct
+		// only where the platform preserves it across a swap -- which Linux does
+		// not, hence ArmScreenshotCapture. Left in place because it is what macOS
+		// has always done and changing that is not this fix's business.
+		// We cannot rely on SCREENWIDTH/HEIGHT here because the output may have been scaled.
+		pixels.Resize(viewport.width * viewport.height * 3);
+		glPixelStorei(GL_PACK_ALIGNMENT, 1);
+		glReadPixels(viewport.left, viewport.top, viewport.width, viewport.height, GL_RGB, GL_UNSIGNED_BYTE, &pixels[0]);
+		glPixelStorei(GL_PACK_ALIGNMENT, 4);
+	}
 
 	// Copy to screenshot buffer:
 	int w = SCREENWIDTH;

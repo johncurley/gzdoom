@@ -59,6 +59,7 @@ public:
 	// Hint: Pitch can be negative for upside-down images, in which case buffer
 	// points to the last row in the buffer, which will be the first row output.
 	virtual TArray<uint8_t> GetScreenshotBuffer(int &pitch, ESSType &color_type, float &gamma) override;
+	void ArmScreenshotCapture() override { mScreenshotArmed = true; }
 
 	void Swap();
 	bool IsHWGammaActive() const { return HWGammaActive; }
@@ -75,6 +76,18 @@ public:
     FTexture *WipeEndScreen() override;
 
 	int camtexcount = 0;
+
+private:
+	// Set by ArmScreenshotCapture(), consumed by Update(), which copies the back
+	// buffer out BEFORE the swap -- the only point at which it is guaranteed to
+	// hold the frame being presented. GetScreenshotBuffer() then serves that
+	// copy. See DFrameBuffer::ArmScreenshotCapture for the measurements.
+	void CaptureFrameForScreenshot();
+
+	bool mScreenshotArmed = false;
+	TArray<uint8_t> mScreenshotPixels;
+	int mScreenshotWidth = 0;
+	int mScreenshotHeight = 0;
 };
 
 }

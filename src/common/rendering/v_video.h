@@ -306,6 +306,22 @@ public:
 	// points to the last row in the buffer, which will be the first row output.
 	virtual TArray<uint8_t> GetScreenshotBuffer(int &pitch, ESSType &color_type, float &gamma) { return TArray<uint8_t>(); }
 
+	// Ask the backend to keep a copy of the NEXT frame it presents, so a later
+	// GetScreenshotBuffer() has something valid to return.
+	//
+	// GetScreenshotBuffer() runs after the buffer swap, and after a swap the
+	// window back buffer is undefined -- EGL defaults to
+	// EGL_SWAP_BEHAVIOR = EGL_BUFFER_DESTROYED and GLX promises nothing either.
+	// The OpenGL backend reads that back buffer, so on Linux every capture came
+	// out solid black. Measured 2026-08-10 through tools/matrix/crossbackend.py
+	// on AshesHardReset save01.zds: mean 0.000 without this, mean 25.318 with
+	// it, against Vulkan's 25.366 on the same frame.
+	//
+	// Vulkan and Metal do not need it -- they re-present the last frame into
+	// their own image rather than touching the swapchain -- so it is a no-op
+	// there, and a caller that never arms gets the old behaviour unchanged.
+	virtual void ArmScreenshotCapture() {}
+
 	virtual float GetZNear() const { return 5.f; }
 	virtual float GetZFar() const { return 65536.f; }
 

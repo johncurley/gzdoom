@@ -698,6 +698,11 @@ UNSAFE_CCMD (screenshot)
 static int gShotAfterFrames = -1;
 static FString gShotAfterName;
 static bool gShotAfterQuit;
+// Set for the one tick between arming the backend's frame capture and taking
+// the shot off that copy. Deliberately not folded into gShotAfterFrames as a
+// negative sentinel: that counter's own `< 0` guard means "disarmed" and would
+// swallow it -- which it did, silently, on the first attempt.
+static bool gShotAfterCapturing;
 
 UNSAFE_CCMD (shotafter)
 {
@@ -784,6 +789,18 @@ void M_TickDeferredScreenShot ()
 		}
 	}
 
+	// The backend was asked to keep the frame presented during the D_Display we
+	// have just returned from, so that copy exists now. Take the shot off it.
+	if (gShotAfterCapturing)
+	{
+		gShotAfterCapturing = false;
+		G_ScreenShot (gShotAfterName.IsEmpty() ? NULL : gShotAfterName.GetChars());
+
+		if (gShotAfterQuit)
+			throw CExitEvent(0);
+		return;
+	}
+
 	if (gShotAfterFrames < 0)
 		return;
 
@@ -800,11 +817,15 @@ void M_TickDeferredScreenShot ()
 	if (--gShotAfterFrames > 0)
 		return;
 
+	// Do NOT shoot here. We run after D_Display, so the swap has already
+	// happened and on OpenGL the back buffer no longer holds anything -- that is
+	// what made every GL capture on Linux black (mean 0.000; 25.318 with this,
+	// against Vulkan's 25.366 on the same frame). Ask the backend to keep the
+	// next frame and shoot one frame later off that copy. Costs one extra
+	// rendered frame, deterministically, in every launch.
 	gShotAfterFrames = -1;
-	G_ScreenShot (gShotAfterName.IsEmpty() ? NULL : gShotAfterName.GetChars());
-
-	if (gShotAfterQuit)
-		throw CExitEvent(0);
+	gShotAfterCapturing = true;
+	screen->ArmScreenshotCapture();
 }
 
 CCMD(openscreenshots)
