@@ -1,5 +1,15 @@
 # Linux session handoff
 
+> **DONE — 2026-08-10. Both tasks passed.** Task 1 builds clean with no `gles_*`
+> symbol errors; Task 2 is 11/11 OK on `gl,vulkan`. Getting there needed three
+> fixes that were not renderer bugs: `HAVE_VULKAN=ON` did not compile, every GL
+> screenshot was black (readback after the buffer swap), and the harness was
+> macOS-only in its paths and could not identify the GL backend on Linux. Full
+> results and the measurements are in `AGENTS.md` under Open items. Two new open
+> items came out of it: Wayland windows not painting until an unrelated event,
+> and an intermittently black GL game window. Kept for the record — do not
+> re-run this from scratch.
+
 Everything below is validation of work already committed, not new development.
 Two things were done on macOS that **only Linux can check**, and both are cheap.
 

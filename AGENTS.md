@@ -63,7 +63,10 @@ one before). Required three ZWidget Cocoa fixes; see
   Runs with its **own config file**, a pinned window and a warmup launch, so it
   cannot contaminate your `gzdoom.ini` or drift with the display. Currently PASS.
 - `tools/matrix/crossbackend.py` — Metal-vs-OpenGL oracle, per-band shape
-  analysis. Currently 11/11 OK.
+  analysis. Currently 11/11 OK on macOS (gl,metal) and 11/11 OK on Linux
+  (gl,vulkan, 2026-08-10). Runs on both platforms now; paths come from
+  `launch_<platform>` blocks in `configs.json`, and `GZDOOM_MATRIX_BINARY`
+  points it at an alternate build directory.
 - `tools/pngdiff.py`, `localize.py`, `cluster.py` — stdlib-only PNG analysis
   (this machine has neither PIL nor ImageMagick).
 
@@ -99,15 +102,155 @@ along with the Tier 2 argument-buffer paths. Expect the first run to be a
 bug-finding exercise, not a benchmark. `run.py --update-baseline` is the first
 useful command there; it refuses to record if any pass is broken.
 
-**The merged tree has only been built on macOS.** The merge resolved
-`src/CMakeLists.txt` by dropping the `if (HAVE_GLES2)` block, on the reasoning
-that this branch lists the GLES sources unconditionally — decided by reading,
-not by building. See `docs/handoff-linux.md`.
+**RESOLVED 2026-08-10 — the merged tree builds and runs on Linux.** Both
+`docs/handoff-linux.md` tasks were carried out on the Linux box (Arch/CachyOS,
+KDE Plasma Wayland, AMD RX 550 polaris12, Mesa 26.1.6, GL 4.6, Vulkan 1.4).
 
-**Vulkan support in `crossbackend.py` has never been executed.** Written on a
-machine with no Vulkan hardware. Also untested: whether the shared-code changes
-made for Metal parity leave Vulkan bit-identical, which `CONTRIBUTING.md`
-requires and nobody has checked.
+Task 1: `HAVE_VULKAN=OFF HAVE_GLES2=OFF` (the default) compiles clean with **no
+`gles_*` duplicate- or missing-symbol errors**, so dropping the
+`if (HAVE_GLES2)` block was the right call. The binary runs under the native
+Wayland backend and the ZWidget launcher paints, listing all four IWADs and the
+new "Add Files..." button. `-DHAVE_GLES2=ON` also builds.
+
+Task 2: `crossbackend.py --backends gl,vulkan` is **11/11 OK** — every config
+"uniform backend noise", median band mean 0.118–0.296, tone x1.00–1.01, no
+structural divergence. The self-check passes for both backends on all 11
+configs. So the shared-code changes made for Metal parity
+(`lineardepth.fp`, `ssaocombine.fp`, the SSAO uniforms in `hw_postprocess.cpp`)
+did **not** disturb Vulkan. Note "bit-identical" is not literally what was
+measured: there is a uniform ~0.2/255 delta everywhere, which is the expected
+backend noise the tool exists to distinguish from structure. `colormap` reports
+the same sparse under-the-coverage-floor note as macOS, so that note is not
+Metal-specific and is benign on Vulkan too.
+
+Three things had to be fixed to get there; none was a renderer bug.
+
+**`HAVE_VULKAN=ON` did not compile at all.** `nativevideo.cpp` calls
+`I_GetVulkanPlatformExtensions` and `I_CreateVulkanSurface` above their
+definitions at the bottom of the same file, and no POSIX header declares them
+the way `win32vulkanvideo.h` does for Windows. Fixed with forward declarations.
+This is why the Vulkan path had never been executed — it could not be built.
+
+**Every OpenGL screenshot on Linux was solid black.** `GetScreenshotBuffer()`
+runs after the buffer swap (`M_TickDeferredScreenShot` is called after
+`D_Display`), and the window back buffer is undefined after a swap — EGL
+defaults to `EGL_SWAP_BEHAVIOR = EGL_BUFFER_DESTROYED` and GLX promises nothing.
+Reproduced on Wayland/EGL and X11/GLX, and on llvmpipe under Xvfb with no
+compositor, so it is not a driver or compositor effect. Fixed by
+`DFrameBuffer::ArmScreenshotCapture()`: the deferred-shot countdown arms the
+backend, `OpenGLFrameBuffer::Update()` copies the frame out between `Flush()`
+and `Swap()`, and the shot is taken one frame later off that copy. Vulkan and
+Metal are unaffected — they re-present into their own image rather than reading
+the swapchain — so it is a no-op there and the unarmed path is unchanged.
+
+Control pair, same scene and harness: GL mean **0.000** before, **25.318**
+after, against Vulkan's **25.366** on the same frame.
+
+**Do not test this on a window that is not painting.** Two failed fix attempts
+were caused by testing on DOOM2 MAP01 runs whose *window* was black for an
+unrelated reason (see the open item below) and on llvmpipe, which also renders
+nothing. In both, FB 0 and the offscreen pipeline texture read entirely zero, so
+the capture path looked broken when it was being handed a black frame. Use the
+matrix scene (AshesHardReset + `save01.zds`, with the harness warmup) — it is
+the only bed here known to render reliably.
+
+**The harness was macOS-only.** `configs.json` hardcoded
+`build/gzdoom.app/Contents/MacOS/gzdoom` and `~/Documents/GZDoom/*.pk3`, and
+`run.py` hardcoded the macOS screenshot directory (`M_GetScreenshotsPath()` is
+`$HOME/.config/gzdoom/screenshots` on Unix). Now merged from optional
+`launch_<platform>` / `crossbackend_launch_<platform>` blocks, with the macOS
+values kept as the defaults so nothing about that machine changes.
+`GZDOOM_MATRIX_BINARY` overrides the binary path for a second build directory.
+`tools/pptest/make.py` shelled out to `zip`, which is not installed here; it now
+uses stdlib `zipfile`.
+
+`confirm_backend()` could not identify OpenGL on Linux: it looks for
+"Initializing OpenGL backend", which the native POSIX backend never prints, so
+every gl row came back `launch failed (log says None)` even when GL had started
+correctly. It now falls back to the `GL_VERSION:` line, checking for an ES
+context first so GLES is not reported as desktop GL.
+
+**A savegame had to be made.** `capspot.zds` and `save01.zds` are macOS-local
+data. The Linux `save01.zds` is AshesHardReset MAP01 ("Night School") at the map
+start, **not** the macOS aobug viewpoint. Fine for crossbackend, which is a
+within-machine comparison, but the two machines are not comparing the same frame
+and `baseline.json` must not be shared between them.
+
+**The self-check passes on an all-black frame.** The control run above reported
+`REPRODUCIBLE (mean 0.000)` and "Self-check passed" for a capture that was
+entirely black — two identical broken frames satisfy a reproducibility gate.
+Worth a degenerate-frame check (near-zero mean, one distinct value) before the
+gate is trusted again.
+
+**Wayland windows do not paint until an unrelated event arrives.** Reported by
+the maintainer: the launcher comes up blank on first run and only paints once
+the pointer moves over it. `xdg_surface_handle_configure` acked the configure
+and nothing else, and the toplevel-configure path sets `m_NeedsUpdate` **only**
+when it is given a non-zero size — but a compositor's first configure is
+normally 0x0, which is how it tells the client to choose its own size (KWin does
+this). `m_NeedsUpdate` starts true, but the run loop consumes it on its first
+pass, which can come before the handshake completes; `DrawSurface()` then
+returns early because no buffer exists yet and the flag has already been
+cleared. Nothing repaints until some later event sets it again.
+
+Fixed by setting `m_NeedsUpdate` at the ack point, which is where xdg-shell
+requires a buffer to be attached and committed. **UNVERIFIED** — the blank
+launcher could not be reproduced on this machine (it painted on every attempt,
+before and after the change), so there is no control run and the fix rests on
+reading the protocol, not on a measurement. Needs confirming by someone who can
+reproduce it. This is a ZWidget subtree change and, if it holds up, an upstream
+bug affecting every ZWidget Wayland application — it belongs in the dpjudas PR
+alongside the Cocoa fixes.
+
+**OpenGL renders nothing with a bare IWAD; loading a large mod fixes it.** Still
+open, and separate from both the capture bug and the Wayland paint bug — it
+survives the fixes for both.
+
+Measured 2026-08-10, GL backend, same binary and command line except the `-file`:
+
+| launch | captured mean |
+|---|---|
+| DOOM2, `+map MAP01` | 0.000 |
+| DOOM2, `-loadgame auto03.zds` | 0.000 |
+| DOOM2 + AshesHardReset, `+map MAP01` | 24.119 |
+| DOOM2 + AshesHardReset, `-loadgame save01.zds` | 24.513 |
+
+So it tracks the **loaded content**, not the launch method, and not the scene
+within a map. With bare DOOM2 the window itself is black — confirmed visually,
+correct title bar over a black client area — so the renderer is drawing nothing
+rather than failing to present. Both FB 0 and the offscreen pipeline texture
+read entirely zero, which an occluded or unpainted window cannot cause.
+
+Vulkan renders bare DOOM2 correctly. This is GL-only.
+
+Reproduced on the pristine pre-fix binary too, so the capture fix did not cause
+it. One pristine run *did* render bare DOOM2 correctly and has never been
+reproduced; every other attempt (4 samples over 32s in one run, plus three later
+runs) was black. Treat that single success as unexplained rather than as
+evidence of intermittency.
+
+Why it matters beyond the bug itself: **the whole matrix suite runs on
+AshesHardReset**, which is exactly the case that works, so none of this is
+visible to `run.py` or `crossbackend.py`. The 11/11 result above is real but it
+exercises the working path only.
+
+**Not measured:** whether `native-platform-expansion` before the merge does the
+same. That decides whether the merge introduced it and is the first thing to
+check.
+
+**X11 has two loose ends, neither chased down.** The Wayland first-paint fix is
+in `xdg_surface_handle_configure`, which is xdg-shell — X11 has no equivalent
+path and was untouched, so it is *not* covered by that fix.
+
+- `BadMatch` (opcode 42, `X_SetInputFocus`) is printed on every X11 backend
+  start. Non-fatal — Xlib's default handler prints and continues — but it is a
+  real protocol error, and the usual cause is `XSetInputFocus` on a window that
+  is not viewable yet, i.e. a map/focus race.
+- The launcher **exited on its own under bare Xvfb**, between 12s and 25s, with
+  nothing in the log. Under XWayland with a real window manager it stayed up,
+  so this may be a no-window-manager artifact rather than a bug; not confirmed
+  either way. Note CI's smoke test runs under Xvfb but passes `-iwad`, so it
+  never opens the launcher and would not catch this.
 
 **ZWidget Cocoa fixes are not upstream yet.** `libraries/ZWidget` is a subtree.
 The three Cocoa fixes sit directly on dpjudas's code (this fork has never
