@@ -250,12 +250,37 @@ which is a map that works, so none of this is visible to `run.py` or
 working path only. A config on a black-frame map would compare black to black
 and pass.
 
-**Not measured:** whether upstream `master` does the same. That is the remaining
-question and it decides whether this is reportable upstream or was introduced by
-this fork's shared-code changes for Metal parity (`hw_postprocess.cpp`,
-`lineardepth.fp`, `ssaocombine.fp`, the `AmbientOccludeScene` signature in
-`v_video.h`). Build `master` with `-DGZDOOM_NATIVE_LINUX=OFF` and run the four
-maps above.
+**Upstream `master` does the same — this is inherited, not ours.** Built the
+`master` mirror (`092b9c051`) in a worktree with its own defaults: no
+`GZDOOM_NATIVE_LINUX` option at all, SDL2 linked, none of this fork's code.
+DOOM2 MAP01 comes up as a black window with a correct "Entryway" title bar;
+MAP12 on the same binary renders "The Factory" normally. Same map-selective
+split as both fork builds.
+
+The backend is confirmed by inference rather than by a log line, because
+upstream prints nothing to stdout here: Vulkan renders DOOM2 MAP01 correctly
+(measured 26.812), so a black MAP01 could not have been a silent Vulkan
+fallback — `+vid_preferbackend 0` did select GL.
+
+So the fork's shared-code changes for Metal parity did **not** cause it, and
+neither did the native platform work. It predates all of it. Since this fork is
+now the maintained port, that makes it ours to fix rather than ours to report.
+
+**Best lead so far: opening the console makes the frame render.** Same launch,
+same map, `+execafter 60 toggleconsole` — mean 27.199, max 255, against 0.000
+max 0 without it. So the 2D path, the present and the capture all work; whatever
+fails is upstream of them and is disturbed by whatever opening the console
+changes (pause state, a forced full redraw, the `gamestate` the draw path sees).
+
+Ruled out: `wipetype 0` (still black, so not the screen wipe), `screenblocks`
+10 and 11 (both black, so not the inset scene viewport). Unexplained: at
+`shotafter 400` MAP01 rendered once (27.493) while 120 and 900 were black —
+settle-dependent in a way that is not monotonic and not yet understood. Note the
+per-map results themselves are solid: MAP01 0.000 on 4 of 4 runs (plus ~8
+earlier), MAP12 51.637-51.640 on 4 of 4.
+
+The `master` worktree is left in place for bisecting; it is the cheapest way to
+find which upstream commit introduced this.
 
 **X11 has two loose ends, neither chased down.** The Wayland first-paint fix is
 in `xdg_surface_handle_configure`, which is xdg-shell — X11 has no equivalent
