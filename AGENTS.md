@@ -202,41 +202,60 @@ reproduce it. This is a ZWidget subtree change and, if it holds up, an upstream
 bug affecting every ZWidget Wayland application — it belongs in the dpjudas PR
 alongside the Cocoa fixes.
 
-**OpenGL renders nothing with a bare IWAD; loading a large mod fixes it.** Still
-open, and separate from both the capture bug and the Wayland paint bug — it
-survives the fixes for both.
+**OpenGL renders some maps as a black frame. Not the platform layer.** Still
+open. Separate from both the capture bug and the Wayland paint bug — it survives
+the fixes for both, and it is GL-only: Vulkan renders every case below
+correctly.
 
-Measured 2026-08-10, GL backend, same binary and command line except the `-file`:
+It is **map-selective**, measured 2026-08-10, same binary, only `+map` changing:
 
-| launch | captured mean |
-|---|---|
-| DOOM2, `+map MAP01` | 0.000 |
-| DOOM2, `-loadgame auto03.zds` | 0.000 |
-| DOOM2 + AshesHardReset, `+map MAP01` | 24.119 |
-| DOOM2 + AshesHardReset, `-loadgame save01.zds` | 24.513 |
+| DOOM2 map, GL | native backend | SDL backend |
+|---|---|---|
+| MAP01 | 0.000 | 0.000 |
+| MAP02 | 0.000 | 0.000 |
+| MAP07 | 0.000 | 0.000 |
+| MAP12 | 51.640 | 51.816 |
 
-So it tracks the **loaded content**, not the launch method, and not the scene
-within a map. With bare DOOM2 the window itself is black — confirmed visually,
-correct title bar over a black client area — so the renderer is drawing nothing
-rather than failing to present. Both FB 0 and the offscreen pipeline texture
-read entirely zero, which an occluded or unpainted window cannot cause.
+DOOM1 `E1M1` renders (37.235). AshesHardReset renders on both `+map MAP01` and
+`-loadgame save01.zds` (24.119 / 24.513) — that is a *different* MAP01, since
+Ashes is a total conversion that replaces it, which is why an earlier reading of
+this as "bare IWAD versus mod" was wrong. It was always the map.
 
-Vulkan renders bare DOOM2 correctly. This is GL-only.
+**The SDL column is the important one.** Built with `-DGZDOOM_NATIVE_LINUX=OFF`,
+so upstream's SDL platform layer, no ZWidget, none of the fork's windowing —
+verified by `libSDL2` being linked and `Native Linux backend initialized`
+appearing zero times in the log. It reproduces identically. **The native
+platform work did not cause this**, and no amount of work on the Wayland/X11
+backend will fix it.
 
-Reproduced on the pristine pre-fix binary too, so the capture fix did not cause
-it. One pristine run *did* render bare DOOM2 correctly and has never been
-reproduced; every other attempt (4 samples over 32s in one run, plus three later
-runs) was black. Treat that single success as unexplained rather than as
-evidence of intermittency.
+That it is map-selective rules out the window system on its own: a surface or
+compositor fault cannot depend on which map is loaded.
 
-Why it matters beyond the bug itself: **the whole matrix suite runs on
-AshesHardReset**, which is exactly the case that works, so none of this is
-visible to `run.py` or `crossbackend.py`. The 11/11 result above is real but it
-exercises the working path only.
+Almost certainly the same defect as the older macOS item, "OpenGL captures black
+on Ashes2063 + capspot.zds, scene-specific" — same signature, GL-only and
+scene-selective, on Cocoa windowing, which shares nothing with the Linux
+backends. One difference not yet reconciled: the macOS note says the *capture*
+was black, whereas on Linux the **window** is black too (confirmed visually,
+correct title bar over a black client area). Both FB 0 and the offscreen
+pipeline texture read entirely zero, so the renderer is drawing nothing rather
+than failing to present.
 
-**Not measured:** whether `native-platform-expansion` before the merge does the
-same. That decides whether the merge introduced it and is the first thing to
-check.
+One pristine run did render DOOM2 MAP01 correctly and has never been reproduced;
+every other attempt (4 samples over 32s in one run, plus five later runs across
+two builds) was black. Treat that as unexplained, not as intermittency.
+
+Why it matters beyond the bug: **the whole matrix suite runs on AshesHardReset**,
+which is a map that works, so none of this is visible to `run.py` or
+`crossbackend.py`. The 11/11 cross-backend result is real but exercises the
+working path only. A config on a black-frame map would compare black to black
+and pass.
+
+**Not measured:** whether upstream `master` does the same. That is the remaining
+question and it decides whether this is reportable upstream or was introduced by
+this fork's shared-code changes for Metal parity (`hw_postprocess.cpp`,
+`lineardepth.fp`, `ssaocombine.fp`, the `AmbientOccludeScene` signature in
+`v_video.h`). Build `master` with `-DGZDOOM_NATIVE_LINUX=OFF` and run the four
+maps above.
 
 **X11 has two loose ends, neither chased down.** The Wayland first-paint fix is
 in `xdg_surface_handle_configure`, which is xdg-shell — X11 has no equivalent
