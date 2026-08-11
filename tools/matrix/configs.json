@@ -27,16 +27,20 @@
 
   "_scenes_note": "Selected with --scene. The default scene needs a third-party mod and a savegame, neither of which travels between machines -- the savegames are per-machine files and the pk3s are large downloads. The doom2/doom1 scenes need only a stock IWAD and a map name, so they run anywhere, including CI, and they cover the bare-IWAD path that the mod scenes never touch. Maps are chosen for content, not convenience: a mostly-enclosed room gives the postprocess passes something to act on. NOTE doom2 uses MAP12 rather than MAP01 deliberately -- see the GL black-frame open item in AGENTS.md; MAP01/02/03/04/06/07/09/10 currently render as an all-black frame on OpenGL and would make every config compare black to black. Switch this to MAP01 once that is fixed, since it is the better regression target.",
 
+  "_screenblocks_note": "The stock scenes pin `screenblocks 12` (no status bar) via always_extra. This is not cosmetic: the Doomguy face is turned by M_Random on an idle timer, so the captured tic samples an arbitrary RNG phase and identical launches produce different pixels. Measured on doom2/MAP12, 8 samples: 6 distinct states with the status bar, 7-of-8 identical without it. The suite tests postprocess passes and the status bar is not one, so removing it costs nothing measured here. See AGENTS.md. The default (mod) scene deliberately does NOT set this -- it would invalidate the recorded baseline.",
+
   "scenes": {
     "doom2": {
       "iwad": "DOOM2.wad",
       "files": [],
-      "map": "MAP12"
+      "map": "MAP12",
+      "always_extra": ["+screenblocks 12"]
     },
     "doom1": {
       "iwad": "DOOM.wad",
       "files": [],
-      "map": "E1M1"
+      "map": "E1M1",
+      "always_extra": ["+screenblocks 12"]
     }
   },
 

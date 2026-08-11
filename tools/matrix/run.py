@@ -122,7 +122,13 @@ def apply_scene(spec, scene):
     # scene that wants +map and silently win.
     L.pop("savegame", None)
     L.pop("map", None)
+    # "always_extra" appends; a scene setting "always" outright would replace the
+    # pinned determinism cvars (cl_capfps above all) with whatever it listed, and
+    # the loss would be silent. Scene-specific cvars are the common case anyway --
+    # a stock scene needs screenblocks pinned, the mod scene does not.
+    extra = s.pop("always_extra", [])
     L.update(s)
+    L["always"] = list(L.get("always", [])) + list(extra)
     spec["launch"] = L
     return spec
 
