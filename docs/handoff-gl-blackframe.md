@@ -149,10 +149,14 @@ cannot, the word is doing no work.
 
 ## Still untested
 
-- **Reporting the black-frame fix upstream.** The defect is in inherited code and
-  reproduces on upstream `master` and on macOS, so the fix applies there
-  unchanged. It has not been offered to anyone. Note active community
-  development has moved to UZDoom, so that is likely the useful destination.
+- **Reporting the black-frame fix upstream — there is nowhere to send it.** The
+  defect is in inherited code and reproduces on upstream `master` and on macOS,
+  so the fix applies unchanged anywhere downstream of GZDoom. But ZDoom/gzdoom is
+  frozen (last substantive commits 2025-11; two trivial patches since) and its
+  maintainer is not currently active, and UZDoom does not accept contributions
+  from this fork. So this stays ours. **Do not spend time preparing a patch for
+  either of them** — an earlier revision of this file suggested UZDoom, which was
+  wrong.
 - **Window focus** — was a live theory for the black frame and is now moot, but
   no window-activation tooling is installed here (no `xdotool`/`wmctrl`), so
   anything else needing a focused window still cannot be tested unattended.
