@@ -462,6 +462,33 @@ named config in isolation before believing it. Equally, a clean full suite is
 weaker evidence than it looks, because the failure moves. Fixing this should
 probably come before the suite is trusted as a gate for anything load-bearing.
 
+**Update 2026-08-12: it reproduces in isolation, and the variable is the
+launch.** "Isolated runs have never failed" was true only of the default
+(Ashes) scene. On the stock `doom2` scene, six isolated runs of `baseline` --
+the identical config, no other config involved -- produced four distinct
+decoded-pixel states:
+
+    f6fced7b   cc8cd0cc   cc8cd0cc   6f66e8c2   43ecc003   cc8cd0cc
+
+So it is not a suite-interaction effect and never was. `tonemap_identity`
+FAILing its must_match on this scene is this and nothing else: an 18-pixel
+element at (454,249), 9 brighter and 9 darker, max |delta| 162, on an otherwise
+pixel-identical frame. The must_match relation cannot be evaluated on `doom2`
+until this is fixed.
+
+This also **contradicts `run.py`'s own docstring**, which states that with
+`cl_capfps 1` two identical launches are byte-identical. That was established on
+the Ashes scene and was never re-tested when the stock scenes were added.
+
+The practical gain is cost: reproducing this no longer needs the mod, the
+savegame, or a full suite run -- it is `--only baseline --scene doom2`, about
+15s a sample, on any machine with DOOM2.wad. The two untested suspects above
+(the shared `matrix.ini` rewrite, `gl_exposure_speed 1`) are now cheap to test,
+and testing them is the obvious next step. Still untested; still not findings.
+
+**Do not record a `doom2` baseline until this is understood** -- it would
+enshrine one arbitrary state out of at least four.
+
 **Also noted, not fixed:** `FShaderProgram::Link()` (`gl_shaderprogram.cpp`, the
 `glslversion < 4.20` branch) leaves its own program bound without restoring the
 previous one — the same class of bug on the old-GL path. It leaves a *linked*
