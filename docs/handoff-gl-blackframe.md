@@ -130,15 +130,19 @@ cannot, the word is doing no work.
 
 ## Where things are
 
-- **Branch `metal-audit`**, 14 commits ahead of `origin/metal-audit` as of
-  2026-08-11, tree clean, **nothing pushed to origin**.
+- **Branch `metal-audit`**, tree clean and **fully pushed to
+  `origin/metal-audit`** as of 2026-08-12 (`449c4fad1`). Nothing local is
+  unpublished; ahead 0, behind 0.
 - **`zwidget/wayland-c-bindings`** is pushed and at `8e0db078a`; the subtree copy
-  and the fork are byte-identical.
+  and the fork are byte-identical (verified 2026-08-12, tree `a679350a7` both
+  sides). `zwidget/cocoa-modal-fixes` is two commits on dpjudas's current master
+  head and is PR-ready as-is.
 - **Build directories** (~4 GB total, all gitignored): `build` defaults,
-  `build-vkonly` Vulkan+GL and the one the harness was driven against,
-  `build-vk` Vulkan+GLES2 (superseded), `build-sdl`
-  `-DGZDOOM_NATIVE_LINUX=OFF` control. Only `build-vkonly` and `build-sdl` are
-  worth keeping.
+  `build-vkonly` Vulkan+GL and the one the harness is driven against,
+  `build-vk` (superseded — it was the Vulkan+GLES2 config, and GLES no longer
+  exists), `build-sdl` the `-DGZDOOM_NATIVE_LINUX=OFF` control. Only
+  `build-vkonly` and `build-sdl` are worth keeping; `build-vk` can be deleted
+  for 1.1 GB.
 - The `master` worktree used for the upstream control has been removed; recreate
   with `git worktree add --detach <path> master`.
 - **This machine:** Arch/CachyOS, KDE Plasma Wayland, AMD RX 550 (polaris12),
