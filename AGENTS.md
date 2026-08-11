@@ -278,10 +278,31 @@ carried `prog=0`→non-zero accordingly; all seven black control runs carried
 `prog=0` on the final frame. `crossbackend.py --backends gl,vulkan` is **11/11
 OK** after the fix.
 
-**One flake to be aware of in the suite:** `tonemap_identity` reported SUSPECT
-(tone x1.05, worst band 118) on one full-suite run and OK on the three runs
-around it — isolated post-fix, isolated pre-fix, and a second full suite. Do not
-read a single SUSPECT there as a regression; re-run it before believing it.
+**Open, and separate: `tonemap_identity` only fails inside the full suite.**
+Found while regression-testing the shader fix, and first written up here as a
+flake on three samples — that was wrong, and the correction is the useful part.
+On more runs it is not random at all, it is **context-dependent**:
+
+| how it is run | result |
+|---|---|
+| full suite (`crossbackend.py --backends gl,vulkan`) | SUSPECT on 2 of 4 |
+| alone (`--only tonemap_identity`) | OK on 5 of 5 |
+
+The SUSPECT runs are large — per-band means 15–29 against a whole-image mean of
+about 25, worst channel delta 118 and 127 — and the tone ratio moved in *both*
+directions across them (x1.05 once, x0.99 the other), so it is not a one-sided
+brightness drift.
+
+**It is not the shader fix and not the merge.** Isolated runs pass on the
+pre-fix binary, on the post-fix binary, and after the merge; the first SUSPECT
+predates the merge. Whatever it is lives in what the suite does *between*
+configs — the shared `WORKDIR/matrix.ini`, which the engine rewrites on exit, is
+the obvious first suspect, and `gl_exposure_speed 1` with an adaptive tonemap is
+the obvious second. Neither has been tested. **Nothing here has been measured
+about the cause; do not repeat any of that as a finding.**
+
+Practical consequence: a single SUSPECT on this config is not a regression
+signal, but neither is a single OK a clearance. Run it both ways.
 
 **Also noted, not fixed:** `FShaderProgram::Link()` (`gl_shaderprogram.cpp`, the
 `glslversion < 4.20` branch) leaves its own program bound without restoring the
