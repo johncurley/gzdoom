@@ -5,7 +5,8 @@ Linux. `docs/handoff-linux.md` is the task list this session was answering; it
 is now marked DONE and should not be re-run.
 
 Read `AGENTS.md` first — the open items there carry the measurements. This file
-is the narrative: what was finished, what is still open, and what not to repeat.
+is the narrative: what was finished, what not to repeat, and (updated
+2026-08-11) how the one bug it left open was closed.
 
 ---
 
@@ -45,70 +46,50 @@ working by the maintainer.
 
 ---
 
-## Open: OpenGL renders a black frame on some maps
+## Solved: OpenGL rendered a black frame on some maps
 
-The one substantial thing left. `AGENTS.md` has the full measurement record;
-this is the short version.
+Fixed 2026-08-11. `AGENTS.md` carries the full record — root cause, the probe
+method, the verification table and the retained eliminations. Short version:
 
-**Shape.** GL only — Vulkan always renders. Strongly map-biased: DOOM2 MAP01,
-02, 03, 04, 06, 07, 09, 10 almost always black; MAP05, 08, 11, 12, 20, 21 always
-render. Not absolute: across ~38 MAP01 runs, 3 rendered. So it is a biased race,
-roughly 8% the other way, and the failing maps are the small fast-loading ones.
+**A stale shader-binding cache.** `FShaderManager::SetActiveShader` skips
+`glUseProgram` when the requested shader is already the one it believes is
+bound. `FShader::Load()` ends with `glUseProgram(0)`, which breaks that belief
+without telling the manager. Because shader compilation is incremental and the
+start screen draws between compile steps, a shader bound for an early startup
+draw could stay cached as "active" while GL's current program was 0 — after
+which *no program was ever bound again* for the life of the process. Every
+`glUniform` failed, every draw produced nothing, and the frame came out black
+including the status bar.
 
-**Not ours, and not new.** Reproduces with `-DGZDOOM_NATIVE_LINUX=OFF` (upstream
-SDL path, no ZWidget) and on the upstream `master` mirror with none of this
-fork's code. Also present on macOS. So it is neither the native platform layer
-nor the Metal-parity changes. As this fork is now the maintained port, it is
-ours to fix rather than to report.
+**The fix** is 15 lines in `src/common/rendering/gl/gl_shader.cpp`: clear
+`mActiveShader` at the end of `FShaderManager::CompileNextShader()`.
 
-**Ruled out by measurement.** Do not re-test these without new evidence:
+**Everything odd about the bug follows from that.** The cache repairs itself as
+soon as any *different* shader is selected. Maps that always worked select a
+second shader early (`Stencil`, `No Texture` both observed); maps that were
+always black draw only with the already-cached one. `toggleconsole` worked
+because console 2D selects `No Texture` — and a benign `echo` did nothing
+because it selects no new shader, which is why "any console command" was never
+the lever. The ~8% of runs that rendered anyway are runs where startup happened
+not to leave a stale bind: **it was never a timing race, though it looked
+exactly like one.**
 
-- the platform layer (SDL build reproduces), the fork's shared-code changes
-  (upstream master reproduces), the GPU driver (llvmpipe reproduces exactly:
-  MAP01 0.000, MAP12 53.915)
-- the `!AppActive` early return in `D_Display` — instrumented, **never taken**;
-  `vid_activeinbackground 1` accordingly changes nothing
-- frame dropping generally — `D_Display` runs to completion and
-  `End2DAndUpdate()` is reached every frame in both the black and the working
-  case
-- the scene branch — entered in both, `viewactive=1`, `screenvp`/`scenevp`/
-  `screen` identical at 640x480
-- the 2D command list — `con_notifylines 0` / `con_notifytime 0` black with and
-  without, separately and together
-- `vid_setmode` (rebuilds the framebuffer), the screen wipe (`wipetype 0`),
-  `screenblocks` 10 and 11, `cl_capfps` 0 and 1, window size, and the
-  maintainer's own config
+**Verified**: MAP01 0.000 → 26.751–26.768 (4 of 4); the seven other
+previously-black maps all render; the six that always worked are unchanged
+(MAP12 51.640, identical to the recorded figure); the SDL control build
+(`GZDOOM_NATIVE_LINUX=OFF`) is fixed too; `crossbackend.py --backends gl,vulkan`
+is 11/11.
 
-**The one lever that works.** `+execafter 60 toggleconsole` renders the frame —
-and the capture shows the *scene*, not just console pixels: Entryway geometry,
-weapon sprite, and the 2D status bar. A benign `echo` does nothing. So the
-renderer, textures, shaders, 2D layer and present path all work for a map that
-is otherwise black, and the only variable that differs between the two runs is
-`ConsoleState`.
+**Two things worth carrying forward:**
 
-**Where that leaves the search.** Below `D_Display`, between `RenderView` and
-the final composite. The probe points used were: the `!AppActive` early return,
-`D_Display` entry, the `gamestate == GS_LEVEL` scene branch, and
-`End2DAndUpdate` — all env-gated on `GZDOOM_TRACE_DISPLAY` and reverted before
-committing, so re-adding them is a few minutes' work.
-
-**Suggested next step:** a GPU frame capture, or probes inside `RenderView` /
-`FGLRenderer::Flush`, comparing console-open against console-closed to find
-where the pipeline texture stops receiving the scene. Not more cvar roulette —
-that avenue is exhausted, see the eliminations above.
-
-**Reproduce in one command** (roughly 40s; expect `mean 0.000`):
-
-```bash
-GZDOOM_MATRIX_BINARY=build-vkonly/gzdoom \
-  ./build-vkonly/gzdoom -iwad ~/.config/gzdoom/DOOM2.WAD -config /tmp/probe.ini \
-  +vid_preferbackend 0 +vid_fullscreen 0 +cl_capfps 1 +map MAP01 \
-  +shotafter 120 quit
-python3 -c "import sys;sys.path.insert(0,'tools');from pngdiff import read_png,stats;\
-import glob;print(stats(*read_png(sorted(glob.glob('$HOME/.config/gzdoom/screenshots/*.png'))[0]))['mean'])"
-```
-
----
+- **`MESA_DEBUG=1` names the failing GL call**, on stderr, for free. It is what
+  cracked this — 17,423 `GL_INVALID_OPERATION in glUniform(program not linked)`
+  per run. `gl_debug_level` produced *nothing* here, because the context is not
+  a debug context; do not spend time on that cvar on this machine.
+- **Readback probes at stage boundaries beat reasoning about the pipeline.**
+  Four env-gated `glReadPixels` calls (scene FB, each postprocess pass, after
+  `Draw2D`, after present) showed the scene framebuffer already empty at the
+  first probe, which eliminated the entire downstream pipeline in one run.
 
 ## Traps this session paid for
 
@@ -137,12 +118,20 @@ prints nothing to stdout, so on that build the backend had to be established by
 inference instead (Vulkan renders MAP01, therefore a black MAP01 was not a
 silent Vulkan fallback).
 
+**A biased success rate is not evidence of a timing race** (added 2026-08-11,
+the fourth retraction). "35 of 38 black, 3 rendered" was recorded here as a race
+and it steered the search toward load-time ordering for a whole session. The
+cause was fully deterministic per map; the few successes came from startup
+variation in a *cache*, not from a window that sometimes closed in time. Before
+calling something a race, name the two things you think are racing — if you
+cannot, the word is doing no work.
+
 ---
 
 ## Where things are
 
-- **Branch `metal-audit`**, 13 commits ahead of `origin/metal-audit`, tree clean,
-  **nothing pushed to origin**.
+- **Branch `metal-audit`**, 14 commits ahead of `origin/metal-audit` as of
+  2026-08-11, tree clean, **nothing pushed to origin**.
 - **`zwidget/wayland-c-bindings`** is pushed and at `8e0db078a`; the subtree copy
   and the fork are byte-identical.
 - **Build directories** (~4 GB total, all gitignored): `build` defaults,
@@ -160,11 +149,14 @@ silent Vulkan fallback).
 
 ## Still untested
 
-- **Window focus.** The unattended runs never focus the window and interactive
-  play always does, which would fit the bug. Against it: MAP12 rendered under
-  Xvfb with no window manager at all. No window-activation tooling is installed
-  here, so this was never settled.
-- **Whether the black-frame bug is known upstream.** A search found no report of
-  this shape, though "open the console" already circulates as a folk workaround
-  for assorted GZDoom black screens, which may be this bug seen from outside.
+- **Reporting the black-frame fix upstream.** The defect is in inherited code and
+  reproduces on upstream `master` and on macOS, so the fix applies there
+  unchanged. It has not been offered to anyone. Note active community
+  development has moved to UZDoom, so that is likely the useful destination.
+- **Window focus** — was a live theory for the black frame and is now moot, but
+  no window-activation tooling is installed here (no `xdotool`/`wmctrl`), so
+  anything else needing a focused window still cannot be tested unattended.
+- **`FShaderProgram::Link()` on GL < 4.20** leaves its own program bound without
+  restoring the previous one — the same class of bug as the one just fixed. Not
+  exercised on this machine (GL 4.6) and not touched.
 - **Apple Silicon**, still, and unchanged by any of this.

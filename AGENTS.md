@@ -13,10 +13,10 @@ it is unusual).
 - **GPU capture runbook:** `docs/gpu-capture-protocol.md`
 - **Linux session handoff:** `docs/handoff-linux.md` — two validation tasks that
   only Linux hardware could perform. **Both done, 2026-08-10; do not re-run.**
-- **Current handoff:** `docs/handoff-gl-blackframe.md` — what that session
-  finished, the one bug still open (OpenGL renders a black frame on some maps),
-  and the traps that produced three retracted conclusions along the way. Start
-  there.
+- **Current handoff:** `docs/handoff-gl-blackframe.md` — the GL black-frame bug,
+  **fixed 2026-08-11** (a stale shader-binding cache; see the section below for
+  the root cause and the verification table), plus the traps that produced four
+  retracted conclusions along the way. Start there.
 
 ---
 
@@ -206,34 +206,114 @@ reproduce it. This is a ZWidget subtree change and, if it holds up, an upstream
 bug affecting every ZWidget Wayland application — it belongs in the dpjudas PR
 alongside the Cocoa fixes.
 
-**OpenGL renders some maps as a black frame. Not the platform layer.** Still
-open. Separate from both the capture bug and the Wayland paint bug — it survives
-the fixes for both, and it is GL-only: Vulkan renders every case below
-correctly.
+**OpenGL rendered some maps as a black frame — SOLVED 2026-08-11.** Root cause,
+fix and verification below. The long investigation that preceded it is kept
+after the fix, because its eliminations are what made the answer findable and
+because two of its readings were wrong in instructive ways.
 
-**It is a race, not a map property — corrected 2026-08-10 after over-claiming
-it twice.** The maps below are strongly biased but not absolute: across ~38
-MAP01 runs this session, 35 were black and **3 rendered** (once at
-`shotafter 400`, once interactively, once on a config that three later pristine
-repeats then reported black). MAP12 rendered on every attempt and has never been
-seen black. So the honest statement is that some maps almost always fail and
-others always succeed, which is a biased race rather than a deterministic
-switch. It smells like a load-time or initialisation race: the maps that fail
-are the small, fast-loading ones (MAP01–04, 06, 07, 09, 10) and the ones that
-succeed are larger (05, 08, 11, 12, 20, 21).
+**Root cause: a stale shader-binding cache.** `FShaderManager::SetActiveShader`
+skips `glUseProgram` when the shader it is asked for is already the one it
+believes is active:
 
-Do **not** trust a single run of this. Two conclusions were recorded here and
-later withdrawn because they rested on n=1: "bare IWAD versus loaded mod", and a
-config-based bisect that fingered `hud_vertical` — a key that is not a cvar in
-the source at all, only a stale entry in the maintainer's ini. Both were flukes
-of an ~8% success rate. Anything measured here needs repeats.
+```cpp
+if (mActiveShader != sh) { glUseProgram(...); mActiveShader = sh; }
+```
 
-Also note the harness contaminates its own control: **the engine rewrites the
-config file on exit**, so a `-config` copy is no longer the file you copied
-after its first run. Copy it fresh per launch.
+`FShader::Load()` ends with `glUseProgram(0)` (`gl_shader.cpp`, end of `Load`),
+which invalidates that belief without telling the manager. Shader compilation is
+**incremental** — `CompileNextShader()` is called repeatedly and the start screen
+draws between calls — so the sequence is:
 
-Interactive play renders these maps normally, which is the strongest hint that
-the trigger is in the unattended launch path rather than in map data.
+1. an early startup draw binds a shader, say `Default`; `mActiveShader = Default`
+2. the next `CompileNextShader()` loads another shader and leaves program **0** bound
+3. every later draw asks for `Default` again, `SetActiveShader` short-circuits,
+   and **no program is ever bound again**
+
+From there the GL current program stays 0 for the life of the process. Every
+`glUniform` fails and every draw produces nothing — which is why the frame was
+black *including the status bar*, the detail that ruled out a scene-render fault.
+
+**The fix** (`src/common/rendering/gl/gl_shader.cpp`, 15 lines): clear
+`mActiveShader` at the end of `FShaderManager::CompileNextShader()`, after the
+compile step rather than before it, so the last compile is covered too.
+
+**How it was found**, in case a similar one turns up: env-gated `glReadPixels`
+probes at four stage boundaries (scene FB, after each postprocess pass, after
+`Draw2D`, after present) showed the scene framebuffer already empty at the
+*first* probe, so nothing downstream was at fault. `MESA_DEBUG=1` then named the
+failure outright — 17,423 `GL_INVALID_OPERATION in glUniform(program not
+linked)` per run, Mesa's message for "no program bound". Adding
+`GL_CURRENT_PROGRAM` to the probe confirmed `prog=0` on every black frame.
+**`MESA_DEBUG=1` is worth reaching for early**; `gl_debug_level` produced nothing
+here because the context is not a debug context, so the cvar is a dead end on
+this machine.
+
+**Why the map bias, the "race", and the console workaround all follow.** The
+cache repairs itself the moment any *different* shader is selected, because then
+`mActiveShader != sh` and a real `glUseProgram` happens. So:
+
+- maps that always rendered (05, 08, 11, 12, 20, 21) contain something that
+  selects a second shader early — `Stencil` and `No Texture` were both observed
+- maps that were almost always black (01–04, 06, 07, 09, 10) draw only with the
+  already-cached shader for the first ~120 frames
+- `toggleconsole` fixed it because console 2D selects `No Texture`. Measured:
+  the repair lands on the frame after the toggle, and the scene FB goes from
+  0.000 to 21.423 in one frame. A benign `echo` does nothing because it selects
+  no new shader — which is exactly why "any console command" never worked
+- the ~8% of runs that rendered anyway are runs where startup happened not to
+  leave a stale bind. It was never a timing race, though it looked exactly like one
+
+**Verification.** Harness: one launch per data point, fresh config each time,
+`+map <n> +shotafter 120 quit`, mean of the capture.
+
+| | before | after |
+|---|---|---|
+| DOOM2 MAP01, native GL | 0.000 on 7 of 8 runs | 26.751–26.768 on 4 of 4 |
+| MAP02, 03, 04, 06, 07, 09, 10 | 0.000 | 38.105, 29.655, 26.019, 24.215, 46.817, 28.743, 43.606 |
+| MAP05, 08, 11, 12, 20, 21 (never broken) | rendered | rendered, MAP12 51.640 vs 51.640 recorded |
+| MAP01, SDL build (`GZDOOM_NATIVE_LINUX=OFF`) | 0.000 | 24.415, 24.180 |
+
+The one control run that rendered without the fix is the known ~8% flake, and it
+carried `prog=0`→non-zero accordingly; all seven black control runs carried
+`prog=0` on the final frame. `crossbackend.py --backends gl,vulkan` is **11/11
+OK** after the fix.
+
+**One flake to be aware of in the suite:** `tonemap_identity` reported SUSPECT
+(tone x1.05, worst band 118) on one full-suite run and OK on the three runs
+around it — isolated post-fix, isolated pre-fix, and a second full suite. Do not
+read a single SUSPECT there as a regression; re-run it before believing it.
+
+**Also noted, not fixed:** `FShaderProgram::Link()` (`gl_shaderprogram.cpp`, the
+`glslversion < 4.20` branch) leaves its own program bound without restoring the
+previous one — the same class of bug on the old-GL path. It leaves a *linked*
+program bound rather than 0, and this machine is GL 4.6, so it was never
+exercised. Untested, not a fix, just recorded.
+
+**It was upstream's bug, and still is.** The defect is in code this fork
+inherited unchanged; it reproduced on the upstream `master` mirror and on macOS.
+The fix above has not been offered upstream.
+
+---
+
+### The investigation that preceded the fix
+
+Kept because the eliminations below are what left only one place to look, and
+because three conclusions recorded here had to be retracted.
+
+**It looked like a race, and was not.** Across ~38 MAP01 runs, 35 were black and
+3 rendered; MAP12 rendered on every attempt. That reads as a biased race, and it
+was recorded as one. The real variable was whether a second shader ever got
+selected — deterministic per map, but with enough startup variation to produce a
+few successes. **A biased success rate is not evidence of a timing race.**
+
+Do **not** trust a single run of this. Two conclusions were recorded and later
+withdrawn because they rested on n=1: "bare IWAD versus loaded mod" (it was the
+map — Ashes replaces MAP01 with a different one), and a config bisect that
+fingered `hud_vertical`, a key that is **not a cvar in the source at all**, only
+a stale entry in a hand-grown ini.
+
+Also: **the engine rewrites the config file on exit**, so a `-config` copy stops
+being the file you copied after its first launch. Copy it fresh per launch.
 
 Map bias, measured 2026-08-10, same binary, only `+map` changing:
 
@@ -244,139 +324,39 @@ Map bias, measured 2026-08-10, same binary, only `+map` changing:
 | MAP07 | 0.000 | 0.000 |
 | MAP12 | 51.640 | 51.816 |
 
-DOOM1 `E1M1` renders (37.235). AshesHardReset renders on both `+map MAP01` and
-`-loadgame save01.zds` (24.119 / 24.513) — that is a *different* MAP01, since
-Ashes is a total conversion that replaces it, which is why an earlier reading of
-this as "bare IWAD versus mod" was wrong. It was always the map.
+**Ruled out by measurement**, all of it correctly:
 
-**The SDL column is the important one.** Built with `-DGZDOOM_NATIVE_LINUX=OFF`,
-so upstream's SDL platform layer, no ZWidget, none of the fork's windowing —
-verified by `libSDL2` being linked and `Native Linux backend initialized`
-appearing zero times in the log. It reproduces identically. **The native
-platform work did not cause this**, and no amount of work on the Wayland/X11
-backend will fix it.
+- the platform layer — the SDL build (`-DGZDOOM_NATIVE_LINUX=OFF`, `libSDL2`
+  linked, `Native Linux backend initialized` absent) reproduced identically
+- the fork's shared-code changes — upstream `master` (`092b9c051`), with none of
+  this fork's code, reproduced identically. Backend confirmed by inference
+  because upstream prints nothing to stdout: Vulkan rendered MAP01 at 26.812, so
+  a black MAP01 was not a silent fallback
+- the GPU driver — llvmpipe reproduced exactly (MAP01 0.000, MAP12 53.915)
+- the `!AppActive` early return in `D_Display` — instrumented, **never taken**,
+  and `vid_activeinbackground 1` accordingly changed nothing
+- frame dropping — `D_Display` ran to completion and `End2DAndUpdate()` was
+  reached every frame in both the black and the working case
+- the scene branch — entered in both, `viewactive=1`, viewports identical
+- the 2D command list — `con_notifylines 0` / `con_notifytime 0`, separately and
+  together, black either way. (The list was never empty: 26 commands were queued
+  on black frames and drew nothing, which in hindsight was the whole answer.)
+- `vid_setmode` (rebuilds the framebuffer), the screen wipe (`wipetype 0`),
+  `screenblocks` 10 and 11, `cl_capfps` 0 and 1, window size, the maintainer's
+  own config
 
-That it is map-selective rules out the window system on its own: a surface or
-compositor fault cannot depend on which map is loaded.
+**That it happens on macOS too** (maintainer, 2026-08-10) agreed with the SDL and
+upstream-master controls.
 
-Almost certainly the same defect as the older macOS item, "OpenGL captures black
-on Ashes2063 + capspot.zds, scene-specific" — same signature, GL-only and
-scene-selective, on Cocoa windowing, which shares nothing with the Linux
-backends. One difference not yet reconciled: the macOS note says the *capture*
-was black, whereas on Linux the **window** is black too (confirmed visually,
-correct title bar over a black client area). Both FB 0 and the offscreen
-pipeline texture read entirely zero, so the renderer is drawing nothing rather
-than failing to present.
+**Bisecting upstream was attempted and abandoned**, blocked on build
+dependencies rather than on the idea: every historical commit sampled (2025-07,
+2024-04, 2021-05, 2017-04) failed to configure with `Could NOT find ZMusic`,
+because old upstream wants a *system* ZMusic where this fork bundles one. It was
+also the wrong tool — the defect is old and the bug is not a regression.
 
-One pristine run did render DOOM2 MAP01 correctly and has never been reproduced;
-every other attempt (4 samples over 32s in one run, plus five later runs across
-two builds) was black. Treat that as unexplained, not as intermittency.
-
-Why it matters beyond the bug: **the whole matrix suite runs on AshesHardReset**,
-which is a map that works, so none of this is visible to `run.py` or
-`crossbackend.py`. The 11/11 cross-backend result is real but exercises the
-working path only. A config on a black-frame map would compare black to black
-and pass.
-
-**Upstream `master` does the same — this is inherited, not ours.** Built the
-`master` mirror (`092b9c051`) in a worktree with its own defaults: no
-`GZDOOM_NATIVE_LINUX` option at all, SDL2 linked, none of this fork's code.
-DOOM2 MAP01 comes up as a black window with a correct "Entryway" title bar;
-MAP12 on the same binary renders "The Factory" normally. Same map-selective
-split as both fork builds.
-
-The backend is confirmed by inference rather than by a log line, because
-upstream prints nothing to stdout here: Vulkan renders DOOM2 MAP01 correctly
-(measured 26.812), so a black MAP01 could not have been a silent Vulkan
-fallback — `+vid_preferbackend 0` did select GL.
-
-So the fork's shared-code changes for Metal parity did **not** cause it, and
-neither did the native platform work. It predates all of it. Since this fork is
-now the maintained port, that makes it ours to fix rather than ours to report.
-
-**It happens on macOS too** (maintainer, 2026-08-10), which agrees with the SDL
-and upstream-master controls: nothing about this is Linux-specific, so it is not
-the native platform layer and not the Wayland/X11 work.
-
-**The scene renders fine — the frame is simply never drawn.** With the console
-open the capture shows Entryway complete: geometry, weapon sprite, and the 2D
-status bar. So textures, shaders, the scene render, the 2D layer and the present
-path all work for a map that is otherwise black. With the console closed the
-frame contains nothing at all, status bar included, which is the tell: a scene
-that failed to draw would still leave the HUD. Something is skipping or
-discarding the whole frame, not failing to render it.
-
-Only the console does it. Measured, same launch, `+execafter 60 <cmd>`:
-
-| command | result |
-|---|---|
-| (none) | 0.000 |
-| `echo probe` | 0.000 |
-| `vid_setmode 640 480` | 0.000 |
-| `toggleconsole` | 27.197, scene visible |
-
-So it is not "any console command pokes it awake", and not a framebuffer
-recreate either — `vid_setmode` rebuilds the framebuffer and changes nothing.
-Whatever the console alters (pause state, `ConsoleState`, the branch `D_Display`
-takes) is the thing to look at.
-
-**Instrumented `D_Display`, 2026-08-10 — the frame is NOT being dropped.** This
-supersedes the "dropped frame" reading above. Env-gated `fprintf`s at three
-points (the `!AppActive` early return; entry to `D_Display`; entry to the
-`gamestate == GS_LEVEL` scene branch; and `End2DAndUpdate`), comparing a black
-run against a `toggleconsole` run:
-
-- the `!AppActive` early return is **never taken** — zero hits, so the
-  "unfocused window skips drawing" theory is dead, and `vid_activeinbackground 1`
-  correspondingly changes nothing
-- `D_Display` runs to completion and `End2DAndUpdate()` is reached on **every**
-  frame in both runs, so the frame is drawn and presented either way
-- the scene branch is entered in both, with `viewactive=1` and identical
-  viewports (`screenvp` `scenevp` `screen` all 640x480)
-- every logged variable is identical between the two runs except
-  `ConsoleState` (0 black, 1 renders)
-
-So the divergence is *below* `D_Display`, somewhere between `RenderView` and the
-final composite, and it correlates with nothing but console state. The probe
-points above are the place to start again; re-adding them is a five-minute job.
-
-Also ruled out since: `+con_notifylines 0` / `+con_notifytime 0` (the harness
-suppresses the notify overlay in every run, so an empty 2D list was a natural
-suspect — black with and without, individually and together), `vid_setmode`
-(rebuilds the framebuffer, still black), and any non-console console command
-(`echo` does nothing; only `toggleconsole` works).
-
-**Not tested: window focus.** The unattended runs never give the window focus
-and interactive play always does, which would fit. Against it: under Xvfb with
-no window manager at all, MAP12 still rendered. No window-activation tooling is
-installed here (no xdotool/wmctrl/kdotool), so this was not settled.
-
-**No known upstream report found** for this specific shape (searched 2026-08-10).
-There are many unrelated GZDoom black-screen threads; notably "open the console"
-already circulates as a folk workaround for some of them, which may be the same
-bug seen from the outside.
-
-**Earlier lead, superseded by the above:** Same launch,
-same map, `+execafter 60 toggleconsole` — mean 27.199, max 255, against 0.000
-max 0 without it. So the 2D path, the present and the capture all work; whatever
-fails is upstream of them and is disturbed by whatever opening the console
-changes (pause state, a forced full redraw, the `gamestate` the draw path sees).
-
-Ruled out: `wipetype 0` (still black, so not the screen wipe), `screenblocks`
-10 and 11 (both black, so not the inset scene viewport). Unexplained: at
-`shotafter 400` MAP01 rendered once (27.493) while 120 and 900 were black —
-settle-dependent in a way that is not monotonic and not yet understood. Note the
-per-map results themselves are solid: MAP01 0.000 on 4 of 4 runs (plus ~8
-earlier), MAP12 51.637-51.640 on 4 of 4.
-
-Bisecting upstream to find where this started is **blocked on build
-dependencies**, not on the idea: every historical commit sampled (2025-07,
-2024-04, 2021-05, 2017-04) fails to configure with
-`Could NOT find ZMusic (missing: ZMUSIC_LIBRARIES ZMUSIC_INCLUDE_DIR)`. Old
-upstream needs a *system* ZMusic where this fork bundles one, and each era will
-have its own breakage against a 2026 toolchain. A bisect also needs a reliable
-pass/fail, which at an ~8% flake rate means ~10 runs per step. Recreate the
-worktree with `git worktree add --detach <path> master` if picking this up.
+**No upstream report was found** for this shape (searched 2026-08-10), though
+"open the console" circulates as a folk workaround for assorted GZDoom black
+screens, which may well be this bug seen from outside.
 
 **X11 has two loose ends, neither chased down.** The Wayland first-paint fix is
 in `xdg_surface_handle_configure`, which is xdg-shell — X11 has no equivalent

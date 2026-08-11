@@ -875,16 +875,29 @@ FShaderManager::FShaderManager()
 
 bool FShaderManager::CompileNextShader()
 {
+	bool done = false;
 	if (mPassShaders[mCompilePass]->CompileNextShader())
 	{
 		mCompilePass++;
 		if (mCompilePass >= MAX_PASS_TYPES)
 		{
 			mCompilePass = -1;
-			return true;
+			done = true;
 		}
 	}
-	return false;
+
+	// FShader::Load() ends by binding program 0, so after compiling anything the
+	// GL current program is no longer whatever this manager last made active.
+	// Compilation is incremental and interleaved with drawing -- the start screen
+	// renders between calls -- so a shader bound for one of those early draws
+	// would otherwise stay cached as active forever: SetActiveShader() would
+	// short-circuit on every later draw and the scene would be rendered with no
+	// program bound at all, producing an entirely black frame (scene and HUD
+	// alike). Which maps hit it depended only on whether some later draw happened
+	// to select a *different* shader and repair the cache by accident.
+	mActiveShader = nullptr;
+
+	return done;
 }
 
 FShaderManager::~FShaderManager()
