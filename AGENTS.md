@@ -99,6 +99,93 @@ build captures AshesHardReset normally. Blocks nothing today because
 readback-level fixes were tried in 2026-08-08 and all failed; the capture
 probably has to move before the buffer swap.
 
+**Why the Metal backend exists, with the 2026-08-11 evidence.** Worth recording
+because it gets asked (Graf asked it directly) and because the landscape moved.
+
+*ZVulkan has diverged from the vendored subtree, and the gap is macOS-shaped.*
+Upstream `dpjudas/ZVulkan` (head 2026-01-23) **removed surface creation entirely**
+(commit "Remove surface creation from ZVulkan", 2025-02-09). Measured against the
+copy in `libraries/ZVulkan`:
+
+| | vendored subtree | upstream today |
+|---|---|---|
+| `VK_MVK_MACOS_SURFACE` | required | **gone** |
+| `VK_KHR_WIN32_SURFACE` / `VK_KHR_XLIB_SURFACE` | required | **gone** |
+| `VK_KHR_PORTABILITY_ENUMERATION` | required | **gone** |
+
+Adopting current ZVulkan therefore means GZDoom must itself request portability
+enumeration and its instance flag (without which MoltenVK will not even
+enumerate a device), create a `CAMetalLayer`, and drive `VK_EXT_metal_surface`
+directly, since `VK_MVK_macos_surface` is deprecated. That is the concrete
+"substantial changes for macOS" cost. Upstream also added MoltenVK layer
+detection setting `MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS` via
+`VK_EXT_layer_settings` (2024-07-03) — **not present in the vendored copy**;
+argument buffers are the bindless mechanism and Tier 2 is what bindless needs.
+
+Do **not** overstate this: upstream ZVulkan still degrades gracefully on
+*features*. Ray query, descriptor indexing, buffer device address and graphics
+pipeline libraries are all still `OptionalExtension`, and it still tries
+1.2 → 1.1 → 1.0. The cost is integration and capability tier, not a feature wall.
+
+*KosmicKrisp does not rescue old Macs.* LunarG's Vulkan-on-Metal Mesa driver
+(merged in Mesa 26.0, Vulkan 1.3 CTS conformant) is per Mesa's own docs "a Vulkan
+conformant implementation for macOS on **Apple Silicon** hardware", requiring
+**macOS 26+** and **Metal 4**. The reference machine (Intel HD 6000, macOS
+12.7.6, Metal 2.0) fails all three, and Intel Macs are not TBDR anyway. Two
+consequences, and the second is the honest one:
+
+- it *strengthens* the case for a native Metal backend on old Intel Macs — the
+  modern Vulkan-on-Metal story has moved to hardware that excludes them
+- it *weakens* the blanket claim that Vulkan on macOS is bad. On Apple Silicon
+  with macOS 26 it is about to be good. Keep the specific argument (no
+  translation layer, old hardware, our bugs to fix, Xcode captures work
+  properly); retire the general one.
+
+**Shader strategy — what is actually native today, and what should be.**
+Measured 2026-08-11, because the naming invites the wrong assumption:
+
+- `shaders/native/mt_ao.metal` and `mt_bloom.metal` are **hand-written MSL**,
+  built into `native_shaders.metallib` and loaded first at runtime. Two files —
+  the compute AO and bloom kernels — plus inline C++ raw-string fallbacks.
+- **Everything else is translated at runtime**: GLSL → SPIR-V → MSL via glslang
+  and SPIRV-Cross, cached as `.msl`. That is roughly fifty programs (15
+  `defaultshaders` with non-alphatest variants for the first seven, 5
+  `effectshaders`, two pass types). `mt_shader.cpp`'s own comment says
+  "Metal shader compilation is slow (GLSL->SPIRV->MSL->Lib)".
+- So it is **not** true that only mod shaders compile dynamically. The engine's
+  own set does too.
+
+Recommended order, if the native path is expanded:
+
+1. **Translate the engine's ~50 known programs at build time** into the metallib.
+   The permutation set is known; only mod shaders genuinely need the runtime
+   path (custom GLSL from PK3s cannot be precompiled, so the translation
+   pipeline never goes away). This costs no hand-written MSL, removes the
+   startup cost, and eliminates the whole compile-while-drawing hazard class.
+2. **Hand-write MSL only for the postprocess and compute passes.** Imageblocks,
+   tile shaders and programmable blending have *no GLSL expression*, so they can
+   never come out of the translation pipeline — native MSL is a prerequisite for
+   the TBDR work, not a preference. Small closed set, already started.
+3. **Do not hand-write the material shaders.** Not because fifty is many, but
+   because they are *composed* from interchangeable fragments (a texel function
+   glued to a material model plus defines). Hand-writing means reimplementing
+   `hw_shaderpatcher` for MSL, for shaders that need no Metal-only feature.
+
+Before expanding native MSL at all, **kill the inline C++ fallback-string
+duplication** by generating it from the `.metal` at build time. Two files already
+required a bespoke parity script after `mt_ao.cpp`/`mt_ao.metal` drifted twice;
+ten would be a standing tax. One source of truth makes
+`tools/check_shader_parity.py` unnecessary rather than busier.
+
+**Metal is NOT vulnerable to the GL stale-shader-binding bug** (read 2026-08-11,
+code reading rather than a runtime test). `MtRenderState::ApplyPipeline` has the
+same *shape* of cache — `if (pipelineKey != mPipelineKey || !mPipelineBound)` —
+but `mPipelineBound = false` is cleared at the render-command-encoder creation
+site itself (`mt_renderstate.cpp`, where `renderCommandEncoder()` is called), and
+again on frame begin and encoder-state reset. That is precisely the invalidation
+the GL path was missing. A fresh `MTLRenderCommandEncoder` carries no pipeline
+state by definition, so the invariant holds structurally.
+
 **Apple Silicon is untested.** Nothing here has ever run on an M-series part.
 The Intel gates are runtime checks, so Apple Silicon takes the **compute** AO
 and bloom paths by default — paths that have never executed on that hardware,
@@ -468,11 +555,23 @@ path and was untouched, so it is *not* covered by that fix.
   either way. Note CI's smoke test runs under Xvfb but passes `-iwad`, so it
   never opens the launcher and would not catch this.
 
-**ZWidget Cocoa fixes are not upstream yet.** `libraries/ZWidget` is a subtree.
-The three Cocoa fixes sit directly on dpjudas's code (this fork has never
-touched `src/window/cocoa/`), so they cherry-pick cleanly onto a branch off
-`master` for a PR (verified: applies clean, 3 files). The Wayland work does not
-— it is entangled with the waylandpp replacement.
+**ZWidget Cocoa fixes are not upstream yet — but the branch is already PR-ready.**
+`libraries/ZWidget` is a subtree. Verified 2026-08-11 against the live remotes,
+so this does not need re-deriving:
+
+- `dpjudas/ZWidget` master head is **`4cf65e59c`** (2026-05-11), and it
+  **contains `155142207 "Add HaikuOS support"`**. The Haiku work from this fork
+  is merged upstream — dpjudas takes contributions from here, which is the
+  relevant fact when deciding whether a PR is worth preparing.
+- `zwidget/cocoa-modal-fixes` is **exactly two commits sitting directly on that
+  head**. No rebase, no conflict, nothing to prepare — it can be opened as-is.
+- `zwidget/wayland-c-bindings` is **byte-identical to the subtree in this repo**
+  (tree `a679350a7` on both sides). Nothing local is unpublished.
+
+The Wayland work still does not cherry-pick — it is entangled with the waylandpp
+replacement, so it is a large PR against a codebase that has not seen it, and a
+conversation rather than a drive-by patch. Given Haiku landed, a new-platform-
+shaped contribution is clearly something he is open to.
 
 Note for that PR: the commit directly beneath it on `master` is *"standardized
 asynchronous Update() method to replace Repaint()"*, so the `dispatch_async` the
