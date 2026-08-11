@@ -489,6 +489,50 @@ and testing them is the obvious next step. Still untested; still not findings.
 **Do not record a `doom2` baseline until this is understood** -- it would
 enshrine one arbitrary state out of at least four.
 
+**Resolved, same day: it is the status bar face, and both standing suspects are
+wrong.** Measured by launching the binary directly, 8 samples per arm, with the
+window geometry held fixed (see the geometry note below -- it contaminated the
+first pass and produced a wrong intermediate reading that exposure mattered):
+
+| arm | distinct states / 8 |
+|---|---|
+| `gl_exposure_speed 1`, shared ini | 6 |
+| `gl_exposure_speed 0`, shared ini | 5 |
+| fresh ini per launch | 5 of 6 |
+| **`screenblocks 12`** (no status bar) | **2** -- 7 of 8 identical |
+
+So neither the shared `matrix.ini` nor `gl_exposure_speed` is the variable.
+Retire both; they were plausible and they are wrong.
+
+The states are a small recurring family, not drift, which is the tell. Diffing
+two of them full-frame gives a fixed bounding box of **92 px at x[391..408]
+y[549..567]** -- 18x19 at bottom-centre, the Doomguy face. `ST_updateFaceWidget`
+turns it with `M_Random` on an idle timer, so the captured tic samples an
+arbitrary RNG phase. `localize.py` could not see it: its analysis region is the
+central `(40,51)-(760,457)` and the face is outside it, so two captures with
+different pixel hashes localized as **identical**. Anything comparing whole-frame
+hashes against `localize.py` output must account for that gap.
+
+A second, independent element remains at **x[455..458] y[249..267]** (18 px,
+max delta 213, a thin in-scene strip), unaffected by `screenblocks` and seen on
+roughly 1 sample in 8. Not identified. It is what `tonemap_identity` tripped on.
+
+Practical: pinning `screenblocks 12` for captures removes the dominant source
+and costs nothing the suite cares about -- it tests postprocess passes, and the
+status bar is not one. It does change every capture, so it invalidates the
+recorded default-scene baseline; that re-record is a deliberate decision and has
+not been made here. The residual element still blocks `must_match` from being
+trusted at zero tolerance on `doom2`.
+
+**Geometry, which contaminates any run of this experiment done by hand.** The
+first launch against a *fresh* config file captures at 1152x720, not the pinned
+800x572: `win_w`/`win_h` are applied after the window is sized. `run.py` already
+handles this with its discarded warmup launch, and its comment says so. Driving
+the binary directly does not, so a hand-rolled arm silently mixes two
+resolutions -- and since `compare()` returns None on a geometry mismatch while
+raw pixel hashes simply differ, the mixture reads as "more nondeterminism".
+Warm the config file first, then sample.
+
 **Also noted, not fixed:** `FShaderProgram::Link()` (`gl_shaderprogram.cpp`, the
 `glslversion < 4.20` branch) leaves its own program bound without restoring the
 previous one — the same class of bug on the old-GL path. It leaves a *linked*
