@@ -38,7 +38,6 @@ private:
 	TextLabel* BackendLabel = nullptr;
 	CheckboxLabel* VulkanCheckbox = nullptr;
 	CheckboxLabel* OpenGLCheckbox = nullptr;
-	CheckboxLabel* GLESCheckbox = nullptr;
 	CheckboxLabel* MetalCheckbox = nullptr;
 #endif
 	ListView* LangList = nullptr;

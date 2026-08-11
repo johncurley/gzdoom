@@ -4,9 +4,6 @@
 #include "v_video.h"
 #include "gl_framebuffer.h"
 #include "gl_sysfb.h"
-#ifdef HAVE_GLES2
-#include "gles/gles_framebuffer.h"
-#endif
 #include "x11_compat.h"
 #include "c_cvars.h"
 #include "printf.h"
@@ -632,12 +629,6 @@ void I_InitNativeWindow()
     RenderAPI api = RenderAPI::OpenGL;
     int backend = V_GetBackend();
     if (backend == 1) api = RenderAPI::Vulkan;
-#ifdef HAVE_GLES2
-    // GLES runs on a desktop GL context here rather than a real ES one, which
-    // is why this asks for RenderAPI::OpenGL. The engine reports it as
-    // GLES_MODE_OGL3 at startup.
-    else if (backend == 2) api = RenderAPI::OpenGL;
-#endif
     
     NativeWindow = DisplayWindow::Create(WindowHost.get(), WidgetType::Window, nullptr, api);
     
@@ -716,17 +707,6 @@ public:
 #endif
         }
 
-#ifdef HAVE_GLES2
-        if (V_GetBackend() == 2) { // GLES
-            DisplayWindow* win = GetActiveZWidgetWindow();
-            if (win) {
-                void* display = win->GetEGLNativeDisplay();
-                void* surface = win->GetEGLNativeWindow();
-                bool isWayland = DisplayBackend::Get()->IsWayland();
-                return new OpenGLESRenderer::OpenGLFrameBuffer(display, surface, isWayland);
-            }
-        }
-#endif
 
         DisplayWindow* win = GetActiveZWidgetWindow();
         if (win) {

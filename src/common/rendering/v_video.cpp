@@ -74,7 +74,7 @@ CVAR(Bool, win_maximized, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITC
 
 CVAR(Bool, r_skipmats, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL)
 
-// 0 means 'no pipelining' for non GLES2 and 4 elements for GLES2
+// 0 means 'no pipelining'; the GLES backend that used 4 elements is gone
 CUSTOM_CVAR(Int, gl_pipeline_depth, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL)
 {
 	if (self < 0)
@@ -102,13 +102,11 @@ CUSTOM_CVAR(Int, vid_maxfps, 500, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 }
 
 // Pick a sensible default backend per platform.
-// 0 = OpenGL, 1 = Vulkan, 2 = OpenGL ES, 3 = Metal
+// 0 = OpenGL, 1 = Vulkan, 2 = (vacant, was OpenGL ES), 3 = Metal
 #if defined(HAVE_METAL) && defined(__APPLE__)
 #define DEFAULT_RENDER_BACKEND 3
 #elif defined(HAVE_VULKAN)
 #define DEFAULT_RENDER_BACKEND 1
-#elif defined(HAVE_GLES2)
-#define DEFAULT_RENDER_BACKEND 2
 #else
 #define DEFAULT_RENDER_BACKEND 0
 #endif
@@ -124,11 +122,6 @@ CUSTOM_CVAR(Int, vid_preferbackend, DEFAULT_RENDER_BACKEND, CVAR_ARCHIVE | CVAR_
 #ifdef HAVE_METAL
 	case 3:
 		Printf("Selecting Metal backend...\n");
-		break;
-#endif
-#ifdef HAVE_GLES2
-	case 2:
-		Printf("Selecting OpenGLES 2.0 backend...\n");
 		break;
 #endif
 #ifdef HAVE_VULKAN
@@ -164,9 +157,10 @@ int V_GetBackend()
 #ifndef HAVE_VULKAN
 	if (v == 1) v = 0;
 #endif
-#ifndef HAVE_GLES2
+	// 2 was the OpenGL ES backend, removed 2026-08-11. The value is left
+	// vacant rather than reused so that an existing gzdoom.ini asking for
+	// Metal (3) still means Metal.
 	if (v == 2) v = 0;
-#endif
 #ifndef HAVE_METAL
 	if (v == 3) v = 0;
 #endif

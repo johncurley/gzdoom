@@ -262,12 +262,6 @@ static bool CheckSkipOptionBlock(FScanner &sc)
 			filter = true;
 	#endif
 		}
-		else if (sc.Compare("GLES"))
-		{
-	#ifdef HAVE_GLES2
-			filter = true;
-	#endif
-		}
 		else if (sc.Compare("SWRender"))
 		{
 #ifndef NO_SWRENDERER

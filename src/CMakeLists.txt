@@ -653,7 +653,6 @@ file( GLOB HEADER_FILES
 	common/thirdparty/utf8proc/*.h
 	common/rendering/*.h
 	common/rendering/gl_load/*.h
-	common/rendering/gles/*.h
 	common/rendering/hwrenderer/data/*.h
 	common/rendering/vulkan/*.h
 	common/rendering/vulkan/system/*.h
@@ -901,33 +900,6 @@ if (HAVE_METAL AND APPLE)
 			VERBATIM)
 	endif()
 endif()
-# The GLES backend is built ONLY with -DHAVE_GLES2=ON, the same way Vulkan and
-# Metal are. Listing these unconditionally (as a 2026-08-09 merge resolution did)
-# linked the backend into every build, where it stayed *reachable* --
-# +vid_preferbackend 2 constructed it on the native Linux path, which has no
-# HAVE_GLES2 guard -- while the startup line naming the backend was compiled
-# out. Measured 2026-08-11: it rendered black and said it was OpenGL.
-# Appending to FASTMATH_SOURCES is also what restores ZD_FASTMATH_FLAG for these
-# files, the second job the dropped block did.
-set (GLES_SOURCES
-	common/rendering/gles/gles_buffers.cpp
-	common/rendering/gles/gles_framebuffer.cpp
-	common/rendering/gles/gles_hwtexture.cpp
-	common/rendering/gles/gles_postprocess.cpp
-	common/rendering/gles/gles_postprocessstate.cpp
-	common/rendering/gles/gles_renderbuffers.cpp
-	common/rendering/gles/gles_renderer.cpp
-	common/rendering/gles/gles_renderstate.cpp
-	common/rendering/gles/gles_samplers.cpp
-	common/rendering/gles/gles_shader.cpp
-	common/rendering/gles/gles_shaderprogram.cpp
-	common/rendering/gles/gles_system.cpp
-)
-
-if (HAVE_GLES2)
-	list (APPEND FASTMATH_SOURCES ${GLES_SOURCES})
-endif()
-
 if (HAVE_VULKAN)
 	list (APPEND FASTMATH_SOURCES ${VULKAN_SOURCES})
 endif()
@@ -1511,9 +1483,7 @@ include_directories(
 	common/rendering/hwrenderer/data
 	common/rendering/gl_load
 	common/rendering/gl
-	common/rendering/gles
 	common/rendering/gl_load/glad/include
-	common/rendering/gles/Mali_OpenGL_ES_Emulator/include
 	common/scripting/vm
 	common/scripting/jit
 	common/scripting/core
@@ -1803,7 +1773,6 @@ source_group("Common\\Rendering\\Hardware Renderer\\Data" REGULAR_EXPRESSION "^$
 source_group("Common\\Rendering\\Hardware Renderer\\Postprocessing" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_DIR}/common/rendering/hwrenderer/postprocessing/.+")
 source_group("Common\\Rendering\\OpenGL Loader" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_DIR}/common/rendering/gl_load/.+")
 source_group("Common\\Rendering\\OpenGL Backend" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_DIR}/common/rendering/gl/.+")
-source_group("Common\\Rendering\\GLES Backend" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_DIR}/common/rendering/gles/.+")
 source_group("Common\\Rendering\\Vulkan Renderer\\System" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_DIR}/common/rendering/vulkan/system/.+")
 source_group("Common\\Rendering\\Vulkan Renderer\\Renderer" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_DIR}/common/rendering/vulkan/renderer/.+")
 source_group("Common\\Rendering\\Vulkan Renderer\\Shaders" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_DIR}/common/rendering/vulkan/shaders/.+")

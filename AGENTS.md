@@ -197,86 +197,70 @@ useful command there; it refuses to record if any pass is broken.
 `docs/handoff-linux.md` tasks were carried out on the Linux box (Arch/CachyOS,
 KDE Plasma Wayland, AMD RX 550 polaris12, Mesa 26.1.6, GL 4.6, Vulkan 1.4).
 
-Task 1: `HAVE_VULKAN=OFF HAVE_GLES2=OFF` (the default) compiles clean with **no
-`gles_*` duplicate- or missing-symbol errors**, so dropping the
-`if (HAVE_GLES2)` block was the right call. The binary runs under the native
-Wayland backend and the ZWidget launcher paints, listing all four IWADs and the
-new "Add Files..." button. `-DHAVE_GLES2=ON` also builds.
+Task 1: the default configuration compiles clean, and the binary runs under the
+native Wayland backend with the ZWidget launcher painting all four IWADs and the
+new "Add Files..." button. (The original wording of this task concerned whether
+the merge's `if (HAVE_GLES2)` resolution was correct. That question is moot — the
+GLES backend was removed on 2026-08-12, see below.)
 
-**But the GLES backend is reachable in a `HAVE_GLES2=OFF` build, and is broken
-here** (measured 2026-08-11, three runs). Because the merge resolution lists the
-GLES sources unconditionally, they link into every build; and unlike the Vulkan
-branch beside it, the GLES branch in `NativeVideo::CreateFrameBuffer`
-(`nativevideo.cpp`, `if (V_GetBackend() == 2)`) carries **no `#ifdef
-HAVE_GLES2`**. So on the default Linux build:
+**The GLES backend has been REMOVED, 2026-08-12.** Gone from the tree: 23 source
+files (6,027 lines), 30 GLES shaders, the `HAVE_GLES2` build option, the branches
+in four platform video layers, the menu entry and the launcher radio button.
+`-DHAVE_GLES2=ON` is now an unused-variable warning, not a build option.
 
-- `+vid_preferbackend 2` really does construct `OpenGLESRenderer::OpenGLFrameBuffer`
-  — confirmed by `GLES forced mode: GLES_MODE_OGL3` in the log, which only that
-  backend prints
-- the startup line that would say so is `#ifdef`'d out in `v_video.cpp`, so the
-  engine **silently mislabels the backend it is running**
-- every capture is black: MAP12 0.000 twice and MAP01 0.000, where GL and Vulkan
-  both render MAP12 at ~51.6
+Why, recorded so the decision is not relitigated from scratch:
 
-**The cause is not known and was not investigated.** Do not assume it is the same
-shader-cache bug as the GL one — GLES carries an identical unguarded
-`mActiveShader`, but its compile paths look structurally unable to leave a stale
-bind (the collection is built in one burst in the constructor, and the one lazy
-path in `FShader::Bind` always binds a freshly created variant, which cannot
-equal the cached one). That is a reading, not a measurement.
+- **It was measurably broken.** In a properly configured `HAVE_GLES2=ON` build it
+  rendered entirely black — menu included — on MAP12 (twice) and MAP01, where GL
+  and Vulkan both render MAP12 at ~51.6. The cause was never investigated,
+  because there was nothing to investigate it *for*.
+- **It was reachable in builds that never asked for it.** The 2026-08-09 merge
+  resolution listed the sources unconditionally, and the `V_GetBackend() == 2`
+  branch in `nativevideo.cpp` carried no `#ifdef` — unlike the Vulkan branch
+  beside it. So `+vid_preferbackend 2` constructed GLES on a default Linux build
+  while the startup line naming the backend was compiled out: the engine ran a
+  backend it did not admit to. Gated 2026-08-11, removed the day after.
+- **Gating made the rot faster, not slower.** Once it no longer compiled by
+  default, refactors would break it silently. Gated-off broken code is an
+  unstable state — commit to it or delete it.
+- **No hardware, no users, no test.** Nothing here can run an ES driver, so it
+  could never be verified. Shipping an unverifiable renderer is worse than not
+  shipping one.
+- **The merge-cost argument had evaporated.** Keeping inherited code cheap to
+  re-merge mattered while upstream was alive. GZDoom is frozen and UZDoom does
+  not take contributions from this fork, so divergence is nearly free now.
 
-Note also `GLES_MODE_OGL3`: this is the GLES backend running on a **desktop GL 4.6
-context** (`nativevideo.cpp:633` maps backend 2 to `RenderAPI::OpenGL`), not a
-real ES driver. So none of the above is evidence about actual embedded hardware,
-which nothing here can test.
+**Backend enum value `2` is deliberately vacant.** Do *not* renumber Metal from 3
+down to 2 to close the gap — every existing `gzdoom.ini` carrying
+`vid_preferbackend 3` would silently come to mean something else.
+`V_GetBackend()` maps 2 to OpenGL and says so in a comment.
 
-**Gated 2026-08-11, and the backend menu is now per-target.** Three changes:
+The embedded case this served — Raspberry Pi 3 and older, pre-2018 Android SoCs —
+is real but unreachable from here; Pi 4/5 have Vulkan via V3DV. If it is ever
+wanted back, `git revert` the removal and fix it *with the hardware in hand*,
+which is the only way it could be done properly. A branch would have been worse
+than deletion: it looks maintained, diverges silently, and charges a rebase for
+nothing.
 
-- `src/CMakeLists.txt` — `GLES_SOURCES` is now its own list appended to
-  `FASTMATH_SOURCES` under `if (HAVE_GLES2)`, exactly as `VULKAN_SOURCES` and
-  `METAL_SOURCES` already were. Verified: `OpenGLESRenderer` symbols go from
-  **361** in a build without the gate to **0** with it. This also restores
-  `-ffast-math -ffp-contract=fast` on the GLES objects (confirmed on the compile
-  line), which is the regression recorded in `3d425b6a6`.
-- `nativevideo.cpp` — the `V_GetBackend() == 2` branch, the GLES include and the
-  `RenderAPI` selection are all `#ifdef HAVE_GLES2` now, matching the Vulkan
-  branch beside them.
-- `V_GetBackend()` — resolves the CVAR against what is compiled in. It used to
-  send an unavailable Metal (3) to **GLES (2)**, which is not a sensible
-  neighbour, and had no fallback at all for Vulkan or GLES. Everything
-  unavailable now falls back to OpenGL. **It also no longer writes the corrected
-  value back to the CVAR** — that existed so the menu would show something valid,
-  and the menu now only offers what the build has. The visible consequence is
-  that a `gzdoom.ini` carried from a macOS machine shows "Unknown" for the
-  backend on Linux instead of being silently rewritten to OpenGL. That is a
-  deliberate trade and easy to reverse if the silent rewrite is preferred.
-
-Measured on the default Linux build after gating, both previously black:
-
-| | before | after |
-|---|---|---|
-| `+vid_preferbackend 2` (GLES) | 0.000, GLES constructed | 51.638, falls back to GL |
-| `+vid_preferbackend 3` (Metal) | 0.000 — remapped to GLES | 51.638, falls back to GL |
-
-**`HAVE_GLES2=ON` still builds** (full configure and build of `build-gles`), and
-in that build backend 2 does construct GLES — and renders **entirely black, menu
-included**. So the GLES backend is broken here in its own right, which the gating
-neither caused nor fixes. Still uninvestigated, and still no evidence either way
-about real ES hardware.
-
-**Menu filtering.** `OptionValue PreferBackend` in `menudef.txt` now wraps each
-entry in `IfOption(Vulkan|GLES|Metal)`; OpenGL is unconditional because it is
-always built. This needed `IfOption` support inside `OptionValue` blocks, which
-did not exist — `ParseOptionValue` was a flat `value, "text"` loop. It is now
+**What replaced it in the menu.** `OptionValue PreferBackend` in `menudef.txt`
+now wraps each entry in `IfOption(Vulkan|Metal)`, OpenGL unconditional. That
+needed `IfOption` support inside `OptionValue` blocks, which did not exist —
+`ParseOptionValue` was a flat `value, "text"` loop and is now
 `ParseOptionValueBody`, recursing through the same `CheckSkipGameBlock` /
-`CheckSkipOptionBlock` helpers that option *menu* bodies already used, so the
-syntax is identical in both places and `ifgame`/`ifnotgame` work there too.
+`CheckSkipOptionBlock` helpers option *menu* bodies already used. So the syntax
+is identical in both places and `ifgame`/`ifnotgame` work there too. Verified by
+capture on the Linux Vulkan+GL build: `vid_preferbackend 0` shows "OpenGL", `1`
+shows "Vulkan", `3` shows **"Unknown"** — Metal is genuinely absent from the
+list, where it previously read "Metal".
 
-Verified by capture on the Linux Vulkan+GL build: `vid_preferbackend 0` shows
-"OpenGL", `1` shows "Vulkan", and `3` shows **"Unknown"** — Metal is genuinely
-absent from the list, where it previously read "Metal". The `IfOption(GLES)`
-entry takes the identical code path but was **not** confirmed visually, because
-the GLES build cannot render a frame to photograph.
+**`V_GetBackend()` also resolves against what is compiled in.** It used to send
+an unavailable Metal (3) to GLES (2), and had no fallback at all for Vulkan.
+Everything unavailable now falls back to OpenGL. It deliberately no longer writes
+the corrected value back to the CVAR: that existed so the menu would show
+something valid, and the menu now offers only what the build has. The visible
+consequence is "Unknown" rather than a silent rewrite when an ini arrives from
+another platform — easy to reverse if the rewrite is preferred.
+
 
 Task 2: `crossbackend.py --backends gl,vulkan` is **11/11 OK** — every config
 "uniform backend noise", median band mean 0.118–0.296, tone x1.00–1.01, no
@@ -440,31 +424,43 @@ carried `prog=0`→non-zero accordingly; all seven black control runs carried
 `prog=0` on the final frame. `crossbackend.py --backends gl,vulkan` is **11/11
 OK** after the fix.
 
-**Open, and separate: `tonemap_identity` only fails inside the full suite.**
-Found while regression-testing the shader fix, and first written up here as a
-flake on three samples — that was wrong, and the correction is the useful part.
-On more runs it is not random at all, it is **context-dependent**:
+**Open, and serious for the tooling: the full suite flakes on a config that
+VARIES between runs.** This was written up twice before getting it right, and
+both wrong versions are instructive. First as "a `tonemap_identity` flake" on
+three samples. Then, on more samples, as "`tonemap_identity` is
+context-dependent — it only fails inside the full suite". Both wrong in the same
+direction: the config name was never the variable.
 
-| how it is run | result |
-|---|---|
-| full suite (`crossbackend.py --backends gl,vulkan`) | SUSPECT on 2 of 4 |
-| alone (`--only tonemap_identity`) | OK on 5 of 5 |
+Measured across five full-suite runs and repeated isolated runs:
 
-The SUSPECT runs are large — per-band means 15–29 against a whole-image mean of
-about 25, worst channel delta 118 and 127 — and the tone ratio moved in *both*
-directions across them (x1.05 once, x0.99 the other), so it is not a one-sided
-brightness drift.
+| config | in the full suite | run alone (`--only <config>`) |
+|---|---|---|
+| `tonemap_identity` | SUSPECT on 2 of 5 | OK on 5 of 5 |
+| `ssao` | SUSPECT on 1 of 5 | OK on 2 of 2 |
 
-**It is not the shader fix and not the merge.** Isolated runs pass on the
-pre-fix binary, on the post-fix binary, and after the merge; the first SUSPECT
-predates the merge. Whatever it is lives in what the suite does *between*
-configs — the shared `WORKDIR/matrix.ini`, which the engine rewrites on exit, is
-the obvious first suspect, and `gl_exposure_speed 1` with an adaptive tonemap is
-the obvious second. Neither has been tested. **Nothing here has been measured
-about the cause; do not repeat any of that as a finding.**
+So roughly half of full-suite runs report **some** config SUSPECT, and *which*
+config it lands on changes. Isolated runs have never failed — and they reproduce
+the passing median band mean exactly (`ssao` 0.207, `tonemap_identity` 0.209),
+so the isolated result is not merely "different", it is the clean one.
 
-Practical consequence: a single SUSPECT on this config is not a regression
-signal, but neither is a single OK a clearance. Run it both ways.
+The SUSPECT runs are large and inconsistent in shape: per-band means 15–70
+against a whole-image mean of about 25, worst channel deltas 118–159, and tone
+ratios of x1.05, x0.99 and x0.75 — varying in both direction and magnitude.
+
+**Not caused by anything in the 2026-08-11/12 work.** Isolated runs pass on the
+pre-shader-fix binary, the post-fix binary, after the harness merge, and after
+the GLES removal; the first SUSPECT predates all of them.
+
+**Nothing has been measured about the cause.** The shared `WORKDIR/matrix.ini`
+that the engine rewrites on exit is the obvious first suspect, and
+`gl_exposure_speed 1` with an adaptive tonemap the second. Neither has been
+tested. Do not repeat either as a finding.
+
+Practical consequence, and it is worse than a single flaky config: **a lone
+SUSPECT anywhere in a full-suite run is not a regression signal.** Re-run the
+named config in isolation before believing it. Equally, a clean full suite is
+weaker evidence than it looks, because the failure moves. Fixing this should
+probably come before the suite is trusted as a gate for anything load-bearing.
 
 **Also noted, not fixed:** `FShaderProgram::Link()` (`gl_shaderprogram.cpp`, the
 `glslversion < 4.20` branch) leaves its own program bound without restoring the

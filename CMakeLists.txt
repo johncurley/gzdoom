@@ -258,10 +258,7 @@ endif()
 
 option (HAVE_VULKAN "Enable Vulkan support" OFF)
 if( APPLE )
-	option (HAVE_GLES2 "Enable GLES2 support" OFF)
 	option (HAVE_METAL "Enable Metal support" ON) # Enable Metal by default
-else()
-	option (HAVE_GLES2 "Enable GLES2 support" OFF)
 endif()
 
 
@@ -284,10 +281,6 @@ if( MSVC )
 
 	if ( HAVE_VULKAN )
 		set( ALL_C_FLAGS "${ALL_C_FLAGS} /DHAVE_VULKAN" )
-	endif()
-
-	if ( HAVE_GLES2 )
-		set( ALL_C_FLAGS "${ALL_C_FLAGS} /DHAVE_GLES2" )
 	endif()
 
 	if ( HAVE_METAL )
@@ -321,10 +314,6 @@ else()
 
 	if ( HAVE_VULKAN )
 		set( ALL_C_FLAGS "${ALL_C_FLAGS} -DHAVE_VULKAN" )
-	endif()
-
-	if ( HAVE_GLES2 )
-		set( ALL_C_FLAGS "${ALL_C_FLAGS} -DHAVE_GLES2" )
 	endif()
 
 	if ( HAVE_METAL )

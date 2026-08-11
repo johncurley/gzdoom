@@ -40,9 +40,14 @@ Note upstream ZDoom/GZDoom is effectively frozen; active community development m
 **The two lines were merged on 2026-08-09** (base `9bfaf4780`, 2026-04-01). This
 tree carries both, so the Metal tree here is live, not a stale snapshot. Only
 two files conflicted: this one, and `src/CMakeLists.txt` -- where the
-`if (HAVE_GLES2)` block was dropped because the Linux side now lists the GLES
-sources unconditionally in the main source list, and keeping both would have
-compiled them twice.
+`if (HAVE_GLES2)` block was dropped in favour of listing the GLES sources
+unconditionally.
+
+That conflict is moot as of 2026-08-11: **the GLES backend has been removed
+entirely** — sources, shaders, build option, menu entries and launcher radio
+button. See `AGENTS.md` for why. Backend enum value `2` is deliberately left
+**vacant** rather than reused, so an existing `gzdoom.ini` asking for Metal (3)
+still means Metal. `-DHAVE_GLES2=ON` is now an unused-variable warning.
 
 ## Build & run
 
@@ -186,7 +191,6 @@ Everything renders through `DFrameBuffer` (`src/common/rendering/v_video.h`), re
 DFrameBuffer → SystemBaseFrameBuffer
   ├── VulkanRenderDevice   vulkan/system/
   ├── OpenGLFrameBuffer    gl/        (+ gl_load/glad)
-  ├── OpenGLESFrameBuffer  gles/
   └── MetalRenderDevice    metal/system/   (macOS)
 ```
 

@@ -1061,10 +1061,6 @@ OptionValue PreferBackend
 	{
 		1, "$OPTVAL_VULKAN"
 	}
-	IfOption(GLES)
-	{
-		2, "$OPTVAL_OPENGLES"
-	}
 	IfOption(Metal)
 	{
 		3, "$OPTVAL_METAL"
