@@ -269,12 +269,20 @@ bool FileSystem::InitMultipleFiles (std::vector<std::string>& filenames, LumpFil
 
 	for(size_t i=0;i<filenames.size(); i++)
 	{
+		size_t filecount = Files.size();
 		AddFile(filenames[i].c_str(), nullptr, filter, Printf);
 
 		if (i == (unsigned)MaxIwadIndex) MoveLumpsInFolder("after_iwad/");
-		std::string path = "filter/%s";
-		path += Files.back()->GetHash();
-		MoveLumpsInFolder(path.c_str());
+		// AddFile reports a missing or unopenable file by returning without
+		// adding anything -- and on the CheckGameInfo path Printf is null, so
+		// it does not even say so. Files.back() was unconditional here, which
+		// made a single bad -file a segfault before the video system was up.
+		if (Files.size() > filecount)
+		{
+			std::string path = "filter/%s";
+			path += Files.back()->GetHash();
+			MoveLumpsInFolder(path.c_str());
+		}
 	}
 
 	NumEntries = (uint32_t)FileInfo.size();
