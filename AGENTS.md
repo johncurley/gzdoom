@@ -116,6 +116,33 @@ Task 1: `HAVE_VULKAN=OFF HAVE_GLES2=OFF` (the default) compiles clean with **no
 Wayland backend and the ZWidget launcher paints, listing all four IWADs and the
 new "Add Files..." button. `-DHAVE_GLES2=ON` also builds.
 
+**But the GLES backend is reachable in a `HAVE_GLES2=OFF` build, and is broken
+here** (measured 2026-08-11, three runs). Because the merge resolution lists the
+GLES sources unconditionally, they link into every build; and unlike the Vulkan
+branch beside it, the GLES branch in `NativeVideo::CreateFrameBuffer`
+(`nativevideo.cpp`, `if (V_GetBackend() == 2)`) carries **no `#ifdef
+HAVE_GLES2`**. So on the default Linux build:
+
+- `+vid_preferbackend 2` really does construct `OpenGLESRenderer::OpenGLFrameBuffer`
+  — confirmed by `GLES forced mode: GLES_MODE_OGL3` in the log, which only that
+  backend prints
+- the startup line that would say so is `#ifdef`'d out in `v_video.cpp`, so the
+  engine **silently mislabels the backend it is running**
+- every capture is black: MAP12 0.000 twice and MAP01 0.000, where GL and Vulkan
+  both render MAP12 at ~51.6
+
+**The cause is not known and was not investigated.** Do not assume it is the same
+shader-cache bug as the GL one — GLES carries an identical unguarded
+`mActiveShader`, but its compile paths look structurally unable to leave a stale
+bind (the collection is built in one burst in the constructor, and the one lazy
+path in `FShader::Bind` always binds a freshly created variant, which cannot
+equal the cached one). That is a reading, not a measurement.
+
+Note also `GLES_MODE_OGL3`: this is the GLES backend running on a **desktop GL 4.6
+context** (`nativevideo.cpp:633` maps backend 2 to `RenderAPI::OpenGL`), not a
+real ES driver. So none of the above is evidence about actual embedded hardware,
+which nothing here can test.
+
 Task 2: `crossbackend.py --backends gl,vulkan` is **11/11 OK** — every config
 "uniform backend noise", median band mean 0.118–0.296, tone x1.00–1.01, no
 structural divergence. The self-check passes for both backends on all 11
