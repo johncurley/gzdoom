@@ -62,13 +62,47 @@ it lands squarely in your build.
 - Duplicate-symbol or missing-symbol errors around `gles_*` → it was wrong, and
   the fix is to restore the block or remove the unconditional entries, not both.
 
-Also confirm the launcher still appears (run with no `-iwad`) and that GLES2
-still builds if you use it: `-DHAVE_GLES2=ON`.
+Also confirm the launcher still appears (run with no `-iwad`).
+
+**One known side effect, only for `-DHAVE_GLES2=ON` builds.** The block that was
+dropped did two jobs: it listed the GLES sources *and* appended them to
+`FASTMATH_SOURCES`, which line 1444 compiles with `ZD_FASTMATH_FLAG`. The
+surviving unconditional listing does the first job only, so GLES sources are now
+built **without** fast-math. Vulkan and Metal still get it.
+
+Not a correctness problem -- losing fast-math makes float behaviour more
+standard, not less -- but it is an unintended consequence of the merge
+resolution, and GLES2 is the one configuration nobody here builds. The default
+is OFF, so ordinary builds are unaffected. If you want the old behaviour back it
+is one line, appending to FASTMATH_SOURCES without re-listing the files:
+
+```cmake
+if (HAVE_GLES2)
+    list (APPEND FASTMATH_SOURCES ${GLES_SOURCES})
+endif()
+```
 
 ## Task 2 — run the cross-backend oracle with Vulkan
 
 This is the first time Vulkan can be used here at all; the RX 550 makes it
 possible.
+
+**`HAVE_VULKAN` defaults to OFF** (CMakeLists.txt:259). The Vulkan backend is not
+in an ordinary build, so `--backends gl,vulkan` cannot work until you rebuild:
+
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DPK3_QUIET_ZIPDIR=ON -DHAVE_VULKAN=ON .
+cmake --build build --parallel $(nproc)
+```
+
+**The harness's mod and savegame are macOS-side.** `configs.json` points at
+`~/Documents/GZDoom/*.pk3` with saves named `capspot.zds` and `save01.zds`
+(`crossbackend_launch`). Neither path nor save is likely to exist on a Linux box.
+Edit `launch.files` / `launch.savegame` and `crossbackend_launch` to a mod and
+save you actually have — any scene works, provided **both backends can capture
+it**, which is the one property that matters. Note OpenGL captures the Ashes2063
++ capspot scene as a black frame (see open items), which is why crossbackend has
+its own scene override in the first place.
 
 ```bash
 python3 tools/matrix/crossbackend.py --selfcheck --backends gl,vulkan

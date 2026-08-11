@@ -13,12 +13,11 @@
     "savegame": "save01.zds"
   },
 
-  "_platform_note": "The keys above are the macOS reference values, kept as the defaults so nothing about that machine changes. `launch_<platform>` and `crossbackend_launch_<platform>` are merged over them by sys.platform, which is how the same configs.json drives the Linux box: different binary path (no .app bundle), different mod directory, and a different screenshot directory (M_GetScreenshotsPath is $HOME/.config/gzdoom/screenshots on Unix, ~/Documents/GZDoom/Screenshots on macOS).",
+  "_platform_note": "The keys above are the macOS reference values, kept as the defaults so nothing about that machine changes. `launch_<platform>` and `crossbackend_launch_<platform>` are merged over them by sys.platform, which is how the same configs.json drives the Linux box: different binary path (no .app bundle) and a different mod directory. The screenshot directory used to be a third such key; it is not any more, because run.py pins `screenshot_dir` as a CVAR to one path on every platform. Do not reintroduce a `screenshots` override -- run.py no longer reads it, so it would be silently ignored.",
 
   "launch_linux": {
     "binary": "build/gzdoom",
-    "files": ["~/.config/gzdoom/Ashes2063Enriched2_23.pk3"],
-    "screenshots": "~/.config/gzdoom/screenshots"
+    "files": ["~/.config/gzdoom/Ashes2063Enriched2_23.pk3"]
   },
 
   "crossbackend_launch_linux": {

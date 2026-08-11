@@ -68,18 +68,21 @@ WORKDIR = "/tmp/gzdoom-matrix"
 # branch's history. All settings that matter are pinned in configs.json
 # "always", so this file starting empty is fine.
 CONFIG = os.path.join(WORKDIR, "matrix.ini")
-
-# Where the engine drops a screenshot, which is NOT the same directory on every
-# platform -- M_GetScreenshotsPath() is ~/Documents/GZDoom/Screenshots on macOS
-# (i_specialpaths.mm) and $HOME/.config/gzdoom/screenshots on Unix
-# (i_specialpaths.cpp). Hardcoding the macOS one made every Linux launch look
-# like "no capture", which reads as a launch failure rather than a path bug.
-# configs.json may override via launch.screenshots.
-SHOTS = os.path.expanduser(
-    "~/Documents/GZDoom/Screenshots" if sys.platform == "darwin"
-    else "~/.config/gzdoom/screenshots")
+# Captures land here, not in the engine's default screenshot directory. That
+# default is platform-specific (~/Documents/GZDoom/Screenshots on macOS, the XDG
+# config dir on Linux), and hardcoding either means the harness reports
+# NO CAPTURE for every config on the other platform. `screenshot_dir` is a CVAR,
+# so the launch pins it and both platforms behave identically.
+#
+# This supersedes an earlier per-platform default plus a `launch.screenshots`
+# override in configs.json. Pinning the CVAR is strictly better -- there is one
+# path, on every platform, and it is inside WORKDIR with the rest of the run --
+# so the override key is gone and nothing should reintroduce it.
+SHOTS = os.path.join(WORKDIR, "shots")
 
 # sys.platform -> the configs.json key suffix holding that platform's overrides.
+# Still needed for the paths that genuinely do differ per machine: the binary
+# and the mod files. Not the screenshot directory -- see SHOTS above.
 PLATFORM_KEY = "darwin" if sys.platform == "darwin" else (
     "linux" if sys.platform.startswith("linux") else sys.platform)
 
@@ -89,7 +92,8 @@ def platform_launch(spec, base="launch"):
 
     The macOS values stay the defaults so nothing about that machine changes;
     a platform block overrides only the keys that genuinely differ (binary
-    path, mod directory, screenshot directory).
+    path, mod directory). The screenshot directory used to be one of these and
+    is not any more -- the launch pins it as a CVAR, see SHOTS.
     """
     L = dict(spec.get(base, {}))
     L.update(spec.get(f"{base}_{PLATFORM_KEY}", {}))
@@ -144,7 +148,7 @@ def launch(cfg, spec, verbose):
                  f"Build first: cmake --build "
                  f"{os.path.dirname(L['binary']).split('/')[0] or 'build'} "
                  f"--target zdoom -j {os.cpu_count()}")
-    shots = os.path.expanduser(L.get("screenshots", SHOTS))
+    os.makedirs(SHOTS, exist_ok=True)
 
     # -nolauncher because an unattended run must never stop at a window waiting
     # to be clicked. -iwad already suppresses the launcher today, so this is
@@ -152,7 +156,8 @@ def launch(cfg, spec, verbose):
     # more than one IWAD is installed and the -iwad name fails to resolve, and
     # the failure mode is the harness hanging until its timeout with no output
     # that says why.
-    argv = [binary, "-nolauncher", "-iwad", L["iwad"], "-config", CONFIG]
+    argv = [binary, "-nolauncher", "-iwad", L["iwad"], "-config", CONFIG,
+            "+screenshot_dir", SHOTS]
     for f in L.get("files", []) + cfg.get("extra_files", []):
         argv += ["-file", os.path.expanduser(f)]
     # A scene is reached either by loading a savegame or by warping to a map.
@@ -187,7 +192,7 @@ def launch(cfg, spec, verbose):
     m = re.findall(r"^Captured (.+)$", text, re.M)
     if not m:
         return None, log_path
-    src = os.path.join(shots, m[-1].strip())
+    src = os.path.join(SHOTS, m[-1].strip())
     dst = os.path.join(WORKDIR, cfg["name"] + ".png")
     if not os.path.exists(src):
         return None, log_path
