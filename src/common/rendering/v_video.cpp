@@ -143,13 +143,33 @@ CUSTOM_CVAR(Int, vid_preferbackend, DEFAULT_RENDER_BACKEND, CVAR_ARCHIVE | CVAR_
 	Printf("Changing the video backend requires a restart for " GAMENAME ".\n");
 }
 
+// Resolve vid_preferbackend against what this binary actually contains.
+//
+// Anything not compiled in falls back to OpenGL, which is the only backend
+// always built. The old code sent an unavailable Metal (3) to GLES (2) instead,
+// which is not a sensible neighbour -- on a Linux build it meant a config
+// carrying the macOS default silently asked for the GLES backend. It also had
+// no fallback at all for Vulkan or GLES, so those selected a backend the binary
+// could not create.
+//
+// Deliberately no longer writes the corrected value back to the CVAR. That was
+// there so the menu would show something valid; the menu now offers only the
+// backends this build has (see OptionValue PreferBackend in menudef.txt), so
+// the write-back bought nothing and cost the user their stored preference the
+// first time they ran a build without it.
 int V_GetBackend()
 {
 	int v = vid_preferbackend;
-#ifndef HAVE_METAL
-	if (v == 3) vid_preferbackend = v = 2;
-#endif
 	if (v < 0 || v > 3) v = 0;
+#ifndef HAVE_VULKAN
+	if (v == 1) v = 0;
+#endif
+#ifndef HAVE_GLES2
+	if (v == 2) v = 0;
+#endif
+#ifndef HAVE_METAL
+	if (v == 3) v = 0;
+#endif
 	return v;
 }
 

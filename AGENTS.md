@@ -143,6 +143,54 @@ context** (`nativevideo.cpp:633` maps backend 2 to `RenderAPI::OpenGL`), not a
 real ES driver. So none of the above is evidence about actual embedded hardware,
 which nothing here can test.
 
+**Gated 2026-08-11, and the backend menu is now per-target.** Three changes:
+
+- `src/CMakeLists.txt` — `GLES_SOURCES` is now its own list appended to
+  `FASTMATH_SOURCES` under `if (HAVE_GLES2)`, exactly as `VULKAN_SOURCES` and
+  `METAL_SOURCES` already were. Verified: `OpenGLESRenderer` symbols go from
+  **361** in a build without the gate to **0** with it. This also restores
+  `-ffast-math -ffp-contract=fast` on the GLES objects (confirmed on the compile
+  line), which is the regression recorded in `3d425b6a6`.
+- `nativevideo.cpp` — the `V_GetBackend() == 2` branch, the GLES include and the
+  `RenderAPI` selection are all `#ifdef HAVE_GLES2` now, matching the Vulkan
+  branch beside them.
+- `V_GetBackend()` — resolves the CVAR against what is compiled in. It used to
+  send an unavailable Metal (3) to **GLES (2)**, which is not a sensible
+  neighbour, and had no fallback at all for Vulkan or GLES. Everything
+  unavailable now falls back to OpenGL. **It also no longer writes the corrected
+  value back to the CVAR** — that existed so the menu would show something valid,
+  and the menu now only offers what the build has. The visible consequence is
+  that a `gzdoom.ini` carried from a macOS machine shows "Unknown" for the
+  backend on Linux instead of being silently rewritten to OpenGL. That is a
+  deliberate trade and easy to reverse if the silent rewrite is preferred.
+
+Measured on the default Linux build after gating, both previously black:
+
+| | before | after |
+|---|---|---|
+| `+vid_preferbackend 2` (GLES) | 0.000, GLES constructed | 51.638, falls back to GL |
+| `+vid_preferbackend 3` (Metal) | 0.000 — remapped to GLES | 51.638, falls back to GL |
+
+**`HAVE_GLES2=ON` still builds** (full configure and build of `build-gles`), and
+in that build backend 2 does construct GLES — and renders **entirely black, menu
+included**. So the GLES backend is broken here in its own right, which the gating
+neither caused nor fixes. Still uninvestigated, and still no evidence either way
+about real ES hardware.
+
+**Menu filtering.** `OptionValue PreferBackend` in `menudef.txt` now wraps each
+entry in `IfOption(Vulkan|GLES|Metal)`; OpenGL is unconditional because it is
+always built. This needed `IfOption` support inside `OptionValue` blocks, which
+did not exist — `ParseOptionValue` was a flat `value, "text"` loop. It is now
+`ParseOptionValueBody`, recursing through the same `CheckSkipGameBlock` /
+`CheckSkipOptionBlock` helpers that option *menu* bodies already used, so the
+syntax is identical in both places and `ifgame`/`ifnotgame` work there too.
+
+Verified by capture on the Linux Vulkan+GL build: `vid_preferbackend 0` shows
+"OpenGL", `1` shows "Vulkan", and `3` shows **"Unknown"** — Metal is genuinely
+absent from the list, where it previously read "Metal". The `IfOption(GLES)`
+entry takes the identical code path but was **not** confirmed visually, because
+the GLES build cannot render a frame to photograph.
+
 Task 2: `crossbackend.py --backends gl,vulkan` is **11/11 OK** — every config
 "uniform backend noise", median band mean 0.118–0.296, tone x1.00–1.01, no
 structural divergence. The self-check passes for both backends on all 11

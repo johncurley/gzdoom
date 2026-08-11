@@ -1049,11 +1049,26 @@ OptionValue VanillaTrans
 	3.0, "$OPTVAL_VTAVANILLA"
 }
 
+// Only the backends actually compiled into this binary. Offering one that is
+// not there selects a backend the engine cannot create: it silently falls back,
+// or -- as the native Linux GLES path did before it was gated -- constructs a
+// backend while reporting a different one. OpenGL is unconditional because it
+// is always built.
 OptionValue PreferBackend
 {
 	0, "$OPTVAL_OPENGL"
-	1, "$OPTVAL_VULKAN"
-	3, "$OPTVAL_METAL"
+	IfOption(Vulkan)
+	{
+		1, "$OPTVAL_VULKAN"
+	}
+	IfOption(GLES)
+	{
+		2, "$OPTVAL_OPENGLES"
+	}
+	IfOption(Metal)
+	{
+		3, "$OPTVAL_METAL"
+	}
 }
 
 OptionMenu "VideoOptions" protected

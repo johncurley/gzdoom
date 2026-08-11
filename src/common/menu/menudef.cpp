@@ -889,21 +889,64 @@ static void ParseAddListMenu(FScanner& sc)
 //
 //=============================================================================
 
+//=============================================================================
+//
+// The body of an OptionValue block, which may be nested inside ifgame /
+// ifnotgame / ifoption exactly as an option MENU body can.
+//
+// Without this an OptionValue list is a fixed set on every target, which is
+// wrong for anything enumerating compiled-in features: the video backend list
+// offered Metal on Linux and Vulkan on a Metal-only macOS build, both of which
+// select a backend that is not in the binary. The filtering keywords already
+// existed for menu bodies; this reuses the same CheckSkip* helpers so the
+// syntax is identical in both places.
+//
+//=============================================================================
+
+static void ParseOptionValueBody(FScanner &sc, FOptionValues *val)
+{
+	sc.MustGetStringName("{");
+	while (!sc.CheckString("}"))
+	{
+		sc.MustGetString();
+		if (sc.Compare("else"))
+		{
+			SkipSubBlock(sc);
+		}
+		else if (sc.Compare("ifgame"))
+		{
+			if (!CheckSkipGameBlock(sc)) ParseOptionValueBody(sc, val);
+		}
+		else if (sc.Compare("ifnotgame"))
+		{
+			if (!CheckSkipGameBlock(sc, false)) ParseOptionValueBody(sc, val);
+		}
+		else if (sc.Compare("ifoption"))
+		{
+			if (!CheckSkipOptionBlock(sc)) ParseOptionValueBody(sc, val);
+		}
+		else
+		{
+			// Not a keyword, so it is a "<value>, <text>" pair. The value was
+			// already consumed as a string above; hand it back so the number
+			// parser sees it.
+			sc.UnGet();
+			FOptionValues::Pair &pair = val->mValues[val->mValues.Reserve(1)];
+			sc.MustGetFloat();
+			pair.Value = sc.Float;
+			sc.MustGetStringName(",");
+			sc.MustGetString();
+			pair.Text = strbin1(sc.String);
+		}
+	}
+}
+
 static void ParseOptionValue(FScanner &sc)
 {
 	FOptionValues *val = new FOptionValues;
 	sc.MustGetString();
 	FName optname = sc.String;
-	sc.MustGetStringName("{");
-	while (!sc.CheckString("}"))
-	{
-		FOptionValues::Pair &pair = val->mValues[val->mValues.Reserve(1)];
-		sc.MustGetFloat();
-		pair.Value = sc.Float;
-		sc.MustGetStringName(",");
-		sc.MustGetString();
-		pair.Text = strbin1(sc.String);
-	}
+	ParseOptionValueBody(sc, val);
 	FOptionValues **pOld = OptionValues.CheckKey(optname);
 	if (pOld != nullptr && *pOld != nullptr) 
 	{
