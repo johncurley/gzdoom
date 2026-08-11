@@ -2,118 +2,238 @@
   "launch": {
     "binary": "build/gzdoom.app/Contents/MacOS/gzdoom",
     "iwad": "DOOM2.wad",
-    "files": ["~/Documents/GZDoom/Ashes2063Enriched2_23.pk3"],
+    "files": [
+      "~/Documents/GZDoom/Ashes2063Enriched2_23.pk3"
+    ],
     "savegame": "capspot.zds",
     "settle_frames": 120,
-    "always": ["+vid_preferbackend 3", "+vid_fullscreen 0", "+win_w 800", "+win_h 600", "+cl_capfps 1", "+gl_exposure_speed 1", "+con_notifylines 0", "+con_notifytime 0"]
+    "always": [
+      "+vid_preferbackend 3",
+      "+vid_fullscreen 0",
+      "+win_w 800",
+      "+win_h 600",
+      "+cl_capfps 1",
+      "+gl_exposure_speed 1",
+      "+con_notifylines 0",
+      "+con_notifytime 0"
+    ]
   },
-
   "crossbackend_launch": {
-    "files": ["~/Documents/GZDoom/AshesHardReset_105.pk3"],
+    "files": [
+      "~/Documents/GZDoom/AshesHardReset_105.pk3"
+    ],
     "savegame": "save01.zds"
   },
-
   "_platform_note": "The keys above are the macOS reference values, kept as the defaults so nothing about that machine changes. `launch_<platform>` and `crossbackend_launch_<platform>` are merged over them by sys.platform, which is how the same configs.json drives the Linux box: different binary path (no .app bundle) and a different mod directory. The screenshot directory used to be a third such key; it is not any more, because run.py pins `screenshot_dir` as a CVAR to one path on every platform. Do not reintroduce a `screenshots` override -- run.py no longer reads it, so it would be silently ignored.",
-
   "launch_linux": {
     "binary": "build/gzdoom",
-    "files": ["~/.config/gzdoom/Ashes2063Enriched2_23.pk3"]
+    "files": [
+      "~/.config/gzdoom/Ashes2063Enriched2_23.pk3"
+    ]
   },
-
   "crossbackend_launch_linux": {
-    "files": ["~/.config/gzdoom/AshesHardReset_105.pk3"],
+    "files": [
+      "~/.config/gzdoom/AshesHardReset_105.pk3"
+    ],
     "savegame": "save01.zds"
   },
-
-  "_scenes_note": "Selected with --scene. The default scene needs a third-party mod and a savegame, neither of which travels between machines -- the savegames are per-machine files and the pk3s are large downloads. The doom2/doom1 scenes need only a stock IWAD and a map name, so they run anywhere, including CI, and they cover the bare-IWAD path that the mod scenes never touch. Maps are chosen for content, not convenience: a mostly-enclosed room gives the postprocess passes something to act on. NOTE doom2 uses MAP12 rather than MAP01 deliberately -- see the GL black-frame open item in AGENTS.md; MAP01/02/03/04/06/07/09/10 currently render as an all-black frame on OpenGL and would make every config compare black to black. Switch this to MAP01 once that is fixed, since it is the better regression target.",
-
+  "_scenes_note": "Selected with --scene. The default scene needs a third-party mod and a savegame, neither of which travels between machines -- the savegames are per-machine files and the pk3s are large downloads. The doom2/doom1 scenes need only a stock IWAD and a map name, so they run anywhere, including CI, and they cover the bare-IWAD path that the mod scenes never touch. A map here must satisfy TWO requirements, and they are not the same requirement: every pass must visibly act on it, AND repeated identical launches must produce identical pixels.",
+  "_map_choice_note": "doom2 uses MAP06, measured 2026-08-12 rather than assumed. MAP12 was the previous choice, forced by the GL black-frame bug (now fixed, 949b3c9be) -- and it was actively harmful: `gl_ssao 3` changes 0.000% of MAP12, so the ssao must_differ_from relation was being satisfied entirely by RNG noise from the status bar face and would have reported ok with the AO pass completely dead. That is the exact failure this suite exists to prevent. Measured over eight candidates, as %px differing from baseline -- noise is two identical launches: MAP01 n=0.000 ssao=19.2 bloom=4.4; MAP02 n=0.000 ssao=31.9 bloom=0.2; MAP03 n=0.000 ssao=64.1 bloom=0.0; MAP06 n=0.000 ssao=57.4 bloom=6.9; MAP07 n=0.000 ssao=0.0 bloom=11.7; MAP11 n=0.115 ssao=12.3 bloom=3.4; MAP12 n=0.004 ssao=0.0 bloom=50.9; MAP15 n=0.132 ssao=45.1 bloom=21.5. MAP03 and MAP07 fail the same way MAP12 did, in the other pass. On an 8-sample determinism check MAP06 was 8/8 pixel-identical where MAP01 gave four distinct states, so MAP01 is NOT the better target despite the earlier note here saying so. Do not change this map without re-running both measurements -- a map that looks fine can silently disarm a relation.",
   "_screenblocks_note": "The stock scenes pin `screenblocks 12` (no status bar) via always_extra. This is not cosmetic: the Doomguy face is turned by M_Random on an idle timer, so the captured tic samples an arbitrary RNG phase and identical launches produce different pixels. Measured on doom2/MAP12, 8 samples: 6 distinct states with the status bar, 7-of-8 identical without it. The suite tests postprocess passes and the status bar is not one, so removing it costs nothing measured here. See AGENTS.md. The default (mod) scene deliberately does NOT set this -- it would invalidate the recorded baseline.",
-
   "scenes": {
     "doom2": {
       "iwad": "DOOM2.wad",
       "files": [],
-      "map": "MAP12",
-      "always_extra": ["+screenblocks 12"]
+      "map": "MAP06",
+      "always_extra": [
+        "+screenblocks 12"
+      ]
     },
     "doom1": {
       "iwad": "DOOM.wad",
       "files": [],
       "map": "E1M1",
-      "always_extra": ["+screenblocks 12"]
+      "always_extra": [
+        "+screenblocks 12"
+      ]
     }
   },
-
   "configs": [
     {
       "name": "baseline",
       "note": "Every optional pass off. The thing everything else is measured against.",
-      "cvars": ["+gl_bloom 0", "+gl_ssao 0", "+gl_tonemap 0", "+gl_lens 0", "+gl_fxaa 0"]
+      "cvars": [
+        "+gl_bloom 0",
+        "+gl_ssao 0",
+        "+gl_tonemap 0",
+        "+gl_lens 0",
+        "+gl_fxaa 0"
+      ]
+    },
+    {
+      "name": "baseline_bloom",
+      "note": "Baseline for the bloom pair only, on the bloom map. Exists because bloom and ssao cannot be measured on the same stock map -- see _map_choice_note. Not a second opinion on `baseline`; it is a different scene and its signature is not comparable to one. Relations only on the doom2 scene: bloom lives on MAP12 (the only stock map where it acts at all) and MAP12 contains a green torch whose flame frame varies between launches, which bloom then amplifies. A stored signature would DIFF on most runs. The must_differ relation is unaffected -- 38.61% of pixels against the torch's 0.004%.",
+      "map": "MAP12",
+      "cvars": [
+        "+gl_bloom 0",
+        "+gl_ssao 0",
+        "+gl_tonemap 0",
+        "+gl_lens 0",
+        "+gl_fxaa 0"
+      ],
+      "relations_only": true
     },
     {
       "name": "ssao",
       "note": "Reference PP AO. Composited nothing at all until 2026-08-06.",
-      "cvars": ["+gl_bloom 0", "+gl_ssao 3", "+gl_tonemap 0", "+gl_lens 0", "+gl_fxaa 0"],
+      "cvars": [
+        "+gl_bloom 0",
+        "+gl_ssao 3",
+        "+gl_tonemap 0",
+        "+gl_lens 0",
+        "+gl_fxaa 0"
+      ],
       "must_differ_from": "baseline"
     },
     {
       "name": "bloom_ref",
-      "note": "Reference PP bloom.",
-      "cvars": ["+gl_bloom 1", "+mt_compute_bloom 0", "+gl_ssao 0", "+gl_tonemap 0", "+gl_lens 0", "+gl_fxaa 0"],
-      "must_differ_from": "baseline"
+      "note": "Reference PP bloom. Relations only on the doom2 scene: bloom lives on MAP12 (the only stock map where it acts at all) and MAP12 contains a green torch whose flame frame varies between launches, which bloom then amplifies. A stored signature would DIFF on most runs. The must_differ relation is unaffected -- 38.61% of pixels against the torch's 0.004%.",
+      "map": "MAP12",
+      "cvars": [
+        "+gl_bloom 1",
+        "+mt_compute_bloom 0",
+        "+gl_ssao 0",
+        "+gl_tonemap 0",
+        "+gl_lens 0",
+        "+gl_fxaa 0"
+      ],
+      "must_differ_from": "baseline_bloom",
+      "relations_only": true
     },
     {
       "name": "bloom_compute",
-      "note": "Metal compute bloom. Agreed with bloom_ref to max_delta 1 on 2026-08-07, so it is NOT declared must_differ_from bloom_ref -- see tolerance.",
-      "cvars": ["+gl_bloom 1", "+mt_compute_bloom 1", "+gl_ssao 0", "+gl_tonemap 0", "+gl_lens 0", "+gl_fxaa 0"],
-      "must_differ_from": "baseline"
+      "note": "Metal compute bloom. Agreed with bloom_ref to max_delta 1 on 2026-08-07, so it is NOT declared must_differ_from bloom_ref -- see tolerance. Relations only on the doom2 scene: bloom lives on MAP12 (the only stock map where it acts at all) and MAP12 contains a green torch whose flame frame varies between launches, which bloom then amplifies. A stored signature would DIFF on most runs. The must_differ relation is unaffected -- 38.61% of pixels against the torch's 0.004%.",
+      "map": "MAP12",
+      "cvars": [
+        "+gl_bloom 1",
+        "+mt_compute_bloom 1",
+        "+gl_ssao 0",
+        "+gl_tonemap 0",
+        "+gl_lens 0",
+        "+gl_fxaa 0"
+      ],
+      "must_differ_from": "baseline_bloom",
+      "relations_only": true
     },
     {
       "name": "tonemap_uncharted",
       "note": "gl_tonemap 1. Rendered upside down until 5a9b53e1b.",
-      "cvars": ["+gl_bloom 0", "+gl_ssao 0", "+gl_tonemap 1", "+gl_lens 0", "+gl_fxaa 0"],
+      "cvars": [
+        "+gl_bloom 0",
+        "+gl_ssao 0",
+        "+gl_tonemap 1",
+        "+gl_lens 0",
+        "+gl_fxaa 0"
+      ],
       "must_differ_from": "baseline"
     },
     {
       "name": "tonemap_identity",
       "note": "gl_tonemap 4 is sqrt(c*c) == c, a mathematical identity. It MUST reproduce the baseline exactly, and tonemap_uncharted proves the pass is capable of changing pixels -- both halves are required.",
-      "cvars": ["+gl_bloom 0", "+gl_ssao 0", "+gl_tonemap 4", "+gl_lens 0", "+gl_fxaa 0"],
+      "cvars": [
+        "+gl_bloom 0",
+        "+gl_ssao 0",
+        "+gl_tonemap 4",
+        "+gl_lens 0",
+        "+gl_fxaa 0"
+      ],
       "must_match": "baseline"
     },
     {
       "name": "lens",
       "note": "gl_lens 1, one draw. Rendered upside down until 5a9b53e1b.",
-      "cvars": ["+gl_bloom 0", "+gl_ssao 0", "+gl_tonemap 0", "+gl_lens 1", "+gl_fxaa 0"],
+      "cvars": [
+        "+gl_bloom 0",
+        "+gl_ssao 0",
+        "+gl_tonemap 0",
+        "+gl_lens 1",
+        "+gl_fxaa 0"
+      ],
       "must_differ_from": "baseline"
     },
     {
       "name": "fxaa",
       "note": "gl_fxaa 1, two draws. Its evenness is why it accidentally survived the V-flip bug.",
-      "cvars": ["+gl_bloom 0", "+gl_ssao 0", "+gl_tonemap 0", "+gl_lens 0", "+gl_fxaa 1"],
+      "cvars": [
+        "+gl_bloom 0",
+        "+gl_ssao 0",
+        "+gl_tonemap 0",
+        "+gl_lens 0",
+        "+gl_fxaa 1"
+      ],
       "must_differ_from": "baseline"
     },
     {
       "name": "colormap",
       "note": "Not a cvar -- a palette flash from an item pickup. Fires in ordinary play and flipped the whole screen until 5a9b53e1b.",
-      "cvars": ["+gl_bloom 0", "+gl_ssao 0", "+gl_tonemap 0", "+gl_lens 0", "+gl_fxaa 0"],
-      "exec": [[60, "give InvulnerabilitySphere"]],
+      "cvars": [
+        "+gl_bloom 0",
+        "+gl_ssao 0",
+        "+gl_tonemap 0",
+        "+gl_lens 0",
+        "+gl_fxaa 0"
+      ],
+      "exec": [
+        [
+          60,
+          "give InvulnerabilitySphere"
+        ]
+      ],
       "must_differ_from": "baseline"
     },
     {
       "name": "custom_pp_identity",
       "note": "Custom postprocess shader at pptest_scale 1.0 is an identity, so it must reproduce the baseline. Requires tools/pptest/make.py to have been run. Never executed AT ALL on Metal until 25fbdc24b.",
-      "extra_files": ["/tmp/pptest.pk3"],
-      "cvars": ["+gl_bloom 0", "+gl_ssao 0", "+gl_tonemap 0", "+gl_lens 0", "+gl_fxaa 0", "+pptest_scale 1.0"],
-      "exec": [[60, "shaderenable pptest 1"]],
+      "extra_files": [
+        "/tmp/pptest.pk3"
+      ],
+      "cvars": [
+        "+gl_bloom 0",
+        "+gl_ssao 0",
+        "+gl_tonemap 0",
+        "+gl_lens 0",
+        "+gl_fxaa 0",
+        "+pptest_scale 1.0"
+      ],
+      "exec": [
+        [
+          60,
+          "shaderenable pptest 1"
+        ]
+      ],
       "must_match": "baseline",
       "optional": true
     },
     {
       "name": "custom_pp_half",
       "note": "The other half of custom_pp_identity: at 0.5 the same shader must visibly darken, or the identity above is just 'the pass never ran'.",
-      "extra_files": ["/tmp/pptest.pk3"],
-      "cvars": ["+gl_bloom 0", "+gl_ssao 0", "+gl_tonemap 0", "+gl_lens 0", "+gl_fxaa 0", "+pptest_scale 0.5"],
-      "exec": [[60, "shaderenable pptest 1"]],
+      "extra_files": [
+        "/tmp/pptest.pk3"
+      ],
+      "cvars": [
+        "+gl_bloom 0",
+        "+gl_ssao 0",
+        "+gl_tonemap 0",
+        "+gl_lens 0",
+        "+gl_fxaa 0",
+        "+pptest_scale 0.5"
+      ],
+      "exec": [
+        [
+          60,
+          "shaderenable pptest 1"
+        ]
+      ],
       "must_differ_from": "baseline",
       "optional": true
     }

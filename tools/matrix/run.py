@@ -100,6 +100,51 @@ def platform_launch(spec, base="launch"):
     return L
 
 
+def effective_map(cfg, L):
+    """The map a config actually loads: its own `map`, else the scene's.
+
+    No single stock map exercises every pass. Measured 2026-08-12 over eight
+    candidates: `gl_ssao 3` changes nothing at all on MAP12 and MAP07, `gl_bloom`
+    changes nothing on MAP03 and MAP06, and the maps where both act (MAP11,
+    MAP15) are the ones that fail an 8-sample determinism check. Forcing one map
+    on every config therefore means knowingly disarming whichever relation that
+    map is blind to -- silently, and reported as `ok`. MAP12 was doing exactly
+    that to ssao.
+
+    A savegame-based scene ignores this: the save carries its own level.
+    """
+    return cfg.get("map") or L.get("map")
+
+
+def relation_partners(configs):
+    """Yield (config, kind, partner_config) for every declared relation."""
+    by_name = {c["name"]: c for c in configs}
+    for c in configs:
+        for kind in ("must_differ_from", "must_match"):
+            other = c.get(kind)
+            if other and other in by_name:
+                yield c, kind, by_name[other]
+
+
+def check_relation_maps(configs, L):
+    """A relation between two different maps is meaningless -- refuse to run it.
+
+    Comparing a config on one map against a partner on another compares two
+    scenes, so must_differ_from passes trivially and must_match can never hold.
+    This is a hard exit rather than a warning: the whole point of the relations
+    is that they cannot be satisfied by accident.
+    """
+    if L.get("savegame"):
+        return
+    bad = [(c["name"], effective_map(c, L), o["name"], effective_map(o, L))
+           for c, _, o in relation_partners(configs)
+           if effective_map(c, L) != effective_map(o, L)]
+    if bad:
+        for name, m1, other, m2 in bad:
+            print(f"  {name} ({m1}) is related to {other} ({m2})")
+        sys.exit("relation across two different maps -- it could not mean anything")
+
+
 def apply_scene(spec, scene):
     """Merge a named entry from configs.json "scenes" over spec["launch"].
 
@@ -172,8 +217,8 @@ def launch(cfg, spec, verbose):
     # configs.json. savegame wins if a scene somehow sets both.
     if L.get("savegame"):
         argv += ["-loadgame", L["savegame"]]
-    elif L.get("map"):
-        argv += ["+map", L["map"]]
+    elif effective_map(cfg, L):
+        argv += ["+map", effective_map(cfg, L)]
 
     for tok in L.get("always", []):
         argv += tok.split()
@@ -284,6 +329,8 @@ def main():
             print(f"skipping optional configs (missing -file): {', '.join(skipped)}")
             print("  (run tools/pptest/make.py to enable the custom-PP ones)\n")
 
+    check_relation_maps(configs, spec["launch"])
+
     os.makedirs(WORKDIR, exist_ok=True)
 
     images, sigs = {}, {}
@@ -332,8 +379,18 @@ def main():
             identical = d["max_channel_delta"] == 0
             if kind == "must_differ_from":
                 if identical or d["px_differing_gt2"] == 0:
-                    print(f"  FAIL {name} is PIXEL-IDENTICAL to {other}. "
-                          f"The effect is not taking effect.")
+                    # Distinguish the two cases. Both used to print
+                    # "PIXEL-IDENTICAL", which on a capture whose hash and
+                    # mean_lum plainly differed reads as a contradiction and
+                    # cost a wrong diagnosis. The threshold case is a real
+                    # result -- it is just a different statement.
+                    if identical:
+                        why = f"is PIXEL-IDENTICAL to {other}"
+                    else:
+                        why = (f"differs from {other} only below the noise "
+                               f"threshold: no pixel moves by more than 2 "
+                               f"levels (max delta {d['max_channel_delta']})")
+                    print(f"  FAIL {name} {why}. The effect is not taking effect.")
                     rel_fail.append(name)
                 else:
                     print(f"  ok   {name} differs from {other}: "
@@ -367,7 +424,15 @@ def main():
             else:
                 print(f"\nscene changed ({prev.get('scene', 'default')} -> {scene}); "
                       "replacing the baseline rather than merging into it")
-        old.update({k: v for k, v in sigs.items() if v})
+        # relations_only configs are deliberately kept OUT of the golden image.
+        # Their map is not reproducible launch to launch, so a stored signature
+        # would report DIFF on most runs -- and a gate that cries wolf is worse
+        # than no gate, because the reader stops looking. Their relations still
+        # run, and a relation is what catches the pass dying outright.
+        rel_only = {c["name"] for c in configs if c.get("relations_only")}
+        old.update({k: v for k, v in sigs.items() if v and k not in rel_only})
+        for k in rel_only:
+            old.pop(k, None)
         with open(BASELINE, "w") as f:
             json.dump({"note": "Golden-image signatures. See tools/matrix/run.py.",
                        "recorded": time.strftime("%Y-%m-%d %H:%M"),
@@ -401,6 +466,10 @@ def main():
     for cfg in configs:
         name = cfg["name"]
         if name not in sigs or not sigs[name]:
+            continue
+        if cfg.get("relations_only"):
+            print(f"  --   {name}: relations only, by declaration (not in the "
+                  f"golden image)")
             continue
         if name not in base:
             print(f"  --   {name}: no baseline entry (new config)")
