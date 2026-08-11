@@ -237,5 +237,6 @@
       "must_differ_from": "baseline",
       "optional": true
     }
-  ]
+  ],
+  "_doom1_note": "doom1/E1M1 is UNVALIDATED. It has never been measured on either requirement -- nobody has checked that each pass acts on E1M1, nor that repeated launches are pixel-identical there. Its screenblocks 12 was pinned by symmetry with doom2, not by measurement. Treat a green run on this scene as unproven: MAP12 looked fine for months while silently disarming the ssao relation. It could not be measured on 2026-08-12 because the reference machine has only DOOM2.wad. Before using it, run the same two measurements recorded in _map_choice_note and pick the map from the result -- E1M1 is a guess, and the doom2 scan found that only 1 map in 8 satisfied both requirements."
 }

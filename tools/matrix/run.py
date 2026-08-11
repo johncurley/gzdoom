@@ -240,6 +240,22 @@ def launch(cfg, spec, verbose):
         subprocess.run(argv, stdout=log, stderr=subprocess.STDOUT, cwd=ROOT)
 
     text = open(log_path, errors="replace").read()
+
+    # -iwad does NOT fail when the named IWAD is absent: the engine falls back to
+    # whichever one it can find and says so only in an `adding <path>` line. Ask
+    # for DOOM.wad on a machine that has only DOOM2.wad and it loads DOOM2,
+    # then dies on `map E1M1` -- which surfaces as NO CAPTURE, with nothing
+    # anywhere saying the wrong game was loaded. Every capture in such a run
+    # would be of a different IWAD than the one declared. Hard-exit instead.
+    want = L["iwad"]
+    if not re.search(r"^adding .*%s, \d+ lumps" % re.escape(want), text,
+                     re.M | re.I):
+        got = re.findall(r"^adding (.*\.wad), \d+ lumps", text, re.M | re.I)
+        sys.exit(f"{cfg['name']}: asked for {want} but the engine loaded "
+                 f"{os.path.basename(got[0]) if got else 'no IWAD'} -- "
+                 f"install {want} or drop the scene that needs it "
+                 f"(see {log_path})")
+
     m = re.findall(r"^Captured (.+)$", text, re.M)
     if not m:
         return None, log_path
