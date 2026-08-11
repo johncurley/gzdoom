@@ -232,11 +232,18 @@ def main():
     ap.add_argument("--only", help="comma-separated config names")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--keep", action="store_true", help="keep captures in " + WORKDIR)
+    ap.add_argument("--scene", help="named entry from configs.json \"scenes\"; "
+                                    "omit for the default (mod-based) scene")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
 
-    spec = load_configs()
+    spec = load_configs(args.scene)
     configs = spec["configs"]
+    # Signatures are only comparable within one scene, so every baseline is
+    # stamped with the scene that produced it and SCENE is what that stamp is
+    # checked against. The default scene predates the stamp, hence its name
+    # doubling as the value assumed for an unstamped baseline.
+    scene = args.scene or "default"
 
     if args.list:
         for c in configs:
@@ -345,11 +352,20 @@ def main():
             return 2
         old = {}
         if os.path.exists(BASELINE):
-            old = json.load(open(BASELINE)).get("configs", {})
+            prev = json.load(open(BASELINE))
+            # Merging across scenes would leave one file holding signatures of
+            # two different viewpoints, indistinguishable from each other and
+            # both wrong for whichever scene ran next. A scene change replaces.
+            if prev.get("scene", "default") == scene:
+                old = prev.get("configs", {})
+            else:
+                print(f"\nscene changed ({prev.get('scene', 'default')} -> {scene}); "
+                      "replacing the baseline rather than merging into it")
         old.update({k: v for k, v in sigs.items() if v})
         with open(BASELINE, "w") as f:
             json.dump({"note": "Golden-image signatures. See tools/matrix/run.py.",
                        "recorded": time.strftime("%Y-%m-%d %H:%M"),
+                       "scene": scene,
                        "configs": old}, f, indent=2, sort_keys=True)
         print(f"\nbaseline recorded for {len(sigs)} configurations -> {BASELINE}")
         return 0
@@ -358,7 +374,22 @@ def main():
         print("\nno baseline yet. Record one with --update-baseline.")
         return 1 if rel_fail else 0
 
-    base = json.load(open(BASELINE))["configs"]
+    stored = json.load(open(BASELINE))
+    base_scene = stored.get("scene", "default")
+    if base_scene != scene:
+        # Comparing anyway would report a DIFF for every config, which reads as
+        # a catastrophic regression and is really just a different viewpoint.
+        # The relations above are self-contained and still carry their signal.
+        print(f"\nbaseline was recorded on scene {base_scene!r}, this run is "
+              f"{scene!r} -- skipping the baseline comparison.")
+        print("  Signatures from two scenes are not comparable. Relations above "
+              "still apply.")
+        print("\n" + ("PASS (relations only)" if not rel_fail else "FAIL"))
+        if rel_fail:
+            print("  broken relations:    " + ", ".join(sorted(set(rel_fail))))
+        return 1 if rel_fail else 0
+
+    base = stored["configs"]
     print("\nagainst baseline:")
     drift = []
     for cfg in configs:
