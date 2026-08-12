@@ -682,6 +682,47 @@ owner and `dispatch_async` still cannot drain inside a main-queue block.
 Each of these produced a wrong conclusion that survived until something
 measured it. They are listed because re-learning them is expensive.
 
+### A silent segfault on any unreadable `-file` (fixed 2026-08-12, `5a567cd85`)
+
+**Symptom:** the engine dies with no error at all. The log ends after the
+version banner — 230 bytes — and nothing says why. Through the matrix harness
+this appeared as `NO CAPTURE` on all nine configurations at once, with nine
+byte-identical logs.
+
+**Cause**, in `src/common/filesystem/source/filesystem.cpp`:
+
+```
+for (size_t i = 0; i < filenames.size(); i++)
+{
+    AddFile(filenames[i].c_str(), nullptr, filter, Printf);
+    ...
+    path += Files.back()->GetHash();   // <-- unconditional
+}
+```
+
+`AddFile()` reports a missing or unopenable file by **returning without pushing
+to `Files`**. So on the first filename, `Files` is still empty and `Files.back()`
+dereferences an empty vector: SIGSEGV inside `D_DoomMain`, before the video
+system is up. And on the `CheckGameInfo` path `Printf` is null, so `AddFile`'s
+own "File or Directory not found" is never emitted either — hence the silence.
+
+**What made it fire here:** the harness's default scene names a mod pk3 under
+`~/Documents`, which macOS TCC blocks for a process launched from a terminal
+without Documents access. The file exists; the engine cannot open it; the
+engine crashes.
+
+**Why it matters beyond that:** this is inherited common code, not fork-specific.
+Any launch naming an unreadable `-file` before the console exists hits it, on
+any platform, and reproduces on upstream master.
+
+**Two lessons worth keeping separate from the fix.** First, an empty-container
+`.back()` is UB, so the symptom is whatever the allocator felt like — here a
+clean crash, but a corrupted read is equally permitted and would have been far
+harder to find. Second, the diagnosis initially stopped at "TCC blocked the
+file, environment problem" and was wrong: the environment only *triggered* it.
+A missing `-file` should produce a message, not a crash, and treating the
+trigger as the cause would have left the bug in place.
+
 ### Build and cache
 
 **The engine loads the pk3 next to the executable.** Rebuild
