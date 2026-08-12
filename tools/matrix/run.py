@@ -100,8 +100,14 @@ def platform_launch(spec, base="launch"):
     return L
 
 
-def effective_map(cfg, L):
+def effective_map(cfg, L, scene=None):
     """The map a config actually loads: its own `map`, else the scene's.
+
+    A config's `map` is keyed BY SCENE ({"doom2": "MAP12"}), because a map name
+    only means anything inside one IWAD -- MAP12 does not exist in DOOM.WAD, so
+    a bare string here would send the doom1 scene looking for a Doom 2 map. A
+    scene with no entry just uses its own map, which is the common case: E1M3
+    exercises every pass on its own, so doom1 needs no overrides at all.
 
     No single stock map exercises every pass. Measured 2026-08-12 over eight
     candidates: `gl_ssao 3` changes nothing at all on MAP12 and MAP07, `gl_bloom`
@@ -113,7 +119,10 @@ def effective_map(cfg, L):
 
     A savegame-based scene ignores this: the save carries its own level.
     """
-    return cfg.get("map") or L.get("map")
+    m = cfg.get("map")
+    if isinstance(m, dict):
+        m = m.get(scene or "default")
+    return m or L.get("map")
 
 
 def relation_partners(configs):
@@ -126,7 +135,7 @@ def relation_partners(configs):
                 yield c, kind, by_name[other]
 
 
-def check_relation_maps(configs, L):
+def check_relation_maps(configs, L, scene=None):
     """A relation between two different maps is meaningless -- refuse to run it.
 
     Comparing a config on one map against a partner on another compares two
@@ -136,9 +145,10 @@ def check_relation_maps(configs, L):
     """
     if L.get("savegame"):
         return
-    bad = [(c["name"], effective_map(c, L), o["name"], effective_map(o, L))
+    bad = [(c["name"], effective_map(c, L, scene), o["name"],
+            effective_map(o, L, scene))
            for c, _, o in relation_partners(configs)
-           if effective_map(c, L) != effective_map(o, L)]
+           if effective_map(c, L, scene) != effective_map(o, L, scene)]
     if bad:
         for name, m1, other, m2 in bad:
             print(f"  {name} ({m1}) is related to {other} ({m2})")
@@ -186,7 +196,7 @@ def load_configs(scene=None):
     return apply_scene(spec, scene)
 
 
-def launch(cfg, spec, verbose):
+def launch(cfg, spec, verbose, scene=None):
     """One configuration, one process, no operator. Returns (png_path, log_path)."""
     L = spec["launch"]
     # GZDOOM_MATRIX_BINARY overrides the configured path, so a second build
@@ -217,8 +227,8 @@ def launch(cfg, spec, verbose):
     # configs.json. savegame wins if a scene somehow sets both.
     if L.get("savegame"):
         argv += ["-loadgame", L["savegame"]]
-    elif effective_map(cfg, L):
-        argv += ["+map", effective_map(cfg, L)]
+    elif effective_map(cfg, L, scene):
+        argv += ["+map", effective_map(cfg, L, scene)]
 
     for tok in L.get("always", []):
         argv += tok.split()
@@ -345,7 +355,7 @@ def main():
             print(f"skipping optional configs (missing -file): {', '.join(skipped)}")
             print("  (run tools/pptest/make.py to enable the custom-PP ones)\n")
 
-    check_relation_maps(configs, spec["launch"])
+    check_relation_maps(configs, spec["launch"], scene)
 
     os.makedirs(WORKDIR, exist_ok=True)
 
@@ -358,14 +368,14 @@ def main():
     # "image geometry differs" on baseline alone), and cold shader compilation,
     # which perturbs the exposure settle for one launch after a rebuild.
     print("warmup launch (discarded)")
-    launch(configs[0], spec, args.verbose)
+    launch(configs[0], spec, args.verbose, scene)
 
     print(f"running {len(configs)} configurations, one launch each\n")
     for i, cfg in enumerate(configs, 1):
         name = cfg["name"]
         t0 = time.time()
         print(f"[{i}/{len(configs)}] {name} ...", end="", flush=True)
-        png, log = launch(cfg, spec, args.verbose)
+        png, log = launch(cfg, spec, args.verbose, scene)
         if not png:
             print(f" NO CAPTURE  (see {log})")
             sigs[name] = None

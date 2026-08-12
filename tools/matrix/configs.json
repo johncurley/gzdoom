@@ -52,7 +52,7 @@
     "doom1": {
       "iwad": "DOOM.wad",
       "files": [],
-      "map": "E1M1",
+      "map": "E1M3",
       "always_extra": [
         "+screenblocks 12"
       ]
@@ -73,7 +73,9 @@
     {
       "name": "baseline_bloom",
       "note": "Baseline for the bloom pair only, on the bloom map. Exists because bloom and ssao cannot be measured on the same stock map -- see _map_choice_note. Not a second opinion on `baseline`; it is a different scene and its signature is not comparable to one. Relations only on the doom2 scene: bloom lives on MAP12 (the only stock map where it acts at all) and MAP12 contains a green torch whose flame frame varies between launches, which bloom then amplifies. A stored signature would DIFF on most runs. The must_differ relation is unaffected -- 38.61% of pixels against the torch's 0.004%.",
-      "map": "MAP12",
+      "map": {
+        "doom2": "MAP12"
+      },
       "cvars": [
         "+gl_bloom 0",
         "+gl_ssao 0",
@@ -98,7 +100,9 @@
     {
       "name": "bloom_ref",
       "note": "Reference PP bloom. Relations only on the doom2 scene: bloom lives on MAP12 (the only stock map where it acts at all) and MAP12 contains a green torch whose flame frame varies between launches, which bloom then amplifies. A stored signature would DIFF on most runs. The must_differ relation is unaffected -- 38.61% of pixels against the torch's 0.004%.",
-      "map": "MAP12",
+      "map": {
+        "doom2": "MAP12"
+      },
       "cvars": [
         "+gl_bloom 1",
         "+mt_compute_bloom 0",
@@ -113,7 +117,9 @@
     {
       "name": "bloom_compute",
       "note": "Metal compute bloom. Agreed with bloom_ref to max_delta 1 on 2026-08-07, so it is NOT declared must_differ_from bloom_ref -- see tolerance. Relations only on the doom2 scene: bloom lives on MAP12 (the only stock map where it acts at all) and MAP12 contains a green torch whose flame frame varies between launches, which bloom then amplifies. A stored signature would DIFF on most runs. The must_differ relation is unaffected -- 38.61% of pixels against the torch's 0.004%.",
-      "map": "MAP12",
+      "map": {
+        "doom2": "MAP12"
+      },
       "cvars": [
         "+gl_bloom 1",
         "+mt_compute_bloom 1",
@@ -238,5 +244,5 @@
       "optional": true
     }
   ],
-  "_doom1_note": "doom1/E1M1 is UNVALIDATED. It has never been measured on either requirement -- nobody has checked that each pass acts on E1M1, nor that repeated launches are pixel-identical there. Its screenblocks 12 was pinned by symmetry with doom2, not by measurement. Treat a green run on this scene as unproven: MAP12 looked fine for months while silently disarming the ssao relation. It could not be measured on 2026-08-12 because the reference machine has only DOOM2.wad. Before using it, run the same two measurements recorded in _map_choice_note and pick the map from the result -- E1M1 is a guess, and the doom2 scan found that only 1 map in 8 satisfied both requirements."
+  "_doom1_note": "doom1 uses E1M3, measured 2026-08-12 on the same two requirements as doom2. E1M3 is the only map found in either IWAD that satisfies both on its own: ssao 44.82%, bloom 15.55% (suite metric, >2 levels), and 8/8 pixel-identical over eight launches -- so unlike doom2 it needs no per-config map override, and the bloom trio's override is keyed to doom2 only. E1M1 was the previous guess and measured poorly: bloom 0.01% d36 against its own noise of 0.00% d36, i.e. indistinguishable from noise, so the bloom relation would have passed on nothing exactly as MAP12's ssao did. Candidates measured: E1M1 ssao=2.95 bloom=0.01; E1M2 n=0.12 ssao=13.29 bloom=0.11; E1M3 n=0.00 ssao=44.82 bloom=15.55; E1M5 n=0.06 ssao=0.19 bloom=0.06; E1M7 ssao=42.91 bloom=0.00; E2M2 ssao=19.35 bloom=0.00; E3M2 n=0.52 ssao=2.30 bloom=15.24; E4M2 n=100.00 (wholly nondeterministic, rejected outright)."
 }
