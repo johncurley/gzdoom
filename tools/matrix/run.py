@@ -86,6 +86,20 @@ SHOTS = os.path.join(WORKDIR, "shots")
 PLATFORM_KEY = "darwin" if sys.platform == "darwin" else (
     "linux" if sys.platform.startswith("linux") else sys.platform)
 
+# Below this mean luminance a capture carries no information, and no relation
+# resting on it means anything. A broken capture or a black-rendering map
+# measures exactly 0.000; real captures measure 13-208 here (baseline.json,
+# doom2 scene: tonemap_uncharted 13.25 is the darkest, colormap 208.48 the
+# brightest), and 13-52 on the cross-backend scenes. Set well above zero so a
+# nearly blank frame is caught too, and well below the darkest real scene.
+#
+# This is the single definition; crossbackend.py imports it from here so the two
+# tools cannot drift to different numbers. It was acted on there first --
+# measured 2026-08-10, the pre-fix OpenGL capture path made the self-check print
+# "REPRODUCIBLE (mean 0.000)" and pass, for a capture that contained nothing at
+# all -- and the same hole existed here until 2026-08-12.
+DEGENERATE_MEAN = 1.0
+
 
 def platform_launch(spec, base="launch"):
     """`launch` merged with any `launch_<platform>` block.
@@ -123,6 +137,17 @@ def effective_map(cfg, L, scene=None):
     if isinstance(m, dict):
         m = m.get(scene or "default")
     return m or L.get("map")
+
+
+def blank_captures(sigs, *names):
+    """Which of `names` produced a capture with no light in it.
+
+    A relation is a statement about two rendered frames, so it needs both of
+    them to BE frames. Split out of the relation loop so it can be exercised
+    without a GPU -- the loop itself needs eleven engine launches to reach.
+    """
+    return [n for n in names
+            if sigs.get(n) and sigs[n]["mean_lum"] <= DEGENERATE_MEAN]
 
 
 def relation_partners(configs):
@@ -395,6 +420,24 @@ def main():
                 continue
             if name not in images or other not in images:
                 print(f"  ?? {name}: {kind} {other} -- missing capture")
+                rel_fail.append(name)
+                continue
+            # Neither relation may rest on a frame with nothing in it. A blank
+            # capture satisfies must_match perfectly -- black equals black --
+            # so the identity would be reported as holding while the scene was
+            # never drawn. must_differ_from survives an ALL-black suite by
+            # accident (it fails on the identity) but not one blank capture
+            # against a live partner, which passes and means nothing. Both are
+            # the same failure the cross-backend self-check hit on 2026-08-10:
+            # a check that a black frame can pass is not a check.
+            blank = blank_captures(sigs, name, other)
+            if blank:
+                where = ", ".join(f"{n} mean_lum {sigs[n]['mean_lum']:.3f}"
+                                  for n in blank)
+                print(f"  FAIL {name}: {kind} {other} -- capture is blank "
+                      f"({where}, at or below {DEGENERATE_MEAN}). Nothing is "
+                      f"being measured; fix the capture before reading this "
+                      f"relation.")
                 rel_fail.append(name)
                 continue
             d = compare(images[name], images[other])

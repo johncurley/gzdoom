@@ -158,9 +158,13 @@ MAX_TONE_RATIO = 4.0
 
 # Below this mean the capture carries no information and no verdict taken from
 # it means anything. Real scenes here measure 13-52; a broken capture or a
-# black-rendering map measures exactly 0.000. Set well above zero so a nearly
-# blank frame is caught too, and well below the darkest real scene.
-DEGENERATE_MEAN = 1.0
+# black-rendering map measures exactly 0.000.
+#
+# Defined in run.py, not here, since run.py's relation guard applies the same
+# rule to the same kind of capture -- two copies of the number would eventually
+# be two different numbers. The measurements behind the value are in the comment
+# there.
+DEGENERATE_MEAN = matrix.DEGENERATE_MEAN
 
 
 def launch_backend(cfg, spec, backend, verbose, scene=None):
