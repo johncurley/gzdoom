@@ -81,6 +81,27 @@ DIFFs. The guard added in that commit is worth *more* than its message claims.
   torch, ~1 sample in 8) survives `screenblocks`. Bloom amplifies it, which is
   why the bloom trio is `relations_only`.
 
+## Every measurement here is from one machine
+
+All of it was measured on the Intel MacBookAir7,2 (HD 6000), on Metal. The code
+changes are platform-neutral, but the *choices* they encode are not proven to
+be: `screenblocks 12`, MAP06 and E1M3 were each selected from measurements taken
+here. The Linux box may have a different noise profile — different GL driver,
+different timing — and if a map that is 8/8 pixel-identical here is not there,
+that is information about the engine, not a broken suite. Re-run the two
+measurements (`--only baseline --scene <name>`, eight samples; and the pass
+scan) before trusting a scene on other hardware.
+
+The same applies in reverse to the noise floor quoted throughout: 0.00% is what
+this GPU produced, not a guarantee.
+
+## Not covered here
+
+The standing items — removing the input diagnostics (`in_keytrace`,
+`ZWIDGET_TRACE_REPEAT`), X11 raw input via XInput2, `check_shader_parity.py`
+into CI, and Apple Silicon validation — are untouched by this session and live
+in `CLAUDE.md` under Outstanding. This file is the matrix suite only.
+
 ## Parked, not abandoned
 
 `upstream-gl-blackframe` (one commit off `master`) and
