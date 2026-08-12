@@ -486,8 +486,10 @@ savegame, or a full suite run -- it is `--only baseline --scene doom2`, about
 (the shared `matrix.ini` rewrite, `gl_exposure_speed 1`) are now cheap to test,
 and testing them is the obvious next step. Still untested; still not findings.
 
-**Do not record a `doom2` baseline until this is understood** -- it would
-enshrine one arbitrary state out of at least four.
+~~**Do not record a `doom2` baseline until this is understood**~~ -- SUPERSEDED
+later the same day. It was understood, the scene moved to a measured map, and a
+`doom2` baseline was recorded deliberately. See the resolution below and the
+"choosing a map" entry further down.
 
 **Resolved, same day: it is the status bar face, and both standing suspects are
 wrong.** Measured by launching the binary directly, 8 samples per arm, with the
@@ -521,8 +523,14 @@ Practical: pinning `screenblocks 12` for captures removes the dominant source
 and costs nothing the suite cares about -- it tests postprocess passes, and the
 status bar is not one. It does change every capture, so it invalidates the
 recorded default-scene baseline; that re-record is a deliberate decision and has
-not been made here. The residual element still blocks `must_match` from being
-trusted at zero tolerance on `doom2`.
+not been made here.
+
+**Update, same day:** `screenblocks 12` is now pinned on the stock scenes, the
+`doom2` scene moved from MAP12 to MAP06, and `tonemap_identity` reproduces the
+baseline *exactly* there — so the residual element does not block `must_match`
+on `doom2` any more. It was only ever a MAP12 problem. MAP12 still hosts the
+bloom pair, which is why those three configs are declared `relations_only` and
+kept out of the golden image.
 
 **Geometry, which contaminates any run of this experiment done by hand.** The
 first launch against a *fresh* config file captures at 1152x720, not the pinned
@@ -681,6 +689,59 @@ owner and `dispatch_async` still cannot drain inside a main-queue block.
 
 Each of these produced a wrong conclusion that survived until something
 measured it. They are listed because re-learning them is expensive.
+
+### Choosing a map for the matrix suite — measure, never assume
+
+**A map the suite runs on can silently disarm a relation, and it reports `ok`.**
+`gl_ssao 3` changes **0.000%** of MAP12, which the suite ran on for months. The
+`ssao` must_differ_from relation was being satisfied entirely by RNG noise from
+the status bar face, so it would have reported `ok` with the AO pass completely
+dead. That is precisely the failure the suite exists to prevent. The same hole
+existed on the `doom1` scene: `gl_bloom` changes 0.01% of E1M1 against a noise
+floor of 0.00%.
+
+A map must satisfy **two** independent requirements, and passing one says
+nothing about the other:
+
+1. every pass visibly acts on it, by the suite's own `>2 levels` metric;
+2. repeated identical launches are pixel-identical, over ~8 samples.
+
+Measured 2026-08-12, %px differing from baseline (`n` = two identical launches):
+
+| DOOM2 | n | ssao | bloom | | DOOM | n | ssao | bloom |
+|---|---|---|---|---|---|---|---|---|
+| MAP01 | 0.00 | 4.89 | dead | | E1M1 | 0.00 | 2.95 | **0.01 dead** |
+| MAP02 | 0.00 | 8.23 | 0.15 | | E1M2 | 0.12 | 13.29 | 0.11 |
+| MAP03 | 0.00 | 22.54 | **dead** | | **E1M3** | **0.00** | **44.82** | **15.55** |
+| **MAP06** | **0.00** | **6.84** | dead | | E1M5 | 0.06 | 0.19 | 0.06 |
+| MAP07 | 0.00 | **dead** | dead | | E1M7 | 0.00 | 42.91 | **dead** |
+| MAP11 | 0.11 | 4.22 | 0.15 | | E2M2 | 0.00 | 19.35 | **dead** |
+| MAP12 | 0.00 | **dead** | 38.61 | | E3M2 | 0.52 | 2.30 | 15.24 |
+| MAP15 | 0.13 | 16.86 | 14.22 | | E4M2 | **100** | — | — |
+
+Of eight Doom 2 candidates, **none** satisfied both — the maps where both passes
+act (MAP11, MAP15) are the ones that fail determinism. Hence per-config maps:
+doom2 is MAP06 with the bloom pair on MAP12. E1M3 is the only map found in
+either IWAD that satisfies both alone, so `doom1` needs no override. E4M2 is
+wholly nondeterministic — 100% of pixels differ between identical launches.
+
+An 8-sample determinism check is load-bearing: MAP02 and MAP01 both showed
+`0.00` noise on a single pair and then produced 5 and 4 distinct states
+respectively over eight launches.
+
+### `-iwad` does not fail when the IWAD is missing — it loads another one
+
+Ask for `DOOM.wad` on a machine that has only `DOOM2.wad` and the engine loads
+DOOM2, saying so only in an `adding <path>` line. It then fails the map, falls
+to the title screen, and **the attract demos are `GS_LEVEL`** — so `shotafter`
+fires and captures a frame of the wrong game. The suite compares those against
+the baseline and reports ordinary-looking DIFFs.
+
+This is worse than a crash: every capture in such a run is of a different IWAD
+than the one declared, and nothing says so. `run.py` now hard-exits naming both
+the requested and the actually-loaded IWAD. (Note `6ebd03671`'s message claims
+this surfaces as `NO CAPTURE` — that was written before the attract-demo
+behaviour was observed, and is wrong.)
 
 ### A silent segfault on any unreadable `-file` (fixed 2026-08-12, `5a567cd85`)
 
