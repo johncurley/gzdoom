@@ -70,7 +70,7 @@ jobs:
           export_appimage: true
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Install Dependencies
       shell: bash
@@ -80,8 +80,15 @@ jobs:
         fi
         mkdir build
 
+    # Supplies GIT_DESCRIBE, which is only a version string: UpdateRevision.cmake
+    # falls back to `git describe --tags --dirty=-m` when it is unset. This step
+    # reaches the GitHub GraphQL API, so a network or TLS fault on the runner
+    # used to fail the whole job for a cosmetic value -- macOS Release died on
+    # `x509: certificate signed by unknown authority` on 2026-08-12 while the
+    # Debug job on the same commit passed. Let it fail soft.
     - name: Git describe
       id: ghd
+      continue-on-error: true
       uses: proudust/gh-describe@v2
 
     - name: Configure
@@ -92,7 +99,13 @@ jobs:
     - name: Build
       shell: bash
       run: |
-        export GIT_DESCRIBE="${{ steps.ghd.outputs.describe }}"
+        # Only export it when non-empty. The describe step is continue-on-error,
+        # so its output is "" when it fails -- and CMake's `if(DEFINED ENV{...})`
+        # is true for a variable set to an empty string, which would pin the
+        # version to nothing and skip the `git describe` fallback that exists
+        # precisely for this case.
+        DESCRIBE="${{ steps.ghd.outputs.describe }}"
+        if [[ -n "$DESCRIBE" ]]; then export GIT_DESCRIBE="$DESCRIBE"; fi
         export MAKEFLAGS=--keep-going
         cmake --build build --config ${{ matrix.config.build_type }} --parallel 3
 
@@ -152,7 +165,9 @@ jobs:
             echo "6f83a789f6c47a745b97d1b0b3f1df2e7eea7a09 appimage-builder" | sha1sum -c -
             chmod +x appimage-builder
 
-            export GIT_DESCRIBE="${{ steps.ghd.outputs.describe }}"
+            # Non-empty guard, same reason as the Build step above.
+            DESCRIBE="${{ steps.ghd.outputs.describe }}"
+            if [[ -n "$DESCRIBE" ]]; then export GIT_DESCRIBE="$DESCRIBE"; fi
             ./appimage-builder --skip-tests --recipe ../tools/AppImageBuilder.yml
             cp *.AppImage package
           else
@@ -161,7 +176,7 @@ jobs:
         fi
 
     - name: Upload Package
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         path: build/package
         name: ${{ matrix.config.name }} ${{ matrix.config.build_type }}
