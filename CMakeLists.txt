@@ -256,7 +256,15 @@ if( ${TARGET_ARCHITECTURE} MATCHES "x86_64" )
 	set( HAVE_VM_JIT ON )
 endif()
 
-option (HAVE_VULKAN "Enable Vulkan support" OFF)
+# Auto-detect Vulkan if available; allow override via -DHAVE_VULKAN=ON/OFF
+find_package(Vulkan QUIET)
+if (NOT DEFINED HAVE_VULKAN)
+	if (Vulkan_FOUND)
+		set(HAVE_VULKAN ON CACHE BOOL "Enable Vulkan support")
+	else()
+		set(HAVE_VULKAN OFF CACHE BOOL "Enable Vulkan support")
+	endif()
+endif()
 if( APPLE )
 	option (HAVE_METAL "Enable Metal support" ON) # Enable Metal by default
 endif()
