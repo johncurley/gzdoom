@@ -33,27 +33,58 @@ SettingsPage::SettingsPage(LauncherWindow* launcher, const FStartupSelectionInfo
 
 #ifdef RENDER_BACKENDS
 	BackendLabel = new TextLabel(this);
-	VulkanCheckbox = new CheckboxLabel(this);
 	OpenGLCheckbox = new CheckboxLabel(this);
+#ifdef HAVE_VULKAN
+	VulkanCheckbox = new CheckboxLabel(this);
+#endif
+#ifdef HAVE_METAL
 	MetalCheckbox = new CheckboxLabel(this);
+#endif
 
 	OpenGLCheckbox->SetRadioStyle(true);
+#ifdef HAVE_VULKAN
 	VulkanCheckbox->SetRadioStyle(true);
+#endif
+#ifdef HAVE_METAL
 	MetalCheckbox->SetRadioStyle(true);
-	OpenGLCheckbox->FuncChanged = [this](bool on) { if (on) { VulkanCheckbox->SetChecked(false); MetalCheckbox->SetChecked(false); }};
-	VulkanCheckbox->FuncChanged = [this](bool on) { if (on) { OpenGLCheckbox->SetChecked(false); MetalCheckbox->SetChecked(false); }};
-	MetalCheckbox->FuncChanged = [this](bool on) { if (on) { VulkanCheckbox->SetChecked(false); OpenGLCheckbox->SetChecked(false); }};
+#endif
+	OpenGLCheckbox->FuncChanged = [this](bool on) { if (on) {
+#ifdef HAVE_VULKAN
+		VulkanCheckbox->SetChecked(false);
+#endif
+#ifdef HAVE_METAL
+		MetalCheckbox->SetChecked(false);
+#endif
+	}};
+#ifdef HAVE_VULKAN
+	VulkanCheckbox->FuncChanged = [this](bool on) { if (on) { OpenGLCheckbox->SetChecked(false);
+#ifdef HAVE_METAL
+		MetalCheckbox->SetChecked(false);
+#endif
+	}};
+#endif
+#ifdef HAVE_METAL
+	MetalCheckbox->FuncChanged = [this](bool on) { if (on) { OpenGLCheckbox->SetChecked(false);
+#ifdef HAVE_VULKAN
+		VulkanCheckbox->SetChecked(false);
+#endif
+	}};
+#endif
 	switch (info.DefaultBackend)
 	{
 	case 0:
 		OpenGLCheckbox->SetChecked(true);
 		break;
+#ifdef HAVE_VULKAN
 	case 1:
 		VulkanCheckbox->SetChecked(true);
 		break;
+#endif
+#ifdef HAVE_METAL
 	case 3:
 		MetalCheckbox->SetChecked(true);
 		break;
+#endif
 	}
 #endif
 
@@ -118,8 +149,12 @@ void SettingsPage::SetValues(FStartupSelectionInfo& info) const
 #ifdef RENDER_BACKENDS
 	int v = 1;
 	if (OpenGLCheckbox->GetChecked()) v = 0;
+	#ifdef HAVE_VULKAN
 	else if (VulkanCheckbox->GetChecked()) v = 1;
+	#endif
+	#ifdef HAVE_METAL
 	else if (MetalCheckbox->GetChecked()) v = 3;
+	#endif
 	info.DefaultBackend = v;
 #endif
 }
@@ -139,9 +174,13 @@ void SettingsPage::UpdateLanguage()
 
 #ifdef RENDER_BACKENDS
 	BackendLabel->SetText(GStrings.GetString("PICKER_PREFERBACKEND"));
+	#ifdef HAVE_VULKAN
 	VulkanCheckbox->SetText(GStrings.GetString("OPTVAL_VULKAN"));
+	#endif
 	OpenGLCheckbox->SetText(GStrings.GetString("OPTVAL_OPENGL"));
+	#ifdef HAVE_METAL
 	MetalCheckbox->SetText(GStrings.GetString("OPTVAL_METAL"));
+	#endif
 #endif
 }
 
@@ -186,14 +225,18 @@ void SettingsPage::OnGeometryChanged()
 	BackendLabel->SetFrameGeometry(x, y, 190.0, BackendLabel->GetPreferredHeight());
 	y += BackendLabel->GetPreferredHeight();
 
-	VulkanCheckbox->SetFrameGeometry(x, y, 190.0, VulkanCheckbox->GetPreferredHeight());
-	y += VulkanCheckbox->GetPreferredHeight();
-
 	OpenGLCheckbox->SetFrameGeometry(x, y, 190.0, OpenGLCheckbox->GetPreferredHeight());
 	y += OpenGLCheckbox->GetPreferredHeight();
 
+	#ifdef HAVE_VULKAN
+	VulkanCheckbox->SetFrameGeometry(x, y, 190.0, VulkanCheckbox->GetPreferredHeight());
+	y += VulkanCheckbox->GetPreferredHeight();
+	#endif
+
+	#ifdef HAVE_METAL
 	MetalCheckbox->SetFrameGeometry(x, y, 190.0, MetalCheckbox->GetPreferredHeight());
 	y += MetalCheckbox->GetPreferredHeight();
+	#endif
 #endif
 
 	y = max<double>(y, optionsBottom);

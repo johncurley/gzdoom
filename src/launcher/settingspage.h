@@ -36,9 +36,13 @@ private:
 	CheckboxLabel* SupportWadsCheckbox = nullptr;
 #ifdef RENDER_BACKENDS
 	TextLabel* BackendLabel = nullptr;
-	CheckboxLabel* VulkanCheckbox = nullptr;
 	CheckboxLabel* OpenGLCheckbox = nullptr;
+#ifdef HAVE_VULKAN
+	CheckboxLabel* VulkanCheckbox = nullptr;
+#endif
+#ifdef HAVE_METAL
 	CheckboxLabel* MetalCheckbox = nullptr;
+#endif
 #endif
 	ListView* LangList = nullptr;
 
