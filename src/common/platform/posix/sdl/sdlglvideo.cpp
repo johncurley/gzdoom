@@ -80,7 +80,9 @@ EXTERN_CVAR(Int, vid_displaybits)
 EXTERN_CVAR(Int, vid_defwidth)
 EXTERN_CVAR(Int, vid_defheight)
 EXTERN_CVAR(Bool, cl_capfps)
+#ifdef HAVE_VULKAN
 EXTERN_CVAR(Bool, vk_debug)
+#endif
 
 // PUBLIC DATA DEFINITIONS -------------------------------------------------
 

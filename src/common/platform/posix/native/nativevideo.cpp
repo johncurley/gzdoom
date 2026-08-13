@@ -35,7 +35,9 @@ typedef XID Window;
 EXTERN_CVAR(Int, vid_defwidth)
 EXTERN_CVAR(Int, vid_defheight)
 EXTERN_CVAR(Bool, vid_fullscreen)
+#ifdef HAVE_VULKAN
 EXTERN_CVAR(Bool, vk_debug)
+#endif
 
 // External global Display pointer needed by gl_sysfb.cpp
 // Note: In a future "Pure Native" update, we could also dlopen libX11.so.6
@@ -191,25 +193,6 @@ extern bool RawKeyboardActive;
 static bool WantGuiCaptureNow()
 {
 	return sysCallbacks.WantGuiCapture && sysCallbacks.WantGuiCapture();
-}
-
-// Temporary diagnostic for stuck keys. Enable with `in_keytrace 1` in the
-// console. Prints one line per key event as it is handed to the engine, so the
-// route decision and the posted/dropped outcome are visible; i_input.cpp prints
-// the resulting set of held buttons whenever it changes. A key-up that shows
-// "posted route=Game" but leaves its button in the held set is the failure we
-// are looking for.
-CVAR(Bool, in_keytrace, false, 0)
-
-void I_TraceKeyEvent(const char* dir, int inputkey, int gzkey, const char* route, bool posted)
-{
-	if (!in_keytrace)
-		return;
-	// stderr rather than Printf: Printf goes to the in-game console once video
-	// is up, and this needs to be capturable from a piped run.
-	fprintf(stderr, "[keytrace] %-4s ik=%-3d gz=%-3d route=%-4s %-7s gui=%d\n",
-		dir, inputkey, gzkey, route, posted ? "posted" : "DROPPED", (int)GUICapture);
-	fflush(stderr);
 }
 
 static int16_t GetModifierMask(bool shiftDown, bool ctrlDown, bool altDown)
@@ -393,7 +376,6 @@ public:
 			ev.data1 = mouseKey;
 			ev.data3 = ModMask();
 			D_PostEvent(&ev);
-			I_TraceKeyEvent("mdn", (int)key, mouseKey, "Game", true);
 		}
     }
     void OnWindowMouseUp(const Point& pos, InputKey key) override {
@@ -429,7 +411,6 @@ public:
 			ev.data1 = mouseKey;
 			ev.data3 = ModMask();
 			D_PostEvent(&ev);
-			I_TraceKeyEvent("mup", (int)key, mouseKey, "Game", true);
 		}
     }
     void OnWindowMouseDoubleclick(const Point& pos, InputKey key) override {}
@@ -449,7 +430,6 @@ public:
 		else
 		{
 			const int16_t wheelKey = InputKeyToWheelKey(key);
-			I_TraceKeyEvent("wheel", (int)key, wheelKey, "Game", wheelKey != 0);
 			if (!wheelKey) return;
 			event_t ev = {EV_KeyDown};
 			ev.data1 = wheelKey;
@@ -530,7 +510,6 @@ public:
 			const bool post = guiev.data1 < 128; // match SDL behavior: uppercase ASCII range only
 			if (post)
 				D_PostEvent(&guiev);
-			I_TraceKeyEvent(isRepeat ? "rep" : "down", (int)key, gzkey, "GUI", post);
 		}
 		else if (!isRepeat && !RawKeyboardActive)
 		{
@@ -544,7 +523,6 @@ public:
 			const bool post = ev.data1 != 0;
 			if (post)
 				D_PostEvent(&ev);
-			I_TraceKeyEvent("down", (int)key, gzkey, "Game", post);
 		}
     }
     void OnWindowKeyUp(InputKey key) override {
@@ -565,7 +543,6 @@ public:
 			const bool post = guiev.data1 < 128;
 			if (post)
 				D_PostEvent(&guiev);
-			I_TraceKeyEvent("up", (int)key, gzkey, "GUI", post);
 		}
 		else if (!RawKeyboardActive)
 		{
@@ -576,7 +553,6 @@ public:
 			const bool post = ev.data1 != 0;
 			if (post)
 				D_PostEvent(&ev);
-			I_TraceKeyEvent("up", (int)key, gzkey, "Game", post);
 		}
     }
     void OnWindowRawKey(RawKeycode keycode, bool down) override {
@@ -594,10 +570,15 @@ public:
         const bool post = ev.data1 != 0;
         if (post)
             D_PostEvent(&ev);
-        I_TraceKeyEvent(down ? "rawdn" : "rawup", 0, (int)keycode, "Raw", post);
     }
     void OnWindowGeometryChanged() override {
-        if (sysCallbacks.OnScreenSizeChanged)
+        // X11 reports the WM's final size asynchronously.  Keep the
+        // framebuffer and viewport in step with that ConfigureNotify; without
+        // this, a fullscreen window can display the initial 640x480 image in
+        // its bottom-left corner.
+        if (screen)
+            screen->Update();
+        else if (sysCallbacks.OnScreenSizeChanged)
             sysCallbacks.OnScreenSizeChanged();
     }
     void OnWindowClose() override {

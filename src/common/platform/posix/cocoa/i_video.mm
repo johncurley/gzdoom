@@ -112,7 +112,9 @@ extern bool ToggleFullscreen;
 EXTERN_CVAR(Bool, vid_hidpi)
 EXTERN_CVAR(Int, vid_defwidth)
 EXTERN_CVAR(Int, vid_defheight)
+#ifdef HAVE_VULKAN
 EXTERN_CVAR(Bool, vk_debug)
+#endif
 
 CVAR(Bool, mvk_debug, false, 0)
 CVAR(Bool, vid_nativefullscreen, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
