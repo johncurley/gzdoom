@@ -11,8 +11,10 @@ bool I_CreateVulkanSurface(VkInstance instance, VkSurfaceKHR* surface);
 bool I_GetVulkanPlatformExtensions(unsigned int* count, const char** names);
 
 EXTERN_CVAR(Bool, vid_fullscreen)
+#ifdef HAVE_VULKAN
 EXTERN_CVAR(Bool, vk_debug)
 EXTERN_CVAR(Int, vk_device)
+#endif
 
 //==========================================================================
 //
