@@ -43,6 +43,9 @@
   "scenes": {
     "doom2": {
       "iwad": "DOOM2.wad",
+      "linux": {
+        "iwad": "DOOM2.WAD"
+      },
       "files": [],
       "map": "MAP06",
       "always_extra": [
@@ -51,6 +54,9 @@
     },
     "doom1": {
       "iwad": "DOOM.wad",
+      "linux": {
+        "iwad": "DOOM.WAD"
+      },
       "files": [],
       "map": "E1M3",
       "always_extra": [

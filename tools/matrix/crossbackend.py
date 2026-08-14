@@ -144,7 +144,7 @@ MAX_TONE_RATIO = 4.0
 DEGENERATE_MEAN = 1.0
 
 
-def launch_backend(cfg, spec, backend, verbose):
+def launch_backend(cfg, spec, backend, verbose, scene=None):
     """Run one config on one backend. Returns (png_path, log_path)."""
     forced = dict(cfg)
     forced["name"] = f"{cfg['name']}__{backend}"
@@ -155,7 +155,7 @@ def launch_backend(cfg, spec, backend, verbose):
     forced["cvars"] = list(cfg.get("cvars", [])) + [
         f"+vid_preferbackend {BACKENDS[backend]}"
     ]
-    return matrix.launch(forced, spec, verbose)
+    return matrix.launch(forced, spec, verbose, scene)
 
 
 def confirm_backend(log_path, backend):
@@ -281,7 +281,7 @@ def classify(bands):
                        f"(worst {worst['max_channel_delta']})")
 
 
-def selfcheck(configs, spec, backends, verbose):
+def selfcheck(configs, spec, backends, verbose, scene=None):
     """Does each backend reproduce ITSELF? Run this before trusting a sweep.
 
     Measured 2026-08-07 during bring-up: Metal reproduced byte for byte across
@@ -305,7 +305,7 @@ def selfcheck(configs, spec, backends, verbose):
             for i in (1, 2):
                 c = dict(cfg)
                 c["name"] = f"{cfg['name']}__selfcheck{i}"
-                png, log = launch_backend(c, spec, backend, verbose)
+                png, log = launch_backend(c, spec, backend, verbose, scene)
                 actual = confirm_backend(log, backend)
                 if actual != backend or not png:
                     print(f"  {cfg['name']:20s} {backend:5s} run {i}: launch "
@@ -427,10 +427,10 @@ def main():
     warm = dict(configs[0])
     warm["name"] = warm["name"] + "__warmup"
     for backend in backends:
-        launch_backend(warm, spec, backend, args.verbose)
+        launch_backend(warm, spec, backend, args.verbose, args.scene)
 
     if args.selfcheck:
-        rc = selfcheck(configs, spec, backends, args.verbose)
+        rc = selfcheck(configs, spec, backends, args.verbose, args.scene)
         if not args.keep:
             shutil.rmtree(matrix.WORKDIR, ignore_errors=True)
         return rc
@@ -450,7 +450,7 @@ def main():
 
             imgs, ok = {}, True
             for backend in backends:
-                png, log = launch_backend(c, spec, backend, args.verbose)
+                png, log = launch_backend(c, spec, backend, args.verbose, args.scene)
                 actual = confirm_backend(log, backend)
                 if actual != backend:
                     print(f"  {c['name']:28s} {backend:5s} FAILED to initialise "
