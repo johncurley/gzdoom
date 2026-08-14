@@ -102,6 +102,7 @@ void DFrameBuffer::Update()
 	if (clientWidth > 0 && clientHeight > 0 && (GetWidth() != clientWidth || GetHeight() != clientHeight))
 	{
 		SetVirtualSize(clientWidth, clientHeight);
+		SetViewportRects(nullptr);
 		V_OutputResized(clientWidth, clientHeight);
 		mVertexData->OutputResized(clientWidth, clientHeight);
 	}
@@ -319,4 +320,3 @@ DEFINE_ACTION_FUNCTION(_Screen, PaletteColor)
 	else index = GPalette.BaseColors[index];
 	ACTION_RETURN_INT(index);
 }
-

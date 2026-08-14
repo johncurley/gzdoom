@@ -374,6 +374,17 @@ bool IVideo::SetResolution ()
 
 	screen = buff;
 	screen->InitializeState();
+	// The native window may have received its final geometry asynchronously
+	// while the framebuffer was being constructed.  Reconcile the framebuffer
+	// with the actual client area now that `screen` is assigned and its backend
+	// state has been initialized.
+	//
+	// Deliberately the non-virtual base implementation: that is the whole of the
+	// resize reconciliation, while the backend overrides are the frame-end
+	// present path.  No frame has begun yet, so the render buffers the Vulkan
+	// override touches have not been created (VkRenderBuffers only builds its
+	// images in BeginFrame) and dispatching virtually here segfaults.
+	screen->DFrameBuffer::Update();
 
 	V_UpdateModeSize(screen->GetWidth(), screen->GetHeight());
 
@@ -544,4 +555,3 @@ CUSTOM_CVAR(Float, transsouls, 0.75f, CVAR_ARCHIVE)
 		self = 1.f;
 	}
 }
-
