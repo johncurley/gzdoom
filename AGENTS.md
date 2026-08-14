@@ -13,6 +13,7 @@ it is unusual).
 - **GPU capture runbook:** `docs/gpu-capture-protocol.md`
 - **Linux session handoff:** `docs/handoff-linux.md` — two validation tasks that
   only Linux hardware could perform. **Both done, 2026-08-10; do not re-run.**
+  What is still open on that machine is the **Tasks — Linux** section below.
 - **Current handoff:** `docs/handoff-gl-blackframe.md` — the GL black-frame bug,
   **fixed 2026-08-11** (a stale shader-binding cache; see the section below for
   the root cause and the verification table), plus the traps that produced four
@@ -73,6 +74,419 @@ one before). Required three ZWidget Cocoa fixes; see
   points it at an alternate build directory.
 - `tools/pngdiff.py`, `localize.py`, `cluster.py` — stdlib-only PNG analysis
   (this machine has neither PIL nor ImageMagick).
+
+---
+
+## Tasks — Linux
+
+Work that **needs the Linux box** (Arch/CachyOS, KDE Plasma Wayland, AMD RX 550,
+Mesa 26.1.6, GL 4.6, Vulkan 1.4) because macOS cannot perform or cannot check
+it. `docs/handoff-linux.md` is finished — its two tasks passed on 2026-08-10 and
+must not be re-run. This is what came out of that session and the two since,
+roughly in order of value. Everything below is either an unverified fix, an
+unmeasured assumption, or a tool gap; none of it is speculative work.
+
+An outside audit of this subsystem was run on 2026-08-12 against
+`docs/audits/audit-contract-linux.md`; its report is
+`docs/audits/findings-linux-2026-08-12.md` and items 10 and 11 came out of it.
+It read a **pruned export** of the tree with `AGENTS.md`, `CLAUDE.md` and
+`docs/` deleted, so §8 blindness was structural rather than requested — worth
+repeating that way, because the previous round could not honestly claim a blind
+read.
+
+Ordinary build there:
+
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DPK3_QUIET_ZIPDIR=ON -DHAVE_VULKAN=ON .
+cmake --build build --parallel $(nproc)
+```
+
+### 1. Confirm the Wayland first-paint fix — it has no control run
+
+The blank-launcher-until-you-move-the-pointer fix (`m_NeedsUpdate` set at the
+`xdg_surface_handle_configure` ack point, ZWidget subtree) **rests on reading
+the xdg-shell protocol, not on a measurement**. It could not be reproduced on
+the machine that wrote it — the launcher painted on every attempt, before and
+after. KWin is the compositor whose first configure is 0x0, so this box is where
+the bug lives.
+
+Needed: reproduce the blank launcher on the pre-fix commit (that is the control;
+without it the fix proves nothing), then show it painting after. If it will not
+reproduce here either, say so — that is a result, and it means the report came
+from a compositor neither machine runs.
+
+This one gates something: it is an upstream ZWidget bug affecting every ZWidget
+Wayland application, and it belongs in the dpjudas PR alongside the Cocoa fixes.
+That PR is otherwise ready (`zwidget/cocoa-modal-fixes`, two commits directly on
+upstream head, verified 2026-08-11).
+
+### 2. Re-validate the matrix suite's scene choices on this hardware
+
+`screenblocks 12`, `doom2` = MAP06 and `doom1` = E1M3 were each **chosen from
+measurements taken on one machine** (Intel HD 6000, Metal). The code is
+platform-neutral; the choices are not. A different GL driver and different
+timing can move both properties they were selected for.
+
+Two measurements, both from the "choosing a map" trap entry below:
+
+1. **Determinism, eight samples** — `--only baseline --scene doom2`, then
+   `--scene doom1`. A single identical-looking pair is not enough: MAP01 and
+   MAP02 both read 0.00 on one pair and then produced 4 and 5 distinct states
+   over eight launches.
+2. **Every pass visibly acts** — the `%px differing` scan for `gl_ssao 3` and
+   `gl_bloom`, by the suite's own `>2 levels` metric.
+
+If a map that is 8/8 pixel-identical on macOS is not here, **that is information
+about the engine, not a broken suite** — record the states, do not just swap the
+map. The quoted 0.00% noise floor is what that GPU produced, not a guarantee.
+
+Only after both pass: record a Linux `baseline.json`. It **must not be shared
+between machines** — the Linux `save01.zds` is AshesHardReset MAP01 at the map
+start, not the macOS aobug viewpoint, so the two boxes are not comparing the
+same frame even on the mod scene.
+
+**Linux result, 2026-08-13:** E1M3 passed the determinism control (8/8 samples
+were identical) and the pass-action scan: `gl_ssao 3` changed 45.46% of pixels,
+reference bloom changed 32.66%, and compute bloom changed 32.66%. MAP06 passed
+the pass-action scan (`gl_ssao 3` 7.12%, reference bloom 34.11%, compute bloom
+34.05%) but failed determinism: eight unattended samples produced seven
+`4b46f461` states (mean 21.856) and one `81668f46` state (mean 21.917). The
+MAP06 result was repeated with no interaction during the run, so do not blame
+the pointer or substitute another map based on a single pair. No Linux
+baseline was recorded because the two chosen scenes did not both pass.
+
+### 3. `crossbackend.py` drops a config's own map — and that disarms bloom
+
+`crossbackend.py:158` calls `matrix.launch(forced, spec, verbose)` with **no
+`scene` argument**, so `effective_map()` resolves a scene-keyed map dict
+(`{"doom2": "MAP12"}`) against `"default"` and gets nothing. The three bloom
+configs — `baseline_bloom`, `bloom_ref`, `bloom_compute` — therefore run on the
+scene's own map under `--scene doom2`, MAP06, instead of the map they were given
+for a measured reason.
+
+**Fixed 2026-08-13** — `launch_backend()`, `selfcheck()` and all three call
+sites now thread `scene`; the savegame-override path deliberately keeps
+`scene=None`, which was previously true by accident. Verified on Linux with
+`--backends gl,vulkan` on both stock scenes: 11/11 OK for `doom2` and 11/11 OK
+for `doom1`. The stock scene definitions also now use Linux's case-sensitive
+`DOOM.WAD`/`DOOM2.WAD` names.
+
+**How bad it was depends on which of two documents you believe, and they
+disagree — see the note under the map-choice trap below.** `configs.json`'s
+`_map_choice_note` records MAP06 bloom at **6.9%** of pixels against MAP12's
+**50.9%**, making this a ~7x loss of signal. The table in *this* file records
+MAP06 bloom as **dead**, which would instead make it the same "reports ok on a
+dead pass" failure the map audit exists to prevent. Both are dated 2026-08-12.
+Until that is settled, claim the signal loss — it is the weaker statement and it
+is true under either reading.
+
+One consequence of the fix worth watching on the re-run: with the bloom trio
+back on MAP12, that scene's launch-to-launch torch variation (0.004% of pixels,
+which bloom amplifies) now enters those rows. That is ~12px of the ~292,320px
+compared region, under the 100px coverage floor — reasoned, not observed.
+
+**Why this lands here rather than on macOS:** crossbackend compares two
+*independent implementations*, which is a stronger invariant than one
+implementation agreeing with its own past, and needs no baseline file and no
+determinism across time. This is the only machine with two non-Metal backends
+that both run.
+
+### 4. `run.py` has no degenerate-frame guard — `crossbackend.py` does
+
+The 2026-08-10 finding ("the self-check passes on an all-black frame") **was
+acted on, in `crossbackend.py` only**: `DEGENERATE_MEAN = 1.0` at line 144,
+enforced in `selfcheck()` at line 321, set above a blank frame and below the
+darkest real scene at 13–52. Do not re-do that.
+
+`run.py` has no equivalent — read 2026-08-12, there is no mean-based check
+anywhere in it. So nothing there separates "identical because the pass is a
+no-op" from "identical because both captures are blank". `must_differ_from`
+happens to catch a fully-black suite (black equals black, so it fails), but
+`must_match` is satisfied by it, and that is the relation with no independent
+proof behind it — its own docstring says it is "only meaningful when some
+sibling config carries a `must_differ_from`".
+
+Small, and the reason it belongs on Linux is that an all-black capture was a
+live condition here twice (readback-after-swap, and the stale shader binding),
+where on the Metal machine it has never occurred.
+
+**Done 2026-08-12.** `DEGENERATE_MEAN` now lives in `run.py` as the single
+definition (`crossbackend.py` imports it), and `run.py`'s relation loop fails
+either relation kind when either capture's `mean_lum` is at or below it.
+Control: the darkest real pair in the recorded baseline, 13.25 vs 21.63, is not
+flagged.
+
+### 5. Two X11 loose ends — the `BadMatch` is now traced to two sites
+
+The Wayland first-paint fix is in xdg-shell and **does not cover X11**.
+
+**`BadMatch` (opcode 42, `X_SetInputFocus`) on every X11 backend start.**
+Non-fatal — Xlib's default handler prints and continues — but it is a real
+protocol error. Read 2026-08-12 (code only, nothing run), and **two independent
+readings landed on the same site**, one of them an outside audit that had not
+seen this file.
+
+`XSetInputFocus` is reachable from exactly two places, both in the ZWidget
+subtree, both through the `dlopen` shim in `x11_remap.h`:
+
+| | site | reached when |
+|---|---|---|
+| A | `x11_display_window.cpp:327`, in `Activate()` | `_NET_ACTIVE_WINDOW` does **not** exist — i.e. no EWMH window manager |
+| B | `x11_display_window.cpp:737`, in the `WM_TAKE_FOCUS` handler | a WM sends the ICCCM message |
+
+`SetInputFocus` returns `BadMatch` for one reason only: the focus window is not
+viewable when the server processes the request. A stale timestamp makes the
+server *ignore* the request, not fault it, so `RevertToParent`/`CurrentTime` are
+not suspects at either site. Neither site checks viewability, and nothing in
+this backend tracks it — `OnEvent` selects `StructureNotifyMask` but has **no
+`MapNotify` case at all**, so the one event that reports viewability is received
+and dropped.
+
+**The correction worth keeping: at site A this is not a race, it is a fixed
+ordering.** `LauncherWindow`'s constructor ends with `PlayGame->SetFocus()`,
+whose `OnSetFocus` focuses the games list first, so `Activate()` runs **twice**
+before `ExecModal` ever calls `Show()` — the X window exists, `XMapRaised` has
+not been called. That predicts exactly 2 messages per launcher start, every
+start, which is what "on every start" already suggested. The earlier
+"map/focus race" reading in this file was wrong in a useful way.
+
+**Linux result, 2026-08-13:** Under XWayland on this KDE session,
+`ZWIDGET_DISPLAY_BACKEND=X11 DISPLAY=:0` with `-iwad DOOM2.WAD` produced no
+`BadMatch` or other X protocol error, and the launcher path without `-iwad`
+also produced none during a 20-second run. The game control bypassed the
+launcher `Activate()` path and exited cleanly after a capture; the launcher
+remained alive until the timeout. This environment therefore did not
+reproduce either suspected site. The discriminator result is still useful:
+it does not justify an X11 fix or claim the bare-Xvfb observation is solved.
+
+The two sites are mutually exclusive on the axis nobody recorded: whether the
+observing session had an EWMH window manager. Under bare Xvfb, site A is
+certain and site B unreachable; under KWin (including XWayland), site A's branch
+is dead code and only B remains. The `BadMatch` was seen alongside the Xvfb
+launcher-exit note below, which points at A — but that was not written down at
+the time.
+
+**Cheapest discriminator, one launch: run with `-iwad`.** That skips the
+launcher entirely, and nothing on the game-window path calls `Activate()`. Error
+still present ⇒ site B. Absent, with exactly 2 on a launcher start ⇒ site A. Do
+this before reaching for an error handler and `XSync`, which costs a subtree
+rebuild.
+
+Fix direction at either site: bail unless the window is viewable
+(`XGetWindowAttributes` is already loaded as `p_GetWindowAttributes`), or handle
+`MapNotify` properly and discharge a pending activation on it. Do **not** drop
+`WM_TAKE_FOCUS` from `WM_PROTOCOLS` — that changes the input model. This is
+stock upstream ZWidget code, not fork-specific, so it belongs in the dpjudas PR.
+
+Related, and silent rather than noisy: at site A's *other* branch the
+`_NET_ACTIVE_WINDOW` ClientMessage is sent for a window that is not yet mapped,
+so a WM has nothing to activate and the launcher's initial focus intent is
+probably lost on X11 under a WM too — with no protocol error to notice.
+- **The launcher exits on its own under bare Xvfb**, between 12s and 25s, with
+  nothing in the log. Under XWayland with a window manager it stayed up, so this
+may be a no-WM artifact rather than a bug; not confirmed either way. CI would
+not catch it — the smoke test passes `-iwad`, so it never opens the launcher.
+
+**X11 sizing result, 2026-08-13:** The fullscreen window initially displayed
+the renderer's 640x480 image in the bottom-left. X11 `ConfigureNotify` reported
+the correct 1920x1080 client size, but the EGL path had not initialized the
+optional Xlib geometry function table, so `SystemGLFrameBuffer` silently fell
+back to 640x480. The framebuffer also needed to recalculate its viewport after
+the asynchronous resize. The accessors now use ZWidget's X11 pixel geometry,
+and framebuffer initialization/resize reconciles the size and viewport. The
+rebuilt fullscreen X11 run was visually confirmed correct.
+
+**Addendum, 2026-08-14 — that diagnosis was right but incomplete, and the
+reconciliation half was crashing Vulkan.** Two follow-ups, both committed:
+
+- `a60ea956d`. The accessor fix above landed on `SystemGLFrameBuffer` only.
+  `SystemBaseFrameBuffer::GetClientWidth/Height` — which `VulkanRenderDevice`
+  inherits and never overrides — was still `return 640;`/`return 480;`, a stub
+  present since `fbc831511` (2026-05-04). So the *same symptom* existed on
+  Vulkan under both Wayland and X11, and had nothing to do with the Xlib
+  function table. Measured: the present blit was going to a 640x360 rect at
+  (0,60) of a correctly-sized 1920x1080 swapchain, and `AcquireImage`'s resize
+  test (`GetClientWidth() != CurrentWidth`) compared 640 against 640, so the
+  swapchain was never rebuilt on resize. The accessors now live on the base
+  class; the GL subclass keeps its direct-X11 query only as a fallback for when
+  there is no ZWidget window. Every other platform backend (win32, cocoa, SDL)
+  already implemented these on the base class — the native port is the only one
+  that stubbed them.
+- `e1f47ce5b`. The "framebuffer initialization reconciles the size" half was
+  `screen->Update()` in `IVideo::SetResolution`, a **virtual** call. On Vulkan
+  it dispatches to `VulkanRenderDevice::Update()`, the frame-end present path,
+  before any frame has begun — dereferencing a `VkRenderBuffers::PipelineImage`
+  that only exists after `BeginFrame()`. Startup SIGSEGV, between the Vulkan
+  device banner and `W_Init`. It is now `screen->DFrameBuffer::Update()`: the
+  base implementation is the whole of the resize reconciliation, the overrides
+  are the present path.
+
+Verification used `vid_showcurrentscaling` (prints `GetClientWidth/Height` as
+"Real resolution") plus `vid_setsize` for a runtime resize, one backend per
+launch. Note `vid_setmode` does not exist in this build. Still untested: an
+actual mouse-drag resize under a compositor-initiated Wayland configure, which
+is a different entry point from `vid_setsize`.
+
+### 6. X11 raw input via XInput2
+
+The standing feature gap: `in_rawkeyboard` works on Wayland and X11 has no
+equivalent path. Whatever lands must respect the `I_StartTic()` /
+`ResetButtonTriggers()` trap in `CLAUDE.md` — without it a single tap latches a
+button on for every later tic, and every input trace still shows balanced
+press/release pairs.
+
+**Verified 2026-08-13:** X11 selects `XI_RawKeyPress` and
+`XI_RawKeyRelease`, enables delivery from `LockKeyboard()`, and forwards the
+focused window's events as `OnWindowRawKey` using the X11 keycode minus 8
+(evdev/`RawKeycode` numbering). The first interactive run exposed that the
+root subscription was using `MasterPointerID`, which silently excluded raw
+keyboard events; selecting `XIAllMasterDevices` fixed it. The rebuilt Linux
+binary then produced matching raw press/release events for forward, left,
+back, and right, with the held-button set returning to `(none)` after every
+release.
+
+### 7. Remove the input diagnostics
+
+The temporary `in_keytrace` diagnostic was removed after the X11 trace passed.
+`ZWIDGET_TRACE_REPEAT` is not present in the current tree.
+
+### 8. `FShaderProgram::Link()`'s old-GL path — the premise was wrong
+
+**Downgraded 2026-08-12.** This file previously called the `glslversion < 4.20`
+branch of `gl_shaderprogram.cpp` "the same class of bug as the GL black-frame
+defect". Code reading says it is not, for three independent reasons, any one
+sufficient:
+
+1. **`mActiveShader` does not track this class of object.** It caches `FShader*`
+   — material shaders. `FShaderProgram` is a different class (a
+   `PPShaderBackend`) and nothing ever assigns one to `mActiveShader`, so
+   `Link()` cannot make that cache disagree with itself.
+2. **Every reachable call sits inside an `FGLPostProcessState` bracket**, whose
+   constructor saves `GL_CURRENT_PROGRAM` and whose destructor restores it. All
+   four paths were checked (`GLPPRenderState::GetGLShader` via `Draw()`,
+   `FPresentShader::Bind` via `CopyToBackbuffer` and via `PresentStereo`,
+   `FShadowMapShader::Bind` via `UpdateShadowMap`). That is exactly what the
+   black-frame bug lacked: `FShader::Load()`'s `glUseProgram(0)` ran during
+   incremental compilation interleaved with drawing, outside any bracket.
+3. **`FShaderProgram::Bind()` is an unguarded `glUseProgram` on every GL
+   version**, on the same paths, shortly after `Link()`. If leaving a program
+   bound were the defect, GL 4.6 would be broken too.
+
+The `glUseProgram` at the head of that branch is also *required* — the
+`glUniform1i` calls after it are the non-DSA form and act on the current
+program. Worst case if it did desync is one screen-quad draw with a valid but
+wrong fragment shader, self-correcting at the next `Bind()`; the black-frame
+bug's severity came entirely from the stranded program being **0**. Leave it
+alone; at most add a comment recording that the bracket is what makes it safe.
+Do not add a save/restore inside `Link()`.
+
+**The test recipe recorded here was also wrong, and would have produced a clean
+run that meant nothing.** `MESA_GL_VERSION_OVERRIDE=4.1` alone does *not* reach
+this branch: `glslversion` derives from `GL_SHADING_LANGUAGE_VERSION`, a
+different string, which still reports 4.60. `MESA_GLSL_VERSION_OVERRIDE=410` is
+the variable that does the work — but on its own it leaves `gl_version` at 4.6,
+which keeps `RFL_SHADER_STORAGE_BUFFER` set, and the shadow-map shader is then
+emitted as `#version 410` while still carrying `layout(std430, binding = 4)`,
+invalid before GLSL 4.30 → `I_FatalError`. **Set both, or neither.**
+
+Cheaper still, and the engine's own switch: **`-glversion 3.3`** forces
+`gl_version = 3.31`, which trips the force-down that sets `glslversion` to 3.31,
+taking the branch on any driver with no environment variables and clearing the
+SSBO flag so the shadow-map hazard cannot fire. Caveat, and it is the kind that
+wastes a session: the confirming log line is **`Emulating OpenGL v 3.3`**, not
+`GL_VERSION:` — `gl_PrintStartupLog` prints the driver's real 4.6/4.60 strings
+regardless, so the startup log is actively misleading here.
+
+Verified as a side effect: on GL 4.6 `PatchShader` promotes `maxGlslVersion` to
+420 for every postprocess shader, so `RemoveSamplerBindings` never runs and
+`samplerstobind` is always empty. Both halves of the old-GL path are dead on
+this hardware, which is what "untested" meant.
+
+### 9. No CI job builds Vulkan
+
+`HAVE_VULKAN` appears nowhere in `.github/workflows/continuous_integration.yml`.
+`HAVE_VULKAN=ON` **did not compile at all** until 2026-08-10 — `nativevideo.cpp`
+called `I_GetVulkanPlatformExtensions` and `I_CreateVulkanSurface` above their
+definitions with no POSIX header declaring them — and that had gone unnoticed
+because nothing ever configured it. A single Linux job with the flag on would
+have caught it at zero cost. Compile only; CI has no GPU and the smoke test
+cannot exercise the backend.
+
+**Done 2026-08-12**, as a separate "Linux GCC 12 Vulkan" matrix entry with a
+`compile_only` flag that skips the smoke test and both packaging steps. It is
+deliberately *not* folded into an existing job: `DEFAULT_RENDER_BACKEND` becomes
+1 when `HAVE_VULKAN` is defined, so an existing job would pass its smoke test
+only via the OpenGL fallback and would upload a Vulkan-default package. **No
+extra apt packages are needed** — checked, not assumed: ZVulkan vendors the
+headers, `find_package(Vulkan)` is inside the Apple branch, volk and ZWidget
+both `dlopen` `libvulkan.so.1`, and the only new system header is
+`<X11/Xlib.h>`, already covered by `libx11-dev`. The job has never run.
+
+### 10 and 11. Wayland bind versions and clipboard init order — FIXED, not published
+
+From the outside audit, 2026-08-12 (`docs/audits/findings-linux-2026-08-12.md`,
+findings 1 and 2). Both were **fixed the next day in `c3474d697`**, "ZWidget:
+clamp Wayland binds and initialize clipboard in either order".
+
+These two items previously stood here as open work, describing the bugs in the
+present tense long after they were fixed. Re-verified against the tree on
+2026-08-14; the description below is what the code now does.
+
+- **Finding 1 (bind versions).** `registry_handle_global` ignored its `version`
+  argument and bound every interface at a hardcoded constant, so a compositor
+  legally advertising a lower version could raise a protocol error and
+  disconnect the client before a window existed. Every bind is now
+  `std::min(version, N)`.
+- **Finding 2 (clipboard).** The data device was created only in the
+  `wl_data_device_manager` branch and only `if (backend->m_waylandSeat)`, with
+  no retry from the `wl_seat` branch — so the reverse announcement order left
+  the clipboard permanently dead, silently. There is now an idempotent
+  `EnsureDataDevice()` called from both branches.
+
+The second half of finding 1's fix direction — "gate listener entries and
+requests on the version actually obtained" — was checked and needs nothing:
+
+- Clamping is downward only, so a listener struct always has at least as many
+  entries as the bound version can deliver. Extra entries are never called,
+  because the compositor does not send events above the bound version.
+- The one listener with a genuinely version-dependent entry,
+  `wl_pointer_listener`, already guards it with
+  `#ifdef WL_POINTER_AXIS_VALUE120_SINCE_VERSION`.
+- No version-gated *request* is used anywhere in this backend — `grep -rn
+  '_RELEASE\b'` over `src/window/wayland/*.cpp` is empty, so there is no
+  `wl_seat.release`/`wl_output.release` class of problem to gate.
+
+**What is actually still open: publishing.** `c3474d697` exists only on
+`metal-audit`. It is not on `zwidget/wayland-c-bindings` or any other
+`zwidget/*` ref. This is stock upstream ZWidget code, so the fix belongs in the
+dpjudas PR alongside the Cocoa fixes, and it goes through the
+cherry-pick-and-publish procedure in `CLAUDE.md` — **not** `git subtree push`.
+
+Neither defect can be reproduced on this machine, which is why they were fixed
+on reading alone. Measured 2026-08-14 under this KDE session, requested versus
+what KWin advertises:
+
+| interface | requested | KWin advertises |
+|---|---|---|
+| `wl_compositor` | 4 | 6 |
+| `wl_seat` | 8 | 10 |
+| `xdg_wm_base` | 4 | 6 |
+| `wl_output` | 3 | 4 |
+| `wl_data_device_manager` | 3 | 3 |
+| `zxdg_output_manager_v1` | 3 | 3 |
+
+KWin also announces `wl_seat` (10th) before `wl_data_device_manager` (14th), so
+finding 2's ordering never occurs here either. Two interfaces have zero
+headroom, which is worth knowing but is not a defect now that the clamp exists.
+A real reproduction needs a nested compositor advertising lower versions, or a
+`libwayland` proxy that rewrites registry advertisements; **nothing suitable is
+installed on this box** (`weston`, `sway`, `cage`, `mutter`, `labwc` all
+absent), and building that harness costs more than the fixes did. Do not treat
+it as a prerequisite.
+
+Note what the audit method bought: both came from a model that had never seen
+this project's notes, reading a pruned export with `AGENTS.md` and `docs/`
+removed, so it could not have been repeating anything.
 
 ---
 
@@ -728,6 +1142,37 @@ wholly nondeterministic — 100% of pixels differ between identical launches.
 An 8-sample determinism check is load-bearing: MAP02 and MAP01 both showed
 `0.00` noise on a single pair and then produced 5 and 4 distinct states
 respectively over eight launches.
+
+**This table disagrees with `configs.json`, and both claim the same date.**
+Found 2026-08-12 while acting on it. `_map_choice_note` in
+`tools/matrix/configs.json` carries the same experiment with different numbers:
+
+| | table above | `_map_choice_note` |
+|---|---|---|
+| MAP06 ssao / bloom | 6.84 / **dead** | 57.4 / **6.9** |
+| MAP01 ssao / bloom | 4.89 / dead | 19.2 / 4.4 |
+| MAP03 bloom | dead | 0.0 |
+| MAP07 ssao | dead | 0.0 |
+| MAP12 ssao / bloom | dead / 38.61 | 0.0 / 50.9 |
+| MAP15 ssao / bloom | 16.86 / 14.22 | 45.1 / 21.5 |
+
+The **noise** column agrees throughout (MAP11 0.11/0.115, MAP15 0.13/0.132,
+MAP12 0.00/0.004), so it is the pass-action scan that differs, not the
+determinism check — which rules out "two different runs of the same procedure"
+as an innocent explanation and points at the two being different measurements
+with the same name. The *decisions* survive either way: MAP06 satisfies both
+requirements on both readings, and MAP12 is the bloom map on both. What does not
+survive is the shorthand "bloom is dead on MAP06", which is only in the table.
+
+`configs.json` is the copy adjacent to the code and was written by the session
+that made the choice, so prefer it until someone re-measures. Also wrong in
+`configs.json` itself, in the other direction: three config `note` fields say
+MAP12 is "the only stock map where [bloom] acts at all", which its own table
+contradicts at MAP15 21.5 and MAP07 11.7.
+
+**Do not quote either set as measured fact in a commit message or a PR** until
+the scan is re-run. The scan is cheap — it is the same `--only` launches the
+determinism check uses.
 
 ### `-iwad` does not fail when the IWAD is missing — it loads another one
 
