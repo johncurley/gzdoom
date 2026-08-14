@@ -1007,7 +1007,10 @@ bool I_CreateVulkanSurface(VkInstance instance, VkSurfaceKHR *surface) {
   windowCreateInfo.sType = VK_STRUCTURE_TYPE_MACOS_SURFACE_CREATE_INFO_MVK;
   windowCreateInfo.pNext = nullptr;
   windowCreateInfo.flags = 0;
-  windowCreateInfo.pView = view;
+  // ARC will not implicitly convert an object pointer to const void *; the
+  // struct field is a non-owning borrow for the duration of the call, so
+  // __bridge (no ownership transfer) is the correct cast.
+  windowCreateInfo.pView = (__bridge const void *)view;
 
   const VkResult result =
       vkCreateMacOSSurfaceMVK(instance, &windowCreateInfo, nullptr, surface);
