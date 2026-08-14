@@ -68,7 +68,8 @@ one before). Required three ZWidget Cocoa fixes; see
   Runs with its **own config file**, a pinned window and a warmup launch, so it
   cannot contaminate your `gzdoom.ini` or drift with the display. Currently PASS.
 - `tools/matrix/crossbackend.py` — Metal-vs-OpenGL oracle, per-band shape
-  analysis. Currently 11/11 OK on macOS (gl,metal) and 11/11 OK on Linux
+  analysis. Currently **12/12 OK on macOS** (gl,metal, 2026-08-15, all configs
+  including the scene-keyed `baseline_bloom`) and 11/11 OK on Linux
   (gl,vulkan, 2026-08-10). Runs on both platforms now; paths come from
   `launch_<platform>` blocks in `configs.json`, and `GZDOOM_MATRIX_BINARY`
   points it at an alternate build directory.
@@ -591,7 +592,47 @@ of its own, and `master` is the upstream mirror. No merge is needed.
 
 Ordered by value.
 
-### 1. Re-run `crossbackend.py` — shared code changed under Metal
+### 1. Re-run `crossbackend.py` — shared code changed under Metal — DONE 2026-08-15
+
+**Result: 12/12 OK**, scene `doom2` (MAP06), `gl,metal`, on the reference
+MacBookAir7,2. Self-check first: both backends REPRODUCIBLE (`baseline` gl mean
+20.981 / metal 20.989; `ssao` gl 20.744 / metal 20.245). No regression from
+`e1f47ce5b` — its two Metal-reaching changes are viewport-shaped, and a viewport
+or extent fault shows as a half-frame or a displaced band, which is precisely
+the shape this tool resolves. Nothing of that shape appeared; passing median
+band means ran 0.013–0.609.
+
+One row needed judgement rather than being clean: `colormap` reported SUSPECT at
+*band 0 mean 0.035, 69.3x the median band (0.001)* — the same palette
+quantisation recorded for it on 2026-08-09, magnified into a large ratio by a
+near-zero denominator. That was a hole in the tool, now closed by
+`BAND_MIN_OUTLIER_MEAN`; see below. `colormap` reads OK with the faint outlier
+still printed.
+
+Worth a note for whoever runs the suite next: AGENTS.md records that roughly
+**half** of full-suite runs used to report *some* config SUSPECT with means of
+15–70 and a wandering victim, cause unmeasured. This run showed nothing of the
+kind. The status-bar-face nondeterminism found on 2026-08-12 and now pinned by
+`screenblocks 12` is the obvious candidate, but **one clean run is not evidence**
+— it would take several full-suite runs to claim that, and nobody has.
+
+#### The ratio test had no absolute floor (fixed, `crossbackend.py`)
+
+`BAND_OUTLIER_RATIO` divided by the median band mean with only a `1e-9`
+divide-by-zero guard. When the other bands agree almost perfectly, any dust
+divides into a large ratio: 0.035 of 255, on 0.01% of pixels, with exactly one
+pixel over `BAND_MAX_DELTA_FLAG`, reported as a 69x outlier.
+
+Fixed with `BAND_MIN_OUTLIER_MEAN = 0.5`, applied as an AND-gate — the same
+shape as `BAND_MIN_HOT_PIXELS` on the max-delta path, and for the same reason.
+A gate can only suppress, so it cannot hide a defect the ratio would otherwise
+have had to invent; retuning `BAND_OUTLIER_RATIO` instead would have stopped the
+band being checked at all. The value is not delicate: real SUSPECTs on this
+suite run per-band means of **15–70**, the false positive is **0.035**, so 0.5
+sits ~14x above the noise and ~30x below the smallest recorded real signal.
+Gated bands are still **printed** (`[faint outlier: ...]`), not dropped.
+
+Why it was run, kept for context:
 
 `e1f47ce5b` altered `v_video.cpp` and `v_framebuffer.cpp`, which every backend
 renders through, Metal included. Two behaviour changes reach Metal:
@@ -607,7 +648,34 @@ Use the harness as it now stands: `1aa3e0c63` fixed `crossbackend.py` dropping
 a config's own map (item 3), and that fix is platform-independent. A run from
 before that commit tested the bloom trio on the wrong map.
 
-### 2. Decide whether Vulkan should be enabled on Apple at all
+### 2. Vulkan on Apple — DECIDED 2026-08-15: auto-detect off Apple, opt-in on it
+
+**Decision (user's, 2026-08-15):** Vulkan-through-MoltenVK does not make sense
+as a shipping backend on Apple hardware — it is a reference platform there, and
+having it on by default defeats the point of the Metal backend. Auto-detect
+stays for the native platforms that want it; Apple requires an explicit
+`-DHAVE_VULKAN=ON`, and is OFF otherwise.
+
+Implemented by guarding both the `find_package(Vulkan QUIET)` and the
+auto-enable with `NOT APPLE`. The opt-in path still works and still resolves
+through `libraries/ZVulkan`, which does its own `find_package` — so nothing
+depended on the root detect having run.
+
+**This also fixed a live breakage nobody had noticed.** The committed state does
+not configure from scratch on this machine at all: a fresh default `cmake -B`
+found Vulkan 1.3.268, set `HAVE_VULKAN`, entered `libraries/ZVulkan`, and died
+on `Could NOT find Vulkan (missing: MoltenVK)`. Verified 2026-08-15 by stashing
+the fix and configuring a clean directory — rc=1. It was invisible here because
+the checked-in `build/` has `HAVE_VULKAN:BOOL=OFF` cached from before
+`42052f77a`, so incremental builds never re-ran the detect. An Apple contributor
+cloning the repo would have hit it immediately.
+
+Note this is the **build-the-committed-state trap** in a new costume: not a
+half-committed change, but a stale *cache* concealing that the committed state
+was broken. `git stash push -u && cmake --build` does not catch it; only
+configuring a fresh directory does.
+
+The original question, for the record:
 
 `42052f77a` added an unconditional `find_package(Vulkan QUIET)` that sets
 `HAVE_VULKAN` whenever Vulkan is found. On the macOS CI runner it is found, so
@@ -1298,6 +1366,21 @@ before it was diagnosed locally.
 
 Corollary for `AGENTS.md` itself: "fixed on <date>" written from the machine
 that made the fix is not evidence the fix is in the branch. Cite the commit.
+
+**A stale CMake cache hides the same class of breakage, and the stash-build
+check above does NOT catch it.** Measured 2026-08-15: the committed tree could
+not be configured from scratch on macOS — `find_package(Vulkan QUIET)` found the
+SDK, set `HAVE_VULKAN`, and `libraries/ZVulkan` then hard-failed on the missing
+MoltenVK component. Every local build passed, because `build/CMakeCache.txt`
+carried `HAVE_VULKAN:BOOL=OFF` from before the detect was added and configure
+never re-ran. A rebuild reuses the cache by design, so the only check that sees
+this is configuring a throwaway directory:
+
+```bash
+cmake -B /tmp/cfgcheck -DCMAKE_BUILD_TYPE=RelWithDebInfo .   # rc must be 0
+```
+
+Do it after any change to `CMakeLists.txt`, and before pushing one.
 
 ### Choosing a map for the matrix suite — measure, never assume
 
