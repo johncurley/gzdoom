@@ -57,48 +57,6 @@ void I_GetEvent() {
 	event_processing_in_progress = false;
 }
 
-// Temporary diagnostic, paired with the [keytrace] output in nativevideo.cpp.
-// Enable with `in_keytrace 1`. Key events are posted to a queue and only applied
-// when the engine drains it, so the button state cannot be read back at post
-// time -- it is reported here instead, once per tic and only when it changes.
-//
-// Reading the two streams together: every "[keytrace] up ... route=Game posted"
-// should be followed by that key's action leaving the held set. If the action
-// stays held, the key-up reached the engine and ButtonMap did not act on it.
-// If no "up" line appears at all, the release never made it this far.
-EXTERN_CVAR(Bool, in_keytrace)
-
-static void I_TraceHeldButtons()
-{
-	if (!in_keytrace)
-		return;
-
-	static FString last;
-	static bool everPrinted = false;
-
-	FString now;
-	for (int i = 0; i < buttonMap.NumButtons(); i++)
-	{
-		if (buttonMap.ButtonDown(i))
-		{
-			if (now.IsNotEmpty()) now << ' ';
-			now << buttonMap.GetButtonName(i);
-		}
-	}
-	// Always emit the first sample, so enabling the cvar visibly confirms the
-	// trace is live even when nothing is held yet.
-	if (!everPrinted || now.Compare(last) != 0)
-	{
-		// stderr, not Printf: once the video backend is up, Printf goes to the
-		// in-game console rather than the terminal, and this trace needs to be
-		// capturable from a piped run.
-		fprintf(stderr, "[keytrace] held: %s\n", now.IsNotEmpty() ? now.GetChars() : "(none)");
-		fflush(stderr);
-		last = now;
-		everPrinted = true;
-	}
-}
-
 void I_StartTic() {
 	// Clear the per-tic edge flags before pumping new input, as the win32 and
 	// cocoa backends do. bWentDown/bWentUp are set by PressKey/ReleaseKey and
@@ -118,7 +76,6 @@ void I_StartTic() {
 	I_CheckNativeMouse();
 	I_ReconcileMouseButtons();
 	I_GetEvent();
-	I_TraceHeldButtons();
 }
 
 void I_StartFrame() {}
