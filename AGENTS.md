@@ -455,6 +455,32 @@ headers, `find_package(Vulkan)` is inside the Apple branch, volk and ZWidget
 both `dlopen` `libvulkan.so.1`, and the only new system header is
 `<X11/Xlib.h>`, already covered by `libx11-dev`. The job has never run.
 
+**2026-08-14 — compile-only is demonstrably not enough.** Two Vulkan-only
+defects were found by hand in one session, and **neither would have been caught
+by this job**, because both are runtime:
+
+- `a60ea956d`. `SystemBaseFrameBuffer::GetClientWidth/Height` returned a
+  hardcoded 640x480 and `VulkanRenderDevice` inherits them. Compiles perfectly.
+  Live since `fbc831511` (2026-05-04) — roughly three months in the tree.
+- `e1f47ce5b`. A virtual `screen->Update()` during `IVideo::SetResolution`
+  reaching `VkPostprocess::SetActiveRenderTarget()` before any frame had begun.
+  Compiles perfectly; segfaults on startup.
+
+The reason GL never had either is that GL is what gets exercised — by hand and
+by the Xvfb smoke test. Vulkan is compiled and never launched, so the entire
+class of "builds fine, dies at runtime" is invisible on that backend.
+
+Worth investigating: Mesa ships **lavapipe**, a CPU Vulkan ICD, so a CI job
+*could* actually launch the Vulkan backend under Xvfb rather than only linking
+it. That would have caught `e1f47ce5b` outright — it dies before `W_Init`, the
+same assertion the existing smoke test already makes — and plausibly
+`a60ea956d` too if the check compares `GetClientWidth()` against the Xvfb
+screen size. Not yet tried; the cost is one apt package
+(`mesa-vulkan-drivers`) and `VK_ICD_FILENAMES`, and the risk is the usual
+software-rasteriser flakiness. Do not fold it into the compile-only job —
+`DEFAULT_RENDER_BACKEND` becomes 1 under `HAVE_VULKAN`, which is the same trap
+recorded above.
+
 ### 10 and 11. Wayland bind versions and clipboard init order — FIXED, not published
 
 From the outside audit, 2026-08-12 (`docs/audits/findings-linux-2026-08-12.md`,
