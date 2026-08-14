@@ -256,10 +256,25 @@ if( ${TARGET_ARCHITECTURE} MATCHES "x86_64" )
 	set( HAVE_VM_JIT ON )
 endif()
 
-# Auto-detect Vulkan if available; allow override via -DHAVE_VULKAN=ON/OFF
-find_package(Vulkan QUIET)
+# Auto-detect Vulkan if available; allow override via -DHAVE_VULKAN=ON/OFF.
+#
+# NOT on Apple. Vulkan there means Vulkan-through-MoltenVK, and replacing that
+# with a native Metal backend is a large part of why this fork exists -- so
+# building it by default would defeat the point. It stays available as a
+# reference implementation for anyone who explicitly asks (-DHAVE_VULKAN=ON),
+# because a second backend is useful as an oracle (see tools/matrix/
+# crossbackend.py, where Vulkan is the tiebreaker for a Metal-vs-GL divergence).
+#
+# This is deliberate, not incidental: the unconditional detect added in
+# 42052f77a turned Vulkan on for macOS CI, which compiled an #ifdef HAVE_VULKAN
+# block in cocoa/i_video.mm that had never been built and carried an ARC bug
+# dating to 2fc29251f. Fixed in f733aee14, but the build should not have been
+# opting itself in.
+if (NOT APPLE)
+	find_package(Vulkan QUIET)
+endif()
 if (NOT DEFINED HAVE_VULKAN)
-	if (Vulkan_FOUND)
+	if (Vulkan_FOUND AND NOT APPLE)
 		set(HAVE_VULKAN ON CACHE BOOL "Enable Vulkan support")
 	else()
 		set(HAVE_VULKAN OFF CACHE BOOL "Enable Vulkan support")
