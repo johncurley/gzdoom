@@ -286,11 +286,27 @@ cause is the error handler, not a timeout.
 CI does not catch it precisely as predicted: the smoke test passes `-iwad`, the
 row that scores 0.
 
-Fix direction is unchanged (bail unless the window is viewable, or handle
-`MapNotify` and discharge a pending activation on it) but the priority is not —
-this is a hard startup failure for anyone on a bare or non-EWMH X server, not
-cosmetic. Still a ZWidget subtree change, so it needs the cherry-pick-and-publish
-procedure and belongs in the dpjudas PR.
+**FIXED 2026-08-14, `89d79bcbe`, published upstream as `dd88a86b7`.** Both
+halves of the fix direction turned out to be needed, and the class already had
+the state to do it — `isMapped`, which this file wrongly said was untracked:
+
+- `Activate()` defers when `!isMapped` and `Show()` discharges the pending
+  activation. That addresses the root cause at both sites, including the
+  *silent* EWMH variant noted below — a `_NET_ACTIVE_WINDOW` ClientMessage for
+  an unmapped window was simply thrown away, so the launcher's initial focus
+  intent was being lost under a window manager too, with no error to notice.
+- The fallback `XSetInputFocus` and the `WM_TAKE_FOCUS` handler both check
+  viewability first, via a shared `IsWindowViewable()`. `XGetWindowAttributes`
+  is a round trip, so it doubles as the synchronisation that guarantees a
+  preceding map has been processed. `WM_TAKE_FOCUS` keeps its WM-supplied
+  timestamp.
+
+Measured, bare Xvfb, launcher path: **1 `BadMatch` / exit 1 / 0.25s → 0 / exit
+124 / ran the full 25s**. Controls unchanged — `-iwad` under Xvfb 0 and exit 0,
+launcher and game under XWayland+KWin 0 X errors, native Wayland unaffected.
+
+This also resolves the "launcher exits on its own under bare Xvfb between 12s
+and 25s" note below: that was this, and it now stays up.
 
 The two sites are mutually exclusive on the axis nobody recorded: whether the
 observing session had an EWMH window manager. Under bare Xvfb, site A is
