@@ -133,6 +133,25 @@ BAND_MIN_HOT_PIXELS = 100
 # is modest. This is what catches a displaced pass.
 BAND_OUTLIER_RATIO = 4.0
 
+# ...but a ratio against a near-zero median manufactures outliers out of nothing.
+# Measured 2026-08-15: `colormap` reported "band 0 mean 0.035 is 69.3x the median
+# band (0.001)" -- an absolute difference of a hundredth of a grey level, on 0.01%
+# of pixels, with exactly ONE pixel above BAND_MAX_DELTA_FLAG. The other bands
+# agree so nearly that any dust at all divides into a large ratio.
+#
+# This is the same lesson BAND_MIN_HOT_PIXELS encodes for the max-delta path, and
+# it is applied the same way: as an AND-requirement, never by retuning
+# BAND_OUTLIER_RATIO. A gate can only suppress a flag, so it cannot hide a defect
+# that the ratio would otherwise have to invent; raising the ratio would instead
+# stop the band being checked.
+#
+# The value has a wide margin either side and is not delicate. A real SUSPECT on
+# this suite runs per-band means of 15-70 with worst channel deltas 118-159
+# (AGENTS.md, five full-suite runs); the false positive above is 0.035. 0.5 sits
+# ~14x above the noise and ~30x below the smallest recorded real signal, and is
+# an eighth of one grey level -- below that a band mean cannot be visible.
+BAND_MIN_OUTLIER_MEAN = 0.5
+
 # Beyond this global brightness ratio between the two captures, the row is
 # treated as INVALID rather than normalised. See gain_match().
 MAX_TONE_RATIO = 4.0
@@ -265,15 +284,25 @@ def classify(bands):
     ratio = (worst["mean_delta"] / median) if median > 1e-9 else (
         float("inf") if worst["mean_delta"] > 1e-9 else 1.0)
 
-    if not hot and ratio < BAND_OUTLIER_RATIO:
+    # A ratio outlier only counts if the band is also absolutely big enough to
+    # mean something. Reported either way -- see BAND_MIN_OUTLIER_MEAN.
+    faint = (ratio >= BAND_OUTLIER_RATIO
+             and worst["mean_delta"] < BAND_MIN_OUTLIER_MEAN)
+
+    if not hot and (ratio < BAND_OUTLIER_RATIO or faint):
         note = ""
+        if faint:
+            note += (f"  [faint outlier: band {worst_i} mean "
+                     f"{worst['mean_delta']:.3f} is {ratio:.1f}x the median "
+                     f"({median:.3f}) but under the {BAND_MIN_OUTLIER_MEAN} "
+                     f"absolute floor]")
         if sparse:
-            note = ("  [sparse: " + ", ".join(
+            note += ("  [sparse: " + ", ".join(
                 f"band {i} max {m} on {n}px" for i, m, n in sparse) +
                 f" -- under the {BAND_MIN_HOT_PIXELS}px coverage floor]")
         return "OK", (f"uniform backend noise (median band mean {median:.3f})"
                       + note)
-    if ratio >= BAND_OUTLIER_RATIO:
+    if ratio >= BAND_OUTLIER_RATIO and not faint:
         return "SUSPECT", (f"band {worst_i} mean {worst['mean_delta']:.3f} is "
                            f"{ratio:.1f}x the median band ({median:.3f}) -- "
                            f"localised difference, check for a vertical offset")
