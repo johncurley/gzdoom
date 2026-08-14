@@ -8,8 +8,10 @@ class SystemBaseFrameBuffer : public DFrameBuffer {
 public:
   SystemBaseFrameBuffer(void *hMonitor, bool fullscreen);
   bool IsFullscreen() override { return false; }
-  int GetClientWidth() override { return 640; }
-  int GetClientHeight() override { return 480; }
+  // Implemented from the ZWidget window, so every backend deriving from this
+  // class gets real geometry -- not just SystemGLFrameBuffer.
+  int GetClientWidth() override;
+  int GetClientHeight() override;
   void ToggleFullscreen(bool yes) override;
   void SetWindowSize(int client_w, int client_h) override;
   virtual NativeHandle GetNativeHandle() const { return {}; }

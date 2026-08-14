@@ -101,6 +101,24 @@ SystemBaseFrameBuffer::SystemBaseFrameBuffer(void *hMonitor, bool fullscreen)
     : DFrameBuffer(640, 480) {}
 SystemBaseFrameBuffer::SystemBaseFrameBuffer() : DFrameBuffer(640, 480) {}
 
+// ZWidget owns the authoritative client geometry under both Wayland and X11,
+// so ask it rather than the windowing system.  This lives on the base class
+// because VulkanRenderDevice derives straight from SystemBaseFrameBuffer and
+// overrides nothing: while these returned a hardcoded 640x480, only the GL
+// backend -- which happens to override them -- ever saw the real window size,
+// and Vulkan sized its viewport and swapchain to a permanent 640x480.
+int SystemBaseFrameBuffer::GetClientWidth() {
+  if (auto *win = GetActiveZWidgetWindow())
+    return std::max(1, win->GetPixelWidth());
+  return 640;
+}
+
+int SystemBaseFrameBuffer::GetClientHeight() {
+  if (auto *win = GetActiveZWidgetWindow())
+    return std::max(1, win->GetPixelHeight());
+  return 480;
+}
+
 void SystemBaseFrameBuffer::ToggleFullscreen(bool yes) {
   // Native backend uses ZWidget for window state. Map fullscreen toggles to
   // xdg_toplevel.set_fullscreen / X11 EWMH equivalents via DisplayWindow.
@@ -431,36 +449,29 @@ SystemGLFrameBuffer::~SystemGLFrameBuffer() {
 #endif
 }
 
+// ZWidget is the preferred source (see the base class).  Only if there is no
+// ZWidget window do we fall back to querying X11 directly, which just the GLX
+// path can do -- the X11 EGL path never initializes the Xlib function table.
 int SystemGLFrameBuffer::GetClientWidth() {
-  if (mIsWayland) {
-    DisplayWindow *win = GetActiveZWidgetWindow();
-    if (win)
-      return std::max(1, win->GetPixelWidth());
-    return 640;
-  }
-  if (X11NativeDisplay && WindowHandle && zd_XGetWindowAttributes) {
+  if (!mIsWayland && !GetActiveZWidgetWindow() && X11NativeDisplay &&
+      WindowHandle && zd_XGetWindowAttributes) {
     XWindowAttributes xwa;
     zd_XGetWindowAttributes(X11NativeDisplay, (Window)(uintptr_t)WindowHandle,
                          &xwa);
     return xwa.width;
   }
-  return 640;
+  return SystemBaseFrameBuffer::GetClientWidth();
 }
 
 int SystemGLFrameBuffer::GetClientHeight() {
-  if (mIsWayland) {
-    DisplayWindow *win = GetActiveZWidgetWindow();
-    if (win)
-      return std::max(1, win->GetPixelHeight());
-    return 480;
-  }
-  if (X11NativeDisplay && WindowHandle && zd_XGetWindowAttributes) {
+  if (!mIsWayland && !GetActiveZWidgetWindow() && X11NativeDisplay &&
+      WindowHandle && zd_XGetWindowAttributes) {
     XWindowAttributes xwa;
     zd_XGetWindowAttributes(X11NativeDisplay, (Window)(uintptr_t)WindowHandle,
                          &xwa);
     return xwa.height;
   }
-  return 480;
+  return SystemBaseFrameBuffer::GetClientHeight();
 }
 
 void SystemGLFrameBuffer::SetVSync(bool vsync) {
