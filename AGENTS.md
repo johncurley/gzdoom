@@ -221,8 +221,9 @@ flagged.
 The Wayland first-paint fix is in xdg-shell and **does not cover X11**.
 
 **`BadMatch` (opcode 42, `X_SetInputFocus`) on every X11 backend start.**
-Non-fatal — Xlib's default handler prints and continues — but it is a real
-protocol error. Read 2026-08-12 (code only, nothing run), and **two independent
+~~Non-fatal — Xlib's default handler prints and continues~~ — **wrong, and
+measured wrong on 2026-08-14: it is fatal.** Xlib's default error handler
+prints and then calls `exit(1)`. See the bare-Xvfb result below. Read 2026-08-12 (code only, nothing run), and **two independent
 readings landed on the same site**, one of them an outside audit that had not
 seen this file.
 
@@ -258,6 +259,38 @@ launcher `Activate()` path and exited cleanly after a capture; the launcher
 remained alive until the timeout. This environment therefore did not
 reproduce either suspected site. The discriminator result is still useful:
 it does not justify an X11 fix or claim the bare-Xvfb observation is solved.
+
+**Bare-Xvfb result, 2026-08-14 — site A confirmed, and the error is fatal.**
+Ran the discriminator above under `Xvfb :77 -screen 0 1280x1024x24`, which has
+no EWMH window manager, so `_NET_ACTIVE_WINDOW` is absent and site A's branch is
+live:
+
+| launch | `BadMatch` | exit | elapsed |
+|---|---|---|---|
+| `-iwad DOOM2.WAD +quit` (skips launcher) | 0 | 0 | 1.7s |
+| no `-iwad` (launcher path) | **1** | **1** | **0.25s** |
+
+Site A (`x11_display_window.cpp:327`, `Activate()`) is therefore the site, and
+site B is not implicated. The prediction of *exactly 2* was wrong for a reason
+that matters more than the count: **Xlib's default error handler calls
+`exit(1)`**, so the process dies on the first one and a second can never be
+observed. The stdout that appears after the error in a combined log is buffered
+early-startup text flushed at exit, not execution continuing.
+
+Consequence, and it is bigger than "a noisy protocol error": **the launcher
+cannot start at all on an X server without an EWMH window manager.** It dies in
+a quarter of a second. This also supersedes the "launcher exits on its own
+between 12s and 25s" note below — under this build it is immediate, and the
+cause is the error handler, not a timeout.
+
+CI does not catch it precisely as predicted: the smoke test passes `-iwad`, the
+row that scores 0.
+
+Fix direction is unchanged (bail unless the window is viewable, or handle
+`MapNotify` and discharge a pending activation on it) but the priority is not —
+this is a hard startup failure for anyone on a bare or non-EWMH X server, not
+cosmetic. Still a ZWidget subtree change, so it needs the cherry-pick-and-publish
+procedure and belongs in the dpjudas PR.
 
 The two sites are mutually exclusive on the axis nobody recorded: whether the
 observing session had an EWMH window manager. Under bare Xvfb, site A is
