@@ -66,7 +66,11 @@ DIFFs. The guard added in that commit is worth *more* than its message claims.
 ## Open
 
 - **`crossbackend.py` has not been looked at.** It shares `configs.json` and
-  knows nothing about scenes, per-config maps or `screenblocks`. It is also the
+  knows nothing about per-config maps or `screenblocks`. (It *does* take
+  `--scene`; read 2026-08-12, the specific gap is that `crossbackend.py:158`
+  calls `matrix.launch()` without the `scene` argument, so the bloom trio's
+  scene-keyed `MAP12` is dropped and those configs run on MAP06, where bloom
+  changes nothing. Written up as a Linux task in `AGENTS.md`.) It is also the
   check most worth investing in: two independent implementations agreeing is a
   stronger invariant than one implementation agreeing with its own past, and it
   needs no baseline file and no determinism across time.

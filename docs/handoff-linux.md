@@ -9,6 +9,9 @@
 > items came out of it: Wayland windows not painting until an unrelated event,
 > and an intermittently black GL game window. Kept for the record — do not
 > re-run this from scratch.
+>
+> **For what is still open on that machine, read `AGENTS.md` § "Tasks — Linux".**
+> This file is history; that section is the work list.
 
 Everything below is validation of work already committed, not new development.
 Two things were done on macOS that **only Linux can check**, and both are cheap.

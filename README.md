@@ -23,8 +23,15 @@ fog, model normals and the palette tonemap all match the reference within a
 pixel value or two. One known residual: SSAO differs from OpenGL by ~0.4/255 in
 its contribution to the final frame, bounded and documented in `AGENTS.md`.
 
-**Linux/BSD** — native Wayland and X11 backends with raw keyboard input and
-desktop theme detection.
+**Linux** — native Wayland and X11 backends with desktop theme detection. The
+X11 raw-keyboard path has been interactively validated on the Linux test
+machine with balanced press/release events and no stuck actions. That machine
+has also passed the GL/Vulkan cross-backend suite; its selected MAP06 scene is
+not launch-to-launch deterministic, so no Linux golden baseline has been
+recorded.
+
+**BSD** — the native POSIX design is intended to cover BSD as well, but this
+fork does not currently claim BSD runtime verification.
 
 **Windows** — unchanged from upstream and covered by CI, but not yet run by the
 maintainer. Reports welcome.
@@ -34,6 +41,18 @@ maintainer. Reports welcome.
 bloom paths, which are gated off on Intel, would be **on** by default there.
 This is the single most useful thing an outside tester could change; see
 "Helping out".
+
+**OpenGL / Vulkan** — OpenGL remains the broadly compatible reference backend;
+the Linux Vulkan path is enabled and has passed the current 11-configuration
+cross-backend suite against OpenGL. The exact OpenGL feature/profile level is
+driver-dependent, so claims about older compatibility profiles or newer core
+features still need to be tied to a measured machine.
+
+The Metal renderer currently translates most known engine shaders at runtime
+and keeps native MSL for Metal-specific compute work. A future build-time
+`metallib` for the stock shader permutations should reduce startup and first
+frame compilation cost, while retaining runtime translation for custom and
+mod-provided shaders.
 
 ---
 
@@ -117,8 +136,8 @@ works and what you are certifying when you submit.
 - `CONTRIBUTING.md` — how work is verified here. Read before submitting.
 - `AGENTS.md` — current state, open items, and the traps that have cost real
   time.
-- `docs/history/agent-log.md` — the working log, 2026-06 onward. An archive,
-  kept because it records what was **disproved**.
+- `docs/history/agent-log.md` — historical log, 2026-06 onward. An archive,
+  kept because it records what was **disproved**, not a current task guide.
 - `docs/engine-modernization.md` — the durable roadmap.
 - `docs/gpu-capture-protocol.md` — GPU frame capture runbook.
 - `src/common/rendering/metal/README_METAL_RENDERER.md` and
