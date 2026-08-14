@@ -84,12 +84,10 @@ void CocoaDisplayBackend::RunLoop()
     ExitRunLoop = false;
 
     // [NSApp run] cannot be nested. An application that starts AppKit itself
-    // and then opens a ZWidget modal window from inside that run loop -- which
-    // is what GZDoom does, calling [NSApp run] and deferring its startup onto a
-    // timer out of applicationDidFinishLaunching -- would re-enter here. AppKit
-    // does not support that: the window is created and drawn, but events keep
-    // going to the outer loop, so the modal window renders and then ignores all
-    // input.
+    // and then opens a ZWidget modal window from inside that run loop would
+    // re-enter here. AppKit does not support that: the window is created and
+    // drawn, but events keep going to the outer loop, so the modal window renders
+    // and then ignores all input.
     //
     // When someone else already owns the run loop, pump events ourselves
     // instead. distantFuture blocks rather than spins; ExitLoop()'s wake event

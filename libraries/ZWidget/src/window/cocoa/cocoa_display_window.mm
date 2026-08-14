@@ -777,15 +777,11 @@ CocoaDisplayWindow::~CocoaDisplayWindow()
     // with `if (impl && impl->windowHost)`, which does not protect against a
     // dangling impl -- only against a null one.
     //
-    // A host that pumps the run loop after closing a modal window will crash
-    // here. GZDoom does exactly that: its console updater calls
-    // -[NSRunLoop limitDateForMode:] while loading, which fires the app's
-    // processEvents: timer, which dispatches a queued mouseMoved: to this view
-    // -- EXC_BAD_ACCESS in -[ZWidgetView mouseMoved:], after the launcher has
-    // already closed.
+    // A host that pumps the run loop after closing a modal window could dispatch
+    // queued events to this view, causing a use-after-free crash in event handlers
+    // after the window is closed.
     //
-    // So sever the link before impl dies. Same defect class as the Wayland
-    // window-destroy use-after-free.
+    // So sever the link before impl dies.
     if (impl->window)
     {
         NSView* content = [impl->window contentView];
@@ -1030,14 +1026,6 @@ void CocoaDisplayWindow::Update()
     // processing, but that starves whenever the host is itself running inside a
     // main-queue block: the main queue is SERIAL, so nothing queued from within
     // that block can run until it returns.
-    //
-    // GZDoom does exactly that -- applicationDidFinishLaunching defers its
-    // entire DoMain via dispatch_async onto the main queue -- so every repaint
-    // requested while the launcher was modal sat in the queue behind a block
-    // that only completes when the game exits. Measured: 120 Update() calls,
-    // zero deferred blocks executed, one drawRect (the initial paint). The
-    // launcher was processing input correctly the whole time and simply never
-    // redrew, which is indistinguishable from a frozen window.
     [[impl->window contentView] setNeedsDisplay:YES];
 }
 
