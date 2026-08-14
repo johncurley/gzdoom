@@ -581,6 +581,78 @@ removed, so it could not have been repeating anything.
 
 ---
 
+## Tasks — macOS
+
+Written 2026-08-14 at the end of a Linux session, as the entry point for the
+next macOS one — the mirror of **Tasks — Linux** above. Start with
+`git pull` on `metal-audit`: that branch is the integration branch and already
+contains everything, `native-platform-expansion` is 229 behind it with nothing
+of its own, and `master` is the upstream mirror. No merge is needed.
+
+Ordered by value.
+
+### 1. Re-run `crossbackend.py` — shared code changed under Metal
+
+`e1f47ce5b` altered `v_video.cpp` and `v_framebuffer.cpp`, which every backend
+renders through, Metal included. Two behaviour changes reach Metal:
+`SetViewportRects(nullptr)` now runs whenever the reconciliation resizes, and
+`IVideo::SetResolution` no longer renders a full frame during startup.
+
+Metal will not crash the way Vulkan did — `MetalRenderDevice::Update()` opens
+with `if (!mInFrame) { BeginFrame(); ... }` and Vulkan has no such guard, which
+is exactly why Vulkan was the one that segfaulted — but "will not crash" is not
+"is correct". This is the first Metal exposure to that change.
+
+Use the harness as it now stands: `1aa3e0c63` fixed `crossbackend.py` dropping
+a config's own map (item 3), and that fix is platform-independent. A run from
+before that commit tested the bloom trio on the wrong map.
+
+### 2. Decide whether Vulkan should be enabled on Apple at all
+
+`42052f77a` added an unconditional `find_package(Vulkan QUIET)` that sets
+`HAVE_VULKAN` whenever Vulkan is found. On the macOS CI runner it is found, so
+**Apple builds now compile the Vulkan backend for the first time** — which
+immediately broke the macOS build, because it pulled in an `#ifdef HAVE_VULKAN`
+block in `cocoa/i_video.mm` that had never been compiled and carried an ARC bug
+dating to `2fc29251f` (2026-01-11). Fixed in `f733aee14`; CI green.
+
+The open question is intent, not correctness. This fork exists partly to
+*replace* MoltenVK with a native Metal backend, and Vulkan-on-Apple means
+Vulkan-through-MoltenVK. `DEFAULT_RENDER_BACKEND` is still 3 on Apple because
+`HAVE_METAL` is tested first, so the default does not change — but the backend
+is now built, linked and offered in the menu and launcher. Either narrow the
+auto-detect to non-Apple platforms or decide it is wanted; do not leave it
+accidental.
+
+### 3. Metal on Apple Silicon — still never run
+
+The standing item from `CLAUDE.md`. The renderer was developed entirely on a
+macOS 12.7 Intel Mac. TBDR versus IMR differences — memoryless storage, store
+actions, `didModifyRange:` — mean Intel-correct code can be wrong on M-series.
+Needs hardware, so it may block on availability rather than effort.
+
+### 4. SSAO attenuation residual
+
+The last open row of the Metal-versus-OpenGL parity table: ~0.047 in occlusion
+units. Detail under **Open items** below.
+
+### Checked already, do not redo
+
+`buttonMap.ResetButtonTriggers()` is **present** in `cocoa/i_input.mm`, as it is
+in `native/` and `win32/`. Only `posix/sdl/` is missing it, matching the note in
+`CLAUDE.md` that upstream SDL has the same omission. Verified 2026-08-14.
+
+`in_rawkeyboard` is **not needed on macOS** and does not exist there. Cocoa's
+gameplay path is already raw: `[NSEvent keyCode]` is a hardware positional
+virtual keycode, layout- and modifier-independent, mapped straight through
+`KEYCODE_TO_DIK[]` to a `DIK_*` scancode at `i_input.mm:550-551`, with no
+keysym or text translation anywhere in it. Linux needs the CVAR because its
+cooked path is the only one producing text and both must coexist; Cocoa splits
+the same way structurally, so there is nothing to switch. `grep -rn
+in_rawkeyboard src/` returns two hits, both in `native/i_input.cpp`.
+
+---
+
 ## Open items
 
 **SSAO residual.** Raw AO attenuation differs from OpenGL by ~0.047 in occlusion
@@ -1194,6 +1266,38 @@ owner and `dispatch_async` still cannot drain inside a main-queue block.
 
 Each of these produced a wrong conclusion that survived until something
 measured it. They are listed because re-learning them is expensive.
+
+### Build the committed state, not your working tree
+
+**Three separate instances in one session, 2026-08-14.** Each was a change made
+in two halves where only one half was committed. The working tree on disk was
+correct, so every local build passed; the commit was broken, so CI and any
+fresh checkout failed. `AGENTS.md` recorded two of the three as *already fixed*,
+because from the machine that wrote them they were.
+
+| | committed half | uncommitted half | symptom |
+|---|---|---|---|
+| `in_keytrace` | `5210976d2` deleted the `CVAR` | the `EXTERN_CVAR` + use | every Linux CI job failed to link |
+| X11 raw keyboard | the XInput2 feature | `XIAllMasterDevices` device fix | feature published upstream inert — silently drops every key |
+| matrix item 3 | `run.py`'s `scene=` parameters | `crossbackend.py`'s call sites | bloom trio silently tested on the wrong map |
+
+The X11 one is the worst shape: it was **published to the ZWidget fork**
+without its second half, so the defect left the building.
+
+The check costs about a minute and catches all three:
+
+```bash
+git stash push -u && cmake --build build --parallel $(nproc) && git stash pop
+```
+
+Do it before any push, and before any `git subtree`-style publish — a subtree
+publish compares against the *committed* subtree, so an uncommitted fix is
+invisible to it by construction. `gh run list --branch <branch>` is the cheap
+confirmation afterwards; on 2026-08-14 CI had already caught the link error
+before it was diagnosed locally.
+
+Corollary for `AGENTS.md` itself: "fixed on <date>" written from the machine
+that made the fix is not evidence the fix is in the branch. Cite the commit.
 
 ### Choosing a map for the matrix suite — measure, never assume
 
