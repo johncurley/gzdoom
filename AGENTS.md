@@ -308,6 +308,22 @@ launcher and game under XWayland+KWin 0 X errors, native Wayland unaffected.
 This also resolves the "launcher exits on its own under bare Xvfb between 12s
 and 25s" note below: that was this, and it now stays up.
 
+**Site B is exercised here after all, and the guard does not block it.**
+Instrumented the `WM_TAKE_FOCUS` handler and ran under XWayland+KWin: the
+launcher receives **2** messages and the game **1**, all three with
+`viewable=1`, so focus is taken normally. KWin supports `_NET_ACTIVE_WINDOW`,
+so site A's fallback is dead there — but the window advertises
+`WM_TAKE_FOCUS` in `WM_PROTOCOLS`, so site B runs on every start under a WM.
+That was the regression risk in guarding it, and it is now measured rather
+than reasoned.
+
+Still untested, and not reachable on this box: `WM_TAKE_FOCUS` arriving while
+the window is *not* viewable — the case the guard exists for. That needs a
+non-EWMH window manager that focuses early, and **no window manager at all is
+installed here** (`twm`, `mwm`, `fvwm`, `blackbox`, `cwm`, `jwm`, `icewm`,
+`openbox`, `matchbox`, `dwm`, `wmaker` all absent). `twm` is the right one to
+install for it — ICCCM-era, no `_NET_ACTIVE_WINDOW`, uses `WM_TAKE_FOCUS`.
+
 The two sites are mutually exclusive on the axis nobody recorded: whether the
 observing session had an EWMH window manager. Under bare Xvfb, site A is
 certain and site B unreachable; under KWin (including XWayland), site A's branch
