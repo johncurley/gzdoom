@@ -14,7 +14,14 @@ it is unusual).
 - **Linux session handoff:** `docs/handoff-linux.md` — two validation tasks that
   only Linux hardware could perform. **Both done, 2026-08-10; do not re-run.**
   What is still open on that machine is the **Tasks — Linux** section below.
-- **Current handoff:** `docs/handoff-gl-blackframe.md` — the GL black-frame bug,
+- **Current handoff:** `docs/handoff-ao-2026-08-16.md` — the AO session. macOS
+  items 1 and 2 closed, the compute-AO cost premise retired, three SSAO-residual
+  suspects killed, and **one new unresolved bug found: compute AO is bistable**.
+  Start there.
+- **Previous handoff:** `docs/handoff-matrix-2026-08-12.md` — the matrix suite
+  made trustworthy (map choice by measurement, the status-bar-face
+  nondeterminism, three silent failures made loud).
+- **Older handoff:** `docs/handoff-gl-blackframe.md` — the GL black-frame bug,
   **fixed 2026-08-11** (a stale shader-binding cache; see the section below for
   the root cause and the verification table), plus the traps that produced four
   retracted conclusions along the way. Start there.
@@ -722,6 +729,43 @@ in_rawkeyboard src/` returns two hits, both in `native/i_input.cpp`.
 ---
 
 ## Open items
+
+**Compute AO is bistable — same command line, two reproducible outputs.** Found
+2026-08-16, unresolved, and it blocks every quality judgement about the compute
+path. See `docs/handoff-ao-2026-08-16.md` for the narrative.
+
+| regime | vs no-AO (MAP06, 1600x776) | |
+|---|---|---|
+| AO absent | mean 0.130, **0.31%** of pixels | survived a two-launch byte-identical gate |
+| AO present | mean 1.526, **14.90%** of pixels | ran 8 launches in a row unchanged |
+
+Both regimes are *reproducible*, which is what makes this a real defect rather
+than noise — the run-to-run variation is not random, it is a latch, and what
+sets it was not found.
+
+Ruled out by measurement, **do not re-test without new evidence**: the AO
+algorithm cvar (0, 1, 2 all alike), the distance fade (`100/500` and `1000/8000`
+both give 14.90%), launch ordering, the archived `gl_ssao` value (already 3
+during inert runs), the PSO binary archive, and stale capture files (verified by
+mtime — every PNG was written after its launch). Deleting `matrix.ini` restored
+the present regime once; the only diff was the fade pair and pinning it did not
+reproduce.
+
+**Next measurement to take:** point `mt_aoprobe` at each regime. It exists for
+exactly this "AO composited nothing" class and has never been aimed at this.
+
+Every compute-AO number elsewhere in this file is from the **absent** regime,
+because that is what the settled two-launch gate produced. Read them with that
+attached.
+
+**AO quality: the PP path is cleaner on stills; in-game is unassessed.** The
+operator's read, 2026-08-16, from the published A/B (reference PP changes 4.80%
+of pixels, compute 0.31%). Recorded as a judgement of *stills* — a fixed
+viewpoint cannot show temporal stability, which is where screen-space AO
+actually fails, and this branch has form there (the AlchemyAO grain regression
+was temporal, fixed with forced 4x blur passes). Judging it needs someone
+playing the game. The Intel guard at `mt_postprocess.cpp:531` was therefore left
+in place: its cost premise is dead, but nothing measured justifies flipping it.
 
 **SSAO residual.** Raw AO attenuation differs from OpenGL by ~0.047 in occlusion
 units (12.52/255 on the debug view). Reaches the shipped frame as mean
