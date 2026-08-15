@@ -835,6 +835,49 @@ The guard is deliberately left in place — flipping a default is a judgement ca
 not a measurement — but its stated reason is now known to be stale, and the
 comment at `mt_postprocess.cpp:528` should not be quoted as if it still held.
 
+#### GPU captures: the pass structure, read without Xcode
+
+Taken 2026-08-15 following `docs/gpu-capture-protocol.md` §0–§2, adapted from the
+AO-composite question to a timing one. `mt_capture` was armed with `+execafter 60`
+rather than typed, so the arms cannot differ by operator timing and the console
+(which stalls the countdown) is never opened. PSO archive cleared before each.
+
+**A `.gputrace` is a bundle, and the encoder labels are greppable inside it.** No
+Xcode is needed to answer structural questions:
+
+```bash
+grep -ao "PP [a-z]*: [a-z0-9_/.]*" frame-<stamp>.gputrace/capture | sort | uniq -c
+```
+
+| arm | labeled PP encoders in the trace |
+|---|---|
+| reference PP | `lineardepth.fp`, `ssao.fp`, `depthblur.fp` **x2**, `ssaocombine.fp` |
+| compute AO | **none** |
+
+So the reference path is a **five-encoder render chain** and the compute path
+replaces all of it with its own unlabeled compute encoders — as
+`gpu-capture-protocol.md` §3 warns, the native compute paths carry no `PP` label.
+
+**The absence was verified, not assumed.** Zero labels could equally mean the
+format did not serialise them in that arm, which would make the comparison
+worthless. Positive control: a third capture, compute AO **plus** `gl_fxaa 1`,
+returns `2 PP fxaa: shaders/pp/fxaa.fp`. The compute-arm trace format does carry
+labels, so the missing AO labels are real.
+
+**Per-encoder GPU timing is still NOT available on this machine, and CLAUDE.md is
+optimistic about it.** `mt_caps` on the HD 6000 reports *"Stage counter sampling:
+no  <- per-pass GPU timing gate"* while CLAUDE.md's "Measuring a rendering change"
+calls an Xcode capture's per-encoder timing "currently the only trustworthy
+per-pass figure on this hardware". Those cannot both be right, and the hardware
+gate is the more credible of the two. Whether Xcode 14.2 shows any per-encoder
+duration without stage counters is **unverified** — it needs the GUI, so it is an
+operator step, not something a harness can settle. Do not quote CLAUDE.md's claim
+as established until someone has actually opened a trace and looked.
+
+Traces retained: `~/Documents/GZDoom/gputrace/frame-20260815-234713` (compute),
+`-234725` (reference), `-235136` (compute + fxaa control). ~317MB each; delete
+them once the timing question is settled.
+
 `mt_msl_precise_math` is kept as a permanent diagnostic (default off, **not**
 archived, `mt_shader.cpp`). It applies in `CompileMSLToLibrary`, deliberately
 *after* the `.msl` disk cache, so a cached translation cannot serve the other
