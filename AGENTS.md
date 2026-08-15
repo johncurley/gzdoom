@@ -779,12 +779,34 @@ being involved, and it feeds `dot(viewNormal, viewDelta)`, where the largest
 deltas come from the most distant samples — consistent with the recorded
 radius-scaling.
 
-Caveat, recorded so it is not mistaken for a conclusion: a few ULP in a
-normalized vector is a very small error to be producing 12.52/255, plausibly by
-orders of magnitude. If suppressing the `fast::` emission does not move the
-residual, the honest next suspect is a **NaN actually reaching** those min/max
-guards, which would make the difference real rather than precision noise.
-Untested either way as of 2026-08-15.
+**Tested 2026-08-15, and the answer is no — `fast::` accounts for none of it.**
+The caveat above (a few ULP is very small for 12.52/255) was the right instinct.
+`mt_msl_precise_math 1` strips the qualifier from every translated shader before
+the Metal compiler sees it; `ssao.fp_frag` gave up **12** of them, including the
+`fast::normalize` in `FetchNormal`, plus `lineardepth.fp` and `ssaocombine.fp`.
+The frame is **byte-identical** to the stock arm, md5 and all, Metal on both
+arms with 98 shaders patched in one and 0 in the other.
+
+That kills a second hypothesis at the same time, for free: IEEE and `fast::`
+min/max/clamp differ **only** on NaN, so an identical frame proves **no NaN is
+reaching those guards** either. Do not re-test the NaN theory; this was its test.
+
+So the residual is not the compute kernel, not `fast::` precision, and not a NaN.
+What remains from the original lead is `LinearDepthTexture`'s **sampler state**
+— the one item on that list never actually measured — and the possibility that
+the ~0.047 figure is an artefact of the AO-isolation method that produced it
+rather than of the renderer. Whoever picks this up should consider re-deriving
+the measurement before hunting further; three specific suspects have now died
+and that raises the prior on the measurement itself.
+
+`mt_msl_precise_math` is kept as a permanent diagnostic (default off, **not**
+archived, `mt_shader.cpp`). It applies in `CompileMSLToLibrary`, deliberately
+*after* the `.msl` disk cache, so a cached translation cannot serve the other
+arm's source. Its stderr proof line is not optional and must not be quietened:
+two of the three attempts at this experiment produced a *correct-looking*
+PIXEL-IDENTICAL verdict while the patch was not running at all — first because
+the line was gated behind `mt_debug`, then because `Printf(PRINT_LOG, ...)` at
+shader-compile time is emitted before the console exists and reaches no log.
 
 **OpenGL captures black on Ashes2063 + capspot.zds.** Scene-specific: the same
 build captures AshesHardReset normally. Blocks nothing today because

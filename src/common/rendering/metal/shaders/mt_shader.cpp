@@ -22,6 +22,21 @@
 
 EXTERN_CVAR(Bool, mt_debug)
 
+// SPIRV-Cross emits the fast:: namespace for the GLSL math builtins -- fast::min,
+// fast::max, fast::clamp, fast::normalize -- and HARDCODES it: spirv_msl.cpp
+// selects "fast::normalize" at GLSLstd450Normalize with no CompilerMSL::Options
+// flag to turn it off. This cvar strips the qualifier so the IEEE variants are
+// used instead, which is the only way to A/B it without forking SPIRV-Cross.
+//
+// It exists to test one hypothesis about the SSAO residual (see AGENTS.md): on
+// finite input fast::min/max/clamp return exactly the IEEE result and differ only
+// on NaN, but fast::normalize is backed by a fast rsqrt and differs by a few ULP,
+// which is the only emission in ssao.fp that can move a pixel without a NaN.
+//
+// NOT archived, and default off. This changes the arithmetic of every translated
+// shader in the engine, so it is a diagnostic, not a setting.
+CVAR(Bool, mt_msl_precise_math, false, 0)
+
 // glslang includes for GLSL → SPIR-V compilation
 #include "glslang/glslang/Public/ShaderLang.h"
 #include "glslang/spirv/GlslangToSpv.h"
@@ -1406,7 +1421,33 @@ MTL::Library *MtShaderManager::CompileMSLToLibrary(const std::string &msl,
   if (msl.empty())
     return nullptr;
 
-  NS::String *source = NS::String::string(msl.c_str(), NS::UTF8StringEncoding);
+  // Applied HERE rather than in TranslateSPIRVToMSL because translation is
+  // cached to disk as .msl: patching before the cache would leave the arm you
+  // ran second reading the arm you ran first off disk. This is the choke point
+  // every shader passes through on its way to the Metal compiler, cached or not.
+  std::string patched;
+  const std::string *src = &msl;
+  if (mt_msl_precise_math) {
+    patched = msl;
+    size_t at = 0, hits = 0;
+    while ((at = patched.find("fast::", at)) != std::string::npos) {
+      patched.erase(at, 6);
+      ++hits;
+    }
+    src = &patched;
+    // Deliberately NOT gated on mt_debug: this line is the proof that the arm
+    // ran at all. Without it, "no difference" and "the patch never executed"
+    // look identical -- which is exactly what happened on the first attempt.
+    //
+    // stderr, not Printf: shaders are compiled before the console exists, so
+    // PRINT_LOG output at this point goes nowhere a harness can read. Same
+    // reason in_keytrace uses stderr (CLAUDE.md). The second attempt failed
+    // this way too -- an empty log read as "the patch did not run".
+    fprintf(stderr, "Metal: mt_msl_precise_math stripped %zu fast:: "
+                    "qualifier(s) from %s\n", hits, name.c_str());
+  }
+
+  NS::String *source = NS::String::string(src->c_str(), NS::UTF8StringEncoding);
   NS::Error *error = nullptr;
 
   MTL::Library *library =
