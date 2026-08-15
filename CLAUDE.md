@@ -123,10 +123,29 @@ ran. Treat a **missing** label as the pass-fail gate when verifying that a featu
 off: a cvar set in the console does not survive a restart, and an ini value silently
 restores it. Pass cvars on the launch command line, one launch per configuration.
 
-For real per-pass GPU cost, take an Xcode GPU frame capture and read its per-encoder
-timing (see below). That is currently the only trustworthy per-pass figure on this
-hardware — native stage-boundary counter sampling is what `mt_caps` reports, and older
-Intel GPUs lack it.
+**There is no per-pass GPU timing on this machine at all.** `mt_caps` reports
+*"Stage counter sampling: no  <- per-pass GPU timing gate"* on the HD 6000, and
+Xcode's counters return **no data** for a captured frame — checked in the GUI on
+2026-08-15, so this is settled rather than inferred. This file previously called an
+Xcode capture's per-encoder timing "the only trustworthy per-pass figure on this
+hardware"; that was never verified and is **wrong**. A capture is still the right
+instrument for what the GPU *did* (see `docs/gpu-capture-protocol.md`) — its encoder
+labels are even greppable straight out of the `.gputrace` bundle without Xcode — but
+not for what a pass *cost*.
+
+To get a per-pass cost anyway, **difference it against the same frame with the pass
+disabled**, several reps per arm, interleaved:
+
+```
+pass cost = Frame avg(feature on) - Frame avg(feature off)
+```
+
+The subtraction cancels the non-AO frame work that otherwise swamps the pass. Worked
+example, 2026-08-15: AO measured at +0.704ms (compute) and +0.717ms (reference PP) at
+1600x776, against a 0.422ms floor — enough to resolve the cost of the pass and to
+exclude a 2x difference between the two paths, which is what the frame-level
+comparison alone could not do. Note the resolution matters: at 800x600 the same
+difference does not clear the noise.
 
 Establish a noise floor before trusting a delta: take two readings of an *identical*
 configuration. On the reference machine that is ~0.4ms, so smaller differences mean

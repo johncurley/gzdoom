@@ -864,19 +864,53 @@ worthless. Positive control: a third capture, compute AO **plus** `gl_fxaa 1`,
 returns `2 PP fxaa: shaders/pp/fxaa.fp`. The compute-arm trace format does carry
 labels, so the missing AO labels are real.
 
-**Per-encoder GPU timing is still NOT available on this machine, and CLAUDE.md is
-optimistic about it.** `mt_caps` on the HD 6000 reports *"Stage counter sampling:
+**RESOLVED 2026-08-15 by differencing, and the AO paths cost the same.** With
+per-encoder timing unavailable (below), the pass cost was recovered arithmetically:
+`Frame avg(AO on) - Frame avg(gl_ssao 0)`, three reps per arm, interleaved
+N,C,R,N,C,R so drift is shared, at 1600x776.
+
+| arm | mean `Frame avg` | AO cost |
+|---|---|---|
+| no AO (`gl_ssao 0`) | 4.681ms | — |
+| compute AO | 5.385ms | **+0.704ms** |
+| reference PP | 5.399ms | **+0.717ms** |
+
+Difference between the paths: **−0.013ms (0.98x)**, worst within-arm spread 0.422ms.
+
+This is the measurement the frame-level comparison could not give, because the
+subtraction removes the ~4.7ms of non-AO work the AO pass was hiding inside. Both
+AO costs (~0.71ms) clear the floor, so the cost of the pass is resolved; the
+difference between paths is 30x below it. **A 2x would mean compute costing
+~1.43ms, i.e. +0.7ms — well above the floor and impossible to miss.** The claim at
+`mt_postprocess.cpp:528` is therefore not merely unreproduced, it is excluded: the
+method can detect a difference of ~0.42ms and sees 0.013ms.
+
+Worth stating the bound rather than "they are equal": this excludes ratios above
+roughly **1.6x**, not every conceivable difference.
+
+*Incidental confirmation of an archived-CVAR leak.* The `N_noao` arm does not set
+`mt_compute_ao*`, and its `mt_metrics` path label came back as compute on rep 1 and
+reference on reps 2-3 — inherited from whichever launch wrote `matrix.ini` last.
+Harmless here (with `gl_ssao 0` no AO runs at all, and the label reports the
+configured path, not an executed one) but it is the archived-cvar contamination trap
+happening live, and it is why every arm above passes its cvars explicitly.
+
+**Per-encoder GPU timing is NOT available on this machine, and CLAUDE.md was wrong
+about it — now fixed.** The operator checked Xcode's counters on the captured frame
+on 2026-08-15: **no data**. So the conflict below is resolved against CLAUDE.md,
+whose claim was never verified. Kept here because the reasoning is worth preserving: `mt_caps` on the HD 6000 reports *"Stage counter sampling:
 no  <- per-pass GPU timing gate"* while CLAUDE.md's "Measuring a rendering change"
 calls an Xcode capture's per-encoder timing "currently the only trustworthy
 per-pass figure on this hardware". Those cannot both be right, and the hardware
-gate is the more credible of the two. Whether Xcode 14.2 shows any per-encoder
-duration without stage counters is **unverified** — it needs the GUI, so it is an
-operator step, not something a harness can settle. Do not quote CLAUDE.md's claim
-as established until someone has actually opened a trace and looked.
+gate is the more credible of the two — and it was. Xcode 14.2 on this GPU shows
+**no counter data** for a captured frame, so there is no per-encoder duration to
+read at any price. CLAUDE.md has been corrected accordingly; use the differencing
+method above for pass cost, and captures for *what ran*, never for what it cost.
 
-Traces retained: `~/Documents/GZDoom/gputrace/frame-20260815-234713` (compute),
-`-234725` (reference), `-235136` (compute + fxaa control). ~317MB each; delete
-them once the timing question is settled.
+Traces are no longer needed and can be deleted:
+`~/Documents/GZDoom/gputrace/frame-20260815-234713` (compute), `-234725`
+(reference), `-235136` (compute + fxaa control), ~317MB each. The greppable
+label result above is recorded, so nothing is lost with them.
 
 `mt_msl_precise_math` is kept as a permanent diagnostic (default off, **not**
 archived, `mt_shader.cpp`). It applies in `CompileMSLToLibrary`, deliberately
