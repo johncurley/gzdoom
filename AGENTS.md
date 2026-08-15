@@ -816,9 +816,40 @@ Two things follow, and neither contradicts the measurements above:
   = 2`. So the first thing to try, if anyone wants to rescue the compute path, is
   `mt_compute_ao_blur_passes 4` at half-res — untested as of this writing.
 
-So the guard now has a *quality* justification, which is stronger than the cost
-premise it replaced: at quarter-res compute under-occludes ~20x, and at half-res
-it is both slower and grainier than the path it would replace.
+*Blur passes 4, the known grain fix — **constant freezing in gameplay**.* Tried
+2026-08-16 because the AlchemyAO grain was previously fixed by forcing 4 blur
+passes and the config above carried 2. Operator's verdict at half-res + blur 4:
+**the game freezes constantly.** That ends it — this is a stability failure, not a
+quality trade, and it outranks every other consideration on this hardware.
+
+**The benchmark harness is blind to the freezing.** Same scene, same settings,
+static viewpoint, `cl_capfps 0`:
+
+| arm | `Frame avg` | `Frame max` | stalls |
+|---|---|---|---|
+| reference PP | 4.753ms | 84.2ms | 4 |
+| compute half-res, blur 2 | 5.120ms | 82.6ms | 4 |
+| compute half-res, blur 4 | 5.516ms | 90.6ms | 4 |
+
+Nothing there looks like freezing — max frame and stall counts are indistinguishable
+from the reference path. So this joins temporal grain as a **second defect class the
+matrix suite structurally cannot see**: a static viewpoint in MAP06 does not
+exercise whatever the compute path does badly during play (camera motion, viewport
+changes, actor load). Do not conclude "no hitching" from these numbers; conclude
+that the instrument does not measure it.
+
+**Verdict: the Intel guard stays, and the compute AO path is not shippable on this
+hardware as it stands.** Every configuration tried loses to the reference path:
+
+| configuration | outcome |
+|---|---|
+| quarter-res (shipped default) | under-occludes ~20x; effectively no AO |
+| half-res, blur 2 | slower, coarse salt-and-pepper grain |
+| half-res, blur 4 | **constant freezing in gameplay** |
+
+The cost premise this session retired was never the real problem. Reviving the path
+needs the freezing diagnosed first, and that needs an instrument that runs while the
+camera moves — the harness will report it healthy.
 
 **SSAO residual.** Raw AO attenuation differs from OpenGL by ~0.047 in occlusion
 units (12.52/255 on the debug view). Reaches the shipped frame as mean

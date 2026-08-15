@@ -83,9 +83,27 @@ Neither half of that contradicts the measurements:
   test lifted the clamp to half-res — 4x the AO pixels — so compute being slower
   there is expected. Different configurations, both results valid.
 - **The grain is the known AlchemyAO artefact**, previously fixed by forcing 4
-  blur passes. The config used carried `mt_compute_ao_blur_passes = 2`. If anyone
-  wants to rescue the compute path, `mt_compute_ao_blur_passes 4` at half-res is
-  the first thing to try. Untested.
+  blur passes; the config used carried `mt_compute_ao_blur_passes = 2`.
+
+**Blur passes 4 was tried, and it freezes.** Operator's verdict at half-res with
+`mt_compute_ao_blur_passes 4`: **the game freezes constantly.** That is a
+stability failure rather than a quality trade, and it ends the question on this
+hardware.
+
+**The harness cannot see the freezing** — same scene, same settings, static
+viewpoint, uncapped:
+
+| arm | `Frame avg` | `Frame max` | stalls |
+|---|---|---|---|
+| reference PP | 4.753ms | 84.2ms | 4 |
+| compute half-res, blur 2 | 5.120ms | 82.6ms | 4 |
+| compute half-res, blur 4 | 5.516ms | 90.6ms | 4 |
+
+Indistinguishable from reference on max frame and stall count. This is the
+**second** defect class the matrix suite is structurally blind to, after temporal
+grain: a static viewpoint does not exercise whatever the compute path does badly
+while the camera moves. Do not read these numbers as "no hitching" — read them as
+"the instrument does not measure hitching".
 
 **The default stays.** `mt_postprocess.cpp:531` remains a one-line change, but the
 guard now rests on quality rather than the dead cost premise: at quarter-res
@@ -147,10 +165,11 @@ counter sampling: no"*, and Xcode's counters return no data — checked in the G
    `ssaocombine` lump and the compute path issues no such draw, so it arms and
    never reports. It fires correctly on the reference path (that is the control).
    Probing compute needs a probe hooking `MtAOModule`, which does not exist.
-2. **DONE 2026-08-16 — in-game assessment.** Compute AO at half-res is slower
-   and grainier ("salt and pepper") than the reference path. The guard stays.
-   Only follow-up: `mt_compute_ao_blur_passes 4` at half-res, which is how the
-   AlchemyAO grain was fixed before and was NOT set in the config tested.
+2. **DONE 2026-08-16 — in-game assessment, and the path is beaten at every
+   setting.** quarter-res: under-occludes ~20x. half-res blur 2: slower, coarse
+   grain. half-res blur 4: **constant freezing**. Reviving it means diagnosing the
+   freeze first, and that needs an instrument that runs while the camera moves —
+   the static harness reports it healthy.
 3. **The SSAO residual** (~0.047 occlusion units). Compute kernel, `fast::`
    precision and NaN-in-guards are all ruled out with proof of execution.
    `LinearDepthTexture`'s sampler state is the last unmeasured item from the
