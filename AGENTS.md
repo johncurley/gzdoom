@@ -10,6 +10,9 @@ it is unusual).
 - **Durable roadmap:** `docs/engine-modernization.md`
 - **Metal field guide:** `.github/copilot-instructions.md` and
   `src/common/rendering/metal/README_METAL_RENDERER.md`
+- **Method:** `docs/renderer-methodology.md` — how to measure a renderer change so
+  the answer survives: instruments and their blind spots, proof of execution,
+  reproducibility gates, contamination, and when to stop measuring and play.
 - **GPU capture runbook:** `docs/gpu-capture-protocol.md`
 - **Linux session handoff:** `docs/handoff-linux.md` — two validation tasks that
   only Linux hardware could perform. **Both done, 2026-08-10; do not re-run.**

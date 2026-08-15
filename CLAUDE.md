@@ -107,6 +107,12 @@ previously translated shader.
 
 ### Measuring a rendering change
 
+**`docs/renderer-methodology.md` is the method** — the instrument table (what each
+tool can and cannot answer), the proof-of-execution gate, reproducibility and noise
+floor, contamination, and the checklist. Read it before designing an experiment;
+what follows here is the command-level detail.
+
+
 Read the **`Frame ... avg=`** wall-clock interval from `mt_metrics` for cost. It is
 the number that cannot lie about whether a change made the game slower.
 
