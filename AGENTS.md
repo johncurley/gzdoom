@@ -792,14 +792,33 @@ Every compute-AO number elsewhere in this file is from the **absent** regime,
 because that is what the settled two-launch gate produced. Read them with that
 attached.
 
-**AO quality: the PP path is cleaner on stills; in-game is unassessed.** The
-operator's read, 2026-08-16, from the published A/B (reference PP changes 4.80%
-of pixels, compute 0.31%). Recorded as a judgement of *stills* — a fixed
-viewpoint cannot show temporal stability, which is where screen-space AO
-actually fails, and this branch has form there (the AlchemyAO grain regression
-was temporal, fixed with forced 4x blur passes). Judging it needs someone
-playing the game. The Intel guard at `mt_postprocess.cpp:531` was therefore left
-in place: its cost premise is dead, but nothing measured justifies flipping it.
+**AO quality: the reference PP path wins, on stills AND in motion.** Settled
+2026-08-16 — the Intel guard at `mt_postprocess.cpp:531` should stay.
+
+*Stills*, from the published A/B: reference PP changes 4.80% of pixels against
+the no-AO control, compute 0.31%. The operator's read was that PP is cleaner.
+
+*In motion* — Ashes2063 at `capspot.zds`, compute AO with
+`mt_compute_ao_intel_clamp false` (half-res), algorithm 1, played rather than
+captured. **Operator's verdict: compute AO is slower, and shows coarser grain —
+"salt and pepper" — that a still does not reveal.** This is the assessment the
+harness structurally could not make, and it is the one that decides the guard.
+
+Two things follow, and neither contradicts the measurements above:
+
+- **"Slower" is consistent with the equal-cost finding.** That measurement was of
+  the *clamped* configuration (`aoScale 4`, quarter-res) where both paths cost
+  ~0.8ms. The in-game test lifted the clamp to half-res, which is 4x the AO
+  pixels. Compute being slower there is expected, not a contradiction — the two
+  results describe different configurations.
+- **The grain is the known AlchemyAO artefact.** It was previously fixed by
+  forcing 4 blur passes; the config used here carried `mt_compute_ao_blur_passes
+  = 2`. So the first thing to try, if anyone wants to rescue the compute path, is
+  `mt_compute_ao_blur_passes 4` at half-res — untested as of this writing.
+
+So the guard now has a *quality* justification, which is stronger than the cost
+premise it replaced: at quarter-res compute under-occludes ~20x, and at half-res
+it is both slower and grainier than the path it would replace.
 
 **SSAO residual.** Raw AO attenuation differs from OpenGL by ~0.047 in occlusion
 units (12.52/255 on the debug view). Reaches the shipped frame as mean

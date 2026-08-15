@@ -67,20 +67,30 @@ Published artifact: three frames (no AO / reference PP / Metal compute) plus
 - Metal compute vs no-AO: mean 0.130, **0.31%** of pixels
 
 **Operator's judgement, 2026-08-16: the PP path is cleaner.** That is a read of
-the *stills*, and it is recorded as such.
+the *stills*.
 
-**In-game appearance is NOT assessed and a still cannot assess it.** A fixed
-viewpoint says nothing about temporal stability, which is where screen-space AO
-actually fails — grain that crawls under motion, flicker as samples change
-between frames. This branch has history there: the AlchemyAO grain regression
-was a temporal artefact fixed with forced 4x blur passes. So a path that looks
-clean in a screenshot can still be unusable in motion, and vice versa. Judging
-this needs someone playing the game, not the harness.
+**And it holds in motion — assessed the same day, by playing.** Ashes2063 at
+`capspot.zds`, compute AO with the Intel clamp lifted
+(`mt_compute_ao_intel_clamp false`, i.e. half-res), algorithm 1. Verdict:
+**compute AO is slower, and shows coarser "salt and pepper" grain** that no still
+in the A/B revealed. This is the assessment the harness structurally could not
+make, and it is the one that decides the question.
 
-**The default was therefore left alone.** Flipping `mt_postprocess.cpp:531` is a
-one-line change and remains available, but nothing measured this session
-justifies it: the cost argument for the guard is dead, and the quality argument
-against flipping is now stronger than the cost argument ever was.
+Neither half of that contradicts the measurements:
+
+- **"Slower" vs the equal-cost finding.** The cost measurement was of the
+  *clamped* config (quarter-res), where both paths came in at ~0.8ms. The in-game
+  test lifted the clamp to half-res — 4x the AO pixels — so compute being slower
+  there is expected. Different configurations, both results valid.
+- **The grain is the known AlchemyAO artefact**, previously fixed by forcing 4
+  blur passes. The config used carried `mt_compute_ao_blur_passes = 2`. If anyone
+  wants to rescue the compute path, `mt_compute_ao_blur_passes 4` at half-res is
+  the first thing to try. Untested.
+
+**The default stays.** `mt_postprocess.cpp:531` remains a one-line change, but the
+guard now rests on quality rather than the dead cost premise: at quarter-res
+compute under-occludes by ~20x, and at half-res it is both slower and grainier
+than the path it would replace.
 
 ---
 
@@ -137,8 +147,10 @@ counter sampling: no"*, and Xcode's counters return no data — checked in the G
    `ssaocombine` lump and the compute path issues no such draw, so it arms and
    never reports. It fires correctly on the reference path (that is the control).
    Probing compute needs a probe hooking `MtAOModule`, which does not exist.
-2. **In-game assessment of both AO paths**, by playing, watching for temporal
-   grain rather than looking at stills.
+2. **DONE 2026-08-16 — in-game assessment.** Compute AO at half-res is slower
+   and grainier ("salt and pepper") than the reference path. The guard stays.
+   Only follow-up: `mt_compute_ao_blur_passes 4` at half-res, which is how the
+   AlchemyAO grain was fixed before and was NOT set in the config tested.
 3. **The SSAO residual** (~0.047 occlusion units). Compute kernel, `fast::`
    precision and NaN-in-guards are all ruled out with proof of execution.
    `LinearDepthTexture`'s sampler state is the last unmeasured item from the
