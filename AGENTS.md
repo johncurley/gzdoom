@@ -838,6 +838,19 @@ exercise whatever the compute path does badly during play (camera motion, viewpo
 changes, actor load). Do not conclude "no hitching" from these numbers; conclude
 that the instrument does not measure it.
 
+**Acted on 2026-08-16 (`b15f25f9d`): `mt_compute_ao` now defaults FALSE on every
+platform.** The Intel guard was previously the only thing keeping it off, so on
+Apple Silicon — where that guard does not apply — a path that freezes in gameplay
+here was the **default on hardware nobody has run**. It is `CVAR_ARCHIVE`, so an
+existing `mt_compute_ao=true` still wins; verified, along with a fresh config
+resolving to `reference PP (hw_postprocess.ssao) -- compute AO off`.
+
+**`mt_frametrace <seconds>` was added in the same commit** as the instrument that
+would have caught this. It reports p50/p95/p99/max plus >33ms and >100ms counts per
+window, to stderr, during actual play. Use it — not the matrix suite — to validate
+any renderer change for smoothness, and especially as the first thing to run when
+Apple Silicon hardware appears.
+
 **Verdict: the Intel guard stays, and the compute AO path is not shippable on this
 hardware as it stands.** Every configuration tried loses to the reference path:
 

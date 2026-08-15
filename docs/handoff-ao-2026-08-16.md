@@ -137,6 +137,12 @@ verdict while the patch under test was not running at all — once behind an
 needed for structural questions:
 `grep -ao "PP [a-z]*: [a-z0-9_/.]*" frame-<stamp>.gputrace/capture | sort | uniq -c`
 
+**Use `mt_frametrace <seconds>` to judge smoothness, never the matrix suite.**
+Added 2026-08-16 (`b15f25f9d`) because the harness reported a configuration that
+froze constantly in gameplay as healthy. Reports p50/p95/p99/max and >33ms/>100ms
+counts per window, to stderr, while you play. p99 and the >100ms count are the
+hitching signal; the average is not.
+
 **There is no per-pass GPU timing on this machine.** `mt_caps` says *"Stage
 counter sampling: no"*, and Xcode's counters return no data — checked in the GUI.
 `CLAUDE.md` claimed the opposite and has been corrected. Use differencing:
