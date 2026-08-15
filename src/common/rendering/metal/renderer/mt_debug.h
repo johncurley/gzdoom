@@ -122,6 +122,8 @@ public:
 
   FrameStats GetLastFrameStats() const { return mLastFrameStats; }
   MtMetricStats GetFrameTimeStats() const;
+  // Per-frame hook for mt_frametrace. No-op unless the cvar is set.
+  void TraceFrameInterval(float frameTimeMs);
   MtMetricStats GetMetricStats(MtMetric metric) const {
     return mMetricHistory.GetStats(metric);
   }
@@ -161,6 +163,14 @@ private:
   // Timing
   std::chrono::high_resolution_clock::time_point mFrameStartTime;
   std::vector<float> mFrameTimeHistory;  // Rolling window (120 frames)
+
+  // mt_frametrace: an UNBOUNDED window per report period, deliberately. The
+  // 120-frame ring above is a display average; hitching needs every frame in
+  // the window or the percentiles are computed over a sample that has already
+  // discarded the bad ones.
+  std::vector<float> mTraceSamples;
+  std::chrono::steady_clock::time_point mTraceWindowStart;
+  bool mTraceStarted = false;
   int mFrameIndex = 0;
 
   // Cross-thread handoff for async GPU frame timing: written (relaxed

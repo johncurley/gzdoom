@@ -31,8 +31,29 @@
 #include "printf.h"
 #include "v_video.h"
 #include <algorithm>
+#include <chrono>
+#include <cstdio>
 #include <ctime>
 #include <cstring>
+
+// Frame-interval trace for ACTUAL GAMEPLAY, in seconds between reports (0 = off).
+//
+// This exists because the benchmark harness is blind to hitching. Measured
+// 2026-08-16: a compute-AO configuration that froze constantly in play reported
+// avg 5.5ms / max 90.6ms / 4 stalls from the matrix suite -- indistinguishable
+// from the reference path, which was smooth. A settled viewpoint in MAP06 does
+// not exercise what the renderer does badly while the camera moves, so
+// `Frame avg` cannot see the defect that actually makes the game unplayable.
+//
+// Percentiles rather than mean and max, because that is what hitching looks
+// like: p50 stays healthy while p99 blows out. A mean hides exactly the frames
+// the player feels, and a lone max cannot distinguish one startup stall from
+// continuous stutter -- which is why the counts below are reported too.
+//
+// stderr, not Printf: this runs during play, where console output covers the
+// screen it is measuring, and PRINT_LOG lands in the console rather than
+// anywhere a harness can read. Same reason in_keytrace uses stderr.
+CVAR(Int, mt_frametrace, 0, 0)
 
 EXTERN_CVAR(Bool, mt_debug)
 EXTERN_CVAR(Bool, mt_compute_ao)
@@ -129,6 +150,8 @@ void MtDebugManager::EndFrame() {
   if (mFrameTimeHistory.size() > 120) {
     mFrameTimeHistory.erase(mFrameTimeHistory.begin());
   }
+
+  TraceFrameInterval(frameTimeMs);
 
   mFrameIndex++;
 
@@ -415,6 +438,67 @@ float MtDebugManager::GetAverageFrameTime() const {
     sum += t;
   }
   return sum / mFrameTimeHistory.size();
+}
+
+// One frame's wall-clock interval. Accumulates until mt_frametrace seconds have
+// passed, then reports the distribution and starts a fresh window -- so a long
+// session reads as a series of independent windows rather than an average that
+// slowly buries a bad patch.
+void MtDebugManager::TraceFrameInterval(float frameTimeMs) {
+  const int period = mt_frametrace;
+  if (period <= 0) {
+    if (!mTraceSamples.empty())
+      mTraceSamples.clear();
+    mTraceStarted = false;
+    return;
+  }
+
+  using clock = std::chrono::steady_clock;
+  const auto now = clock::now();
+
+  if (!mTraceStarted) {
+    mTraceStarted = true;
+    mTraceWindowStart = now;
+    mTraceSamples.clear();
+    fprintf(stderr,
+            "mt_frametrace: reporting every %ds. p99 and the >100ms count are "
+            "the hitching signal; avg is not.\n",
+            period);
+  }
+
+  mTraceSamples.push_back(frameTimeMs);
+
+  const auto elapsed =
+      std::chrono::duration_cast<std::chrono::milliseconds>(now - mTraceWindowStart)
+          .count();
+  if (elapsed < (long long)period * 1000 || mTraceSamples.size() < 2)
+    return;
+
+  std::vector<float> sorted = mTraceSamples;
+  std::sort(sorted.begin(), sorted.end());
+  auto pct = [&sorted](double p) {
+    const size_t i = (size_t)(p * (double)(sorted.size() - 1) + 0.5);
+    return sorted[i < sorted.size() ? i : sorted.size() - 1];
+  };
+
+  double total = 0.0;
+  size_t over33 = 0, over100 = 0;
+  for (float v : mTraceSamples) {
+    total += v;
+    if (v > 33.3f) ++over33;
+    if (v > 100.0f) ++over100;
+  }
+  const double mean = total / (double)mTraceSamples.size();
+
+  fprintf(stderr,
+          "mt_frametrace  n=%zu  avg=%6.2fms (%5.1f fps)  p50=%6.2f  p95=%6.2f  "
+          "p99=%6.2f  max=%7.2f  >33ms=%zu (%.1f%%)  >100ms=%zu\n",
+          mTraceSamples.size(), mean, mean > 0.0 ? 1000.0 / mean : 0.0,
+          pct(0.50), pct(0.95), pct(0.99), sorted.back(), over33,
+          100.0 * (double)over33 / (double)mTraceSamples.size(), over100);
+
+  mTraceSamples.clear();
+  mTraceWindowStart = now;
 }
 
 MtMetricStats MtDebugManager::GetFrameTimeStats() const {

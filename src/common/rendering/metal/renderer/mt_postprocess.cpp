@@ -45,7 +45,31 @@ void MtAOProbeAfter(MetalRenderDevice *fb, const FRenderStyle &blend,
 void MtAOProbeCountdown();
 
 EXTERN_CVAR(Int, gl_dither_bpc)
-CVAR(Bool, mt_compute_ao, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+// Compute AO is OPT-IN on every platform. It used to default true, which meant
+// the Intel guard below was the only thing keeping it off -- and on Apple Silicon,
+// where that guard does not apply, it was therefore the DEFAULT on hardware nobody
+// has ever run this backend on.
+//
+// That is not a defensible default given what the path does on the only hardware
+// it has been measured on (2026-08-16, HD 6000, all in gameplay or size-matched
+// captures):
+//
+//   quarter-res (the shipped Intel setting)  under-occludes ~20x -- effectively no AO
+//   half-res, blur 2                         slower than reference, coarse
+//                                            salt-and-pepper grain
+//   half-res, blur 4 (the known grain fix)   CONSTANT FREEZING in gameplay
+//
+// The freezing is the reason this is opt-in rather than merely Intel-guarded. If it
+// is a throughput problem, Apple Silicon erases it; if it is a synchronisation or
+// hazard bug, it follows the code to Apple Silicon and lands there as the default.
+// Nothing measured distinguishes those, and the benchmark harness reports the
+// freezing configuration as healthy (avg 5.5ms, max 90.6ms, 4 stalls -- the same
+// as the reference path), so it will not catch a regression here either.
+//
+// Being CVAR_ARCHIVE, anyone who has deliberately enabled it keeps it. Re-enable
+// with `mt_compute_ao 1`. Validate with `mt_frametrace` while actually playing,
+// not with the matrix suite -- see AGENTS.md.
+CVAR(Bool, mt_compute_ao, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Bool, mt_compute_bloom, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 // Use the compute bloom path on Intel integrated GPUs. Default false, matching
 // mt_compute_ao_intel: on an HD 6000 a GPU frame capture on 2026-08-07 showed
