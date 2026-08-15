@@ -14,6 +14,10 @@ it is unusual).
 - **Linux session handoff:** `docs/handoff-linux.md` — two validation tasks that
   only Linux hardware could perform. **Both done, 2026-08-10; do not re-run.**
   What is still open on that machine is the **Tasks — Linux** section below.
+- **Linux work:** `docs/handoff-linux-2026-08-16.md` — what is open on the Linux
+  box, in order, with one correction: the Wayland fixes items 10/11 call
+  unpublished **are** on `zwidget/wayland-c-bindings`; what is open is
+  upstreaming to dpjudas, gated on reproducing the first-paint bug.
 - **Current handoff:** `docs/handoff-ao-2026-08-16.md` — the AO session. macOS
   items 1 and 2 closed, the compute-AO cost premise retired, three SSAO-residual
   suspects killed, and **one new unresolved bug found: compute AO is bistable**.
@@ -555,8 +559,14 @@ requests on the version actually obtained" — was checked and needs nothing:
   '_RELEASE\b'` over `src/window/wayland/*.cpp` is empty, so there is no
   `wl_seat.release`/`wl_output.release` class of problem to gate.
 
-**What is actually still open: publishing.** `c3474d697` exists only on
-`metal-audit`. It is not on `zwidget/wayland-c-bindings` or any other
+**CORRECTION 2026-08-16: publishing is DONE.** Verified by fetching both remotes:
+`zwidget/wayland-c-bindings` carries this as `bebe13394`, alongside the first-paint
+fix (`10b60e035`), the three X11 commits and the Cocoa modal work. What remains is
+**upstreaming to dpjudas**, which has none of them — and that is gated on the
+first-paint control run (item 1). See `docs/handoff-linux-2026-08-16.md`.
+
+The paragraph below is left for its procedure note, but its premise is stale:
+`c3474d697` was only on `metal-audit`. It is not on `zwidget/wayland-c-bindings` or any other
 `zwidget/*` ref. This is stock upstream ZWidget code, so the fix belongs in the
 dpjudas PR alongside the Cocoa fixes, and it goes through the
 cherry-pick-and-publish procedure in `CLAUDE.md` — **not** `git subtree push`.
