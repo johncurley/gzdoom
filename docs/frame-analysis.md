@@ -158,7 +158,10 @@ thing preventing someone from moving the call. Declared dependencies (`ssao` rea
 
 Not "port everything". The order that follows from the analysis:
 
-1. **Declare resources first, keep the existing execution.** A registry describing
+1. **Declare resources first, keep the existing execution.** Sketched in
+   `docs/frame-graph-resources.md` — interface, registration sites, what it reports
+   and validates, and the phase split.
+   Original statement of the step: A registry describing
    the tier-1 and tier-2 textures with sizes and formats, built where they are
    created today. Zero behaviour change, immediately useful: it can print the live
    set, and it gives the size-mismatch validation §3.3 lacks.
