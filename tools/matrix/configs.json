@@ -122,13 +122,14 @@
     },
     {
       "name": "bloom_compute",
-      "note": "Metal compute bloom. Agreed with bloom_ref to max_delta 1 on 2026-08-07, so it is NOT declared must_differ_from bloom_ref -- see tolerance. Relations only on the doom2 scene: bloom lives on MAP12 (the only stock map where it acts at all) and MAP12 contains a green torch whose flame frame varies between launches, which bloom then amplifies. A stored signature would DIFF on most runs. The must_differ relation is unaffected -- 38.61% of pixels against the torch's 0.004%.",
+      "note": "Metal compute bloom. MUST pass mt_compute_bloom_intel 1: on Intel the architecture gate in mt_postprocess.cpp silently routes the frame to the reference PP path, and without it this config tested the REFERENCE path while claiming to test compute -- measured 2026-08-16, the two arms came back byte-identical for exactly that reason. Caught by the 'bloom path in use' label in mt_caps, which is the only thing that distinguishes them. Metal compute bloom. Agreed with bloom_ref to max_delta 1 on 2026-08-07, so it is NOT declared must_differ_from bloom_ref -- see tolerance. Relations only on the doom2 scene: bloom lives on MAP12 (the only stock map where it acts at all) and MAP12 contains a green torch whose flame frame varies between launches, which bloom then amplifies. A stored signature would DIFF on most runs. The must_differ relation is unaffected -- 38.61% of pixels against the torch's 0.004%.",
       "map": {
         "doom2": "MAP12"
       },
       "cvars": [
         "+gl_bloom 1",
         "+mt_compute_bloom 1",
+        "+mt_compute_bloom_intel 1",
         "+gl_ssao 0",
         "+gl_tonemap 0",
         "+gl_lens 0",

@@ -864,6 +864,37 @@ The cost premise this session retired was never the real problem. Reviving the p
 needs the freezing diagnosed first, and that needs an instrument that runs while the
 camera moves — the harness will report it healthy.
 
+**Compute BLOOM, unlike compute AO, is correct — and the Intel guard for it now
+has the isolated A/B its own comment says it lacked.** Measured 2026-08-16 on
+MAP12 at 1600x1200, path proved per launch by the `bloom path in use` label.
+
+| arm | image vs no-bloom | bloom cost |
+|---|---|---|
+| reference PP bloom | mean 13.598 | **+2.764ms** |
+| Metal compute bloom | mean 13.661 | **+3.883ms** |
+
+Compute vs reference bloom: mean 0.1233, and only **0.004%** of pixels differ —
+which is exactly the documented MAP12 green-torch figure, not a bloom difference.
+So the 2026-08-07 claim that the two agree to `max_delta 1` holds.
+
+The difference is **cost**: compute bloom is ~1.12ms dearer, about 40% more, well
+clear of the noise floor. `mt_compute_bloom_intel`'s comment says the Intel default
+is "not backed by an isolated A/B of bloom alone" — it is now, and the guard is
+correct to keep compute bloom off on this hardware.
+
+**`mt_compute_bloom` is deliberately LEFT at default `true`** (unlike
+`mt_compute_ao`). The risk profile is different in kind: compute bloom produces the
+right image and merely costs more on an old IMR GPU, which is precisely the hardware
+TBDR is not. Its failure mode on Apple Silicon would be performance, not a broken
+image or a freeze. It remains unvalidated there — run `mt_frametrace` on it first.
+
+*The suite was not testing what it claimed.* `bloom_compute` passed
+`+mt_compute_bloom 1` but not `+mt_compute_bloom_intel 1`, so on Intel the
+architecture gate routed it to the **reference** path — the config tested reference
+against reference and came back byte-identical, which reads exactly like success.
+Fixed in `configs.json`; the `bloom path in use` label in `mt_caps` is the only
+thing that distinguishes them, and it is why this was caught.
+
 **SSAO residual.** Raw AO attenuation differs from OpenGL by ~0.047 in occlusion
 units (12.52/255 on the debug view). Reaches the shipped frame as mean
 **0.392/255**, max 11, on under 1% of pixels at maximum AO strength — measured
