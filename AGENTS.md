@@ -738,6 +738,54 @@ phase. The divergence scales with sampling radius, which points at how
 far-reaching samples are handled — the `sampleUV` clamp in
 `ComputeSampleHorizon` and `LinearDepthTexture`'s default sampler state.
 
+*Also ruled out, 2026-08-15: the compute AO kernel is not involved, and on this
+machine it never was.* `mt_postprocess.cpp:531` forces `useComputeAO = false` on
+Intel unless `mt_compute_ao_intel` is set, and that defaults **false**. So Metal's
+default AO on the reference machine has always been the same reference PP path
+(`hw_postprocess.ssao`) that OpenGL runs — the residual was never a
+compute-versus-raster comparison. Measured by sweeping `+mt_compute_ao 1` against
+`+mt_compute_ao 0` on Metal: **bit-identical**, md5 and all, because both arms ran
+the same code. Do not re-test this; the cvar cannot do anything here on its own.
+
+*The compute kernel IS a separate divergence, and item 3 should expect it.*
+Forcing it on with `+mt_compute_ao_intel 1` changes the frame by mean
+**0.656/255, max 10, on 3.46% of pixels** against the reference PP path, Metal on
+both arms so no cross-backend convention is involved. Path proved per arm by
+`mt_metrics`: *"AO path in use: Metal compute (MtAOModule)"* with a `ComputeCPU AO`
+line, versus *"reference PP (hw_postprocess.ssao) -- compute AO off"*. This
+matters on Apple Silicon, where the Intel guard does not apply and the compute
+path is therefore the **default** — AO there will differ from every figure in this
+table before anyone changes a line. Do not read that as a regression.
+
+*Narrowed target.* The residual is GL's `ssao.fp` against the **translated**
+`ssao.fp` — same algorithm, same uniforms (already proven bit-identical),
+different emitted arithmetic. The cached MSL
+(`~/Library/Application Support/zdoom/cache/mt_shadersppssaofp_*.msl`) shows
+SPIRV-Cross emitting `fast::` intrinsics where the GLSL has IEEE ones:
+`fast::clamp` on the very `sampleUV` line above, `fast::max/min` through the
+horizon math, and `fast::normalize` in `FetchNormal`.
+
+Note this is **not** the "Metal fast-math default" already ruled out above — that
+was the compiler flag; this is SPIRV-Cross selecting lower-precision *function
+variants* in the emitted source, and it is a defensible mapping because GLSL
+leaves `min`/`max`/`clamp` undefined on NaN.
+
+Most of those emissions are probably inert: on finite inputs `fast::max`,
+`fast::min` and `fast::clamp` return exactly the IEEE result, differing only on
+NaN/Inf. **`fast::normalize` is the exception** — it is backed by a fast
+reciprocal-sqrt and differs by a few ULP on ordinary finite input. It is
+therefore the only emission in that shader that can move a pixel without a NaN
+being involved, and it feeds `dot(viewNormal, viewDelta)`, where the largest
+deltas come from the most distant samples — consistent with the recorded
+radius-scaling.
+
+Caveat, recorded so it is not mistaken for a conclusion: a few ULP in a
+normalized vector is a very small error to be producing 12.52/255, plausibly by
+orders of magnitude. If suppressing the `fast::` emission does not move the
+residual, the honest next suspect is a **NaN actually reaching** those min/max
+guards, which would make the difference real rather than precision noise.
+Untested either way as of 2026-08-15.
+
 **OpenGL captures black on Ashes2063 + capspot.zds.** Scene-specific: the same
 build captures AshesHardReset normally. Blocks nothing today because
 `crossbackend.py` has its own scene override, and `run.py` pins Metal. Three
