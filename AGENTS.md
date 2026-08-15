@@ -10,6 +10,8 @@ it is unusual).
 - **Durable roadmap:** `docs/engine-modernization.md`
 - **Metal field guide:** `.github/copilot-instructions.md` and
   `src/common/rendering/metal/README_METAL_RENDERER.md`
+- **Frame analysis:** `docs/frame-analysis.md` — what the passes and resources
+  actually are, extracted from the code, as the basis for the frame-graph work.
 - **Method:** `docs/renderer-methodology.md` — how to measure a renderer change so
   the answer survives: instruments and their blind spots, proof of execution,
   reproducibility gates, contamination, and when to stop measuring and play.

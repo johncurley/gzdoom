@@ -20,6 +20,13 @@ not the active roadmap.
 
 ## Track A: Rendering foundation
 
+**Prerequisite written 2026-08-16: `docs/frame-analysis.md`** — the actual pass and
+resource dependency map (three tiers of resources, the extracted pass I/O table, and
+the four implicit couplings a graph would make explicit). Items 3 and 4 below should
+start from it; it also proposes the migration order and argues AO should be *last*,
+not first.
+
+
 1. Establish performance and compatibility baselines.
 2. Introduce an immutable render-world snapshot.
 3. Build a backend-neutral frame graph.
