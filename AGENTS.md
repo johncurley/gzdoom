@@ -751,8 +751,42 @@ mtime — every PNG was written after its launch). Deleting `matrix.ini` restore
 the present regime once; the only diff was the fade pair and pinning it did not
 reproduce.
 
-**Next measurement to take:** point `mt_aoprobe` at each regime. It exists for
-exactly this "AO composited nothing" class and has never been aimed at this.
+**`mt_aoprobe` cannot see this — done 2026-08-16, do not retry.** The probe hooks
+`MtPPRenderState::Draw` and matches on the `ssaocombine` lump, and the compute
+path issues no such draw (its GPU capture carries no `PP` encoder labels at all).
+It arms and never reports. It *does* fire on the reference path, which is the
+control proving the probe works: blend `SrcAlpha/InvSrcAlpha`, stencil ON, load
+action `Load`, SceneColor differing on 58.71% of pixels, `SceneFog` all zero, AO
+input 800x387 with mean `ssao.x` 0.888. Probing the compute path needs a probe
+that hooks `MtAOModule`, which does not exist.
+
+**What the regimes correlate with: scene resolution, not configuration.** The one
+launch pair captured with logs differed only here — present at `1440x773`, absent
+at `1440x776`, from the *same* requested window. That also explains the
+"first launch differs" pattern throughout this session: the first launch after a
+configuration change lands at a different scene size, which is a trap already
+documented for the capture harness.
+
+Refuted since: a mid-run `vid_setsize` resize does **not** restore AO (size-matched
+control, both arms resized). And the AO buffer is not the differentiator — on Intel
+`mt_compute_ao_intel_clamp` forces `aoScale = 4` (mt_ao.cpp:1544), so 773 and 776
+both round to a 194-row AO texture. That points at the **full-res consumers**, not
+the AO buffer.
+
+**Two levers each raise compute AO ~8x, and neither closes the gap:**
+
+| configuration | AO vs no-AO, size-matched |
+|---|---|
+| default (fullres cleanup on, quarter-res) | 0.227% |
+| `mt_compute_ao_skip_fullres true` | 1.739% |
+| `mt_compute_ao_intel_clamp false` (half-res) | 1.837% |
+| *reference PP, for scale* | *4.80%* |
+
+So on Intel the forced quarter-res clamp and the fullres cleanup path each suppress
+most of the occlusion, and even lifting either leaves compute at ~⅓ of the
+reference path. **Start here rather than at the bistability** — this is a
+reproducible, size-matched, single-variable result, and it may well be that the
+"regimes" are the same mechanism seen at two scene sizes.
 
 Every compute-AO number elsewhere in this file is from the **absent** regime,
 because that is what the settled two-launch gate produced. Read them with that

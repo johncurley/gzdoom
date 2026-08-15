@@ -118,10 +118,25 @@ counter sampling: no"*, and Xcode's counters return no data — checked in the G
 
 ## Open, in the order I would take them
 
-1. **The bistability above.** Everything else about compute AO is blocked on it.
-   The next measurement I would take is an `mt_aoprobe` run in each regime —
-   that probe exists for exactly this class of "AO composited nothing" defect
-   and was never pointed at this.
+1. **Why compute AO under-occludes on Intel.** Start here, not at the
+   bistability — it is a reproducible, size-matched, single-variable result:
+
+   | configuration | AO vs no-AO |
+   |---|---|
+   | default | 0.227% |
+   | `mt_compute_ao_skip_fullres true` | 1.739% |
+   | `mt_compute_ao_intel_clamp false` | 1.837% |
+   | *reference PP* | *4.80%* |
+
+   The forced quarter-res clamp (`aoScale = 4`, mt_ao.cpp:1544) and the fullres
+   cleanup path each suppress most of the occlusion, and lifting either still
+   leaves compute at about a third of the reference path. It is plausible the
+   two "regimes" are this same mechanism seen at two scene sizes.
+
+   `mt_aoprobe` is **not** the instrument — done, do not retry. It matches on the
+   `ssaocombine` lump and the compute path issues no such draw, so it arms and
+   never reports. It fires correctly on the reference path (that is the control).
+   Probing compute needs a probe hooking `MtAOModule`, which does not exist.
 2. **In-game assessment of both AO paths**, by playing, watching for temporal
    grain rather than looking at stills.
 3. **The SSAO residual** (~0.047 occlusion units). Compute kernel, `fast::`
