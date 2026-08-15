@@ -799,6 +799,42 @@ rather than of the renderer. Whoever picks this up should consider re-deriving
 the measurement before hunting further; three specific suspects have now died
 and that raises the prior on the measurement itself.
 
+**The "~2x on Intel" premise for the compute AO guard does not reproduce.**
+Measured 2026-08-15. `mt_postprocess.cpp:528` justifies disabling compute AO on
+Intel with "compute AO measured at ~2x its cost there"; that predates the
+AlchemyAO work, which changed the kernel and its pass structure, and had never
+been re-checked. Metal on both arms, `gl_ssao 3`, path proved per launch by its
+`mt_metrics` label, arms interleaved A,B,A,B so thermal drift is shared, and
+**`cl_capfps 0` + `vid_vsync 0`** — with the harness default `+cl_capfps 1` both
+arms just report the cap.
+
+| | compute AO | reference PP | delta |
+|---|---|---|---|
+| 800x600, mean of `Frame avg` | 4.971ms | 5.189ms | −0.218ms (0.96x) |
+| 1600x776, mean of `Frame avg` | 5.139ms | 5.164ms | −0.025ms (1.00x) |
+| 1600x776, best `Frame min` | 1.512ms | 1.244ms | +0.268ms (1.22x) |
+
+Per-arm repeat spread was 0.083–0.264ms, and CLAUDE.md puts the machine's noise
+floor at ~0.4ms. Every delta above is inside that, and the sign is not even
+consistent between `avg` and `min`. **The honest reading is that the two paths
+cost the same at frame level, not that compute is faster.** What is definite is
+the negative: a 2x on a ~5ms frame would be ~5ms, more than ten times the noise
+floor, and nothing of the sort is present at either resolution.
+
+Note the resolution arm was verified rather than assumed — the captures are
+1600x776 (the display clips the requested 1200), ~2.6x the pixels of the 800x600
+arm, and the frame time did not move. That says this scene is not fill-bound at
+either size, which is also the limit of the measurement: at ~200fps the frame is
+dominated by work that is not AO, so a real per-pass difference could hide inside
+it. **The definitive test is per-encoder timing from an Xcode GPU capture**, which
+CLAUDE.md already names as the only trustworthy per-pass figure on this hardware.
+The frame-level result is enough to retire the 2x claim, not enough to prove the
+paths are equal in isolation.
+
+The guard is deliberately left in place — flipping a default is a judgement call,
+not a measurement — but its stated reason is now known to be stale, and the
+comment at `mt_postprocess.cpp:528` should not be quoted as if it still held.
+
 `mt_msl_precise_math` is kept as a permanent diagnostic (default off, **not**
 archived, `mt_shader.cpp`). It applies in `CompileMSLToLibrary`, deliberately
 *after* the `.msl` disk cache, so a cached translation cannot serve the other
