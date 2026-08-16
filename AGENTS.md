@@ -21,8 +21,9 @@ it is unusual).
   What is still open on that machine is the **Tasks — Linux** section below.
 - **Linux work:** `docs/handoff-linux-2026-08-16.md` — what is open on the Linux
   box, in order, with one correction: the Wayland fixes items 10/11 call
-  unpublished **are** on `zwidget/wayland-c-bindings`; what is open is
-  upstreaming to dpjudas, gated on reproducing the first-paint bug.
+  unpublished **are** on `zwidget/wayland-c-bindings`. Item 1 (first-paint
+  repro) is now **closed, does not reproduce** — see Tasks — Linux item 1
+  below; publishing upstream (item 5) is unblocked.
 - **Current handoff:** `docs/handoff-ao-2026-08-16.md` — the AO session. macOS
   items 1 and 2 closed, the compute-AO cost premise retired, three SSAO-residual
   suspects killed, and **one new unresolved bug found: compute AO is bistable**.
@@ -118,24 +119,49 @@ cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DPK3_QUIET_ZIPDIR=ON -DHAVE_VU
 cmake --build build --parallel $(nproc)
 ```
 
-### 1. Confirm the Wayland first-paint fix — it has no control run
+### 1. Confirm the Wayland first-paint fix — CLOSED, does not reproduce on KWin either
 
 The blank-launcher-until-you-move-the-pointer fix (`m_NeedsUpdate` set at the
-`xdg_surface_handle_configure` ack point, ZWidget subtree) **rests on reading
-the xdg-shell protocol, not on a measurement**. It could not be reproduced on
-the machine that wrote it — the launcher painted on every attempt, before and
-after. KWin is the compositor whose first configure is 0x0, so this box is where
-the bug lives.
+`xdg_surface_handle_configure` ack point, ZWidget subtree) **rested on reading
+the xdg-shell protocol, not on a measurement**, and could not be reproduced on
+the machine that wrote it.
 
-Needed: reproduce the blank launcher on the pre-fix commit (that is the control;
-without it the fix proves nothing), then show it painting after. If it will not
-reproduce here either, say so — that is a result, and it means the report came
-from a compositor neither machine runs.
+**Linux result, 2026-08-16 (KDE Plasma, kwin_wayland, RX 550):** does not
+reproduce here either. Control: `d70d1f944` (`d4fae73da^`, pre-fix), launched
+with no `-iwad` so the ZWidget IWAD-picker window is what's under test — the
+bitmap-rendered path the bug actually applies to, not the game window, which
+renders via OpenGL/EGL and never goes through `DrawSurface`'s buffer-attach
+logic at all (`DrawSurface()` early-returns for `RenderAPI::OpenGL`/`Vulkan`).
+Four independent launches, including a race loop that grabbed the earliest
+`spectacle -a` screenshot obtainable after backgrounding the process (first
+attempt succeeded every time, ~tens of ms after the window existed): the
+launcher was fully painted in all four, never blank. Post-fix (current HEAD)
+repeated once for symmetry: also painted immediately, no observable
+difference from the control.
 
-This one gates something: it is an upstream ZWidget bug affecting every ZWidget
-Wayland application, and it belongs in the dpjudas PR alongside the Cocoa fixes.
-That PR is otherwise ready (`zwidget/cocoa-modal-fixes`, two commits directly on
-upstream head, verified 2026-08-11).
+**Why it's deterministic here, from reading `wayland_display_window.cpp`:**
+`InitializeToplevel()` does `wl_surface_commit()` followed by a *synchronous*
+`wl_display_roundtrip()` inside the constructor, before the constructor
+returns. That roundtrip fully processes and acks the compositor's initial
+configure. `m_NeedsUpdate` starts `true` and nothing clears it before then —
+only `WaylandDisplayBackend::CheckNeedsUpdate()` does, on the run loop's first
+pass, and that necessarily runs after the constructor (and its roundtrip)
+have already completed. So on this call sequence there is no window in which
+the flag can be lost before the surface is ready. Whatever produced the
+original report needs either a different compositor timing (async configure
+delivery, a compositor that defers the ack response) or a different code path
+than the one exercised by a normal launcher/game launch — not established
+here, and not needed to close this item.
+
+**Conclusion:** two machines (this one and the one that wrote the fix) have
+now tried and neither reproduces it. Per the standing instruction, that is
+itself the result — the original report came from a compositor neither
+machine runs. The fix is a correct, protocol-mandated hardening (xdg-shell
+does require a buffer after every ack, unconditionally) and should still go
+upstream on that basis, not on a repro that doesn't exist. Does not block
+task 5's PR to dpjudas — drop the "confirmed fixed... on the same setup"
+framing from anything published upstream; say it's a protocol-correctness fix
+with no local reproduction, which is the truthful and stronger claim.
 
 ### 2. Re-validate the matrix suite's scene choices on this hardware
 

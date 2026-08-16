@@ -29,25 +29,33 @@ a different task with a different gate (see task 1). Do not redo the cherry-pick
 
 ---
 
-## 1. Reproduce the Wayland first-paint bug, or say it cannot be reproduced
+## 1. Reproduce the Wayland first-paint bug, or say it cannot be reproduced — CLOSED 2026-08-16
 
-**`AGENTS.md` Tasks — Linux, item 1.** The blank-launcher-until-you-move-the-pointer
-fix rests on reading the xdg-shell protocol, **not on a measurement**. It could not
-be reproduced on the machine that wrote it. KWin is the compositor whose first
-configure is 0x0, so the Linux box is where the bug should live.
+**`AGENTS.md` Tasks — Linux, item 1.** Does not reproduce under KWin either. Control
+build at `d70d1f944` (`d4fae73da^`, pre-fix) launched with no `-iwad` so the
+ZWidget bitmap-rendered IWAD picker is under test (not the OpenGL game window,
+which never touches this code path). Four independent launches on this KDE
+Plasma/kwin_wayland/RX 550 box, including a race loop grabbing the earliest
+possible screenshot after process start — painted immediately every time, never
+blank. Post-fix HEAD repeated once for symmetry: same result, no observable
+difference.
 
-Needed, in this order:
+Source reading explains why it's deterministic here: `InitializeToplevel()` does a
+*synchronous* `wl_display_roundtrip()` right after `wl_surface_commit()`, inside
+the constructor, before it returns — so the initial configure is fully acked
+before `WaylandDisplayBackend::CheckNeedsUpdate()` ever gets a chance to consume
+the `m_NeedsUpdate` flag on the run loop's first pass. There is no window in this
+call sequence where the flag can be lost before the surface is ready. See
+`AGENTS.md` Tasks — Linux item 1 for the full writeup.
 
-1. Check out the **pre-fix** commit and reproduce the blank launcher. *This is the
-   control.* Without it the fix proves nothing.
-2. Show it painting after the fix.
-3. If it will not reproduce under KWin either, **say so** — that is a result, and it
-   means the original report came from a compositor neither machine runs.
+**Two machines have now tried and neither reproduces it — that is itself the
+result** the original instruction asked for: the report came from a compositor
+neither machine runs. The fix is still correct (xdg-shell does require a buffer
+after every ack, unconditionally) and should go upstream on that protocol-reading
+basis, not on a false "confirmed fixed" claim — drop that framing from the PR
+description.
 
-**This gates the upstream PR.** The dpjudas PR is otherwise ready and would carry
-the Wayland, X11 and Cocoa fixes above. Offering an unreproduced protocol fix
-upstream is exactly the thing to avoid — and this branch has already published one
-feature upstream with a missing half (see the build-the-committed-state trap).
+**This gated the upstream PR; it no longer does — see task 5, now unblocked.**
 
 ## 2. Re-validate the matrix suite's scene choices on this hardware
 
@@ -101,10 +109,12 @@ backend-agnostic place (`v_video.cpp` sees every frame) or write the GL counterp
 Until then, no Linux renderer change can be judged for smoothness by anything but a
 person's impression — which is how the macOS defect escaped for a whole session.
 
-## 5. Publish upstream to dpjudas — gated on task 1
+## 5. Publish upstream to dpjudas — task 1 is closed, this is now unblocked
 
-Once task 1 has a control run, open the PR to `dpjudas/ZWidget` with the six commits
-in the table above. `cocoa-modal-fixes` was verified clean against upstream head on
+Open the PR to `dpjudas/ZWidget` with the six commits in the table above. Describe
+the first-paint fix as a protocol-correctness fix (xdg-shell requires a buffer
+after every ack, unconditionally), not as a confirmed repro — two machines tried
+and neither reproduced the blank-launcher symptom (task 1). `cocoa-modal-fixes` was verified clean against upstream head on
 2026-08-11 (12 warnings before and after, all pre-existing OpenGL deprecations).
 
 **Use the cherry-pick procedure in `CLAUDE.md`, never `git subtree push`** — measured
