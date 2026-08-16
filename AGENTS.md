@@ -437,8 +437,9 @@ installed here** (`twm`, `mwm`, `fvwm`, `blackbox`, `cwm`, `jwm`, `icewm`,
 `openbox`, `matchbox`, `dwm`, `wmaker` all absent). `twm` is the right one to
 install for it — ICCCM-era, no `_NET_ACTIVE_WINDOW`, uses `WM_TAKE_FOCUS`.
 
-**Attempted 2026-08-16, blocked by a different, more fundamental problem —
-still open, not this item's question.** `twm` installed clean (`xorg-twm`).
+**Attempted 2026-08-16, blocked by a different, more fundamental problem, now
+root-caused — still open, not this item's question.** `twm` installed clean
+(`xorg-twm`).
 Under a fresh `Xvfb` + `twm` pair, `X11Connection`'s constructor completes in
 full (confirmed by per-call instrumentation: `XOpenDisplay`, `XOpenIM`, the
 XInput2 query chain, all return normally) and `X11DisplayWindow`'s constructor
@@ -448,20 +449,44 @@ before any further startup output, well past a 30s timeout. Never reached the
 `WM_TAKE_FOCUS` handler at all, so this item is still genuinely untested, not
 negative.
 
-Root cause not found — `ptrace` is blocked in the sandbox this session ran in
-(`Yama ptrace_scope=1`, and this process isn't a ptrace-able child of the
-session that tried), so no backtrace could be taken, and `/proc/<pid>/syscall`
-is equally inaccessible. What *is* established: this is likely an `Xvfb`
-fragility, not a `twm`- or gzdoom-specific bug. A single `gzdoom` process
-killed by `SIGTERM` mid-connection was enough to wedge the `Xvfb` instance
-into refusing all future connections — confirmed by `xdpyinfo`, a totally
-unrelated client, hanging identically against the same display afterward. Do
-**not** reuse an `Xvfb` display after a killed client; every trial needs a
-fresh instance, which is expensive (rebuild + relaunch each time) and is why
-this was not chased further this session. Next attempt should either get real
-`ptrace` permission (root, or run outside this sandbox) or add a proper timed
-watchdog inside the engine itself rather than relying on external process
-inspection.
+**Root cause found, same day, once `ptrace` was enabled** (`sudo sysctl
+kernel.yama.ptrace_scope=0`). `gdb -p <pid> -batch -ex "thread apply all bt"`
+against a fresh, unkilled instance puts the main thread here:
+
+```
+#0  poll ()                                            [libc]
+#1  ...                                                 [libxcb]
+#4  xcb_wait_for_reply ()                               [libxcb]
+#5  xcb_get_extension_data ()                           [libxcb]
+#6-9 ...                                                [libEGL_mesa.so.0]
+#10 SystemGLFrameBuffer::InitEGL()      gl_sysfb.cpp:264
+#11 SystemGLFrameBuffer::SystemGLFrameBuffer()  gl_sysfb.cpp:412
+#12 OpenGLFrameBuffer::OpenGLFrameBuffer()  gl_framebuffer.cpp:101
+#13 NativeVideo::CreateFrameBuffer()    nativevideo.cpp:709
+#14 IVideo::SetResolution()             v_video.cpp:368
+#15 V_Init2()                           v_video.cpp:453
+```
+
+Line 264 is the standard `eglInitialize(egl_dpy, nullptr, nullptr)` call, and it
+never returns — Mesa's EGL X11 platform backend is blocked inside its own XCB
+extension probe (`xcb_get_extension_data`, almost certainly DRI3 or Present),
+waiting on a reply `Xvfb` never sends cleanly. **This is a Mesa-vs-`Xvfb`
+incompatibility, orthogonal to `twm`, to `gzdoom`'s own code, and to the
+`WM_TAKE_FOCUS` guard this item is actually about** — the same hang was
+confirmed on both GL and Vulkan, and neither `LIBGL_ALWAYS_SOFTWARE=1` nor
+`LIBGL_DRI3_DISABLE=1` (individually or together) routes around it. Also now
+explains the earlier "killing one client wedges the display for everyone"
+observation: killing a client stuck mid-way through an XCB extension query
+appears to corrupt something in `Xvfb`'s own per-extension request state, not
+just that one client's connection.
+
+**Consequence for this item: it needs a different test harness, not more
+patience on this one.** `Xvfb` cannot get a `gzdoom` process far enough to reach
+`OnClientMessage` at all, on this machine, regardless of GL/Vulkan or software
+rendering. Untried: a nested server with real GLAMOR-backed GL passthrough
+(`Xephyr` against the working `:0` XWayland session, if its Mesa build supports
+it) instead of `Xvfb`. Until then this item stays genuinely untested — not
+negative, and not close to being closed by trying again the same way.
 
 The two sites are mutually exclusive on the axis nobody recorded: whether the
 observing session had an EWMH window manager. Under bare Xvfb, site A is
