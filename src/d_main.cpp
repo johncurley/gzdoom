@@ -911,7 +911,12 @@ void D_Display ()
 	int wipe_type;
 	sector_t *viewsec;
 
-	GC::CheckGC();
+	{
+		// vid_stalltrace: a GC sweep is a classic multi-hundred-millisecond
+		// stall and it runs before anything else in the frame.
+		VLoopPhase phase("gc");
+		GC::CheckGC();
+	}
 
 	SetDeltaTime();
 
@@ -983,6 +988,7 @@ void D_Display ()
 		if (vr_mode == 0 || vid_rendermode != 4)
 		{
 			// save the current screen if about to wipe
+			VLoopPhase phase("wipestart");
 			wipestart = screen->WipeStartScreen();
 
 			switch (wipegamestate)
@@ -1013,9 +1019,16 @@ void D_Display ()
 	}
 	
 	screen->FrameTime = I_msTimeFS();
-	TexAnim.UpdateAnimations(screen->FrameTime);
-	R_UpdateSky(screen->FrameTime);
-	screen->BeginFrame();
+	{
+		VLoopPhase phase("texanim");
+		TexAnim.UpdateAnimations(screen->FrameTime);
+		R_UpdateSky(screen->FrameTime);
+	}
+	{
+		// Wrapper: the Metal backend's BeginFrame contains "nextdrawable".
+		VLoopPhase phase("beginframe", true);
+		screen->BeginFrame();
+	}
 	twod->ClearClipRect();
 	if ((gamestate == GS_LEVEL || gamestate == GS_TITLELEVEL) && gametic != 0)
 	{
@@ -1023,10 +1036,13 @@ void D_Display ()
 		//E_RenderFrame();
 		//
 		
-		D_Render([&]()
 		{
-			viewsec = RenderView(&players[consoleplayer]);
-		}, true);
+			VLoopPhase phase("renderview");
+			D_Render([&]()
+			{
+				viewsec = RenderView(&players[consoleplayer]);
+			}, true);
+		}
 
 		twod->Begin(screen->GetWidth(), screen->GetHeight());
 		if (!hud_toggled)
@@ -1280,7 +1296,7 @@ void D_DoomLoop ()
 			}
 
 			{
-				VLoopPhase phase("display");
+				VLoopPhase phase("display", true);
 				D_Display ();
 			}
 			{

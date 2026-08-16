@@ -362,7 +362,11 @@ private:
 class VLoopPhase
 {
 public:
-	explicit VLoopPhase(const char *name);
+	// wrapper: this phase CONTAINS other phases (e.g. "display" contains
+	// "beginframe"). Wrappers are printed but excluded from the accounted
+	// total, which would otherwise double-count and drive (unaccounted)
+	// negative -- observed at -1007.50ms before this existed.
+	explicit VLoopPhase(const char *name, bool wrapper = false);
 	~VLoopPhase();
 
 	VLoopPhase(const VLoopPhase &) = delete;
@@ -370,6 +374,7 @@ public:
 
 private:
 	const char *mName = nullptr;
+	bool mWrapper = false;
 	std::chrono::steady_clock::time_point mStart;
 };
 

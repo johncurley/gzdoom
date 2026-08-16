@@ -115,12 +115,13 @@ namespace
 		const char *name = nullptr;
 		double ms = 0.0;
 		int entries = 0;
+		bool wrapper = false;
 	};
 
 	constexpr int MAX_LOOP_PHASES = 16;
 	LoopPhaseBucket g_loopPhases[MAX_LOOP_PHASES];
 
-	void AccumulateLoopPhase(const char *name, double ms)
+	void AccumulateLoopPhase(const char *name, double ms, bool wrapper)
 	{
 		for (int i = 0; i < MAX_LOOP_PHASES; i++)
 		{
@@ -135,6 +136,7 @@ namespace
 				g_loopPhases[i].name = name;
 				g_loopPhases[i].ms = ms;
 				g_loopPhases[i].entries = 1;
+				g_loopPhases[i].wrapper = wrapper;
 				return;
 			}
 		}
@@ -162,9 +164,11 @@ namespace
 				if (g_loopPhases[order[j]].ms > g_loopPhases[order[i]].ms)
 					std::swap(order[i], order[j]);
 
+		// Wrappers contain other phases, so counting them would double-count.
 		double accounted = 0.0;
 		for (int i = 0; i < count; i++)
-			accounted += g_loopPhases[order[i]].ms;
+			if (!g_loopPhases[order[i]].wrapper)
+				accounted += g_loopPhases[order[i]].ms;
 
 		fprintf(stderr, "vid_stalltrace  interval=%.2fms%s%s\n", intervalMs,
 			g_loopContext ? "  context=" : "",
@@ -174,7 +178,8 @@ namespace
 			const auto &b = g_loopPhases[order[i]];
 			if (b.ms < 0.01)
 				continue;
-			fprintf(stderr, "    %-14s %9.2fms  x%d\n", b.name, b.ms, b.entries);
+			fprintf(stderr, "    %-14s %9.2fms  x%d%s\n", b.name, b.ms, b.entries,
+				b.wrapper ? "  (wraps others)" : "");
 		}
 		// The remainder is the loop's own overhead plus anything between the
 		// instrumented phases. A large unaccounted figure means the stall is
@@ -196,11 +201,12 @@ VLoopContext::~VLoopContext()
 	g_loopContext = mPrevious;
 }
 
-VLoopPhase::VLoopPhase(const char *name)
+VLoopPhase::VLoopPhase(const char *name, bool wrapper)
 {
 	if (vid_stalltrace <= 0)
 		return;
 	mName = name;
+	mWrapper = wrapper;
 	mStart = std::chrono::steady_clock::now();
 }
 
@@ -210,7 +216,7 @@ VLoopPhase::~VLoopPhase()
 		return;
 	AccumulateLoopPhase(mName,
 		std::chrono::duration<double, std::milli>(
-			std::chrono::steady_clock::now() - mStart).count());
+			std::chrono::steady_clock::now() - mStart).count(), mWrapper);
 }
 
 //==========================================================================

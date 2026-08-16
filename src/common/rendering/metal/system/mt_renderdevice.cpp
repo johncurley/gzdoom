@@ -591,6 +591,12 @@ void MetalRenderDevice::BeginFrame() {
           metalLayer->setDrawableSize(CGSizeMake(targetDrawableW, targetDrawableH));
       }
 
+      // vid_stalltrace: nextDrawable() blocks when the drawable pool is
+      // exhausted and gives up after ~1 second, which is the exact signature of
+      // the ~1000-1025ms freezes found on 2026-08-17. Timed separately from the
+      // inflight-frames semaphore above -- that one has its own timeout and did
+      // NOT fire during those freezes, which is what pointed here.
+      VLoopPhase drawablePhase("nextdrawable");
       mCurrentDrawable = (CA::MetalDrawable *)metalLayer->nextDrawable();
 
       if (mCurrentDrawable && mFrameCount < 10) {

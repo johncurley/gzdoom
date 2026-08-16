@@ -1050,6 +1050,33 @@ Note the startup cluster (~150-330ms intervals, fully unaccounted, no context
 label) is from before `D_DoomLoop` is entered -- the startup screen and
 `d_main.cpp:896` drive `Update()` directly. Expected, not the reported freeze.
 
+**Split further 2026-08-17 -- the stall is `nextDrawable()`, not compilation.**
+Phases added inside `D_Display` (`gc`, `wipestart`, `texanim`, `beginframe`,
+`renderview`) and around `PrecacheLevel`/`S_PrecacheLevel`. Two results:
+
+```
+interval=232.52ms
+    beginframe        230.51ms  x1  (wraps others)
+    nextdrawable      227.53ms  x1
+    display             7.79ms  x1  (wraps others)
+    renderview          1.06ms  x1
+```
+
+**98.7% of the stall is `CA::MetalLayer::nextDrawable()`**
+(`mt_renderdevice.cpp:594`), which blocks when the drawable pool is exhausted
+and gives up after ~1 second -- the exact ~1000-1025ms signature. It is a
+different wait from the inflight-frames semaphore just above it, which has its
+own 1s timeout and did **not** fire during these freezes; that mismatch is what
+pointed here.
+
+`precache` measured **9.29ms**, inside a `levelload` of 50.37ms. The earlier
+guess that the 785ms was texture precache was **wrong** -- precache is cheap and
+the level-transition remainder is still unattributed.
+
+Phases that contain other phases (`display`, `beginframe`) are marked `wrapper`
+and excluded from the accounted total; without that they double-counted and drove
+`(unaccounted)` to -1007.50ms.
+
 **Contamination found in the first session:** `Metal GPU Frame Capture Enabled`
 appears in `trace.txt`. That line is emitted by Apple's framework, not our code,
 and only when `METAL_CAPTURE_ENABLED` is set -- the capture layer adds

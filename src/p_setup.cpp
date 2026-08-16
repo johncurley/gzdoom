@@ -577,6 +577,11 @@ void P_SetupLevel(FLevelLocals *Level, int position, bool newGame)
 	// preload graphics and sounds
 	if (precache)
 	{
+		// vid_stalltrace: the obvious suspect for a level-transition freeze.
+		// Sits inside the levelload phase, so this splits it out rather than
+		// adding coverage -- see AGENTS.md, where levelload measured 56.82ms of
+		// a 910ms interval and the bulk was elsewhere.
+		VLoopPhase precachePhase("precache");
 		PrecacheLevel(Level);
 		S_PrecacheLevel(Level);
 	}
