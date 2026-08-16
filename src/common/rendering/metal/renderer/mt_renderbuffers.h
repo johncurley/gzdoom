@@ -1,5 +1,8 @@
 #pragma once
 
+#include "zstring.h"
+#include "mt_resources.h"
+
 #include <memory>
 
 namespace MTL {
@@ -12,7 +15,12 @@ class MtTextureImage;
 // Render buffers (framebuffer targets)
 class MtRenderBuffers {
 public:
-  MtRenderBuffers(MetalRenderDevice *fb);
+  // tag distinguishes the two live instances in the resource registry: the
+  // screen buffers and the savegame-thumbnail buffers go through this same
+  // class, and without a prefix the thumbnail's small textures overwrite the
+  // screen's entries under identical names. Caught by the registry itself,
+  // 2026-08-16, which reported every scene target as 216x162 and STALE.
+  MtRenderBuffers(MetalRenderDevice *fb, const char *tag = "screen");
   ~MtRenderBuffers();
 
   // Get render targets
@@ -20,6 +28,14 @@ public:
 
   int GetWidth() const { return mWidth; }
   int GetHeight() const { return mHeight; }
+  const char *ResName(int slot) const { return mResNames[slot].GetChars(); }
+  // Only the screen buffers track the scene viewport. The savegame-thumbnail
+  // instance has its own size and must not be checked against it, or it reports
+  // STALE on every frame -- which is how a validator earns being ignored.
+  MtSizeRule SceneRule() const;
+  enum ResSlot { RES_SceneColor, RES_SceneDepth, RES_SceneNormal,
+                 RES_SceneFog, RES_Pipeline0, RES_Pipeline1, RES_Count };
+
   int GetSceneWidth() const { return mSceneWidth; }
   int GetSceneHeight() const { return mSceneHeight; }
   int GetSceneSamples() const { return mSamples; }
@@ -48,6 +64,8 @@ public:
   std::unique_ptr<MtTextureImage> PipelineImage[NumPipelineImages];
 
 private:
+  FString mResNames[6];
+  const char *mTag = "screen";
   void CreatePipelineDepthStencil(int width, int height);
   void CreatePipeline(int width, int height);
   void CreateScene(int width, int height, int samples);

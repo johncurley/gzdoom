@@ -38,6 +38,7 @@
 #include "mt_commandbuffer.h"
 #include "mt_hwbuffer.h"
 #include "mt_renderdevice.h"
+#include "metal/renderer/mt_resources.h"
 
 #include "mt_binaryarchive.h"
 #include "textures.h"
@@ -274,7 +275,7 @@ void MetalRenderDevice::InitializeState() {
   mBufferManager->Init();
 
   mScreenBuffers.reset(new MtRenderBuffers(this));
-  mSaveBuffers.reset(new MtRenderBuffers(this));
+  mSaveBuffers.reset(new MtRenderBuffers(this, "save"));
   mActiveRenderBuffers = mScreenBuffers.get();
 
   mPostprocess.reset(new MtPostprocess(this));
@@ -480,6 +481,17 @@ void MetalRenderDevice::WaitForDisplayTick() {
 }
 
 void MetalRenderDevice::BeginFrame() {
+  // Registry frame boundary. It lives HERE, not in MtRenderBuffers::BeginFrame,
+  // because that runs again for every render-to-texture: measured 2026-08-16, a
+  // dump taken mid-frame reported "scene 216x162" -- the last small target
+  // rendered -- and flagged every main-scene resource STALE against it. The
+  // device's frame is the only boundary that means one displayed frame.
+  // mScreenBuffers specifically, not the active set: mSaveBuffers renders the
+  // savegame thumbnail through the same path at its own small size, which is
+  // what produced the bogus "scene 216x162" reference on the first run.
+  MtResources().BeginFrame(
+      mScreenBuffers ? mScreenBuffers->GetSceneWidth() : 0,
+      mScreenBuffers ? mScreenBuffers->GetSceneHeight() : 0);
   if (mInFrame)
     return;
   mInFrame = true;

@@ -1,4 +1,5 @@
 #include "mt_ao.h"
+#include "mt_resources.h"
 #include "c_cvars.h"
 #include "mt_renderbuffers.h"
 #include "../system/mt_renderdevice.h"
@@ -1403,6 +1404,20 @@ void MtAOModule::EnsureTextures(int width, int height) {
 
     mAOWidth = width;
     mAOHeight = height;
+
+    // Tier 3 of docs/frame-analysis.md section 1: private to this module, and
+    // invisible to every shared diagnostic until now. The divisor is whatever
+    // aoScale resolved to -- on Intel the intel_clamp forces 4, so the rule
+    // recorded here is what the module ACTUALLY used, not what the cvar says.
+    const int div = mAOScale > 0 ? mAOScale : 1;
+    MtResources().Declare({"AO.Ambient", "MtAOModule", width, height, 1,
+                           (int)MTL::PixelFormatRG16Float,
+                           MtSizeRule::Scaled(div), true},
+                          mAOTexture);
+    MtResources().Declare({"AO.Blur", "MtAOModule", width, height, 1,
+                           (int)MTL::PixelFormatRG16Float,
+                           MtSizeRule::Scaled(div), true},
+                          mBlurTexture);
 }
 
 // A stencil texture view over the scene depth/stencil buffer.
@@ -1486,6 +1501,14 @@ void MtAOModule::EnsureFullresTextures(int width, int height) {
                                                usage, MTL::StorageModePrivate);
     mFullresTempTexture = compute->CreateTexture(width, height, MTL::PixelFormatRG16Float,
                                                  usage, MTL::StorageModePrivate);
+    MtResources().Declare({"AO.FullresAO", "MtAOModule", width, height, 1,
+                           (int)MTL::PixelFormatRG16Float, MtSizeRule::Full(),
+                           true},
+                          mFullresAOTexture);
+    MtResources().Declare({"AO.FullresTemp", "MtAOModule", width, height, 1,
+                           (int)MTL::PixelFormatRG16Float, MtSizeRule::Full(),
+                           true},
+                          mFullresTempTexture);
     mFullresWidth = width;
     mFullresHeight = height;
 }
@@ -1520,6 +1543,10 @@ void MtAOModule::EnsureDepthPyramid(int width, int height) {
     mDepthPyramidTexture = fb->device->device->newTexture(desc);
     desc->release();
 
+    MtResources().Declare({"AO.DepthPyramid", "MtAOModule", width, height, 1,
+                           (int)MTL::PixelFormatR16Float, MtSizeRule::Full(),
+                           true},
+                          mDepthPyramidTexture);
     mDepthPyramidWidth = mDepthPyramidTexture ? width : 0;
     mDepthPyramidHeight = mDepthPyramidTexture ? height : 0;
 }
@@ -1545,9 +1572,20 @@ bool MtAOModule::Render(float m5, int sceneWidth, int sceneHeight, const HWViewp
         fb->mVersionManager.architecture == MtGPUArchitecture::Intel && aoScale < 4)
         aoScale = 4;
     aoScale = clamp(aoScale, 1, 4);
+    // Record the divisor the module RESOLVED to (the Intel clamp may have forced
+    // it to 4 regardless of the cvar) so the registry's size rule describes what
+    // actually happened rather than what was asked for.
+    mAOScale = aoScale;
     EnsureTextures((sceneWidth + aoScale - 1) / aoScale, (sceneHeight + aoScale - 1) / aoScale);
     if (!mAOTexture || !mBlurTexture)
         return false;
+
+    // Marks this path as having run THIS FRAME. The "UNTOUCHED this frame" line
+    // in mt_resources is then a structural answer to "did compute AO execute",
+    // which is exactly what no label on this path could give -- the compute path
+    // issues no ssaocombine draw, so mt_aoprobe cannot see it at all.
+    MtResources().Touch("AO.Ambient");
+    MtResources().Touch("AO.Blur");
 
     int algorithm = clamp((int)mt_compute_ao_algorithm, 0, 2);
     if (algorithm == 2)

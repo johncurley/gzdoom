@@ -7,6 +7,8 @@
 #include "../mt_system_wrapper.h"
 
 #include "mt_renderbuffers.h"
+#include "mt_resources.h"
+#include <string.h>
 #include "c_cvars.h"
 #include "../system/mt_renderdevice.h"
 #include "../textures/mt_texture.h"
@@ -21,9 +23,21 @@ EXTERN_CVAR(Int, gl_shadowmap_quality)
 // assumes that headroom exists. Off by default until the visual A/B lands.
 CVAR(Bool, mt_hdr_pipeline, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
-MtRenderBuffers::MtRenderBuffers(MetalRenderDevice *fb) : fb(fb) {}
+MtRenderBuffers::MtRenderBuffers(MetalRenderDevice *fb, const char *tag)
+    : fb(fb), mTag(tag ? tag : "screen") {
+  static const char *kBase[RES_Count] = {"SceneColor",       "SceneDepthStencil",
+                                         "SceneNormal",      "SceneFog",
+                                         "PipelineImage[0]", "PipelineImage[1]"};
+  for (int i = 0; i < RES_Count; ++i)
+    mResNames[i].Format("%s.%s", mTag, kBase[i]);
+}
 
 MtRenderBuffers::~MtRenderBuffers() {}
+
+MtSizeRule MtRenderBuffers::SceneRule() const {
+  return strcmp(mTag, "screen") == 0 ? MtSizeRule::Full()
+                                     : MtSizeRule::Absolute();
+}
 
 int MtRenderBuffers::DesiredColorFormat() const {
   return (int)(mt_hdr_pipeline ? MTL::PixelFormatRGBA16Float
@@ -52,6 +66,13 @@ void MtRenderBuffers::BeginFrame(int width, int height, int sceneWidth,
     mSceneHeight = sceneHeight;
     CreateScene(sceneWidth, sceneHeight, 1); // samples=1 for now
   }
+
+  // Touch only. The frame boundary is MetalRenderDevice::BeginFrame -- this
+  // function runs again for every render-to-texture, so advancing the frame here
+  // made a mid-frame dump measure itself against whatever small target rendered
+  // last.
+  for (int i = 0; i < RES_Count; ++i)
+    MtResources().Touch(ResName(i));
 }
 
 // Name a render target so it is identifiable in a GPU frame capture. Without
@@ -118,6 +139,15 @@ void MtRenderBuffers::CreatePipeline(int width, int height) {
     PipelineImage[i]->SetTexture(texture);
     PipelineImage[i]->SetWidth(width);
     PipelineImage[i]->SetHeight(height);
+    // Pipeline images track the WINDOW, not the scene viewport, so they are
+    // Fixed rather than SceneFull -- at screenblocks < 11 the two differ and a
+    // SceneFull rule would report a false STALE on every frame.
+    {
+      MtResources().Declare({ResName(i == 0 ? RES_Pipeline0 : RES_Pipeline1),
+                             "MtRenderBuffers", width, height, 1,
+                             mColorFormat, MtSizeRule::Absolute(), false},
+                            texture);
+    }
     desc->release();
   }
 }
@@ -178,6 +208,9 @@ void MtRenderBuffers::CreateSceneColor(int width, int height, int samples) {
   SceneColor->SetTexture(texture);
   SceneColor->SetWidth(width);
   SceneColor->SetHeight(height);
+  MtResources().Declare({ResName(RES_SceneColor), "MtRenderBuffers", width, height, samples,
+                         mColorFormat, SceneRule(), false},
+                        texture);
   desc->release();
 }
 
@@ -202,6 +235,10 @@ void MtRenderBuffers::CreateSceneDepthStencil(int width, int height,
   SceneDepthStencil->SetTexture(texture);
   SceneDepthStencil->SetWidth(width);
   SceneDepthStencil->SetHeight(height);
+  MtResources().Declare({ResName(RES_SceneDepth), "MtRenderBuffers", width, height,
+                         samples, (int)MTL::PixelFormatDepth32Float_Stencil8,
+                         SceneRule(), false},
+                        texture);
   desc->release();
 }
 
@@ -230,6 +267,9 @@ void MtRenderBuffers::CreateSceneNormal(int width, int height, int samples) {
   SceneNormal->SetTexture(texture);
   SceneNormal->SetWidth(width);
   SceneNormal->SetHeight(height);
+  MtResources().Declare({ResName(RES_SceneNormal), "MtRenderBuffers", width, height,
+                         samples, mNormalFormat, SceneRule(), false},
+                        texture);
   desc->release();
 }
 
@@ -253,5 +293,8 @@ void MtRenderBuffers::CreateSceneFog(int width, int height, int samples) {
   SceneFog->SetTexture(texture);
   SceneFog->SetWidth(width);
   SceneFog->SetHeight(height);
+  MtResources().Declare({ResName(RES_SceneFog), "MtRenderBuffers", width, height, samples,
+                         mFogFormat, SceneRule(), false},
+                        texture);
   desc->release();
 }

@@ -839,6 +839,7 @@ set (METAL_SOURCES
 	common/rendering/metal/renderer/mt_pipelinestate.cpp
 	common/rendering/metal/renderer/mt_streambuffer.cpp
 	common/rendering/metal/renderer/mt_renderbuffers.cpp
+	common/rendering/metal/renderer/mt_resources.cpp
 	common/rendering/metal/renderer/mt_postprocess.cpp
 	common/rendering/metal/renderer/mt_ao.cpp
 	common/rendering/metal/renderer/mt_bloom.cpp

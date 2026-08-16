@@ -107,6 +107,7 @@ private:
     MTL::Texture* mDepthPyramidTexture = nullptr;
     int mAOWidth = 0;
     int mAOHeight = 0;
+    int mAOScale = 1;   // resolved divisor, for the resource registry
     int mFullresWidth = 0;
     int mFullresHeight = 0;
     int mDepthPyramidWidth = 0;
