@@ -138,6 +138,62 @@ and neither reproduced the blank-launcher symptom (task 1). `cocoa-modal-fixes` 
 2026-08-09, a subtree split synthesises 22,906 commits of which 2 touch the files
 being published, and `git merge-base --is-ancestor` calls that a clean fast-forward.
 
+## 6. Engine: the Vulkan/GL side of the frame analysis — the next engine step
+
+`docs/frame-analysis.md` maps the renderer's passes, resources and couplings, and is
+explicitly **Metal-only**. The frame graph it feeds (Track A items 3-4) is meant to be
+backend-neutral, and designing that interface from one backend is how you get an
+abstraction shaped like Metal with holes where the others differ. This task closes
+that gap; the graph interface is designed afterwards, against all three.
+
+**Produce `docs/frame-analysis-vulkan-gl.md`**, same structure as the Metal one, so
+the two can be read side by side.
+
+**Extract mechanically, do not read prose.** The Metal pass table came from grepping
+the `SetInput*`/`SetOutput*` calls, because prose and code have already disagreed on
+this branch. The `hw_postprocess` half is *shared*, so that table should transfer
+unchanged — if it does not, that discrepancy is itself the finding.
+
+Four questions, each cheap, each chosen because the Metal answer was load-bearing:
+
+1. **What drives PP render state?** Metal's `MtPPRenderState` drives the *main*
+   render state, which is why a PP pass could silently change shader-variant
+   selection for every later scene draw (frame-analysis.md §3.1 — 134 of 135 wall
+   draws compiled with no normal output). Vulkan's `VkPPRenderState` is a separate
+   object, so that coupling should be absent. **Confirm it, and check GL**: GL brackets
+   with `FGLPostProcessState` (saves/restores `GL_CURRENT_PROGRAM`), which is a third
+   discipline again. A graph has to accommodate all three, or force one.
+2. **Who writes `SceneNormal`, and how is the G-buffer variant selected?** Metal uses
+   `DrawBufferCount > 1 ? GBUFFER_PASS : NORMAL_PASS`; the identical logic is at
+   `vk_renderpass.cpp:251`. If Vulkan selects the same way but is not vulnerable,
+   the difference is *where the state lives*, which is exactly what the graph should
+   make explicit.
+3. **Are there alternate implementations of a node?** Metal has compute AO and compute
+   bloom that bypass the PP chain entirely and are chosen by conditionals at the call
+   site. GL has no compute path at all (GL 4.1 on macOS cannot; the Linux GL is 4.6
+   but nothing uses it). If Vulkan has none either, then "a node may have
+   direct-compute / raster / disabled implementations" is a *Metal-only* requirement
+   today — worth knowing before it shapes the interface.
+4. **Who owns resource lifetimes?** Metal has three tiers, the third being module-private
+   textures invisible to shared code (nine in AO, five in bloom). Establish whether
+   Vulkan/GL have a tier 3 at all. If they do not, the registry can stay simpler than
+   the Metal side suggests.
+
+**This also decides where the resource registry lives.** It is currently
+`metal/renderer/mt_resources.{h,cpp}`, phase 1, deliberately Metal-side because a
+shared header with one user is worse than a local one. Nothing in the interface is
+Metal-specific except an int pixel format, so lifting it to `hwrenderer/` is
+mechanical — but only worth doing once a second backend has something to register.
+Answer question 4 and the decision makes itself.
+
+`crossbackend.py --backends gl,vulkan` is available for checking claims now that
+`HAVE_VULKAN=ON` builds in CI (task 3, closed).
+
+**Then the graph work returns to macOS**: interface design informed by both analyses,
+then `Pass2` (tonemap → colormap → lens → fxaa) as the first migration — four pure
+`current → next` passes already covered by the suite's relations — with AO last, for
+the reasons in frame-analysis.md §4.
+
 ## Not tasks — closed, do not reopen
 
 - **X11 raw input via XInput2** (item 6) — done and published. `XIAllMasterDevices`

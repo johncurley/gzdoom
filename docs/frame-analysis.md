@@ -185,7 +185,9 @@ does not exist yet (no per-pass GPU timing; see `docs/renderer-methodology.md` �
 
 Recorded so it can be checked rather than trusted:
 
-- It is **Metal-only**. Vulkan's `VkPPRenderState` is a separate object, so §3.1 does
+- It is **Metal-only**. The companion task is specified as task 6 of
+  `docs/handoff-linux-2026-08-16.md`, and the graph interface should not be designed
+  until it is done. Vulkan's `VkPPRenderState` is a separate object, so §3.1 does
   not apply there, and a backend-neutral graph must fit both. The GL backend has its
   own `FGLPostProcessState` bracket discipline.
 - The pass table is **static extraction**. It reflects the `SetInput*`/`SetOutput*`
