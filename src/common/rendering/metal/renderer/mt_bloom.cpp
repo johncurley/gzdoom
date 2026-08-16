@@ -1,4 +1,5 @@
 #include "mt_bloom.h"
+#include "mt_resources.h"
 #include "../system/mt_renderdevice.h"
 #include "../shaders/mt_shader.h"
 #include "metal/renderer/mt_compute.h"
@@ -364,6 +365,20 @@ void MtBloomModule::CreateTextures(int width, int height, MTL::PixelFormat forma
     mBloomB = compute->CreateTexture(width, height, MTL::PixelFormatRGBA16Float,
                                      usage, MTL::StorageModePrivate);
 
+    // Tier 3 of docs/frame-analysis.md: private to this module. Bloom works at a
+    // fixed fraction of the scene, so the divisor is derived from the size it was
+    // asked for rather than assumed.
+    {
+        const int sw = MtResources().SceneWidth();
+        const int div = (sw > 0 && width > 0) ? std::max(1, (sw + width - 1) / width) : 1;
+        MtResources().Declare({"Bloom.A", "MtBloomModule", width, height, 1,
+                               (int)MTL::PixelFormatRGBA16Float,
+                               MtSizeRule::Scaled(div), true}, mBloomA);
+        MtResources().Declare({"Bloom.B", "MtBloomModule", width, height, 1,
+                               (int)MTL::PixelFormatRGBA16Float,
+                               MtSizeRule::Scaled(div), true}, mBloomB);
+    }
+
     // Create a small mip chain for multi-scale bloom (half, quarter, eighth)
     // Sizes must be halved by *iterative ceiling*, not by shifting: the
     // reference carries each level's rounded-up size into the next
@@ -406,6 +421,10 @@ void MtBloomModule::ReleaseTextures() {
 
 bool MtBloomModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* srcTex, float amount,
                             MTL::Texture* exposureTex) {
+    // Marks the compute bloom path as having run this frame -- the same
+    // structural proof-of-execution the AO textures give.
+    MtResources().Touch("Bloom.A");
+    MtResources().Touch("Bloom.B");
     auto tStart = std::chrono::high_resolution_clock::now();
     if (!extractPSO || !blurHPSO || !blurVPSO || !cmdBuf || !srcTex) return false;
 
