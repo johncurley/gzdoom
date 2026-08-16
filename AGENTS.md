@@ -302,11 +302,21 @@ Small, and the reason it belongs on Linux is that an all-black capture was a
 live condition here twice (readback-after-swap, and the stale shader binding),
 where on the Metal machine it has never occurred.
 
-**Done 2026-08-12.** `DEGENERATE_MEAN` now lives in `run.py` as the single
-definition (`crossbackend.py` imports it), and `run.py`'s relation loop fails
-either relation kind when either capture's `mean_lum` is at or below it.
-Control: the darkest real pair in the recorded baseline, 13.25 vs 21.63, is not
-flagged.
+**Done 2026-08-12, but only on a side branch — actually merged 2026-08-16.**
+This section has read "Done" since 2026-08-12, but the fix (`851bb34c8`,
+"matrix: refuse a relation that rests on a blank capture") lived only on the
+same orphaned `matrix-scene-degenerate-vulkan-ci` branch/worktree as item 9's
+CI job, never merged into `metal-audit` — `run.py` had no `DEGENERATE_MEAN` at
+all until today. Found and fixed as a side effect of closing item 9, since both
+sat on the same unmerged branch. Cherry-picked clean (`f528bfa24`, auto-merged
+against this branch's independent scene-threading work in `crossbackend.py`).
+
+`DEGENERATE_MEAN` now lives in `run.py` as the single definition
+(`crossbackend.py` imports it), and `run.py`'s relation loop fails either
+relation kind when either capture's `mean_lum` is at or below it. Control: the
+darkest real pair in the recorded baseline, 13.25 vs 21.63, is not flagged.
+Re-verified 2026-08-16 after the merge: `run.py --scene doom2` still a clean
+`PASS`, and `crossbackend.py --backends gl,vulkan --scene doom2` still 12/12 OK.
 
 ### 5. Two X11 loose ends — the `BadMatch` is now traced to two sites
 
@@ -559,7 +569,7 @@ Verified as a side effect: on GL 4.6 `PatchShader` promotes `maxGlslVersion` to
 `samplerstobind` is always empty. Both halves of the old-GL path are dead on
 this hardware, which is what "untested" meant.
 
-### 9. No CI job builds Vulkan
+### 9. No CI job builds Vulkan — CLOSED 2026-08-16, merged and verified beyond compile-only
 
 `HAVE_VULKAN` appears nowhere in `.github/workflows/continuous_integration.yml`.
 `HAVE_VULKAN=ON` **did not compile at all** until 2026-08-10 — `nativevideo.cpp`
@@ -579,6 +589,33 @@ headers, `find_package(Vulkan)` is inside the Apple branch, volk and ZWidget
 both `dlopen` `libvulkan.so.1`, and the only new system header is
 `<X11/Xlib.h>`, already covered by `libx11-dev`. The job has never run.
 
+**Correction, 2026-08-16: it was never actually on this branch.** The commit
+existed only on a side branch/worktree (`matrix-scene-degenerate-vulkan-ci`, off
+`97759abed`) that was never merged into `metal-audit` — `.github/workflows/
+continuous_integration.yml` on this branch had no Vulkan entry at all until
+today, despite this section reading "Done" since 2026-08-12. Cherry-picked in
+clean (`2bcc6e637`, touches only the workflow file).
+
+**Verified beyond compile-only, which the job itself still cannot do.** This
+machine has real Vulkan 1.4 hardware, which CI does not, so what CI can only
+compile was actually run here:
+
+- `cmake -DHAVE_VULKAN=ON` (auto-detected by default on Linux, no flag needed —
+  `build/CMakeCache.txt` already showed `HAVE_VULKAN:UNINITIALIZED=ON`) compiled
+  clean as part of an ordinary rebuild, gcc 16.2.1 — newer than CI's pinned
+  gcc-12, so this is not the identical compiler, but it is a second one.
+- `+vid_preferbackend 1` launched cleanly against the real GPU (`AMD Radeon RX
+  550 (RADV POLARIS12)`, driver 26.1.6, Vulkan 1.4.354), reached `MAP06`, and
+  captured a correct, full frame — screenshot checked by eye.
+- Both known runtime-only defects this section flagged (`a60ea956d`,
+  `e1f47ce5b`) are already ancestors of this branch's HEAD, and this launch is
+  live confirmation neither regressed: correct window geometry, no startup
+  segfault.
+- `tools/matrix/crossbackend.py --backends gl,vulkan --scene doom2`: **12/12
+  OK**, every config within `tone x1.00-1.01` and `uniform backend noise`, no
+  band outlier flagged — Vulkan agrees with GL as tightly as the tool's own
+  noise floor allows, on every pass including the two runtime-fragile ones.
+
 **2026-08-14 — compile-only is demonstrably not enough.** Two Vulkan-only
 defects were found by hand in one session, and **neither would have been caught
 by this job**, because both are runtime:
@@ -594,12 +631,14 @@ The reason GL never had either is that GL is what gets exercised — by hand and
 by the Xvfb smoke test. Vulkan is compiled and never launched, so the entire
 class of "builds fine, dies at runtime" is invisible on that backend.
 
-Worth investigating: Mesa ships **lavapipe**, a CPU Vulkan ICD, so a CI job
-*could* actually launch the Vulkan backend under Xvfb rather than only linking
-it. That would have caught `e1f47ce5b` outright — it dies before `W_Init`, the
-same assertion the existing smoke test already makes — and plausibly
-`a60ea956d` too if the check compares `GetClientWidth()` against the Xvfb
-screen size. Not yet tried; the cost is one apt package
+**Still open, and still the honest remaining gap:** CI itself has no GPU, so
+the compile-only job still cannot catch a third runtime-only Vulkan defect the
+way this session's *local* hardware run just did. Mesa ships **lavapipe**, a
+CPU Vulkan ICD, so a CI job *could* actually launch the Vulkan backend under
+Xvfb rather than only linking it — that would have caught `e1f47ce5b` outright
+(it dies before `W_Init`, the same assertion the existing smoke test already
+makes) and plausibly `a60ea956d` too, if the check compares `GetClientWidth()`
+against the Xvfb screen size. Not yet tried; the cost is one apt package
 (`mesa-vulkan-drivers`) and `VK_ICD_FILENAMES`, and the risk is the usual
 software-rasteriser flakiness. Do not fold it into the compile-only job —
 `DEFAULT_RENDER_BACKEND` becomes 1 under `HAVE_VULKAN`, which is the same trap

@@ -78,21 +78,34 @@ doesn't disqualify the map: bloom is deliberately measured on MAP12 instead,
 via the `relations_only` trio, and that relation still holds (34.05%). See
 `AGENTS.md` Tasks — Linux item 2 for the full session log.
 
-## 3. Add a Linux CI job that builds Vulkan
+## 3. Add a Linux CI job that builds Vulkan — CLOSED 2026-08-16
 
-**`AGENTS.md` Tasks — Linux, item 9**, and this session made it more relevant.
-`42052f77a` added an unconditional `find_package(Vulkan QUIET)`; on 2026-08-16 that
-was narrowed to **non-Apple** (`fe1b9c0ab`), because Vulkan-on-Apple means MoltenVK
-and this fork exists to replace it. Consequence: Linux is now the **only** platform
-where the Vulkan backend can be auto-detected and built, and **no CI job builds it
-at all**, so `HAVE_VULKAN=ON` compiles nowhere in CI.
+**`AGENTS.md` Tasks — Linux, item 9.** The job existed since 2026-08-12 but only
+on an orphaned side branch/worktree that never got merged into `metal-audit` — this
+branch's CI workflow had no Vulkan entry at all until today, despite `AGENTS.md`
+reading "Done" for four days. Cherry-picked in clean, one file
+(`.github/workflows/continuous_integration.yml`), no conflicts.
 
-That matters beyond tidiness: `CONTRIBUTING.md` asks that shared-code changes leave
-GL and Vulkan bit-identical, and `crossbackend.py --backends gl,vulkan` is the
-tiebreaker that says whether a Metal divergence is a Metal bug or a deferred-backend
-convention. Both are unavailable if Vulkan never builds.
+Then verified past what the CI job itself can ever prove, since this machine has
+real Vulkan 1.4 hardware and CI does not: `-DHAVE_VULKAN=ON` compiled clean under
+gcc 16.2.1 (a second compiler, not CI's pinned gcc-12), `+vid_preferbackend 1`
+launched against the real GPU (RX 550, RADV POLARIS12) and rendered a correct
+frame, and `crossbackend.py --backends gl,vulkan --scene doom2` came back **12/12
+OK** — Vulkan agrees with GL within the tool's own noise floor on every pass,
+including the two runtime-only defects (`a60ea956d`, `e1f47ce5b`) already fixed
+on this branch that the compile-only job could never have caught either way.
 
-The item notes the dependency cost is low — both loaders `dlopen` `libvulkan.so.1`.
+Found the same problem a second time in the same spot: `run.py`'s degenerate-frame
+guard (`AGENTS.md` Tasks — Linux item 4) had the identical fate — fixed
+2026-08-12, only on that same orphaned branch, never merged. Cherry-picked that
+too (`f528bfa24`) since it was sitting right there; re-verified clean afterward.
+
+**Still open:** CI itself still has no GPU, so a third runtime-only Vulkan defect
+of the same shape as the two above would still slip past it. Mesa's **lavapipe**
+(a CPU Vulkan ICD) could let the CI job actually launch the backend under Xvfb
+instead of only linking it — not yet tried, see `AGENTS.md` item 9 for the cost
+and the trap to avoid (do not fold it into the compile-only job; `HAVE_VULKAN`
+flips `DEFAULT_RENDER_BACKEND` to 1).
 
 ## 4. There is no smoothness instrument on Linux
 
