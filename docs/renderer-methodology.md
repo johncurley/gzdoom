@@ -168,6 +168,14 @@ pixels that gained and lost average out.
 gate that can only suppress, never as a retune of the ratio, which would stop the
 check running at all.
 
+**Assert identical dimensions before comparing two captures.** Measured 2026-08-16:
+frames rendered at 1600x773 and 1600x776 — the same requested window, on the same
+machine — differ by **14.90%** of pixels, while two frames at the same size differ by
+0.03%. A viewport three pixels taller re-renders the scene; the images are not
+misaligned, they are *different renders*. Several scripts here zipped flat pixel
+arrays without checking, and the artefact was mistaken for a renderer state for a
+whole session. `zip()` silently truncates to the shorter array, so this fails quietly.
+
 **Amplify differences for the eye, state the gain.** A 12x-amplified absolute
 difference map against a control makes "where does this pass act" obvious at a
 glance. Always label the gain; an unlabelled amplified diff is a rumour.

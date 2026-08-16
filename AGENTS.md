@@ -826,7 +826,29 @@ mean relative darkening, or a bright scene, or the debug view (`gl_ssao_debug 1`
 which does respond: strength 0.7→0 moves it 245.1→249.8 across 40% of pixels, and
 radius x8 moves it to 242.5).
 
-**Still genuinely unexplained:** the 14.90% runs. That is fifty times the effect
+**CLOSED 2026-08-16 — the 14.90% runs were a size mismatch, and this whole item is
+measurement error.** Two captures at 1600x**773** differ from each other by 0.029%
+and 0.000%; the same captures against the 1600x**776** baseline read **14.90%**. A
+three-pixel-taller viewport re-renders the scene, so the two are different images
+that misregister everywhere — the means are nearly identical (20.155 vs 20.353), so
+it was never brightness. Several early scripts zipped flat pixel arrays without a
+size check, which is how this passed as a renderer state for a whole session.
+
+Six in-process launches (AO toggled on/off inside each process) then return
+**identical** figures to three decimals: frame mean 20.791, 9.26% of pixels differ at
+all, 0.26% above the >2 threshold, 0.457% mean darkening. There is no bistability.
+
+**So the compute AO "regimes" never existed.** Two distinct measurement faults
+produced them: comparing captures of different sizes (the 14.90% level), and a fixed
+absolute threshold on a multiplicative effect over a dark scene (the 0.31% / 2.77%
+levels). What survives from the whole investigation is the in-game evidence — slower,
+grainy, freezing at blur 4 — which is direct observation and untouched by either.
+
+**Rule:** never compare two captures without asserting identical dimensions. The
+scene height varies between launches on this machine (773 vs 776 at the same
+requested window size), which is also why the harness discards the first launch.
+
+*Superseded, kept for the trail:* That is fifty times the effect
 measured here and cannot be threshold noise, so something in those launches really
 was different — frame brightness or exposure state is the first thing to check,
 since absolute deltas scale with it.
