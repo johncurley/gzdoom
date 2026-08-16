@@ -792,6 +792,45 @@ mtime — every PNG was written after its launch). Deleting `matrix.ini` restore
 the present regime once; the only diff was the fade pair and pinning it did not
 reproduce.
 
+**The metric was wrong, and most of this item may be an artefact (2026-08-16).**
+The in-process A/B — toggling inside ONE launch, which removes the launch-history
+confound entirely — gives a clean control (no toggle ⇒ byte-identical captures) and
+then this:
+
+| toggle, in-process | effect on the frame |
+|---|---|
+| `mt_compute_ao 0` | **none — byte-identical** |
+| `skip_fullres true` | none |
+| `normal_upsample false` | none |
+| `intel_clamp false` | none |
+| `gl_ssao 0` | differs |
+
+So no compute-AO knob changes the frame at all, and the compute and reference paths
+produce the *same* image. That alone kills every "compute AO under-occludes"
+reading taken from launch-to-launch comparison.
+
+What AO actually does here, measured AO-on vs AO-off in one launch: **8.44%** of
+pixels differ *at all*, mean darkening **0.41%** where the scene is not black, and
+only **0.22%** exceed the `>2` threshold every earlier measurement used. The
+`mt_ao_probe` numbers agree and explain it: the composite computes alpha mean
+**0.043** on **93.85%** of pixels with the gate passing 100%, and 4% of a scene
+averaging **20/255** is under one grey level.
+
+**AO is working. The frame effect is small because AO is multiplicative and this
+scene is dark.** The `pixels > 2` metric — used throughout this investigation —
+discards nearly all of it, which is why the same configuration read as 0.31% or
+2.77% depending on conditions that barely moved the underlying signal.
+
+Do not measure AO with a fixed absolute-difference threshold on a dark scene. Use
+mean relative darkening, or a bright scene, or the debug view (`gl_ssao_debug 1`,
+which does respond: strength 0.7→0 moves it 245.1→249.8 across 40% of pixels, and
+radius x8 moves it to 242.5).
+
+**Still genuinely unexplained:** the 14.90% runs. That is fifty times the effect
+measured here and cannot be threshold noise, so something in those launches really
+was different — frame brightness or exposure state is the first thing to check,
+since absolute deltas scale with it.
+
 **A THIRD level, and a retracted finding (2026-08-16).** With the resource registry
 instrumented, compute AO was measured at **0.306%** by default and **2.768%** with
 `mt_compute_ao_skip_fullres true` — which looked like a clean localisation: the
