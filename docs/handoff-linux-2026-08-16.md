@@ -152,17 +152,58 @@ same file's neighbourhood.
 
 Linux renderer changes can now be judged for smoothness the same way macOS ones can.
 
-## 5. Publish upstream to dpjudas — task 1 is closed, this is now unblocked
+## 5. Publish upstream to dpjudas — branch pushed 2026-08-16, PR not yet opened
 
-Open the PR to `dpjudas/ZWidget` with the six commits in the table above. Describe
-the first-paint fix as a protocol-correctness fix (xdg-shell requires a buffer
-after every ack, unconditionally), not as a confirmed repro — two machines tried
-and neither reproduced the blank-launcher symptom (task 1). `cocoa-modal-fixes` was verified clean against upstream head on
-2026-08-11 (12 warnings before and after, all pre-existing OpenGL deprecations).
+**Scope grew from "six commits" to the full `wayland-c-bindings` branch (12
+commits), deliberately — see the correction below before assuming the six-commit
+table above is still the plan.**
+
+Attempting to cherry-pick just the five Wayland/X11 fixes (leaving out the
+waylandpp→generated-C-bindings replacement, `8621e9767`/`1932ebf9c`, as
+apparently-unrelated) onto a fresh branch off `zwidget/master` produced real
+conflicts, not context drift: `zwidget/master` is still on the old
+waylandpp-based `wayland_display_window.cpp`, and `1932ebf9c`/`8621e9767` turn
+out to touch X11 files too (`x11_dynamic.h`, `x11_remap.h` — the dlopen loader
+and macro-remap shim both backends use). The Wayland and X11 fixes are not
+separable from that replacement; one resolved conflict (`OnClientMessage`)
+would have silently dropped the `XSetWMProtocols` registration the WM_TAKE_FOCUS
+handler needs to ever fire, had it not been checked against the fork's actual
+final file state rather than resolved from the conflict markers alone.
+
+Given that, the decision (2026-08-16) was to widen the PR to the whole branch
+rather than fight the entanglement: `zwidget-wayland-c-bindings-clean` was fast-
+forwarded to exactly `zwidget/wayland-c-bindings` (12 commits, ~19,700
+insertions / 3,400 deletions across 59 files) and **pushed to the fork** —
+https://github.com/johncurley/ZWidget/tree/zwidget-wayland-c-bindings-clean.
+Confirmed before pushing: `zwidget/master`'s HEAD SHA (`4cf65e59c`) is byte-
+identical to `dpjudas/ZWidget`'s current `master` via the GitHub API, so this
+branch sits directly on current upstream — no rebase needed, ready to PR as
+pushed.
+
+**Built standalone and verified, both sides:** this branch compiles clean
+(exit 0) against a bare CMake configure, and comparing warning counts against
+a `zwidget/master`-only build shows **51 warnings on master, 40 on this
+branch** — net fewer, mostly from removing the deleted waylandpp helper files.
+It is not warning-free relative to master, though: four **new** warning types
+appear (three `%p`-format mismatches against `wl_display*`/`wl_registry*`/
+`xkb_context*` in debug trace logging, one member-initialization-order warning
+in `WaylandDisplayWindow`) that were not on master. Not yet fixed — small and
+mechanical (cast to `void*`, reorder two initializers) whenever this is picked
+back up.
+
+**Deliberately not opened as a PR yet — inspect the branch first, open it
+yourself when ready.** `cocoa-modal-fixes`'s two commits (verified clean
+against upstream head on 2026-08-11, 12 pre-existing warnings before and
+after) are content-identical to the two Cocoa commits already inside this
+branch (`de9963f25`/`51a25ffa5` vs `7374fb476`/`877c585ff` — same diff hunks,
+different SHAs from being cherry-picked onto different bases) — no separate
+Cocoa PR is needed once this one exists.
 
 **Use the cherry-pick procedure in `CLAUDE.md`, never `git subtree push`** — measured
 2026-08-09, a subtree split synthesises 22,906 commits of which 2 touch the files
 being published, and `git merge-base --is-ancestor` calls that a clean fast-forward.
+Moot for this particular branch (it was fast-forwarded from an already-published
+branch, not freshly split), but still the rule for anything published from here on.
 
 ## 6. Engine: the Vulkan/GL side of the frame analysis — CLOSED 2026-08-16
 

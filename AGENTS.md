@@ -26,8 +26,11 @@ it is unusual).
   unpublished **are** on `zwidget/wayland-c-bindings`. Items 1-4 (first-paint
   repro, scene revalidation, Vulkan CI, smoothness instrument) are **closed** —
   see Tasks — Linux items 1, 2, 9, 12 below. Item 6 (Vulkan/GL frame analysis) is
-  also **closed** — `docs/frame-analysis-vulkan-gl.md`. Publishing upstream
-  (item 5) is unblocked and is what remains.
+  also **closed** — `docs/frame-analysis-vulkan-gl.md`. Item 5 (publish upstream)
+  **grew in scope and is pushed, not yet PR'd**: the six-commit table turned out
+  entangled with the waylandpp→C-bindings replacement, so the branch pushed is
+  the full `wayland-c-bindings` (12 commits, `zwidget-wayland-c-bindings-clean`
+  on the fork) — see Tasks — Linux item 5.
 - **Current handoff:** `docs/handoff-ao-2026-08-16.md` — the AO session. macOS
   items 1 and 2 closed, the compute-AO cost premise retired, three SSAO-residual
   suspects killed, and **one new unresolved bug found: compute AO is bistable**.
@@ -684,9 +687,13 @@ requests on the version actually obtained" — was checked and needs nothing:
 
 **CORRECTION 2026-08-16: publishing is DONE.** Verified by fetching both remotes:
 `zwidget/wayland-c-bindings` carries this as `bebe13394`, alongside the first-paint
-fix (`10b60e035`), the three X11 commits and the Cocoa modal work. What remains is
-**upstreaming to dpjudas**, which has none of them — and that is gated on the
-first-paint control run (item 1). See `docs/handoff-linux-2026-08-16.md`.
+fix (`10b60e035`), the three X11 commits and the Cocoa modal work. What remained was
+**upstreaming to dpjudas**, gated on the first-paint control run (item 1) — closed
+the same day. The branch is now pushed to the fork
+(`zwidget-wayland-c-bindings-clean`, all 12 commits including the
+waylandpp-replacement prerequisite the six-commit framing didn't account for);
+the PR itself hasn't been opened yet. See `docs/handoff-linux-2026-08-16.md` item 5
+for the full state and why the scope grew.
 
 The paragraph below is left for its procedure note, but its premise is stale:
 `c3474d697` was only on `metal-audit`. It is not on `zwidget/wayland-c-bindings` or any other
