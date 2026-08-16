@@ -4,6 +4,8 @@
 
 #include <atomic>
 #include <chrono>
+#include <map>
+#include <string>
 #include <vector>
 
 class MetalRenderDevice;
@@ -56,9 +58,47 @@ public:
   // drains it into the regular metric history.
   void RecordGPUFrameTimeAsync(float durationMs);
 
-  // Stall tracking — call from render thread when a synchronous GPU wait occurs
-  // type: "drawable", "semaphore", "streambuffer"
-  void RecordStall(const char *type, float durationMs);
+  // Stall tracking — call from the render thread whenever the frame is held up
+  // by synchronous work, whether that is a GPU wait ("drawable", "semaphore",
+  // "streambuffer") or a compilation ("msl_translate", "msl_tolib",
+  // "pso_compile", "pp_pso", "compute_pso").
+  //
+  // `type` must be a stable short label; `detail` is optional and names the
+  // specific thing compiled or waited on (a shader name, a pipeline key).
+  // Both are copied only when a trace is actually being kept.
+  //
+  // Attribution is the point: a >100ms frame from mt_frametrace says a stall
+  // happened, not what it was. Every cold path that can run inside a frame
+  // reports here, so a hitch during play can be pinned on shader translation,
+  // Metal library compilation, PSO creation or a GPU wait — which are four
+  // different fixes.
+  void RecordStall(const char *type, float durationMs,
+                   const char *detail = nullptr);
+
+  // Per-type session totals for mt_stalltrace. `inFrame` counts stalls that
+  // landed between BeginFrame and EndFrame, so they are inside the interval
+  // mt_frametrace measures.
+  //
+  // A "between" stall is NOT free: it still holds the render thread and still
+  // delays the next frame — measured 2026-08-17, the startup precompile batch
+  // reports entirely as "between" while the same window's frametrace shows
+  // p95=73.87ms. Read the flag as "is this inside the number frametrace
+  // reports", not as "does the player feel this".
+  struct StallTotals {
+    int count = 0;
+    float totalMs = 0.0f;
+    float maxMs = 0.0f;
+    int inFrameCount = 0;
+    float inFrameTotalMs = 0.0f;
+    int frameOfMax = -1;
+    std::string worstDetail;
+  };
+
+  // Writes the per-type table to stderr. Called automatically at each
+  // mt_frametrace window boundary (so the two instruments line up) and by the
+  // mt_stalls CCMD.
+  void PrintStallSummary(const char *reason);
+  void ResetStallSummary();
 
   // CPU-side cost (staging memcpy + blit encode + commit) of the "world
   // texture" upload path in mt_texture.cpp -- not a blocking stall (the
@@ -178,6 +218,12 @@ private:
   // per frame on the render thread in EndFrame(). -1.0f means "no new value
   // since last drain".
   std::atomic<float> mPendingGPUFrameTimeMs{-1.0f};
+
+  // mt_stalltrace: per-type session totals, and whether a frame is currently
+  // open. std::map rather than unordered_map so the summary prints in a
+  // stable order without sorting it at report time.
+  std::map<std::string, StallTotals> mStallTotals;
+  bool mInFrame = false;
 
   // Memory tracking
   size_t mTotalAllocated = 0;

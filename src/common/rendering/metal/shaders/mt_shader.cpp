@@ -8,12 +8,14 @@
 #include "filesystem.h"
 #include "hwrenderer/data/hw_shaderpatcher.h"
 #include "i_specialpaths.h"
+#include "metal/renderer/mt_debug.h"
 #include "metal/renderer/mt_pipelinestate.h"
 #include "metal/system/mt_renderdevice.h"
 #include "metal/system/mt_binaryarchive.h"
 #include "gamestate.h"
 #include "mt_shader.h"
 #include "printf.h"
+#include <chrono>
 #include <fstream>
 #include <regex>
 #include <set>
@@ -21,6 +23,37 @@
 #include <sstream>
 
 EXTERN_CVAR(Bool, mt_debug)
+
+// Compile-attribution timing (mt_stalltrace). Every cold path in this file can
+// run inside a frame -- a mod texture with a custom shader, a postprocess
+// effect first enabled mid-session, or any material permutation the startup
+// precompile did not cover -- and each one blocks the render thread while it
+// runs. Reporting them through MtDebugManager::RecordStall is what lets an
+// mt_frametrace spike be attributed to compilation rather than to rendering
+// cost. The timers are unconditional (a few hundred nanoseconds on paths that
+// take milliseconds); only the reporting is gated.
+namespace {
+class MtCompileTimer {
+public:
+  MtCompileTimer()
+      : mStart(std::chrono::high_resolution_clock::now()) {}
+
+  float ElapsedMs() const {
+    return std::chrono::duration<float, std::milli>(
+               std::chrono::high_resolution_clock::now() - mStart)
+        .count();
+  }
+
+private:
+  std::chrono::high_resolution_clock::time_point mStart;
+};
+
+void RecordCompileStall(MetalRenderDevice *fb, const char *type, float ms,
+                        const std::string &detail) {
+  if (fb && fb->GetDebugManager())
+    fb->GetDebugManager()->RecordStall(type, ms, detail.c_str());
+}
+} // namespace
 
 // SPIRV-Cross emits the fast:: namespace for the GLSL math builtins -- fast::min,
 // fast::max, fast::clamp, fast::normalize -- and HARDCODES it: spirv_msl.cpp
@@ -400,6 +433,10 @@ MtShaderManager::CompileShader(const std::string &name,
       ss << vfile.rdbuf();
       vertexMSL = ss.str();
     } else {
+      // Cold path: no .msl on disk for this source+defines permutation, so the
+      // full GLSL -> SPIR-V -> MSL translation runs here, synchronously.
+      MtCompileTimer translateTimer;
+
       // Step 1: GLSL → SPIR-V
       auto vertexSPIRV =
           CompileGLSLToSPIRV(vertexSource, name + "_vert", true, defines);
@@ -410,6 +447,8 @@ MtShaderManager::CompileShader(const std::string &name,
       // Step 2: SPIR-V → MSL
       vertexMSL =
           TranslateSPIRVToMSL(vertexSPIRV, true, name + "_vert"); // Pass name
+      RecordCompileStall(fb, "msl_translate", translateTimer.ElapsedMs(),
+                         name + "_vert");
       if (vertexMSL.empty()) {
         if (module->function)
           ((MTL::Function *)module->function)->release();
@@ -469,6 +508,9 @@ MtShaderManager::CompileShader(const std::string &name,
       ss << ffile.rdbuf();
       fragmentMSL = ss.str();
     } else {
+      // Cold path, as above -- see the vertex branch.
+      MtCompileTimer translateTimer;
+
       // Step 1: GLSL → SPIR-V
       auto fragmentSPIRV =
           CompileGLSLToSPIRV(fragmentSource, name + "_frag", false, defines);
@@ -483,6 +525,8 @@ MtShaderManager::CompileShader(const std::string &name,
       // Step 2: SPIR-V → MSL
       fragmentMSL = TranslateSPIRVToMSL(fragmentSPIRV, false,
                                         name + "_frag"); // Pass name
+      RecordCompileStall(fb, "msl_translate", translateTimer.ElapsedMs(),
+                         name + "_frag");
       if (fragmentMSL.empty()) {
         if (module->function)
           ((MTL::Function *)module->function)->release();
@@ -1229,8 +1273,12 @@ MtShaderManager::CreateComputePipeline(const char *functionName,
     }
 
     NS::Error *error = nullptr;
+    MtCompileTimer psoTimer;
     auto pso = deviceObj->newComputePipelineState(desc, MTL::PipelineOptionNone, nullptr, &error);
-    
+    RecordCompileStall(fb, "compute_pso", psoTimer.ElapsedMs(),
+                       debugName ? debugName : functionName);
+
+
     if (!pso && error) {
       Printf(PRINT_LOG, "Metal: Failed to create compute pipeline %s: %s\n",
              debugName, error->localizedDescription()->utf8String());
@@ -1258,7 +1306,10 @@ MtShaderManager::CreateComputePipeline(const char *functionName,
   compileOptions->setLanguageVersion(MTL::LanguageVersion2_0);
 
   NS::Error *error = nullptr;
+  MtCompileTimer fallbackTimer;
   auto library = deviceObj->newLibrary(sourceString, compileOptions, &error);
+  RecordCompileStall(fb, "msl_tolib", fallbackTimer.ElapsedMs(),
+                     debugName ? debugName : "compute_fallback");
   compileOptions->release();
   if (!library) {
     if (error) {
@@ -1450,8 +1501,16 @@ MTL::Library *MtShaderManager::CompileMSLToLibrary(const std::string &msl,
   NS::String *source = NS::String::string(src->c_str(), NS::UTF8StringEncoding);
   NS::Error *error = nullptr;
 
+  // Timed separately from msl_translate, and deliberately: this is the Metal
+  // front-end compiling MSL, and it runs on EVERY path -- including a .msl disk
+  // cache hit, which skips glslang and SPIRV-Cross but not this. If the disk
+  // cache appears not to help, this is where the time went.
+  MtCompileTimer libraryTimer;
+
   MTL::Library *library =
       fb->device->device->newLibrary(source, nullptr, &error);
+
+  RecordCompileStall(fb, "msl_tolib", libraryTimer.ElapsedMs(), name);
 
   if (!library) { // Always log if library creation failed
     if (error) {

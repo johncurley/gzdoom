@@ -91,8 +91,18 @@ MtPipelineStateManager::GetPipelineState(const MtPipelineKey &key,
   float compileMs = std::chrono::duration<float, std::milli>(
       std::chrono::high_resolution_clock::now() - compileStart).count();
 
-  if (fb->GetDebugManager())
-    fb->GetDebugManager()->RecordStall("pso_compile", compileMs);
+  // Detail names the permutation, not just the fact of a compile: with ~50
+  // programs times blend/vertex-format/target combinations, "which key was
+  // cold" is the whole question when deciding what a startup warm-up would
+  // have to cover.
+  if (fb->GetDebugManager()) {
+    char detail[128];
+    snprintf(detail, sizeof(detail),
+             "eff=%d state=%d vfmt=%d blend=%d alpha=%d fmt=%d",
+             key.SpecialEffect, key.EffectState, key.VertexFormat,
+             key.BlendMode, (int)key.AlphaTest, key.PixelFormat);
+    fb->GetDebugManager()->RecordStall("pso_compile", compileMs, detail);
+  }
 
   // Cache and return
   auto ptr = state.get();
@@ -226,8 +236,21 @@ MtPipelineStateManager::GetPPPipelineState(MtShaderProgram *program,
   }
 
   NS::Error *error = nullptr;
+  auto ppCompileStart = std::chrono::high_resolution_clock::now();
   MTL::RenderPipelineState *pipeline =
       fb->device->device->newRenderPipelineState(desc, &error);
+
+  // A postprocess PSO is created the first time an effect is used, which can
+  // easily be mid-session (a CVAR toggled in the menu, or an effect that only
+  // some maps reach). Attributed separately from the material pso_compile
+  // below because the fix would be different: a small fixed set that could be
+  // warmed at startup.
+  if (fb->GetDebugManager())
+    fb->GetDebugManager()->RecordStall(
+        "pp_pso",
+        std::chrono::duration<float, std::milli>(
+            std::chrono::high_resolution_clock::now() - ppCompileStart).count(),
+        "postprocess");
 
   if (!pipeline && error) {
     Printf(PRINT_LOG, "Metal: Failed to create PP pipeline: %s\n",

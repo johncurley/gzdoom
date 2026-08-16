@@ -55,6 +55,24 @@
 // anywhere a harness can read. Same reason in_keytrace uses stderr.
 CVAR(Int, mt_frametrace, 0, 0)
 
+// Attribution for the spikes mt_frametrace reports. Threshold in milliseconds;
+// 0 is off. Any stall at or above the threshold is written to stderr the moment
+// it happens, with its type, its detail (shader or pipeline name) and the frame
+// index -- and per-type totals are printed at every mt_frametrace window
+// boundary, so a ">100ms=3" line can be read together with what those three
+// frames were doing.
+//
+// This exists because mt_frametrace can only say a frame was slow. The standing
+// suspect for intermittent freezing is runtime shader compilation: ~50 of the
+// engine's own programs go GLSL->SPIR-V->MSL->MTLLibrary at runtime and the
+// disk caches only help on a repeat permutation. Whether a given hitch is that,
+// a PSO creation, or an ordinary GPU wait are three different problems, and no
+// frame-interval instrument can tell them apart.
+//
+// stderr for the same reason mt_frametrace uses it: this runs during play,
+// where console output covers the screen being measured.
+CVAR(Int, mt_stalltrace, 0, 0)
+
 EXTERN_CVAR(Bool, mt_debug)
 EXTERN_CVAR(Bool, mt_compute_ao)
 EXTERN_CVAR(Bool, mt_compute_ao_intel)
@@ -120,6 +138,7 @@ void MtDebugManager::BeginFrame() {
 
   // Reset current frame stats
   mCurrentFrameStats = {};
+  mInFrame = true;
 
   // Record start time
   mFrameStartTime = std::chrono::high_resolution_clock::now();
@@ -150,6 +169,10 @@ void MtDebugManager::EndFrame() {
   if (mFrameTimeHistory.size() > 120) {
     mFrameTimeHistory.erase(mFrameTimeHistory.begin());
   }
+
+  // Cleared before TraceFrameInterval so the window report's own output is not
+  // attributed to the frame that happened to close the window.
+  mInFrame = false;
 
   TraceFrameInterval(frameTimeMs);
 
@@ -253,12 +276,60 @@ void MtDebugManager::RecordGPUFrameTimeAsync(float durationMs) {
   mPendingGPUFrameTimeMs.store(durationMs, std::memory_order_relaxed);
 }
 
-void MtDebugManager::RecordStall(const char *type, float durationMs) {
+void MtDebugManager::RecordStall(const char *type, float durationMs,
+                                 const char *detail) {
   mCurrentFrameStats.stallCount++;
   mCurrentFrameStats.stallTotalMs += durationMs;
   if (durationMs > mCurrentFrameStats.stallMaxMs)
     mCurrentFrameStats.stallMaxMs = durationMs;
+
+  const int threshold = mt_stalltrace;
+  if (threshold <= 0)
+    return;
+
+  // Totals accumulate for every stall once tracing is on, not just the ones
+  // over the threshold -- a hundred 3ms compiles in one frame is a hitch that
+  // no single record would report.
+  auto &totals = mStallTotals[type ? type : "?"];
+  totals.count++;
+  totals.totalMs += durationMs;
+  if (mInFrame) {
+    totals.inFrameCount++;
+    totals.inFrameTotalMs += durationMs;
+  }
+  if (durationMs > totals.maxMs) {
+    totals.maxMs = durationMs;
+    totals.frameOfMax = mFrameIndex;
+    totals.worstDetail = detail ? detail : "";
+  }
+
+  if (durationMs < (float)threshold)
+    return;
+
+  fprintf(stderr, "mt_stalltrace  %-14s %8.2fms  frame=%d %s  %s\n",
+          type ? type : "?", durationMs, mFrameIndex,
+          mInFrame ? "[in-frame]" : "[between]", detail ? detail : "");
 }
+
+void MtDebugManager::PrintStallSummary(const char *reason) {
+  if (mStallTotals.empty()) {
+    fprintf(stderr, "mt_stalltrace: no stalls recorded (%s)\n",
+            reason ? reason : "");
+    return;
+  }
+
+  fprintf(stderr, "mt_stalltrace totals (%s)\n", reason ? reason : "");
+  fprintf(stderr, "  %-14s %6s %10s %9s %6s %10s  %s\n", "type", "count",
+          "total_ms", "max_ms", "inFrm", "inFrm_ms", "worst");
+  for (const auto &entry : mStallTotals) {
+    const auto &t = entry.second;
+    fprintf(stderr, "  %-14s %6d %10.2f %9.2f %6d %10.2f  %s (frame %d)\n",
+            entry.first.c_str(), t.count, t.totalMs, t.maxMs, t.inFrameCount,
+            t.inFrameTotalMs, t.worstDetail.c_str(), t.frameOfMax);
+  }
+}
+
+void MtDebugManager::ResetStallSummary() { mStallTotals.clear(); }
 
 void MtDebugManager::RecordTextureUpload(float durationMs) {
   mCurrentFrameStats.textureUploads++;
@@ -497,6 +568,13 @@ void MtDebugManager::TraceFrameInterval(float frameTimeMs) {
           pct(0.50), pct(0.95), pct(0.99), sorted.back(), over33,
           100.0 * (double)over33 / (double)mTraceSamples.size(), over100);
 
+  // Attribution for the spikes just reported. Cumulative for the session, not
+  // per window -- the per-stall lines above give the per-window detail, and a
+  // running total is what answers "is this still happening or was it all
+  // startup".
+  if (mt_stalltrace > 0)
+    PrintStallSummary("cumulative, at frametrace window");
+
   mTraceSamples.clear();
   mTraceWindowStart = now;
 }
@@ -716,6 +794,32 @@ CCMD(mt_metrics_reset)
 
   debug->ClearBenchmarkHistory();
   Printf(PRINT_HIGH, "Metal benchmark history reset.\n");
+}
+
+// mt_stalls [reset] -- dump the mt_stalltrace attribution table on demand,
+// rather than waiting for the next mt_frametrace window. Output goes to
+// stderr with the rest of the trace, so the console does not reorder it.
+CCMD(mt_stalls)
+{
+  auto debug = GetActiveMetalDebugManager();
+  if (!debug) {
+    Printf(PRINT_HIGH, "Metal metrics are not available.\n");
+    return;
+  }
+
+  if (argv.argc() > 1 && !stricmp(argv[1], "reset")) {
+    debug->ResetStallSummary();
+    Printf(PRINT_HIGH, "Metal stall attribution reset.\n");
+    return;
+  }
+
+  if (mt_stalltrace <= 0)
+    Printf(PRINT_HIGH,
+           "mt_stalltrace is 0, so nothing is being recorded. Set it to a "
+           "millisecond threshold (e.g. 5) and replay.\n");
+
+  debug->PrintStallSummary("mt_stalls");
+  Printf(PRINT_HIGH, "Metal stall attribution written to stderr.\n");
 }
 
 

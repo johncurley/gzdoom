@@ -968,6 +968,53 @@ benchmark-blind-to-hitching lesson applies here too) and watch stderr for a
 or anything already-rendered. That distinguishes a compile stall from a
 rendering-cost problem before any code changes.
 
+**Instrument added 2026-08-17: `mt_stalltrace`.** `mt_frametrace` can only say a
+frame was slow. `mt_stalltrace <ms>` attributes it: every cold path that can run
+inside a frame now reports through `MtDebugManager::RecordStall` with a type, a
+detail (shader or pipeline-key name) and the frame index, printed to stderr as
+it happens, with per-type session totals at each `mt_frametrace` window boundary
+and on the `mt_stalls` CCMD (`mt_stalls reset` to zero it). Types:
+
+| type | what it is |
+|---|---|
+| `msl_translate` | GLSL → SPIR-V → MSL. Skipped on a `.msl` disk-cache hit. |
+| `msl_tolib` | MSL → `MTLLibrary`. Runs on **every** path, cache hit included. |
+| `pso_compile` | material PSO, cold key. Detail names the permutation. |
+| `pp_pso` | postprocess PSO. |
+| `compute_pso` | compute PSO (AO/bloom). |
+| `drawable`/`semaphore`/`streambuffer` | pre-existing GPU waits. |
+
+`inFrm` in the totals counts only stalls between `BeginFrame` and `EndFrame` —
+i.e. inside the interval `mt_frametrace` measures. A "between" stall still holds
+the render thread: the startup precompile batch reports entirely as "between"
+while the same window's frametrace shows p95=73.87ms. Read the column as "is
+this inside the frametrace number", not "does the player feel it".
+
+**First measurement, DOOM2 MAP01, idle, reference MacBookAir7,2:**
+
+| | cold cache | warm cache |
+|---|---|---|
+| `msl_translate` | 92 compiles, **2105.78ms**, max 133.29 | **absent** |
+| `msl_tolib` | 92, 115.78ms, max 7.57 | 92, **159.69ms**, max 7.07 |
+| `pso_compile` | 5, 11.61ms (all in-frame) | 5, 7.74ms (all in-frame) |
+| `compute_pso` | 7, 19.62ms | 7, 13.21ms |
+
+Two things that were assumed are now measured. Translation really is the bulk of
+it — 2.1 seconds on a cold cache, and the `.msl` cache does remove all of it on
+the next run. But **the `.msl` cache does not avoid the Metal front-end
+compile**: `msl_tolib` still runs 92 times for ~160ms on a fully warm cache. So
+"the caches handle it on the second run" is only two-thirds true, and a build-
+time metallib is what removes the remaining third.
+
+Note the 92 stage-compiles against the "roughly fifty programs" figure below:
+fifty *programs*, each with a vertex and a fragment stage.
+
+**Still not confirmed:** none of this is yet the reported freeze. This is idle
+MAP01, and only 5 material PSOs went cold in it. The gate stands — a real play
+session with `+mt_stalltrace 5 +mt_frametrace 5`, looking for `pso_compile` or
+`msl_translate` lines whose frame index lines up with a `>100ms` frame on
+entering new geometry.
+
 **If confirmed, the fix is already scoped** under "Shader strategy" below:
 translate the engine's own ~50 known programs into the metallib **at build
 time**, since the permutation set is fixed and known — leaving only genuinely
