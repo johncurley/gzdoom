@@ -34,7 +34,11 @@ it is unusual).
 - **Current handoff:** `docs/handoff-ao-2026-08-16.md` — the AO session. macOS
   items 1 and 2 closed, the compute-AO cost premise retired, three SSAO-residual
   suspects killed, and **one new unresolved bug found: compute AO is bistable**.
-  Start there.
+  Start there. **New Tasks — macOS item 5**, from real play rather than
+  measurement: intermittent freezing, suspect is runtime shader compilation
+  (only two shaders are hand-written MSL; ~50 engine programs still compile
+  GLSL→SPIR-V→MSL live on first hit). Confirm with `mt_frametrace` before
+  reaching for the metallib fix already scoped under "Shader strategy".
 - **Previous handoff:** `docs/handoff-matrix-2026-08-12.md` — the matrix suite
   made trustworthy (map choice by measurement, the status-bar-face
   nondeterminism, three silent failures made loud).
@@ -912,6 +916,39 @@ Needs hardware, so it may block on availability rather than effort.
 
 The last open row of the Metal-versus-OpenGL parity table: ~0.047 in occlusion
 units. Detail under **Open items** below.
+
+### 5. Intermittent freezing in real gameplay — suspect: runtime shader compilation
+
+**New 2026-08-16**, reported from real play, not measured yet. Freezing "now and
+again" during normal gameplay, not reproduced or characterised on this machine —
+raised on the Linux side of this session, deferred here since it needs macOS
+hardware and the user's own play session to chase.
+
+The standing suspect, already documented under "Shader strategy" further down in
+this file: **only two shaders are hand-written MSL** (`mt_ao.metal`,
+`mt_bloom.metal`, built into `native_shaders.metallib`). Roughly fifty of the
+engine's own programs still go GLSL → SPIR-V → MSL → Metal library **at
+runtime** — `mt_shader.cpp`'s own comment calls this out: "Metal shader
+compilation is slow (GLSL->SPIRV->MSL->Lib)." The two-tier disk cache (`.msl`
+files, `mt_pipelines.bin` PSO archive) only helps on a *repeat* permutation
+across runs; a shader/material/blend-mode combination hit for the first time in
+a session — e.g. walking into a new area with unfamiliar textures or materials —
+still compiles live, which is exactly the "now and again" shape a stutter from
+new content would have.
+
+**First step: confirm before fixing.** Launch with `+mt_frametrace 5` during an
+ordinary play session (not a settled viewpoint — the matrix suite's own
+benchmark-blind-to-hitching lesson applies here too) and watch stderr for a
+`>100ms` spike that lines up with entering new geometry rather than combat load
+or anything already-rendered. That distinguishes a compile stall from a
+rendering-cost problem before any code changes.
+
+**If confirmed, the fix is already scoped** under "Shader strategy" below:
+translate the engine's own ~50 known programs into the metallib **at build
+time**, since the permutation set is fixed and known — leaving only genuinely
+dynamic mod/PK3 shaders on the runtime path. See the "Recommended order, if the
+native path is expanded" list there for the staged plan and why hand-writing the
+material shaders is explicitly the wrong move.
 
 ### Checked already, do not redo
 
