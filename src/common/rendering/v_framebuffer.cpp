@@ -79,6 +79,140 @@ EXTERN_CVAR(Int, screenblocks)
 // screen it is measuring.
 CVAR(Int, vid_frametrace, 0, 0)
 
+// Between-frames attribution, in milliseconds (0 = off). The companion to
+// mt_stalltrace, and deliberately NOT in the Metal backend: mt_stalltrace can
+// only report what the renderer does, and a play session on 2026-08-17 found
+// recurring ~1025ms freezes with no renderer stall anywhere near them. The time
+// was going somewhere outside every instrument we had.
+//
+// vid_frametrace already SEES those stalls -- it spans Update()-to-Update(),
+// which is the whole game loop -- it just cannot say where they went. This
+// splits that interval into named phases (VLoopPhase below, placed in
+// D_DoomLoop) and dumps the breakdown whenever an interval exceeds the
+// threshold. Backend-agnostic for the same reason vid_frametrace is: the
+// suspects here are playsim, level load, sound and I/O, none of which care
+// which renderer is running.
+//
+// A phase costing ~0 on a slow frame is as much of a result as one costing
+// 900ms -- it excludes a suspect.
+CVAR(Int, vid_stalltrace, 0, 0)
+
+// Nested-Update() context. Some code drives screen->Update() from its own inner
+// loop rather than returning to D_DoomLoop -- the screen wipe (wipe.cpp), the
+// startup screen, the platform layer's resize pump. Those intervals contain no
+// loop phase at all and would otherwise report as 100% unaccounted, which reads
+// like a hole in the instrument rather than the explanation it actually is.
+static const char *g_loopContext = nullptr;
+
+namespace
+{
+	// Fixed table, no allocation, names compared by pointer: every call site
+	// passes a string literal, and this runs on the hot path of every frame.
+	// A name that somehow is not a literal still works, it just gets its own
+	// row per distinct pointer.
+	struct LoopPhaseBucket
+	{
+		const char *name = nullptr;
+		double ms = 0.0;
+		int entries = 0;
+	};
+
+	constexpr int MAX_LOOP_PHASES = 16;
+	LoopPhaseBucket g_loopPhases[MAX_LOOP_PHASES];
+
+	void AccumulateLoopPhase(const char *name, double ms)
+	{
+		for (int i = 0; i < MAX_LOOP_PHASES; i++)
+		{
+			if (g_loopPhases[i].name == name)
+			{
+				g_loopPhases[i].ms += ms;
+				g_loopPhases[i].entries++;
+				return;
+			}
+			if (g_loopPhases[i].name == nullptr)
+			{
+				g_loopPhases[i].name = name;
+				g_loopPhases[i].ms = ms;
+				g_loopPhases[i].entries = 1;
+				return;
+			}
+		}
+		// Table full: drop it rather than grow on the hot path. Sixteen is far
+		// more than D_DoomLoop has phases; overflow means a call site was added
+		// inside a loop with a computed name.
+	}
+
+	void ResetLoopPhases()
+	{
+		for (int i = 0; i < MAX_LOOP_PHASES; i++)
+			g_loopPhases[i] = LoopPhaseBucket();
+	}
+
+	// Prints the phases that actually cost something, largest first.
+	void ReportLoopPhases(double intervalMs)
+	{
+		int order[MAX_LOOP_PHASES];
+		int count = 0;
+		for (int i = 0; i < MAX_LOOP_PHASES && g_loopPhases[i].name != nullptr; i++)
+			order[count++] = i;
+
+		for (int i = 0; i < count; i++)
+			for (int j = i + 1; j < count; j++)
+				if (g_loopPhases[order[j]].ms > g_loopPhases[order[i]].ms)
+					std::swap(order[i], order[j]);
+
+		double accounted = 0.0;
+		for (int i = 0; i < count; i++)
+			accounted += g_loopPhases[order[i]].ms;
+
+		fprintf(stderr, "vid_stalltrace  interval=%.2fms%s%s\n", intervalMs,
+			g_loopContext ? "  context=" : "",
+			g_loopContext ? g_loopContext : "");
+		for (int i = 0; i < count; i++)
+		{
+			const auto &b = g_loopPhases[order[i]];
+			if (b.ms < 0.01)
+				continue;
+			fprintf(stderr, "    %-14s %9.2fms  x%d\n", b.name, b.ms, b.entries);
+		}
+		// The remainder is the loop's own overhead plus anything between the
+		// instrumented phases. A large unaccounted figure means the stall is
+		// somewhere with no VLoopPhase around it yet -- that is a finding, not
+		// a defect in the report.
+		fprintf(stderr, "    %-14s %9.2fms\n", "(unaccounted)",
+			intervalMs - accounted);
+	}
+}
+
+VLoopContext::VLoopContext(const char *name)
+{
+	mPrevious = g_loopContext;
+	g_loopContext = name;
+}
+
+VLoopContext::~VLoopContext()
+{
+	g_loopContext = mPrevious;
+}
+
+VLoopPhase::VLoopPhase(const char *name)
+{
+	if (vid_stalltrace <= 0)
+		return;
+	mName = name;
+	mStart = std::chrono::steady_clock::now();
+}
+
+VLoopPhase::~VLoopPhase()
+{
+	if (!mName)
+		return;
+	AccumulateLoopPhase(mName,
+		std::chrono::duration<double, std::milli>(
+			std::chrono::steady_clock::now() - mStart).count());
+}
+
 //==========================================================================
 //
 // DFrameBuffer Constructor
@@ -138,7 +272,12 @@ void DFrameBuffer::Update()
 void DFrameBuffer::TraceFrameInterval()
 {
 	const int period = vid_frametrace;
-	if (period <= 0)
+	const int stallThreshold = vid_stalltrace;
+
+	// vid_stalltrace works on its own: the interval still has to be measured to
+	// know whether a breakdown is worth printing, so the two share this timing
+	// but neither requires the other.
+	if (period <= 0 && stallThreshold <= 0)
 	{
 		if (!mFrameTraceSamples.empty()) mFrameTraceSamples.clear();
 		mFrameTraceStarted = false;
@@ -154,14 +293,38 @@ void DFrameBuffer::TraceFrameInterval()
 		mFrameTraceWindowStart = now;
 		mFrameTraceLastFrame = now;
 		mFrameTraceSamples.clear();
-		fprintf(stderr,
-			"vid_frametrace: reporting every %ds. p99 and the >100ms count are "
-			"the hitching signal; avg is not.\n", period);
+		ResetLoopPhases();
+		if (period > 0)
+		{
+			fprintf(stderr,
+				"vid_frametrace: reporting every %ds. p99 and the >100ms count are "
+				"the hitching signal; avg is not.\n", period);
+		}
+		if (stallThreshold > 0)
+		{
+			fprintf(stderr,
+				"vid_stalltrace: breaking down any interval over %dms by loop phase.\n",
+				stallThreshold);
+		}
 		return;
 	}
 
 	const float frameTimeMs = std::chrono::duration<float, std::milli>(now - mFrameTraceLastFrame).count();
 	mFrameTraceLastFrame = now;
+
+	// The phases accumulated since the previous Update() are exactly the ones
+	// that make up the interval just measured, so this is reported and cleared
+	// here rather than anywhere else in the loop.
+	if (stallThreshold > 0)
+	{
+		if (frameTimeMs >= (float)stallThreshold)
+			ReportLoopPhases(frameTimeMs);
+		ResetLoopPhases();
+	}
+
+	if (period <= 0)
+		return;
+
 	mFrameTraceSamples.push_back(frameTimeMs);
 
 	const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - mFrameTraceWindowStart).count();

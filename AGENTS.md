@@ -1017,6 +1017,46 @@ time metallib is what removes the remaining third.
 Note the 92 stage-compiles against the "roughly fifty programs" figure below:
 fifty *programs*, each with a vertex and a fragment stage.
 
+**`vid_stalltrace` added 2026-08-17, and it moved the suspect.** `mt_stalltrace`
+can only see the renderer. The first real play session (`trace.txt`) found
+recurring ~1025ms freezes with **no renderer stall anywhere near them** -- seven
+stalls all session, largest 114ms at frame 50, and the late-session ones cost
+13.4ms total. Neither 1s timeout in the Metal backend (`displaylink_timeout`,
+`semaphore_timeout`) fired either.
+
+`vid_stalltrace <ms>` splits the `vid_frametrace` interval into named game-loop
+phases (`VLoopPhase`, placed in `D_DoomLoop`, plus `levelload` and `savegame`)
+and prints the breakdown for any interval over the threshold. `VLoopContext`
+labels regions that drive `screen->Update()` from their own inner loop (the
+wipe), which otherwise report as 100% unaccounted.
+
+Result on a level transition, reproduced twice:
+
+```
+interval=910.01ms
+    playsim        68.16ms  x1
+    levelload      56.82ms  x1
+    (unaccounted) 784.94ms
+```
+
+**~785ms of level-transition cost is inside `D_Display`, not in
+`G_DoLoadLevel`.** `D_Display` calls `screen->Update()` itself, so the interval
+ends before the `display` phase closes -- the unaccounted figure is D_Display's
+work up to its first `Update()`, which on a new level is texture precache and
+first-frame setup. Next step is a phase inside `D_Display` around precache to
+split that 785ms.
+
+Note the startup cluster (~150-330ms intervals, fully unaccounted, no context
+label) is from before `D_DoomLoop` is entered -- the startup screen and
+`d_main.cpp:896` drive `Update()` directly. Expected, not the reported freeze.
+
+**Contamination found in the first session:** `Metal GPU Frame Capture Enabled`
+appears in `trace.txt`. That line is emitted by Apple's framework, not our code,
+and only when `METAL_CAPTURE_ENABLED` is set -- the capture layer adds
+per-command-buffer instrumentation. Re-run with it unset before trusting any
+figure from that session. (The 35fps p50 is just `cl_capfps=true` locking to the
+Doom tic rate, and `max=51627.51` is the window being backgrounded.)
+
 **Still not confirmed:** none of this is yet the reported freeze. This is idle
 MAP01, and only 5 material PSOs went cold in it. The gate stands — a real play
 session with `+mt_stalltrace 5 +vid_frametrace 5`, looking for `pso_compile` or

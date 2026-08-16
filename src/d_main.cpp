@@ -1255,18 +1255,42 @@ void D_DoomLoop ()
 			if (gametic > lasttic)
 			{
 				lasttic = gametic;
+				VLoopPhase phase("startframe");
 				I_StartFrame ();
 			}
 			I_SetFrameTime();
 
-			TryRunTics (); // will run at least one tic
+			// vid_stalltrace phases. These bracket the whole loop body so an
+			// interval flagged by vid_frametrace can be attributed. Note that
+			// "display" straddles the interval boundary -- D_Display calls
+			// screen->Update(), which is where the interval is measured -- so
+			// its figure covers the tail of one interval and the head of the
+			// next. That is fine for finding a stall (a 900ms display phase is
+			// still a 900ms stall in D_Display) but do not read it as a clean
+			// per-interval render cost.
+			{
+				VLoopPhase phase("playsim");
+				TryRunTics (); // will run at least one tic
+			}
 			// Update display, next frame, with current state.
-			I_StartTic ();
-			D_ProcessEvents();
+			{
+				VLoopPhase phase("events");
+				I_StartTic ();
+				D_ProcessEvents();
+			}
 
-			D_Display ();
-			M_TickDeferredScreenShot ();
-			S_UpdateMusic();
+			{
+				VLoopPhase phase("display");
+				D_Display ();
+			}
+			{
+				VLoopPhase phase("screenshot");
+				M_TickDeferredScreenShot ();
+			}
+			{
+				VLoopPhase phase("music");
+				S_UpdateMusic();
+			}
 
 			if (gameloop_abort)
 			{

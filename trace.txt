@@ -1,0 +1,38 @@
+DEBUG: main entered
+2026-08-17 10:31:36.053 gzdoom[4221:37087] Metal GPU Frame Capture Enabled
+vid_frametrace: reporting every 5s. p99 and the >100ms count are the hitching signal; avg is not.
+mt_stalltrace  pso_compile        5.38ms  frame=5 [in-frame]  eff=-1 state=6 vfmt=202776 blend=197121 alpha=1 fmt=80
+vid_frametrace  n=27  avg=185.19ms (  5.4 fps)  p50= 28.59  p95=1025.23  p99=1026.67  max=1026.67  >33ms=9 (33.3%)  >100ms=6
+mt_stalltrace  msl_translate    114.00ms  frame=50 [in-frame]  shaders/pp/screenquad.vp_vert
+mt_stalltrace  msl_translate      5.03ms  frame=91 [in-frame]  shaders/pp/ssao.fp_frag
+mt_stalltrace  msl_translate      5.56ms  frame=91 [in-frame]  shaders/pp/depthblur.fp_frag
+mt_stalltrace  pso_compile        5.57ms  frame=91 [in-frame]  eff=-1 state=0 vfmt=204832 blend=33554689 alpha=1 fmt=80
+vid_frametrace  n=159  avg= 31.47ms ( 31.8 fps)  p50= 28.80  p95= 31.97  p99=137.15  max= 230.23  >33ms=3 (1.9%)  >100ms=3
+vid_frametrace  n=175  avg= 28.58ms ( 35.0 fps)  p50= 28.55  p95= 30.81  p99= 34.24  max=  36.34  >33ms=3 (1.7%)  >100ms=0
+vid_frametrace  n=176  avg= 28.56ms ( 35.0 fps)  p50= 28.64  p95= 30.38  p99= 30.83  max=  32.22  >33ms=0 (0.0%)  >100ms=0
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.59  p95= 29.71  p99= 31.10  max=  32.04  >33ms=0 (0.0%)  >100ms=0
+vid_frametrace  n=175  avg= 28.58ms ( 35.0 fps)  p50= 28.57  p95= 31.25  p99= 34.10  max=  34.98  >33ms=3 (1.7%)  >100ms=0
+vid_frametrace  n=175  avg= 28.59ms ( 35.0 fps)  p50= 28.54  p95= 31.82  p99= 32.81  max=  37.40  >33ms=2 (1.1%)  >100ms=0
+vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.54  p95= 31.96  p99= 33.35  max=  33.74  >33ms=3 (1.7%)  >100ms=0
+vid_frametrace  n=173  avg=326.84ms (  3.1 fps)  p50= 28.62  p95= 32.31  p99= 33.28  max=51627.51  >33ms=2 (1.2%)  >100ms=1
+vid_frametrace  n=108  avg= 46.51ms ( 21.5 fps)  p50= 28.54  p95= 31.59  p99=1024.42  max=1026.65  >33ms=3 (2.8%)  >100ms=2
+vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.55  p95= 29.72  p99= 30.07  max=  31.56  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace  pso_compile        8.08ms  frame=1732 [in-frame]  eff=-1 state=6 vfmt=271396 blend=197121 alpha=0 fmt=80
+mt_stalltrace  pso_compile        5.35ms  frame=1732 [in-frame]  eff=3 state=6 vfmt=204832 blend=257 alpha=1 fmt=80
+vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.58  p95= 30.50  p99= 31.70  max=  47.88  >33ms=1 (0.6%)  >100ms=0
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.55  p95= 30.10  p99= 31.27  max=  32.44  >33ms=0 (0.0%)  >100ms=0
+vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.58  p95= 30.17  p99= 33.37  max=  35.23  >33ms=3 (1.7%)  >100ms=0
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.56  p95= 30.23  p99= 31.57  max=  31.90  >33ms=0 (0.0%)  >100ms=0
+vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.61  p95= 30.35  p99= 31.00  max=  31.29  >33ms=0 (0.0%)  >100ms=0
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.59  p95= 29.76  p99= 30.57  max=  31.10  >33ms=0 (0.0%)  >100ms=0
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.58  p95= 29.86  p99= 31.67  max=  33.24  >33ms=0 (0.0%)  >100ms=0
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.55  p95= 30.43  p99= 31.55  max=  36.43  >33ms=1 (0.6%)  >100ms=0
+vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.57  p95= 30.14  p99= 31.34  max=  36.89  >33ms=1 (0.6%)  >100ms=0
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.57  p95= 29.69  p99= 30.97  max=  31.82  >33ms=0 (0.0%)  >100ms=0
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.61  p95= 30.00  p99= 30.96  max=  32.21  >33ms=0 (0.0%)  >100ms=0
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.54  p95= 30.27  p99= 32.25  max=  33.99  >33ms=2 (1.1%)  >100ms=0
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.55  p95= 29.66  p99= 30.66  max=  31.98  >33ms=0 (0.0%)  >100ms=0
+vid_frametrace  n=163  avg= 36.58ms ( 27.3 fps)  p50= 28.66  p95= 32.01  p99=122.57  max=1034.96  >33ms=4 (2.5%)  >100ms=3
+vid_frametrace  n=101  avg= 49.64ms ( 20.1 fps)  p50= 29.05  p95= 32.00  p99=1034.73  max=1035.03  >33ms=3 (3.0%)  >100ms=2
+vid_frametrace  n=176  avg= 28.62ms ( 34.9 fps)  p50= 28.59  p95= 29.78  p99= 31.82  max=  37.92  >33ms=2 (1.1%)  >100ms=0
+vid_frametrace  n=118  avg= 43.27ms ( 23.1 fps)  p50= 28.55  p95= 31.56  p99=263.92  max=1533.97  >33ms=4 (3.4%)  >100ms=2

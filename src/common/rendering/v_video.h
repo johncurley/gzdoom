@@ -348,6 +348,49 @@ private:
 };
 
 
+// vid_stalltrace: scoped timer naming one phase of the game loop, so an
+// interval that vid_frametrace flags as a hitch can be attributed to playsim,
+// level load, sound, display or I/O rather than merely reported as slow.
+//
+// Place one around each phase in D_DoomLoop. Cost when vid_stalltrace is 0 is a
+// single int compare -- no clock read, no accumulation.
+//
+//    { VLoopPhase _p("playsim"); TryRunTics(); }
+//
+// The name must outlive the object and should be a string literal; the bucket
+// table compares by pointer.
+class VLoopPhase
+{
+public:
+	explicit VLoopPhase(const char *name);
+	~VLoopPhase();
+
+	VLoopPhase(const VLoopPhase &) = delete;
+	VLoopPhase &operator=(const VLoopPhase &) = delete;
+
+private:
+	const char *mName = nullptr;
+	std::chrono::steady_clock::time_point mStart;
+};
+
+// vid_stalltrace: marks a region that drives screen->Update() from its own
+// inner loop instead of returning to D_DoomLoop -- the screen wipe, the startup
+// screen, a resize pump. Intervals measured inside such a region contain no
+// VLoopPhase at all, so without this they report as 100% unaccounted and look
+// like a hole in the instrument rather than the answer.
+class VLoopContext
+{
+public:
+	explicit VLoopContext(const char *name);
+	~VLoopContext();
+
+	VLoopContext(const VLoopContext &) = delete;
+	VLoopContext &operator=(const VLoopContext &) = delete;
+
+private:
+	const char *mPrevious = nullptr;
+};
+
 // This is the screen updated by I_FinishUpdate.
 extern DFrameBuffer *screen;
 

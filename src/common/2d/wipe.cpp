@@ -532,6 +532,11 @@ void PerformWipe(FTexture* startimg, FTexture* endimg, int wipe_type, bool stops
 
 	wipestart = I_msTime();
 
+	// vid_stalltrace: this loop calls screen->Update() itself rather than
+	// returning to D_DoomLoop, so every interval it measures would otherwise
+	// contain no loop phase and report as entirely unaccounted.
+	VLoopContext wipeContext("wipe");
+
 	do
 	{
 		if (wiper->Interpolatable() && !cl_capfps)

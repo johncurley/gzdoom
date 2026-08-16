@@ -2390,6 +2390,12 @@ void G_DoSaveGame (bool okForQuicksave, bool forceQuicksave, FString filename, c
 	TArray<FCompressedBuffer> savegame_content;
 	TArray<FString> savegame_filenames;
 
+	// vid_stalltrace: a savegame write is disk I/O plus compression on the game
+	// thread, and autosaves fire without the player asking -- exactly the shape
+	// of a freeze that happens "now and again" with nothing on screen to
+	// explain it.
+	VLoopPhase savePhase("savegame");
+
 	char buf[100];
 
 	// Do not even try, if we're not in a level. (Can happen after

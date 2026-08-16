@@ -1360,6 +1360,11 @@ void G_DoLoadLevel(const FString &nextmapname, int position, bool autosave, bool
 {
 	gamestate_t oldgs = gamestate;
 
+	// vid_stalltrace: level load is the strongest suspect for a multi-hundred-
+	// millisecond freeze, and it runs inside TryRunTics, so without its own
+	// bucket it is indistinguishable from a slow playsim tic.
+	VLoopPhase loadPhase("levelload");
+
 	// Here the new level needs to be allocated.
 	primaryLevel->DoLoadLevel(nextmapname, position, autosave, newGame);
 
