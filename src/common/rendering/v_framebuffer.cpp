@@ -51,6 +51,7 @@
 #include "version.h"
 #include "hw_material.h"
 
+#include <algorithm>
 #include <chrono>
 #include <thread>
 
@@ -60,6 +61,23 @@ CVAR(Bool, gl_scale_viewport, true, CVAR_ARCHIVE);
 EXTERN_CVAR(Int, vid_maxfps)
 CVAR(Bool, cl_capfps, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 EXTERN_CVAR(Int, screenblocks)
+
+// Frame-interval trace for ACTUAL GAMEPLAY, in seconds between reports (0 = off).
+// Backend-agnostic counterpart to the Metal-only mt_frametrace
+// (mt_debug.cpp): this hooks DFrameBuffer::Update(), which every backend's
+// own Update() override chains to via Super::Update(), so GL and Vulkan get
+// the same instrument for free without a separate per-backend copy.
+//
+// Exists for the same reason mt_frametrace does: a benchmark harness sampling
+// a settled viewpoint cannot see hitching that only happens while the camera
+// moves in real play, and a mean/max pair cannot distinguish "one startup
+// stall" from "stutters constantly" -- see mt_debug.cpp's mt_frametrace
+// comment for the measured case that motivated it. Percentiles instead: p50
+// stays healthy while p99 blows out, which is what hitching looks like.
+//
+// stderr, not Printf: this runs during play, where console output covers the
+// screen it is measuring.
+CVAR(Int, vid_frametrace, 0, 0)
 
 //==========================================================================
 //
@@ -106,6 +124,76 @@ void DFrameBuffer::Update()
 		V_OutputResized(clientWidth, clientHeight);
 		mVertexData->OutputResized(clientWidth, clientHeight);
 	}
+
+	TraceFrameInterval();
+}
+
+// One frame's wall-clock interval, self-measured with steady_clock since the
+// base class is not handed a frame time by its callers. Accumulates until
+// vid_frametrace seconds have passed, then reports the distribution and
+// starts a fresh window -- so a long session reads as a series of
+// independent windows rather than an average that slowly buries a bad patch.
+// Samples are unbounded within a window on purpose: a display-average ring
+// would discard exactly the frames a hitching report needs.
+void DFrameBuffer::TraceFrameInterval()
+{
+	const int period = vid_frametrace;
+	if (period <= 0)
+	{
+		if (!mFrameTraceSamples.empty()) mFrameTraceSamples.clear();
+		mFrameTraceStarted = false;
+		return;
+	}
+
+	using clock = std::chrono::steady_clock;
+	const auto now = clock::now();
+
+	if (!mFrameTraceStarted)
+	{
+		mFrameTraceStarted = true;
+		mFrameTraceWindowStart = now;
+		mFrameTraceLastFrame = now;
+		mFrameTraceSamples.clear();
+		fprintf(stderr,
+			"vid_frametrace: reporting every %ds. p99 and the >100ms count are "
+			"the hitching signal; avg is not.\n", period);
+		return;
+	}
+
+	const float frameTimeMs = std::chrono::duration<float, std::milli>(now - mFrameTraceLastFrame).count();
+	mFrameTraceLastFrame = now;
+	mFrameTraceSamples.push_back(frameTimeMs);
+
+	const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - mFrameTraceWindowStart).count();
+	if (elapsed < (long long)period * 1000 || mFrameTraceSamples.size() < 2)
+		return;
+
+	std::vector<float> sorted = mFrameTraceSamples;
+	std::sort(sorted.begin(), sorted.end());
+	auto pct = [&sorted](double p) {
+		const size_t i = (size_t)(p * (double)(sorted.size() - 1) + 0.5);
+		return sorted[i < sorted.size() ? i : sorted.size() - 1];
+	};
+
+	double total = 0.0;
+	size_t over33 = 0, over100 = 0;
+	for (float v : mFrameTraceSamples)
+	{
+		total += v;
+		if (v > 33.3f) ++over33;
+		if (v > 100.0f) ++over100;
+	}
+	const double mean = total / (double)mFrameTraceSamples.size();
+
+	fprintf(stderr,
+		"vid_frametrace  n=%zu  avg=%6.2fms (%5.1f fps)  p50=%6.2f  p95=%6.2f  "
+		"p99=%6.2f  max=%7.2f  >33ms=%zu (%.1f%%)  >100ms=%zu\n",
+		mFrameTraceSamples.size(), mean, mean > 0.0 ? 1000.0 / mean : 0.0,
+		pct(0.50), pct(0.95), pct(0.99), sorted.back(), over33,
+		100.0 * (double)over33 / (double)mFrameTraceSamples.size(), over100);
+
+	mFrameTraceSamples.clear();
+	mFrameTraceWindowStart = now;
 }
 
 void DFrameBuffer::SetClearColor(int color)

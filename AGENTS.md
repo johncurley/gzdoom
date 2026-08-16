@@ -21,9 +21,10 @@ it is unusual).
   What is still open on that machine is the **Tasks — Linux** section below.
 - **Linux work:** `docs/handoff-linux-2026-08-16.md` — what is open on the Linux
   box, in order, with one correction: the Wayland fixes items 10/11 call
-  unpublished **are** on `zwidget/wayland-c-bindings`. Item 1 (first-paint
-  repro) is now **closed, does not reproduce** — see Tasks — Linux item 1
-  below; publishing upstream (item 5) is unblocked.
+  unpublished **are** on `zwidget/wayland-c-bindings`. Items 1-4 (first-paint
+  repro, scene revalidation, Vulkan CI, smoothness instrument) are **closed** —
+  see Tasks — Linux items 1, 2, 9, 12 below. Publishing upstream (item 5) is
+  unblocked; item 6 (Vulkan/GL frame analysis) is next.
 - **Current handoff:** `docs/handoff-ao-2026-08-16.md` — the AO session. macOS
   items 1 and 2 closed, the compute-AO cost premise retired, three SSAO-residual
   suspects killed, and **one new unresolved bug found: compute AO is bistable**.
@@ -715,6 +716,42 @@ it as a prerequisite.
 Note what the audit method bought: both came from a model that had never seen
 this project's notes, reading a pruned export with `AGENTS.md` and `docs/`
 removed, so it could not have been repeating anything.
+
+### 12. No smoothness instrument on Linux — CLOSED 2026-08-16, lifted backend-agnostic
+
+`mt_frametrace` (`b15f25f9d`, same-day macOS session) reports frame-interval
+percentiles to stderr during real gameplay, because a benchmark harness sampling a
+settled viewpoint cannot see hitching that only shows up while the camera moves — a
+compute-AO configuration that froze constantly in play read as healthy (avg 5.5ms,
+max 90.6ms) from the matrix suite. It hooks Metal's own frame-interval recorder in
+`mt_debug.cpp`, so GL and Vulkan had no equivalent.
+
+**Lifted rather than duplicated.** `DFrameBuffer::Update()` (`v_framebuffer.cpp`) is
+the base-class hook every backend's own `Update()` chains to via `Super::Update()` —
+confirmed by reading `gl_framebuffer.cpp`, `vk_renderdevice.cpp` and
+`mt_renderdevice.cpp` before touching anything: all three call it. One
+implementation there covers GL, Vulkan and Metal, at the cost of self-measuring the
+interval with `steady_clock` rather than being handed a frame time (the base class
+isn't given one). New cvar `vid_frametrace`, deliberately not `mt_frametrace` so the
+name doesn't imply Metal-only; Metal's own instrument is untouched — did not risk
+editing `mt_debug.cpp` while a concurrent macOS session was actively pushing to that
+file's neighbourhood.
+
+**Verified on both Linux backends, real gameplay, `doom2`/MAP06:**
+
+- GL: startup stalls visible in the first two 1s windows (`n=2 avg=568ms`,
+  `n=4 avg=294ms p99=1114ms`), then several clean windows (`avg=28ms p50=28
+  p99=31, >33ms=0`) with one catching a real blip (`p99=38.33, >33ms=1`) that
+  `avg` alone buried.
+- Vulkan (`+vid_preferbackend 1`): same shape and same order of magnitude,
+  confirming the hook fires identically on both without a single
+  backend-specific line of code.
+- `vid_frametrace 0` (the default): zero lines in the log — silent unless
+  armed, same proof-of-execution discipline this file already asks for
+  elsewhere (`CLAUDE.md`'s "Measuring a rendering change").
+
+Linux renderer changes can now be judged for smoothness the same way macOS ones
+can, not just by a person's impression.
 
 ---
 

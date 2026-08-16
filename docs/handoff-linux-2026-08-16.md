@@ -107,7 +107,7 @@ instead of only linking it — not yet tried, see `AGENTS.md` item 9 for the cos
 and the trap to avoid (do not fold it into the compile-only job; `HAVE_VULKAN`
 flips `DEFAULT_RENDER_BACKEND` to 1).
 
-## 4. There is no smoothness instrument on Linux
+## 4. There is no smoothness instrument on Linux — CLOSED 2026-08-16, lifted backend-agnostic
 
 **New, and the most transferable lesson of the macOS session.** On 2026-08-16 a
 renderer configuration that **froze constantly in gameplay** was reported healthy by
@@ -120,11 +120,37 @@ percentiles to stderr during actual play — p50/p95/p99/max plus >33ms and >100
 counts, because p50 stays healthy while p99 blows out and a mean hides exactly the
 frames the player feels.
 
-**It is Metal-only.** It lives in `mt_debug.cpp` and hooks the Metal frame-interval
-recorder, so GL and Vulkan on Linux have no equivalent. Either lift it to a
-backend-agnostic place (`v_video.cpp` sees every frame) or write the GL counterpart.
-Until then, no Linux renderer change can be judged for smoothness by anything but a
-person's impression — which is how the macOS defect escaped for a whole session.
+**Took the first option, not the second: lifted rather than duplicated.**
+`mt_frametrace` hooks Metal's own frame-interval recorder in `mt_debug.cpp`, which
+GL and Vulkan have no equivalent of and nothing to hook. Rather than write a second,
+GL-specific copy (a third if Vulkan ever needed its own), the same instrument now
+lives in `DFrameBuffer::Update()` (`v_framebuffer.cpp`), which every backend's own
+`Update()` override already chains to via `Super::Update()` — confirmed by reading
+all three (`gl_framebuffer.cpp`, `vk_renderdevice.cpp`, `mt_renderdevice.cpp`) before
+touching anything, all three call it. One implementation now covers GL, Vulkan *and*
+Metal, at the cost of self-measuring the interval with `steady_clock` instead of
+being handed a frame time (the base class isn't given one).
+
+New cvar `vid_frametrace` (deliberately not `mt_frametrace`, so the name doesn't
+imply Metal-only). Metal's own `mt_frametrace` is untouched — did not risk touching
+`mt_debug.cpp` while a concurrent macOS session was actively pushing commits to the
+same file's neighbourhood.
+
+**Verified on both Linux backends, real gameplay, MAP06:**
+
+- GL (default): first two 1s windows show the startup stalls (`n=2 avg=568ms`,
+  `n=4 avg=294ms p99=1114ms`), then settles to `n=36 avg=28ms p50=28 p99=31,
+  >33ms=0` for several windows, with one window catching a real blip
+  (`p99=38.33, >33ms=1`) that avg alone would have buried — exactly the shape the
+  instrument exists to show.
+- Vulkan (`+vid_preferbackend 1`): same shape, same order of magnitude
+  (`n=2 avg=567ms` startup, then `n=35-37 avg=28ms p99=31-33ms`) — confirms the
+  hook fires identically on both backends without a single backend-specific line.
+- Default off (`vid_frametrace 0`, the default): zero `vid_frametrace` lines in the
+  log — silent unless armed, same proof-of-execution discipline `CLAUDE.md` already
+  asks for elsewhere.
+
+Linux renderer changes can now be judged for smoothness the same way macOS ones can.
 
 ## 5. Publish upstream to dpjudas — task 1 is closed, this is now unblocked
 

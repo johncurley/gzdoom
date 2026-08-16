@@ -35,6 +35,8 @@
 #define __V_VIDEO_H__
 
 #include <functional>
+#include <vector>
+#include <chrono>
 #include "basics.h"
 #include "vectors.h"
 #include "m_png.h"
@@ -332,6 +334,17 @@ private:
 	uint64_t fpsLimitTime = 0;
 
 	bool isIn2D = false;
+
+	// vid_frametrace: per-frame wall-clock interval trace during actual play,
+	// backend-agnostic (called from Update(), which every backend's own
+	// override chains to via Super::Update()). See TraceFrameInterval() in
+	// v_framebuffer.cpp for why this exists and why it reports percentiles
+	// rather than a mean.
+	std::vector<float> mFrameTraceSamples;
+	std::chrono::steady_clock::time_point mFrameTraceWindowStart;
+	std::chrono::steady_clock::time_point mFrameTraceLastFrame;
+	bool mFrameTraceStarted = false;
+	void TraceFrameInterval();
 };
 
 
