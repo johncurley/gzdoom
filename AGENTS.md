@@ -163,7 +163,7 @@ task 5's PR to dpjudas — drop the "confirmed fixed... on the same setup"
 framing from anything published upstream; say it's a protocol-correctness fix
 with no local reproduction, which is the truthful and stronger claim.
 
-### 2. Re-validate the matrix suite's scene choices on this hardware
+### 2. Re-validate the matrix suite's scene choices on this hardware — CLOSED 2026-08-16
 
 `screenblocks 12`, `doom2` = MAP06 and `doom1` = E1M3 were each **chosen from
 measurements taken on one machine** (Intel HD 6000, Metal). The code is
@@ -197,6 +197,55 @@ the pass-action scan (`gl_ssao 3` 7.12%, reference bloom 34.11%, compute bloom
 MAP06 result was repeated with no interaction during the run, so do not blame
 the pointer or substitute another map based on a single pair. No Linux
 baseline was recorded because the two chosen scenes did not both pass.
+
+**Linux result, 2026-08-16 — resolved, and one contradiction explained by
+operator contamination.** Re-ran both measurements through `tools/matrix/run.py`
+directly (not by hand), which also settles a conflict this file never resolved:
+`effective_map()`'s own docstring, from a 2026-08-12 measurement, says "`gl_bloom`
+changes nothing at all on MAP03 and MAP06" — directly contradicting the
+2026-08-13 entry's 34% figure above. Neither of those was reproduced by a run
+through the harness.
+
+- **Determinism, `--only baseline --scene doom2`, 8 samples:** all eight
+  `4b46f461`, mean_lum 21.856 — identical to every one of today's runs below.
+  The 2026-08-13 outlier (`81668f46`) did not recur.
+- **`gl_bloom` on MAP06, tested directly** (not via `bloom_ref`, which is
+  hard-pinned to MAP12 regardless of scene — see item 3 below; there is no
+  stock config that puts bloom on MAP06, so this needed a one-off launch pair
+  built from the harness's own `launch()`/`compare()`, cvars identical to
+  `baseline` plus `+gl_bloom 1`): **first sample 93.67% differing, mean_lum
+  21.86 -> 22.83 — then the window was moved during that capture.** Six
+  further samples, untouched, all landed on the same state: `a791defa`,
+  0.00% differing from baseline (below the 2-level noise floor). The window
+  move produced a single large, misleading outlier against an otherwise
+  perfectly deterministic result — the same shape of failure as the
+  2026-08-13 MAP06 determinism outlier above, which this makes newly
+  suspect despite that entry's own "repeated with no interaction" note.
+  Both readings of "bloom acts on MAP06" (34% and 93%) are now believed to be
+  contamination of the same kind; the clean, 6-for-6 reproducible answer is
+  that it does not, which matches the 2026-08-12 docstring and not the
+  2026-08-13 entry.
+- **`gl_ssao 3` on MAP06, via `--only ssao --scene doom2`:** 7.12% of pixels,
+  max delta 11 — reproduces the 2026-08-13 figure exactly.
+- Bloom not acting on MAP06 does not disqualify it: bloom is deliberately
+  measured on MAP12 instead, via the `relations_only` `baseline_bloom`/
+  `bloom_ref`/`bloom_compute` trio (confirmed this session too: 34.05%
+  against `baseline_bloom`). MAP06 only ever needed to carry `gl_ssao`.
+- Full suite, both scenes, via `run.py --scene <doom1|doom2>` (not `--only`):
+  **every relation `ok` on both**, none FAIL. `doom1` is relations-only by the
+  tool's own design (E1M3 needs no map override, but nothing requested a
+  golden image for it either) and printed a clean `PASS (relations only)`.
+  `doom2` recorded a fresh `baseline.json` (`--update-baseline`, all 10
+  configs, relations held throughout) and a follow-up plain run against it
+  came back a clean `PASS` on every non-relations-only config.
+
+**Conclusion: both scene choices hold.** `screenblocks 12` + `doom2`=MAP06 +
+`doom1`=E1M3 are validated on this hardware, a Linux `baseline.json` is
+recorded for `doom2`, and the standing lesson is procedural: **a captured
+window that gets touched mid-run produces exactly one large outlier against an
+otherwise clean result, not visible drift** — treat any single-sample anomaly
+in an "unattended" series as contamination to rule out before it is read as
+engine nondeterminism, on this branch or the next one.
 
 ### 3. `crossbackend.py` drops a config's own map — and that disarms bloom
 

@@ -57,22 +57,26 @@ description.
 
 **This gated the upstream PR; it no longer does — see task 5, now unblocked.**
 
-## 2. Re-validate the matrix suite's scene choices on this hardware
+## 2. Re-validate the matrix suite's scene choices on this hardware — CLOSED 2026-08-16
 
-**`AGENTS.md` Tasks — Linux, item 2.** `screenblocks 12`, `doom2` = MAP06 and
-`doom1` = E1M3 were each chosen from measurements taken on **one machine** (Intel
-HD 6000, Metal). The code is platform-neutral; the choices are not — a different GL
-driver and different timing can move both properties they were selected for.
+**`AGENTS.md` Tasks — Linux, item 2.** Both scene choices hold on this hardware.
+8/8 determinism on `doom2`/MAP06 today (the 2026-08-13 single outlier did not
+recur), `gl_ssao 3` acts on MAP06 (7.12%, reproduces 2026-08-13 exactly), and a
+Linux `baseline.json` is now recorded and holds on a clean re-run. `doom1`/E1M3
+passes relations-only, as designed.
 
-Two measurements, both described under the "choosing a map" trap in `AGENTS.md`:
-
-1. **Determinism, eight samples** — `--only baseline --scene doom2`, then
-   `--scene doom1`. One identical-looking pair is not enough.
-2. **The pass scan** — every pass must visibly act on the chosen map. This is the
-   half that was disarmed for months on the old map choice.
-
-If a map that is 8/8 pixel-identical on macOS is not on Linux, **that is information
-about the engine, not a broken suite.** Record it either way.
+One real finding along the way: the 2026-08-13 entry's "`gl_bloom` changes 34%
+of MAP06" does not reproduce — six clean, untouched samples all landed on
+0.00% differing (matching a 2026-08-12 measurement that said bloom does
+nothing on MAP06, not the 34% one). The first sample of that test came back at
+93.67% differing, and the window was moved during that capture. **A window
+touched mid-run produces one large, misleading outlier against an otherwise
+perfectly clean series — not visible drift.** That is the most likely
+explanation for the 2026-08-13 MAP06 determinism outlier too, despite that
+entry's own "repeated with no interaction" note. Bloom not acting on MAP06
+doesn't disqualify the map: bloom is deliberately measured on MAP12 instead,
+via the `relations_only` trio, and that relation still holds (34.05%). See
+`AGENTS.md` Tasks — Linux item 2 for the full session log.
 
 ## 3. Add a Linux CI job that builds Vulkan
 
