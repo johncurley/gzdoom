@@ -164,7 +164,7 @@ and neither reproduced the blank-launcher symptom (task 1). `cocoa-modal-fixes` 
 2026-08-09, a subtree split synthesises 22,906 commits of which 2 touch the files
 being published, and `git merge-base --is-ancestor` calls that a clean fast-forward.
 
-## 6. Engine: the Vulkan/GL side of the frame analysis — the next engine step
+## 6. Engine: the Vulkan/GL side of the frame analysis — CLOSED 2026-08-16
 
 `docs/frame-analysis.md` maps the renderer's passes, resources and couplings, and is
 explicitly **Metal-only**. The frame graph it feeds (Track A items 3-4) is meant to be
@@ -215,10 +215,36 @@ Answer question 4 and the decision makes itself.
 `crossbackend.py --backends gl,vulkan` is available for checking claims now that
 `HAVE_VULKAN=ON` builds in CI (task 3, closed).
 
-**Then the graph work returns to macOS**: interface design informed by both analyses,
-then `Pass2` (tonemap → colormap → lens → fxaa) as the first migration — four pure
-`current → next` passes already covered by the suite's relations — with AO last, for
-the reasons in frame-analysis.md §4.
+**Done. `docs/frame-analysis-vulkan-gl.md` written**, all four questions answered:
+
+1. **PP render state** — not the "three disciplines to accommodate" the framing
+   predicted. Metal's pipeline selection reads a raw, PP-writable field on the
+   *shared* render-target struct (`mRenderTarget.DrawBuffers`,
+   `mt_renderstate.cpp:769`) — that's the bug. Vulkan uses the identically-named
+   field for scene draws (`vk_renderstate.cpp:517,538`) but its PP draws
+   (`vk_pprenderstate.cpp:53`) never touch it — architecturally isolated, not just a
+   separate object. GL's shader selection reads a decoupled logical field
+   (`mPassType`, `gl_renderstate.cpp:100`) that PP draws never touch either, so GL
+   was never at risk of *this* bug — its `EnableDrawBuffers` restore
+   (`gl_framebuffer.cpp:448-456`) protects the raw GL binding, a different failure
+   mode. Vulkan's immunity checked against a real result, not just reading: the
+   `ssao` config in this session's `crossbackend.py` run came back clean.
+2. **`SceneNormal`/G-buffer selection** — shared logic, `hw_entrypoint.cpp` +
+   `hw_drawinfo.cpp`, identical on all three backends; not what varies.
+3. **Alternate implementations** — confirmed Metal-only. Zero compute-shader calls
+   anywhere in the Vulkan or GL renderer source.
+4. **Resource lifetimes / tier 3** — Vulkan and GL have none; tier 3 is a direct
+   consequence of Metal's compute AO/bloom (question 3), so the registry doesn't
+   need to model it for the other two. Vulkan does carry one extra system neither
+   other backend has: a render-pass cache keyed on format/samples that a resize
+   must invalidate (`vk_renderbuffers.cpp:69-70`).
+
+**The graph work returns to macOS now**: interface design informed by both
+analyses, then `Pass2` (tonemap → colormap → lens → fxaa) as the first migration —
+four pure `current → next` passes already covered by the suite's relations — with AO
+last, for the reasons in frame-analysis.md §4 (strengthened, not just retained: §3.1
+is now traced to its exact field on all three backends, so AO can be migrated
+correctly rather than cautiously).
 
 ## Not tasks — closed, do not reopen
 

@@ -12,6 +12,8 @@ it is unusual).
   `src/common/rendering/metal/README_METAL_RENDERER.md`
 - **Frame analysis:** `docs/frame-analysis.md` — what the passes and resources
   actually are, extracted from the code, as the basis for the frame-graph work.
+  Metal-only; `docs/frame-analysis-vulkan-gl.md` is the companion for the other two
+  backends, closed 2026-08-16 — read both before designing the graph interface.
 - **Method:** `docs/renderer-methodology.md` — how to measure a renderer change so
   the answer survives: instruments and their blind spots, proof of execution,
   reproducibility gates, contamination, and when to stop measuring and play.
@@ -23,8 +25,9 @@ it is unusual).
   box, in order, with one correction: the Wayland fixes items 10/11 call
   unpublished **are** on `zwidget/wayland-c-bindings`. Items 1-4 (first-paint
   repro, scene revalidation, Vulkan CI, smoothness instrument) are **closed** —
-  see Tasks — Linux items 1, 2, 9, 12 below. Publishing upstream (item 5) is
-  unblocked; item 6 (Vulkan/GL frame analysis) is next.
+  see Tasks — Linux items 1, 2, 9, 12 below. Item 6 (Vulkan/GL frame analysis) is
+  also **closed** — `docs/frame-analysis-vulkan-gl.md`. Publishing upstream
+  (item 5) is unblocked and is what remains.
 - **Current handoff:** `docs/handoff-ao-2026-08-16.md` — the AO session. macOS
   items 1 and 2 closed, the compute-AO cost premise retired, three SSAO-residual
   suspects killed, and **one new unresolved bug found: compute AO is bistable**.
