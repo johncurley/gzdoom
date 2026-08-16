@@ -511,7 +511,21 @@ float MtDebugManager::GetAverageFrameTime() const {
   return sum / mFrameTimeHistory.size();
 }
 
-// One frame's wall-clock interval. Accumulates until mt_frametrace seconds have
+// NOT a full frame interval, despite what this comment used to say. The sample
+// is BeginFrame->EndFrame -- the renderer bracket only -- so everything between
+// EndFrame and the next BeginFrame (playsim, sound, input, and the shader
+// precompile driven from d_main.cpp) is excluded. Measured 2026-08-17 on one
+// run with both instruments on: this reported p50=2.60ms/392fps and max=109.76
+// where vid_frametrace, which times Update()-to-Update(), reported
+// p50=16.68ms/59.2fps and max=1121.57. It missed a full second of the worst
+// stall in the run.
+//
+// Use vid_frametrace to detect hitching. This one is still useful for renderer
+// cost specifically -- it isolates the bracket, and its baseline is not pinned
+// to the refresh rate the way a true interval's is -- but it cannot see a stall
+// that happens between frames, which is the shape a compile stall usually has.
+//
+// One frame's render bracket. Accumulates until mt_frametrace seconds have
 // passed, then reports the distribution and starts a fresh window -- so a long
 // session reads as a series of independent windows rather than an average that
 // slowly buries a bad patch.

@@ -961,12 +961,20 @@ a session — e.g. walking into a new area with unfamiliar textures or materials
 still compiles live, which is exactly the "now and again" shape a stutter from
 new content would have.
 
-**First step: confirm before fixing.** Launch with `+mt_frametrace 5` during an
-ordinary play session (not a settled viewpoint — the matrix suite's own
-benchmark-blind-to-hitching lesson applies here too) and watch stderr for a
-`>100ms` spike that lines up with entering new geometry rather than combat load
-or anything already-rendered. That distinguishes a compile stall from a
-rendering-cost problem before any code changes.
+**First step: confirm before fixing.** Launch with `+vid_frametrace 5
++mt_stalltrace 5` during an ordinary play session (not a settled viewpoint — the
+matrix suite's own benchmark-blind-to-hitching lesson applies here too) and
+watch stderr for a `>100ms` spike that lines up with entering new geometry
+rather than combat load or anything already-rendered. That distinguishes a
+compile stall from a rendering-cost problem before any code changes.
+
+**Use `vid_frametrace`, not `mt_frametrace`, to detect the hitch.** This gate
+said `mt_frametrace` until 2026-08-17, which was wrong for exactly this hunt —
+see the trap entry "mt_frametrace is not a frame interval" below. `mt_frametrace`
+samples the `BeginFrame`->`EndFrame` bracket only, so a stall between frames —
+which is the shape a compile stall usually has, since `CompileNextShader` is
+driven from `d_main.cpp` outside the bracket — is invisible to it. One run with
+both on: `mt_frametrace` max=109.76 against `vid_frametrace` max=1121.57.
 
 **Instrument added 2026-08-17: `mt_stalltrace`.** `mt_frametrace` can only say a
 frame was slow. `mt_stalltrace <ms>` attributes it: every cold path that can run
@@ -1011,7 +1019,7 @@ fifty *programs*, each with a vertex and a fragment stage.
 
 **Still not confirmed:** none of this is yet the reported freeze. This is idle
 MAP01, and only 5 material PSOs went cold in it. The gate stands — a real play
-session with `+mt_stalltrace 5 +mt_frametrace 5`, looking for `pso_compile` or
+session with `+mt_stalltrace 5 +vid_frametrace 5`, looking for `pso_compile` or
 `msl_translate` lines whose frame index lines up with a `>100ms` frame on
 entering new geometry.
 
@@ -2295,6 +2303,26 @@ palette LUT) must be changed at runtime via `+execafter` to be exercised.
 **`Frame ... avg=` is the cost metric. `FrameGPU` is not.** It reports spans that
 cannot coexist with the measured frame interval (~220ms against 7ms frames). The
 cause is unresolved; the obvious fix is a no-op.
+
+**`mt_frametrace` is not a frame interval.** It samples `BeginFrame` ->
+`EndFrame` (`mt_renderdevice.cpp:635` and `:400`) — the renderer bracket — while
+`vid_frametrace` times `Update()`-to-`Update()` and is a true wall-clock
+interval. The names and the report format are nearly identical and its own
+comment claimed "wall-clock interval" until 2026-08-17. One run, both enabled,
+matching sample counts:
+
+| | `vid_frametrace` | `mt_frametrace` |
+|---|---|---|
+| steady p50 | 16.68ms (59.2 fps) | 2.60ms (392 fps) |
+| startup p99 | 1069.07ms | 64.62ms |
+| startup max | 1121.57ms | 109.76ms |
+
+It missed a full second of the worst stall in the run, because playsim, sound,
+input and the `d_main.cpp`-driven shader precompile all sit outside the bracket.
+**Use `vid_frametrace` for hitching**; `mt_frametrace` is still the better read
+on renderer cost alone, since its baseline is not pinned to the refresh rate.
+Note the converse defect: `vid_frametrace`'s p50 lands on the refresh interval
+because it includes the present wait, so its p50 is not a cost figure.
 
 **Turn off vsync and the fps cap for any performance A/B.** With
 `vid_vsync=true` and `vid_maxfps=60`, every config that clears 60fps reports
