@@ -23,10 +23,20 @@
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.action-games</string>
 	<!-- Permits programmatic MTLCaptureManager frame capture (the mt_capture
-	     console command). Note this only applies when launched as a bundle;
-	     running Contents/MacOS/gzdoom directly, which is how the capture
-	     protocol launches it, needs METAL_CAPTURE_ENABLED=1 in the
-	     environment instead. -->
+	     console command).
+
+	     CORRECTED 2026-08-17: this comment used to claim the key "only applies
+	     when launched as a bundle" and that running Contents/MacOS/gzdoom
+	     directly needs METAL_CAPTURE_ENABLED=1 instead. Both halves are false.
+	     Executing the binary inside the bundle still resolves the main bundle,
+	     so this key applies there too -- measured by the framework's own
+	     "Metal GPU Frame Capture Enabled" line appearing on every direct
+	     launch, and by unset METAL_CAPTURE_ENABLED having no effect.
+
+	     Consequence: the capture layer is active for EVERY run of this build,
+	     including benchmarks. It instruments command buffers and drawables, so
+	     it is a standing contaminant in any measurement taken through this
+	     bundle. Set this false to A/B it; build/ab/ holds a prepared pair. -->
 	<key>MetalCaptureEnabled</key>
 	<true/>
 	<key>LSMinimumSystemVersion</key>

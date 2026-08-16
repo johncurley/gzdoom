@@ -2391,6 +2391,25 @@ on renderer cost alone, since its baseline is not pinned to the refresh rate.
 Note the converse defect: `vid_frametrace`'s p50 lands on the refresh interval
 because it includes the present wait, so its p50 is not a cost figure.
 
+**An unfocused window is throttled to ~268ms per frame.** macOS throttles
+background rendering, and the result is a locked ~268ms cadence with every frame
+over 100ms -- which reads as catastrophic hitching and is nothing of the kind.
+Two `vid_stalltrace` symptoms come from it: intervals that are 100% unaccounted
+(no loop phase runs), and `>33ms=100.0%` windows. Any unattended launch that
+backgrounds the process produces this, so an A/B run this way compares two
+throttled arms and cannot show a difference. Keep the window focused, and treat
+a suspiciously round repeated interval as throttling until proven otherwise.
+
+**The Metal capture layer is enabled on every run of this build.**
+`MetalCaptureEnabled` is set true in `src/posix/osx/zdoom-info.plist`, and it
+applies even when executing `Contents/MacOS/gzdoom` directly -- the plist's own
+comment claimed otherwise until 2026-08-17 and was wrong, verified by
+`unset METAL_CAPTURE_ENABLED` having no effect while the framework still printed
+"Metal GPU Frame Capture Enabled". The layer instruments command buffers and
+drawables, so it is a standing contaminant in every measurement ever taken
+through this bundle, not a per-session mistake. `build/ab/capture-{on,off}.app`
+is a prepared pair with byte-identical executables for testing it.
+
 **Turn off vsync and the fps cap for any performance A/B.** With
 `vid_vsync=true` and `vid_maxfps=60`, every config that clears 60fps reports
 identically. Use `+vid_vsync 0 +vid_maxfps 0 +cl_capfps 0`.
