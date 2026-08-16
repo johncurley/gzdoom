@@ -1602,6 +1602,8 @@ bool MtAOModule::Render(float m5, int sceneWidth, int sceneHeight, const HWViewp
         EnsureFullresTextures(sceneWidth, sceneHeight);
         if (!mFullresAOTexture || !mFullresTempTexture)
             return false;
+        MtResources().Touch("AO.FullresAO");
+        MtResources().Touch("AO.FullresTemp");
     }
 
     SSAOParams params = {};
@@ -1906,6 +1908,8 @@ void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL
     // relative to cmdBuf, which would make mip generation race the
     // dispatches that depend on it.
     bool useMipAlgorithm = (algorithm == 2) && ssaoMipPSO && depthLinearizePSO && mDepthPyramidTexture;
+    if (useMipAlgorithm)
+        MtResources().Touch("AO.DepthPyramid");
     if (useMipAlgorithm) {
         auto linearizeEncoder = cmdBuf->computeCommandEncoder();
         if (linearizeEncoder) {

@@ -78,6 +78,7 @@ private:
     MtResourceDesc desc;
     const void *handle = nullptr;
     unsigned long long lastTouchedFrame = 0;
+    bool everTouched = false; // false = NO Touch call site, not 'unused'
     size_t bytes = 0;
   };
 

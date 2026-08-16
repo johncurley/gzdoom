@@ -766,6 +766,22 @@ mtime — every PNG was written after its launch). Deleting `matrix.ini` restore
 the present regime once; the only diff was the fade pair and pinning it did not
 reproduce.
 
+**A THIRD level, and a retracted finding (2026-08-16).** With the resource registry
+instrumented, compute AO was measured at **0.306%** by default and **2.768%** with
+`mt_compute_ao_skip_fullres true` — which looked like a clean localisation: the
+full-res cleanup stage destroying the AO signal, with the normal-aware upsample as
+the mechanism. **It did not replicate.** Re-run with a warm-up launch that carried
+the same AO cvars, all four arms — `normal_upsample` true and false,
+`atrous_passes 0`, `skip_fullres` — returned **2.768%** identically, twice each.
+
+So `skip_fullres` and `normal_upsample` are **not** the variable, and the earlier
+0.306% readings belong to the same launch-history-dependent state as the 14.90%
+ones. Three levels are now on record (0.306 / 2.768 / 14.90) and the selector is
+still unidentified. **Do not accept any AO-suppression finding from launch-to-launch
+comparison** — the confound swamps the effect being measured. The next attempt must
+be an **in-process A/B**: toggle the cvar at runtime inside one launch and capture
+before and after, since these cvars are read per frame.
+
 **`mt_aoprobe` cannot see this — done 2026-08-16, do not retry.** The probe hooks
 `MtPPRenderState::Draw` and matches on the `ssaocombine` lump, and the compute
 path issues no such draw (its GPU capture carries no `PP` encoder labels at all).

@@ -144,8 +144,10 @@ void MtFrameResources::Forget(const char *name) {
 }
 
 void MtFrameResources::Touch(const char *name) {
-  if (Entry *e = Find(name))
+  if (Entry *e = Find(name)) {
     e->lastTouchedFrame = mFrame;
+    e->everTouched = true;
+  }
 }
 
 void MtFrameResources::BeginFrame(int sceneWidth, int sceneHeight) {
@@ -190,12 +192,17 @@ void MtFrameResources::Dump(FString &out) const {
 
     FString size;
     size.Format("%dx%d", d.width, d.height);
+    // Three states, not two. A resource with no Touch call site anywhere reads
+    // "n/i" (not instrumented) rather than "-", because reporting it as unused
+    // would be a finding manufactured by missing instrumentation -- which is
+    // exactly the false signal this registry exists to remove.
     const bool touched = e.lastTouchedFrame == mFrame && mFrame != 0;
+    const char *touchState = touched ? "yes" : (e.everTouched ? "-" : "n/i");
 
     out.AppendFormat("  %-22s %-16s %-11s %-8s %-8s %-7s %5.2f%s%s\n",
                      d.name ? d.name : "?", d.owner ? d.owner : "?",
                      size.GetChars(), FormatName(d.pixelFormat),
-                     rule.GetChars(), touched ? "yes" : "-",
+                     rule.GetChars(), touchState,
                      (double)e.bytes / (1024.0 * 1024.0),
                      d.transient ? "  transient" : "", flag.GetChars());
   }
@@ -205,7 +212,7 @@ void MtFrameResources::Dump(FString &out) const {
   // memory, or an algorithm variant nobody selected.
   FString untouched;
   for (const auto &e : mEntries) {
-    if (mFrame != 0 && e.lastTouchedFrame != mFrame) {
+    if (mFrame != 0 && e.everTouched && e.lastTouchedFrame != mFrame) {
       if (untouched.Len())
         untouched += ", ";
       untouched += e.desc.name ? e.desc.name : "?";
