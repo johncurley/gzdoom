@@ -433,6 +433,32 @@ installed here** (`twm`, `mwm`, `fvwm`, `blackbox`, `cwm`, `jwm`, `icewm`,
 `openbox`, `matchbox`, `dwm`, `wmaker` all absent). `twm` is the right one to
 install for it — ICCCM-era, no `_NET_ACTIVE_WINDOW`, uses `WM_TAKE_FOCUS`.
 
+**Attempted 2026-08-16, blocked by a different, more fundamental problem —
+still open, not this item's question.** `twm` installed clean (`xorg-twm`).
+Under a fresh `Xvfb` + `twm` pair, `X11Connection`'s constructor completes in
+full (confirmed by per-call instrumentation: `XOpenDisplay`, `XOpenIM`, the
+XInput2 query chain, all return normally) and `X11DisplayWindow`'s constructor
+completes too, including `XCreateWindow` and `XCreateIC` — so the window
+itself is created successfully. **Both GL and Vulkan then hang afterward**,
+before any further startup output, well past a 30s timeout. Never reached the
+`WM_TAKE_FOCUS` handler at all, so this item is still genuinely untested, not
+negative.
+
+Root cause not found — `ptrace` is blocked in the sandbox this session ran in
+(`Yama ptrace_scope=1`, and this process isn't a ptrace-able child of the
+session that tried), so no backtrace could be taken, and `/proc/<pid>/syscall`
+is equally inaccessible. What *is* established: this is likely an `Xvfb`
+fragility, not a `twm`- or gzdoom-specific bug. A single `gzdoom` process
+killed by `SIGTERM` mid-connection was enough to wedge the `Xvfb` instance
+into refusing all future connections — confirmed by `xdpyinfo`, a totally
+unrelated client, hanging identically against the same display afterward. Do
+**not** reuse an `Xvfb` display after a killed client; every trial needs a
+fresh instance, which is expensive (rebuild + relaunch each time) and is why
+this was not chased further this session. Next attempt should either get real
+`ptrace` permission (root, or run outside this sandbox) or add a proper timed
+watchdog inside the engine itself rather than relying on external process
+inspection.
+
 The two sites are mutually exclusive on the axis nobody recorded: whether the
 observing session had an EWMH window manager. Under bare Xvfb, site A is
 certain and site B unreachable; under KWin (including XWayland), site A's branch
