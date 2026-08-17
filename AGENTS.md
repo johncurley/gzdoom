@@ -1173,6 +1173,39 @@ backend. If a 1s `nextdrawable` appears with NO matching present outlier, then
 `nextDrawable()` is blocking on something other than drawable availability, and
 that is a different investigation.
 
+**The PSO binary archive works; the 257ms figure that prompted an investigation
+does not reproduce.** A warm launch had appeared to spend 257ms in `pso_compile`
+with one pipeline at 252.65ms, which suggested `mt_pipelines.bin` was not being
+hit. Re-measured properly -- two runs, each **quit cleanly** so the destructor
+actually serializes the archive:
+
+| | cold (no archive on disk) | warm (962KB archive) |
+|---|---|---|
+| `pso_compile` | 13 compiles, **29.80ms**, max 5.64 | 13 compiles, **8.80ms**, max 1.01 |
+| `msl_tolib` | 101, 39.39ms | 101, 39.37ms |
+| `compute_pso` | 4.99ms | 2.07ms |
+| `pp_pso` | 17.85ms | 3.29ms |
+| total | ~92ms | ~53ms |
+
+The archive is doing its job -- 3.4x on pipeline cost, 5.6x on the worst single
+one. **The earlier 257ms was an artifact of killing the process**: the archive is
+written in `MtBinaryArchive`'s destructor, so a `kill`ed run never persists it
+and the next "warm" run is really a second cold one. Any future measurement of
+this must quit through the game.
+
+**Do not use `PipelineOptionFailOnBinaryArchiveMiss` on this hardware.** It was
+added to count hit rate directly and reports a perfect hit rate always: a run
+started with no archive file on disk still reported `hits=2 misses=0` on its
+first two pipelines, which an empty archive cannot satisfy. The option is
+accepted and ignored by this driver. Removed rather than kept with a caveat --
+an instrument that always says "fine" is worse than none, because it reads as
+confirmation. Archive effectiveness is measured by cost instead, as above.
+
+**Consequence for the metallib.** Total compile cost on a warm launch is ~53ms,
+of which the metallib would remove `msl_tolib`'s ~39ms. Its real prize is the
+cold-cache path -- roughly 1.9s of `msl_translate` after any shader change --
+which is a *developer* cost, not a player one. Scope it that way.
+
 **`vid_vsync 1` does NOT fix it -- hypothesis refuted 2026-08-17.** The
 un-synced presentation path was the leading theory: no display sync, no display
 link, `cl_capfps` sleeping on its own schedule, therefore no periodic pacing and

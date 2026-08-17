@@ -629,6 +629,7 @@ void MtDebugManager::TraceFrameInterval(float frameTimeMs) {
             fb->GetDrawablesOutstanding(), fb->GetDrawablesPeak(),
             presented ? (double)latTotal / (double)presented / 1000.0 : 0.0,
             (double)fb->GetPresentLatencyUsMax() / 1000.0);
+
   }
 
   mTraceSamples.clear();

@@ -579,7 +579,18 @@ MTL::RenderPipelineState *MtPipelineStateManager::CreateRenderPipelineState(
       desc->setBinaryArchives(archives);
   }
 
-  // Create the pipeline state
+  // Create the pipeline state.
+  //
+  // NOT probed with PipelineOptionFailOnBinaryArchiveMiss. That was tried on
+  // 2026-08-17 to measure archive hit rate and it does not work on this driver:
+  // a run started with NO archive file on disk still reported hits=2 misses=0
+  // on its first two pipelines, which an empty archive cannot satisfy. The
+  // option is accepted and ignored, so it reports a perfect hit rate always --
+  // a worse instrument than none, because it reads as confirmation.
+  //
+  // Archive effectiveness is measured by COST instead, which is unambiguous:
+  // pso_compile totals 29.80ms cold versus 8.80ms warm over the same 13
+  // pipelines (max 5.64ms -> 1.01ms). The archive works.
   NS::Error *error = nullptr;
   auto state = device->newRenderPipelineState(desc, &error);
 
