@@ -306,7 +306,10 @@ void MtDebugManager::RecordStall(const char *type, float durationMs,
   if (durationMs < (float)threshold)
     return;
 
-  fprintf(stderr, "mt_stalltrace  %-14s %8.2fms  frame=%d %s  %s\n",
+  // One line shape for every Metal-side stall event, whatever records it:
+  //   mt_stall  <type>  <ms>  <context>  <detail>
+  // Grep "mt_stall " to get all of them; grep a type to get one kind.
+  fprintf(stderr, "mt_stall  %-14s %8.2fms  frame=%d %s  %s\n",
           type ? type : "?", durationMs, mFrameIndex,
           mInFrame ? "[in-frame]" : "[between]", detail ? detail : "");
 }
@@ -546,8 +549,9 @@ void MtDebugManager::TraceFrameInterval(float frameTimeMs) {
     mTraceWindowStart = now;
     mTraceSamples.clear();
     fprintf(stderr,
-            "mt_frametrace: reporting every %ds. p99 and the >100ms count are "
-            "the hitching signal; avg is not.\n",
+            "mt_frametrace: RENDERER BRACKET only (BeginFrame..EndFrame), every "
+            "%ds. This is NOT the frame interval -- use vid_frametrace for that; "
+            "playsim, level load and anything between frames are excluded here.\n",
             period);
   }
 
@@ -598,22 +602,29 @@ void MtDebugManager::TraceFrameInterval(float frameTimeMs) {
   if (fb) {
     const uint64_t waits = fb->GetSemWaits();
     const uint64_t signals = fb->GetSemSignals();
-    fprintf(stderr,
-            "mt_seminflight  waits=%llu signals=%llu drift=%+lld\n",
-            (unsigned long long)waits, (unsigned long long)signals,
-            (long long)signals - (long long)waits);
-
-    // Drawable lifecycle. "lost" is the number acquired that never reported
-    // presented: if that climbs, drawables are leaking and nextDrawable() will
-    // eventually starve permanently. If it stays at 0-1 (one in flight) while
-    // present latency spikes, the compositor is retiring them late instead.
+    // Frame-pacing resources, one line. These are the things that decide
+    // whether the render thread gets to start a frame:
+    //
+    //   drift      semaphore waits minus signals. Should sit at -1 (one frame
+    //              in flight). Sustained positive drift means backpressure has
+    //              decayed and the CPU can outrun the GPU.
+    //   lost       drawables acquired that never reported presented. Bounded
+    //              small is normal (frames in flight); growth is a leak.
+    //   peak       high-water outstanding, against the configured pool size.
+    //              Blocking while peak < pool means availability is NOT the
+    //              constraint -- measured 2026-08-17, and that is what moved
+    //              the root cause below the backend.
+    //   latency    presentDrawable() to presented-handler.
     const uint64_t acquired = fb->GetDrawablesAcquired();
     const uint64_t presented = fb->GetDrawablesPresented();
     const uint64_t latTotal = fb->GetPresentLatencyUsTotal();
     fprintf(stderr,
-            "mt_drawables  acquired=%llu presented=%llu lost=%lld  "
-            "outstanding=%d peak=%d  present_latency avg=%.2fms max=%.2fms\n",
-            (unsigned long long)acquired, (unsigned long long)presented,
+            "mt_pacing  sem(waits=%llu signals=%llu drift=%+lld)  "
+            "drawables(acquired=%llu lost=%lld outstanding=%d peak=%d)  "
+            "present(avg=%.2fms max=%.2fms)\n",
+            (unsigned long long)waits, (unsigned long long)signals,
+            (long long)signals - (long long)waits,
+            (unsigned long long)acquired,
             (long long)acquired - (long long)presented,
             fb->GetDrawablesOutstanding(), fb->GetDrawablesPeak(),
             presented ? (double)latTotal / (double)presented / 1000.0 : 0.0,

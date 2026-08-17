@@ -468,8 +468,9 @@ void MetalRenderDevice::PresentFrame(void *drawablePtr) {
         const int thresholdMs = mt_stalltrace;
         if (thresholdMs > 0 && latencyUs >= (uint64_t)thresholdMs * 1000ull) {
           fprintf(stderr,
-                  "mt_present  latency=%8.2fms  outstanding=%d\n",
-                  (double)latencyUs / 1000.0, self->GetDrawablesOutstanding());
+                  "mt_stall  %-14s %8.2fms  [presented-handler]  outstanding=%d\n",
+                  "present", (double)latencyUs / 1000.0,
+                  self->GetDrawablesOutstanding());
         }
       }));
 
@@ -643,7 +644,9 @@ void MetalRenderDevice::BeginFrame() {
           // whole explanation, and this should be silent during steady play.
           if (mt_stalltrace > 0) {
             fprintf(stderr,
-                    "mt_drawablesize  %.0fx%.0f -> %.0fx%.0f  (pool realloc)\n",
+                    "mt_stall  %-14s %8.2fms  [resize]  %.0fx%.0f -> %.0fx%.0f "
+                    "(pool realloc)\n",
+                    "drawablesize", 0.0,
                     (double)metalLayer->drawableSize().width,
                     (double)metalLayer->drawableSize().height,
                     (double)targetDrawableW, (double)targetDrawableH);
@@ -685,8 +688,9 @@ void MetalRenderDevice::BeginFrame() {
             std::chrono::steady_clock::now() - acquireStart).count();
         if (waitMs >= (double)mt_stalltrace) {
           fprintf(stderr,
-                  "mt_nextdrawable  wait=%8.2fms  result=%s  outstanding=%d\n",
-                  waitMs, mCurrentDrawable ? "drawable" : "NIL-TIMEOUT",
+                  "mt_stall  %-14s %8.2fms  [acquire]  result=%s outstanding=%d\n",
+                  "nextdrawable", waitMs,
+                  mCurrentDrawable ? "drawable" : "NIL-TIMEOUT",
                   GetDrawablesOutstanding());
         }
       }

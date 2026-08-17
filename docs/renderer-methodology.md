@@ -42,7 +42,11 @@ from a reference", which is why the reference matters more than the tool.
 | `Frame ... avg=` (`mt_metrics`) | did the frame get slower, overall | which pass; anything that only happens in motion |
 | `FrameGPU` | **nothing you should quote** | it reports spans that cannot coexist with the measured frame interval (~220ms against 7ms frames, 2026-08-07). Cause unresolved; the obvious fix is a no-op |
 | `ComputeCPU` / `PPCPU` labels | **which code path ran** — their best use | cost. They are encode time, not GPU time |
-| `mt_frametrace <seconds>` | hitching, during actual play: p50/p95/p99, >33ms and >100ms counts | anything you do not walk through; Metal only |
+| `vid_frametrace <seconds>` | **hitching** during actual play: true frame interval (Update to Update), p50/p95/p99, >33ms and >100ms counts. Backend-agnostic | *where* the time went; and its p50 sits on the refresh interval, since the present wait is included, so p50 is not a cost figure |
+| `mt_frametrace <seconds>` | **renderer cost** in isolation: the BeginFrame..EndFrame bracket only | everything between frames — playsim, level load, the start screen. It is NOT a frame interval, and read as one it under-reports badly (measured 2026-08-17: max 109.76 where the true interval was 1121.57) |
+| `vid_stalltrace <ms>` | **where** a slow loop iteration went, by named phase (playsim, display, renderview, levelload, precache, savegame, nextdrawable, …) | anything inside a nested Update() loop — the wipe and start screen fold into the enclosing iteration by design |
+| `mt_stalltrace <ms>` | **which Metal-side event** stalled: shader translation, library compile, PSO creation, GPU waits, drawable acquire/present. One `mt_stall` line per event plus per-type totals | non-Metal causes; use `vid_stalltrace` first to find out whether the renderer was even involved |
+| `mt_pacing` (auto, with `mt_frametrace`) | frame-pacing resources: semaphore drift, drawables acquired/lost/outstanding/peak, present latency | why the layer is blocking when the pool is not exhausted — that constraint lives below the backend |
 | pixel diff (`pngdiff`, `localize`, `cluster`) | did the image change, where, in which direction | whether the change is *correct*; and `localize.py` cannot see the status bar — its region is the central `(40,51)-(760,457)` |
 | `crossbackend.py` | does Metal disagree with the GL reference, and in what *shape* | a bug both backends share; it finds divergence, not correctness |
 | `run.py` + relations | did a pass stop running at all | whether the baseline it compares to was ever right |
@@ -55,6 +59,19 @@ Two entries deserve emphasis because they were learned the hard way:
 counter sampling: no  <- per-pass GPU timing gate"*. `CLAUDE.md` used to claim an
 Xcode capture's per-encoder timing was the trustworthy fallback; that was never
 verified and is wrong. Apple Silicon has the counters and will lift this.
+
+**Two instruments have nearly the same name and measure different things.**
+`vid_frametrace` is the true frame interval; `mt_frametrace` is the renderer
+bracket only. Their reports look almost identical. Read one for the other and
+you will conclude the engine is fine while it stalls for a second — which
+happened on 2026-08-17, and cost a session. Both now print a header saying which
+they are; trust the header, not the name.
+
+**Reach for them in this order.** `vid_frametrace` says *whether* there is
+hitching. `vid_stalltrace` says *which phase* of the loop it was. Only if that
+phase is renderer-side do `mt_stalltrace` and `mt_pacing` earn their run. Going
+straight to the Metal instruments answers "what did the renderer do" for a
+problem that, four times out of five this session, was not the renderer.
 
 **The benchmark harness cannot see hitching at all.** Measured 2026-08-16: a
 configuration that froze constantly in gameplay reported avg 5.5ms, max 90.6ms,

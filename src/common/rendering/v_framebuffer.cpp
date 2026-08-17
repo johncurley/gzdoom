@@ -393,13 +393,17 @@ void DFrameBuffer::TraceFrameInterval()
 		if (period > 0)
 		{
 			fprintf(stderr,
-				"vid_frametrace: reporting every %ds. p99 and the >100ms count are "
-				"the hitching signal; avg is not.\n", period);
+				"vid_frametrace: TRUE frame interval (Update to Update), every %ds. "
+				"p99 and the >100ms count are the hitching signal; avg is not, and "
+				"p50 sits on the refresh interval because the present wait is "
+				"included.\n", period);
 		}
 		if (stallThreshold > 0)
 		{
 			fprintf(stderr,
-				"vid_stalltrace: breaking down any interval over %dms by loop phase.\n",
+				"vid_stalltrace: loop-phase breakdown of any iteration over %dms. "
+				"Reported at the D_DoomLoop boundary, so the wipe and start screen "
+				"fold into the enclosing iteration rather than reporting separately.\n",
 				stallThreshold);
 		}
 		return;
