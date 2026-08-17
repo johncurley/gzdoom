@@ -1,0 +1,245 @@
+DEBUG: main entered
+vid_frametrace: reporting every 5s. p99 and the >100ms count are the hitching signal; avg is not.
+vid_stalltrace: breaking down any interval over 100ms by loop phase.
+mt_stalltrace  msl_tolib        148.47ms  frame=0 [between]  Default_vert_vert
+mt_stalltrace  msl_tolib        178.70ms  frame=0 [between]  Default_frag_frag
+mt_stalltrace  msl_tolib          9.83ms  frame=0 [in-frame]  shaders/pp/screenquad.vp_vert
+mt_stalltrace  msl_tolib         28.65ms  frame=0 [in-frame]  shaders/pp/present.fp_frag
+mt_frametrace: reporting every 5s. p99 and the >100ms count are the hitching signal; avg is not.
+mt_stalltrace  msl_tolib        168.74ms  frame=5 [between]  Warp 1_frag_frag
+mt_stalltrace  msl_tolib        171.20ms  frame=5 [between]  Warp 2_frag_frag
+mt_stalltrace  msl_tolib        209.64ms  frame=5 [between]  Specular_frag_frag
+mt_stalltrace  msl_tolib        188.25ms  frame=5 [between]  PBR_frag_frag
+mt_stalltrace  msl_tolib        101.65ms  frame=5 [between]  Paletted_frag_frag
+mt_stalltrace  msl_tolib        138.69ms  frame=5 [between]  No Texture_frag_frag
+mt_stalltrace  msl_tolib        173.19ms  frame=5 [between]  Basic Fuzz_frag_frag
+mt_stalltrace  msl_tolib        166.99ms  frame=5 [between]  Smooth Fuzz_frag_frag
+mt_stalltrace  msl_tolib        168.78ms  frame=5 [between]  Swirly Fuzz_frag_frag
+mt_stalltrace  msl_tolib        168.16ms  frame=5 [between]  Translucent Fuzz_frag_frag
+mt_stalltrace  msl_tolib        168.85ms  frame=5 [between]  Jagged Fuzz_frag_frag
+mt_stalltrace  msl_tolib        170.50ms  frame=5 [between]  Noise Fuzz_frag_frag
+mt_stalltrace  msl_tolib        172.15ms  frame=5 [between]  Smooth Noise Fuzz_frag_frag
+mt_stalltrace  msl_tolib        188.24ms  frame=5 [between]  Software Fuzz_frag_frag
+mt_stalltrace  msl_tolib        166.77ms  frame=5 [between]  Default_frag_frag
+mt_stalltrace  msl_tolib        170.86ms  frame=5 [between]  Warp 1_frag_frag
+mt_stalltrace  msl_tolib        169.20ms  frame=5 [between]  Warp 2_frag_frag
+mt_stalltrace  msl_tolib        205.94ms  frame=5 [between]  Specular_frag_frag
+mt_stalltrace  msl_tolib        189.55ms  frame=5 [between]  PBR_frag_frag
+mt_stalltrace  msl_tolib        101.76ms  frame=5 [between]  Paletted_frag_frag
+mt_stalltrace  msl_tolib        138.54ms  frame=5 [between]  No Texture_frag_frag
+mt_stalltrace  msl_tolib        167.52ms  frame=5 [between]  Basic Fuzz_frag_frag
+mt_stalltrace  msl_tolib        167.44ms  frame=5 [between]  Smooth Fuzz_frag_frag
+mt_stalltrace  msl_tolib        168.18ms  frame=5 [between]  Swirly Fuzz_frag_frag
+mt_stalltrace  msl_tolib        166.62ms  frame=5 [between]  Translucent Fuzz_frag_frag
+mt_stalltrace  msl_tolib        182.85ms  frame=5 [between]  Jagged Fuzz_frag_frag
+mt_stalltrace  msl_tolib        170.24ms  frame=5 [between]  Noise Fuzz_frag_frag
+mt_stalltrace  msl_tolib        168.02ms  frame=5 [between]  Smooth Noise Fuzz_frag_frag
+mt_stalltrace  msl_tolib        185.25ms  frame=5 [between]  Software Fuzz_frag_frag
+mt_stalltrace  msl_tolib         38.68ms  frame=5 [between]  fogboundary_frag_frag
+mt_stalltrace  msl_tolib         97.42ms  frame=5 [between]  spheremap_vert_vert
+mt_stalltrace  msl_tolib         50.70ms  frame=5 [between]  burn_vert_vert
+mt_stalltrace  msl_tolib         44.01ms  frame=5 [between]  burn_frag_frag
+mt_stalltrace  msl_tolib         33.65ms  frame=5 [between]  stencil_frag_frag
+mt_stalltrace  msl_tolib        186.04ms  frame=5 [between]  dithertrans_frag_frag
+mt_stalltrace  msl_tolib        175.09ms  frame=5 [between]  Default_frag_frag
+mt_stalltrace  msl_tolib        181.60ms  frame=5 [between]  Warp 1_frag_frag
+mt_stalltrace  msl_tolib        189.05ms  frame=5 [between]  Warp 2_frag_frag
+mt_stalltrace  msl_tolib        213.28ms  frame=5 [between]  Specular_frag_frag
+mt_stalltrace  msl_tolib        193.43ms  frame=5 [between]  PBR_frag_frag
+mt_stalltrace  msl_tolib        104.51ms  frame=5 [between]  Paletted_frag_frag
+mt_stalltrace  msl_tolib        143.67ms  frame=5 [between]  No Texture_frag_frag
+mt_stalltrace  msl_tolib        172.22ms  frame=5 [between]  Basic Fuzz_frag_frag
+mt_stalltrace  msl_tolib        174.14ms  frame=5 [between]  Smooth Fuzz_frag_frag
+mt_stalltrace  msl_tolib        173.24ms  frame=5 [between]  Swirly Fuzz_frag_frag
+mt_stalltrace  msl_tolib        173.91ms  frame=5 [between]  Translucent Fuzz_frag_frag
+mt_stalltrace  msl_tolib        173.11ms  frame=5 [between]  Jagged Fuzz_frag_frag
+mt_stalltrace  msl_tolib        175.56ms  frame=5 [between]  Noise Fuzz_frag_frag
+mt_stalltrace  msl_tolib        173.09ms  frame=5 [between]  Smooth Noise Fuzz_frag_frag
+mt_stalltrace  msl_tolib        190.99ms  frame=5 [between]  Software Fuzz_frag_frag
+mt_stalltrace  msl_tolib        170.78ms  frame=5 [between]  Default_frag_frag
+mt_stalltrace  msl_tolib        172.94ms  frame=5 [between]  Warp 1_frag_frag
+mt_stalltrace  msl_tolib        171.00ms  frame=5 [between]  Warp 2_frag_frag
+mt_stalltrace  msl_tolib        214.60ms  frame=5 [between]  Specular_frag_frag
+mt_stalltrace  msl_tolib        196.98ms  frame=5 [between]  PBR_frag_frag
+mt_stalltrace  msl_tolib        103.55ms  frame=5 [between]  Paletted_frag_frag
+mt_stalltrace  msl_tolib        142.34ms  frame=5 [between]  No Texture_frag_frag
+mt_stalltrace  msl_tolib        174.56ms  frame=5 [between]  Basic Fuzz_frag_frag
+mt_stalltrace  msl_tolib        172.10ms  frame=5 [between]  Smooth Fuzz_frag_frag
+mt_stalltrace  msl_tolib        172.97ms  frame=5 [between]  Swirly Fuzz_frag_frag
+mt_stalltrace  msl_tolib        171.48ms  frame=5 [between]  Translucent Fuzz_frag_frag
+mt_stalltrace  msl_tolib        173.94ms  frame=5 [between]  Jagged Fuzz_frag_frag
+mt_stalltrace  msl_tolib        172.98ms  frame=5 [between]  Noise Fuzz_frag_frag
+mt_stalltrace  msl_tolib        171.86ms  frame=5 [between]  Smooth Noise Fuzz_frag_frag
+mt_stalltrace  msl_tolib        189.29ms  frame=5 [between]  Software Fuzz_frag_frag
+mt_stalltrace  msl_tolib         37.60ms  frame=5 [between]  fogboundary_frag_frag
+mt_stalltrace  msl_tolib         33.84ms  frame=5 [between]  stencil_frag_frag
+mt_stalltrace  msl_tolib        182.76ms  frame=5 [between]  dithertrans_frag_frag
+vid_frametrace  n=6  avg=2234.63ms (  0.4 fps)  p50=606.55  p95=11532.80  p99=11532.80  max=11532.80  >33ms=5 (83.3%)  >100ms=4
+mt_frametrace  n=6  avg= 43.38ms ( 23.1 fps)  p50= 54.37  p95=116.84  p99=116.84  max= 116.84  >33ms=3 (50.0%)  >100ms=1
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       1.17      0.25      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib          92   11124.54    214.60      2      38.48  Specular_frag_frag (frame 5)
+  pp_pso              1       0.45      0.45      1       0.45  postprocess (frame 0)
+  pso_compile         2       4.42      2.92      2       4.42  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
+mt_seminflight  waits=6 signals=5 drift=-1
+vid_stalltrace  interval=143.40ms  active=1
+    playsim           138.78ms  x1
+    display             4.51ms  x1  (wraps others)
+    events              0.10ms  x1
+    mt_endframe         0.06ms  x1
+    beginframe          0.04ms  x1  (wraps others)
+    presentframe        0.02ms  x1
+    cmd_endframe        0.02ms  x1
+    nextdrawable        0.02ms  x1
+    pool_release        0.01ms  x1
+    (unaccounted)       4.38ms
+vid_stalltrace  interval=1021.57ms  active=1
+    display          1003.08ms  x1  (wraps others)
+    beginframe       1002.37ms  x1  (wraps others)
+    nextdrawable     1002.31ms  x1
+    playsim            18.42ms  x1
+    events              0.05ms  x1
+    presentframe        0.03ms  x1
+    cmd_endframe        0.01ms  x1
+    pool_release        0.01ms  x1
+    (unaccounted)       0.72ms
+vid_stalltrace  interval=1021.23ms  active=1
+    display          1003.09ms  x1  (wraps others)
+    beginframe       1002.31ms  x1  (wraps others)
+    nextdrawable     1002.23ms  x1
+    playsim            17.83ms  x1
+    events              0.03ms  x1
+    presentframe        0.03ms  x1
+    pool_release        0.01ms  x1
+    cmd_endframe        0.01ms  x1
+    (unaccounted)       1.07ms
+mt_stalltrace  msl_tolib          9.35ms  frame=9 [in-frame]  shaders/pp/screenquad.vp_vert
+mt_stalltrace  msl_tolib         19.92ms  frame=9 [in-frame]  shaders/pp/bloomcombine.fp_frag
+mt_stalltrace  msl_tolib         21.91ms  frame=9 [in-frame]  shaders/pp/blur.fp_frag
+mt_stalltrace  msl_tolib         22.71ms  frame=9 [in-frame]  shaders/pp/blur.fp_frag
+vid_stalltrace  interval=104.82ms  active=1
+    display            82.69ms  x1  (wraps others)
+    playsim            21.82ms  x1
+    beginframe          0.14ms  x1  (wraps others)
+    nextdrawable        0.03ms  x1
+    events              0.03ms  x1
+    presentframe        0.02ms  x1
+    cmd_endframe        0.02ms  x1
+    (unaccounted)      82.88ms
+mt_stalltrace  msl_tolib         21.91ms  frame=27 [in-frame]  shaders/pp/lineardepth.fp_frag
+mt_stalltrace  msl_tolib         39.07ms  frame=27 [in-frame]  shaders/pp/ssao.fp_frag
+mt_stalltrace  msl_tolib         24.97ms  frame=27 [in-frame]  shaders/pp/depthblur.fp_frag
+mt_stalltrace  msl_tolib         27.67ms  frame=27 [in-frame]  shaders/pp/depthblur.fp_frag
+mt_stalltrace  msl_tolib         25.40ms  frame=27 [in-frame]  shaders/pp/ssaocombine.fp_frag
+vid_stalltrace  interval=1585.38ms  active=1
+    renderview        162.32ms  x1
+    playsim            82.99ms  x1
+    levelload          53.35ms  x1
+    precache            8.62ms  x1
+    events              2.54ms  x1
+    presentframe        1.34ms  x43
+    wipestart           1.31ms  x1
+    nextdrawable        1.09ms  x43
+    cmd_endframe        0.59ms  x43
+    pool_release        0.58ms  x43
+    beginframe          0.13ms  x1  (wraps others)
+    fpslimit            0.02ms  x43
+    drawable_release      0.01ms  x43
+    (unaccounted)    1270.61ms
+vid_frametrace  n=94  avg= 53.30ms ( 18.8 fps)  p50= 29.93  p95= 31.37  p99=1021.23  max=1021.56  >33ms=5 (5.3%)  >100ms=4
+mt_frametrace  n=94  avg=  4.60ms (217.3 fps)  p50=  1.59  p95=  2.53  p99= 82.54  max= 206.32  >33ms=2 (2.1%)  >100ms=1
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       1.17      0.25      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101   11337.45    214.60     11     251.40  Specular_frag_frag (frame 5)
+  pp_pso             10       2.14      0.45     10       2.14  postprocess (frame 0)
+  pso_compile         7       6.79      2.92      7       6.79  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
+mt_seminflight  waits=100 signals=99 drift=-1
+vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.58  p95= 29.74  p99= 31.38  max=  36.34  >33ms=2 (1.1%)  >100ms=0
+mt_frametrace  n=175  avg=  2.08ms (481.7 fps)  p50=  1.85  p95=  2.96  p99=  4.51  max=   8.08  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       1.17      0.25      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101   11337.45    214.60     11     251.40  Specular_frag_frag (frame 5)
+  pp_pso             10       2.14      0.45     10       2.14  postprocess (frame 0)
+  pso_compile         8       7.13      2.92      8       7.13  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
+mt_seminflight  waits=275 signals=274 drift=-1
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.57  p95= 29.87  p99= 30.72  max=  33.79  >33ms=2 (1.1%)  >100ms=0
+mt_frametrace  n=176  avg=  1.91ms (523.4 fps)  p50=  1.81  p95=  2.51  p99=  3.18  max=   6.05  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       1.17      0.25      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101   11337.45    214.60     11     251.40  Specular_frag_frag (frame 5)
+  pp_pso             10       2.14      0.45     10       2.14  postprocess (frame 0)
+  pso_compile         8       7.13      2.92      8       7.13  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
+mt_seminflight  waits=451 signals=450 drift=-1
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.57  p95= 29.79  p99= 30.24  max=  30.94  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=176  avg=  1.83ms (547.0 fps)  p50=  1.81  p95=  2.29  p99=  2.64  max=   2.91  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       1.17      0.25      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101   11337.45    214.60     11     251.40  Specular_frag_frag (frame 5)
+  pp_pso             10       2.14      0.45     10       2.14  postprocess (frame 0)
+  pso_compile         8       7.13      2.92      8       7.13  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
+mt_seminflight  waits=627 signals=626 drift=-1
+vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.60  p95= 29.51  p99= 30.11  max=  30.41  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=175  avg=  1.74ms (574.0 fps)  p50=  1.67  p95=  2.31  p99=  2.50  max=   2.51  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       1.17      0.25      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101   11337.45    214.60     11     251.40  Specular_frag_frag (frame 5)
+  pp_pso             10       2.14      0.45     10       2.14  postprocess (frame 0)
+  pso_compile         8       7.13      2.92      8       7.13  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
+mt_seminflight  waits=802 signals=801 drift=-1
+vid_frametrace  n=176  avg= 28.58ms ( 35.0 fps)  p50= 28.58  p95= 29.52  p99= 30.10  max=  33.60  >33ms=1 (0.6%)  >100ms=0
+mt_frametrace  n=176  avg=  1.74ms (573.7 fps)  p50=  1.67  p95=  2.24  p99=  2.57  max=   4.48  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       1.17      0.25      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101   11337.45    214.60     11     251.40  Specular_frag_frag (frame 5)
+  pp_pso             10       2.14      0.45     10       2.14  postprocess (frame 0)
+  pso_compile         8       7.13      2.92      8       7.13  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
+mt_seminflight  waits=978 signals=977 drift=-1
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.56  p95= 29.91  p99= 31.07  max=  39.45  >33ms=1 (0.6%)  >100ms=0
+mt_frametrace  n=176  avg=  1.98ms (505.1 fps)  p50=  1.77  p95=  2.82  p99=  4.37  max=  12.81  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       1.17      0.25      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101   11337.45    214.60     11     251.40  Specular_frag_frag (frame 5)
+  pp_pso             10       2.14      0.45     10       2.14  postprocess (frame 0)
+  pso_compile        12      12.88      2.92     12      12.88  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
+mt_seminflight  waits=1154 signals=1153 drift=-1
+vid_frametrace  n=175  avg= 28.58ms ( 35.0 fps)  p50= 28.56  p95= 29.80  p99= 30.50  max=  32.23  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=175  avg=  1.65ms (607.6 fps)  p50=  1.58  p95=  2.23  p99=  2.76  max=   3.73  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       1.17      0.25      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101   11337.45    214.60     11     251.40  Specular_frag_frag (frame 5)
+  pp_pso             10       2.14      0.45     10       2.14  postprocess (frame 0)
+  pso_compile        13      13.30      2.92     13      13.30  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
+mt_seminflight  waits=1329 signals=1328 drift=-1
+vid_stalltrace  interval=1291.83ms  active=1
+    playsim            43.89ms  x1
+    levelload          15.81ms  x1
+    precache            3.81ms  x1
+    events              2.22ms  x1
+    wipestart           1.34ms  x1
+    presentframe        1.24ms  x40
+    nextdrawable        1.01ms  x40
+    renderview          0.76ms  x1
+    cmd_endframe        0.66ms  x40
+    pool_release        0.56ms  x40
+    beginframe          0.16ms  x1  (wraps others)
+    fpslimit            0.02ms  x40
+    drawable_release      0.01ms  x40
+    (unaccounted)    1220.49ms
+vid_frametrace  n=171  avg= 29.25ms ( 34.2 fps)  p50= 28.64  p95= 31.15  p99= 33.16  max=  92.17  >33ms=2 (1.2%)  >100ms=0
+mt_frametrace  n=171  avg=  1.95ms (513.5 fps)  p50=  1.63  p95=  2.73  p99=  3.61  max=  44.54  >33ms=1 (0.6%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       1.17      0.25      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101   11337.45    214.60     11     251.40  Specular_frag_frag (frame 5)
+  pp_pso             10       2.14      0.45     10       2.14  postprocess (frame 0)
+  pso_compile        13      13.30      2.92     13      13.30  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
+mt_seminflight  waits=1500 signals=1499 drift=-1

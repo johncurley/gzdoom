@@ -1090,6 +1090,52 @@ So the ~900-1030ms class survives with the window focused and every phase near
 zero. Focus loss is excluded; the ~268ms family is confirmed as throttling and
 should be filtered out of any reading by its `active=0` stamp.
 
+**CONFIRMED 2026-08-17: the mid-play freeze is `nextDrawable()` hitting its
+1-second timeout.** Fully-instrumented play trace, capture layer OFF, focused
+window:
+
+```
+interval=1021.57ms  active=1
+    display        1003.08ms  x1  (wraps others)
+    beginframe     1002.37ms  x1  (wraps others)
+    nextdrawable   1002.31ms  x1
+    playsim          18.42ms  x1
+```
+
+Twice in one session, at 1002.31ms and 1002.23ms -- `CA::MetalLayer::nextDrawable()`
+(`mt_renderdevice.cpp:594`) blocking for exactly the timeout it gives up after.
+Both occurred **before the first `levelload` of the session**, so no wipe and no
+start screen: ordinary gameplay, `playsim` 18ms, everything else near zero.
+
+**What is excluded, all by measurement rather than reading:**
+
+- *Shader compilation.* Whole-session cost 45ms: `pso_compile` 13 for 4.81ms
+  (max 1.42), `msl_tolib` 101 for 35.35ms, `compute_pso` 1.47ms.
+- *Inflight-semaphore leak.* `mt_seminflight` drift held at -1 across all 1500
+  frames. Backpressure is intact and the pool starves anyway.
+- *Focus loss / throttling.* `active=1` on both stalls.
+- *The capture layer.* Reproduced with `MetalCaptureEnabled=false`.
+- *The post-`Update()` tail.* `pool_release`, `drawable_release`,
+  `presentframe`, `cmd_endframe` all 0.01-0.03ms on the stalling frames.
+
+**A retraction that was itself wrong.** This attribution was made, retracted, and
+is now restored. The retraction rested on traces showing `nextdrawable` at 0.01ms
+during 1029ms intervals -- but those were start-screen intervals read through the
+mis-aligned report (see the boundary fix above). Aligned reporting restores the
+original conclusion. Lesson worth keeping: an instrument defect can manufacture a
+convincing refutation, not just a convincing false positive.
+
+**Still open: WHY the pool starves.** The GPU is finishing frames in ~1.1ms
+(`mt_frametrace` p50), three drawables are configured
+(`maximumDrawableCount`, `mt_renderdevice.cpp:230`), backpressure is correct, and
+`presentDrawable()` is plain and correctly guarded by `if (mCurrentDrawable)`.
+Yet no drawable is free for a full second. Next candidates, none tested:
+`displaySyncEnabled` on the layer versus `vid_vsync=false`; the CVDisplayLink
+delivering or stalling (`WaitForDisplayTick` has its own untriggered 1s timeout);
+and a drawable retained past its release by something holding its texture. An
+`addPresentedHandler` measuring present-to-presented latency would separate
+"never presented" from "presented late".
+
 **The multi-second level-transition stalls are the screen wipe, by design.**
 Long play trace, capture-off, 2026-08-17. Two intervals of 1448.32ms and
 1445.30ms, both `active=1`, both carrying **x43** on every per-Update phase
