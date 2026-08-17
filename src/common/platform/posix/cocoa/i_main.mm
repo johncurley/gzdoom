@@ -403,6 +403,36 @@ void I_ResumeCocoaEventPump() { s_cocoaEventPumpSuspended = false; }
   if (s_cocoaEventPumpSuspended)
     return;
 
+  // Keep AppActive honest by polling, because the notifications that are
+  // supposed to maintain it never arrive.
+  //
+  // applicationDidBecomeActive:/applicationWillResignActive: below set the
+  // AppActive global, and measured 2026-08-17 neither fires: DoMain runs inside
+  // the dispatch_async main-queue block in main() and never returns, so those
+  // delegate notifications are never delivered. AppActive therefore sat at true
+  // for the entire session, which meant:
+  //
+  //   - D_Display's "if (!AppActive ...) return;" early-out never ran, so the
+  //     engine rendered at full rate while in the background
+  //   - vid_activeinbackground was inert -- the CVAR existed and did nothing
+  //   - vid_lowerinbackground (d_net.cpp) and the haptics active check
+  //     (m_haptics.cpp) were reading a constant
+  //
+  // [NSApp isActive] is queried on the spot and does not depend on notification
+  // delivery. Polling it once per pump fixes every reader without touching any
+  // of them. The delegate methods are left in place: they are correct code and
+  // would resume working if the NSApp ownership ever changes.
+  {
+    const bool activeNow = [NSApp isActive] ? true : false;
+    if (activeNow != AppActive) {
+      AppActive = activeNow;
+      // Sound follows focus, which is what the (never-delivered) delegate
+      // methods were trying to do.
+      if (GSnd)
+        S_SetSoundPaused(activeNow ? 1 : 0);
+    }
+  }
+
   @autoreleasepool {
 
     while (true) {

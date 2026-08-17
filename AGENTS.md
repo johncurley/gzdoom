@@ -1173,6 +1173,46 @@ backend. If a 1s `nextdrawable` appears with NO matching present outlier, then
 `nextDrawable()` is blocking on something other than drawable availability, and
 that is a different investigation.
 
+**`AppActive` fixed by polling, 2026-08-17.** The notifications that maintained
+it never arrive (see below), so `cocoa/i_main.mm`'s `processEvents:` now sets
+`AppActive = [NSApp isActive]` once per pump and drives `S_SetSoundPaused` off
+the transition. One place, and every reader is correct without being touched:
+`D_Display`'s early-out (`d_main.cpp:926`), `vid_lowerinbackground`
+(`d_net.cpp:2197`), and the haptics active check (`m_haptics.cpp:454`) were all
+reading a constant.
+
+Verified with a positive control -- activating Finder mid-run. `active=0` now
+appears in `vid_stalltrace`, and the backgrounded period produced a single
+**14076ms** interval instead of continuing to render: `D_Display` returns
+immediately, so no frames are drawn at all. Previously the engine kept rendering
+in the background at the throttled ~268ms cadence. On a laptop that is battery
+burned for nothing, and `vid_activeinbackground` finally does what it says.
+
+The delegate methods are deliberately left in place. They are correct code and
+would resume working if the `NSApp`/`DoMain` ownership ever changes; the polling
+is the workaround, not a replacement.
+
+**`MetalCaptureEnabled` set false in the shipped plist, 2026-08-17.** With it
+true the Metal capture layer was active on every run of every build --
+instrumenting command buffers and drawables, and a standing contaminant in every
+measurement this fork has recorded. Its in-frame cost measured 0.00ms
+(`capture_end`), so this is hygiene rather than a performance fix, but a
+contaminant that cheap to remove should not ship switched on.
+
+Captures still work: verified both directions in one sitting -- a default launch
+emits no `Metal GPU Frame Capture Enabled` line, and
+`METAL_CAPTURE_ENABLED=1 ./build/gzdoom.app/Contents/MacOS/gzdoom` emits it.
+Checked rather than reasoned about, because the previous version of that plist
+comment asserted the key applied only to bundle launches and was wrong.
+
+**One-off matrix FAIL was nondeterminism, not a regression.** The run
+immediately after these two changes reported `tonemap_uncharted` changed; two
+consecutive re-runs both PASS with the same signature (`ad6046f6`, mean_lum
+13.255) matching the baseline. This is the wandering-victim flakiness recorded
+above for full-suite runs. A single config changing while the rest hold is the
+signature to re-run rather than investigate -- a *global* shift with relations
+intact is the one that means something.
+
 **Ashes validates the shipped MSL set -- and cannot validate the mod-shader
 path.** Run 2026-08-17, `Ashes2063Enriched2_23.pk3` on DOOM2, cold `.msl` cache:
 `msl_translate` **absent**, `msl_tolib` exactly **92** -- the same stages as a
