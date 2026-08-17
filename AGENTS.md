@@ -1090,6 +1090,35 @@ So the ~900-1030ms class survives with the window focused and every phase near
 zero. Focus loss is excluded; the ~268ms family is confirmed as throttling and
 should be filtered out of any reading by its `active=0` stamp.
 
+**The phase report was mis-attributed by one interval (fixed 2026-08-17).**
+Reporting happened inside `TraceFrameInterval`, i.e. inside `Update()`. Any phase
+whose destructor runs after the `Update()` nested within it -- `display` wraps
+`D_Display`, which calls `Update()` -- closed only after that timestamp, so its
+time landed in the FOLLOWING interval's buckets. A stall inside `D_Display` read
+as 100% unaccounted in one interval and as `display` in the next, which is much
+of why the surviving ~1s stall looked causeless.
+
+`V_LoopTraceBoundary()` now does the reporting, called from the top of
+`D_DoomLoop`'s iteration where no phase is open, and measures the iteration
+itself -- so the span and the phases cover exactly the same code. Effect:
+
+```
+interval=216.28ms  active=1
+    display        213.15ms  x1  (wraps others)
+    beginframe     211.63ms  x1  (wraps others)
+    nextdrawable   211.30ms  x1
+    (unaccounted)    0.93ms
+```
+
+`(unaccounted)` went from 100% to **0.93ms**, and the chain resolves
+parent -> child -> cause.
+
+**Deliberate trade-off:** loops that drive `screen->Update()` themselves and
+never return to the boundary -- the wipe, the start screen -- no longer produce
+their own reports; their cost folds into the enclosing iteration. In the same
+run, seven frames exceeded 100ms but only one breakdown printed: the other six
+were start-screen refreshes. That is the intended filtering, not lost coverage.
+
 **The post-`Update()` tail is exonerated, and most "~1s stalls" were the
 startup screen.** Phases added inside `MetalRenderDevice::Update()` --
 `presentframe`, `cmd_endframe`, `fpslimit`, `pool_release`, `drawable_release`,

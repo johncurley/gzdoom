@@ -144,6 +144,10 @@ namespace
 	bool g_lastAppActive = true;
 	bool g_focusChangedThisInterval = false;
 
+	// Loop-iteration boundary timing, aligned with the phase buckets.
+	std::chrono::steady_clock::time_point g_lastLoopBoundary;
+	bool g_loopBoundaryStarted = false;
+
 	// Prefer the live query where one exists; fall back to the global elsewhere.
 	bool LoopTraceAppIsActive()
 	{
@@ -259,6 +263,52 @@ VLoopPhase::~VLoopPhase()
 			std::chrono::steady_clock::now() - mStart).count(), mWrapper);
 }
 
+// Called from the top of D_DoomLoop's iteration, where no VLoopPhase is open.
+// That is what makes the breakdown sum correctly: the measured span and the
+// accumulated phases now cover exactly the same code, one whole loop iteration.
+//
+// Trade-off, deliberate: loops that drive screen->Update() themselves and never
+// return here -- the wipe, the start screen -- no longer produce their own
+// reports. Their cost folds into the enclosing iteration instead. That is the
+// honest attribution, and both were already identified and labelled; reporting
+// them per-Update() is what produced the ~268ms and ~1.2s intervals that read
+// as mysterious stalls and were only ever start-screen refreshes.
+void V_LoopTraceBoundary()
+{
+	const int stallThreshold = vid_stalltrace;
+	if (stallThreshold <= 0)
+	{
+		if (g_loopBoundaryStarted)
+		{
+			ResetLoopPhases();
+			g_loopBoundaryStarted = false;
+		}
+		return;
+	}
+
+	const auto now = std::chrono::steady_clock::now();
+
+	if (!g_loopBoundaryStarted)
+	{
+		g_loopBoundaryStarted = true;
+		g_lastLoopBoundary = now;
+		ResetLoopPhases();
+		return;
+	}
+
+	const double iterationMs =
+		std::chrono::duration<double, std::milli>(now - g_lastLoopBoundary).count();
+	g_lastLoopBoundary = now;
+
+	const bool activeNow = LoopTraceAppIsActive();
+	g_focusChangedThisInterval = (activeNow != g_lastAppActive);
+	g_lastAppActive = activeNow;
+
+	if (iterationMs >= (double)stallThreshold)
+		ReportLoopPhases(iterationMs);
+	ResetLoopPhases();
+}
+
 //==========================================================================
 //
 // DFrameBuffer Constructor
@@ -358,21 +408,16 @@ void DFrameBuffer::TraceFrameInterval()
 	const float frameTimeMs = std::chrono::duration<float, std::milli>(now - mFrameTraceLastFrame).count();
 	mFrameTraceLastFrame = now;
 
-	{
-		const bool activeNow = LoopTraceAppIsActive();
-		g_focusChangedThisInterval = (activeNow != g_lastAppActive);
-		g_lastAppActive = activeNow;
-	}
 
-	// The phases accumulated since the previous Update() are exactly the ones
-	// that make up the interval just measured, so this is reported and cleared
-	// here rather than anywhere else in the loop.
-	if (stallThreshold > 0)
-	{
-		if (frameTimeMs >= (float)stallThreshold)
-			ReportLoopPhases(frameTimeMs);
-		ResetLoopPhases();
-	}
+	// Phases are NOT reported here. Reporting used to happen at this point, and
+	// it mis-attributed by a whole interval: any phase whose destructor runs
+	// after the Update() nested inside it -- "display" wraps D_Display, which
+	// calls Update() -- closes only after this timestamp, so its time landed in
+	// the FOLLOWING interval's buckets. A stall inside D_Display therefore read
+	// as 100% unaccounted here and as "display" one interval later, which is
+	// exactly the shape that made the surviving ~1s stall look causeless.
+	// V_LoopTraceBoundary() below does the reporting instead, from a point in
+	// D_DoomLoop where no phase is open.
 
 	if (period <= 0)
 		return;

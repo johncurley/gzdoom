@@ -1265,6 +1265,9 @@ void D_DoomLoop ()
 	{
 		try
 		{
+			// vid_stalltrace boundary: top of the iteration, no phase open.
+			V_LoopTraceBoundary();
+
 			GStrings.SetDefaultGender(players[consoleplayer].userinfo.GetGender()); // cannot be done when the CVAR changes because we don't know if it's for the consoleplayer.
 
 			// frame syncronous IO operations

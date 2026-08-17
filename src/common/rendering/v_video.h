@@ -396,6 +396,12 @@ private:
 	const char *mPrevious = nullptr;
 };
 
+// vid_stalltrace: call once per game-loop iteration, from a point where no
+// VLoopPhase is open. Measures the iteration and reports the phase breakdown if
+// it exceeded the threshold. See V_LoopTraceBoundary() in v_framebuffer.cpp for
+// why reporting cannot happen inside Update().
+void V_LoopTraceBoundary();
+
 // This is the screen updated by I_FinishUpdate.
 extern DFrameBuffer *screen;
 

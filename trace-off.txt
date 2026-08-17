@@ -1,65 +1,75 @@
 DEBUG: main entered
 vid_frametrace: reporting every 5s. p99 and the >100ms count are the hitching signal; avg is not.
 vid_stalltrace: breaking down any interval over 100ms by loop phase.
-vid_stalltrace  interval=352.69ms
-    nextdrawable        0.53ms  x1
-    (unaccounted)     352.16ms
-vid_stalltrace  interval=143.43ms
-    nextdrawable        0.63ms  x1
-    (unaccounted)     142.80ms
-vid_stalltrace  interval=187.87ms
-    nextdrawable        0.64ms  x1
-    (unaccounted)     187.23ms
-vid_stalltrace  interval=1029.71ms
-    nextdrawable        0.01ms  x1
-    (unaccounted)    1029.70ms
-vid_stalltrace  interval=787.36ms
-    playsim           142.44ms  x1
-    events              0.06ms  x1
-    beginframe          0.04ms  x1  (wraps others)
+vid_stalltrace  interval=421.35ms
+    nextdrawable        1.08ms  x1
+    (unaccounted)     420.26ms
+vid_stalltrace  interval=214.59ms
+    nextdrawable        0.54ms  x1
+    (unaccounted)     214.04ms
+vid_stalltrace  interval=1341.74ms
+    nextdrawable        0.55ms  x1
+    (unaccounted)    1341.20ms
+vid_stalltrace  interval=1023.69ms
+    playsim           158.53ms  x1
+    beginframe          0.08ms  x1  (wraps others)
+    events              0.05ms  x1
     nextdrawable        0.02ms  x1
-    (unaccounted)     644.83ms
-vid_stalltrace  interval=121.47ms
-    beginframe         92.82ms  x1  (wraps others)
-    nextdrawable       92.71ms  x1
-    playsim            27.94ms  x1
-    display             0.60ms  x1  (wraps others)
+    (unaccounted)     865.09ms
+vid_stalltrace  interval=109.46ms
+    beginframe         82.70ms  x1  (wraps others)
+    nextdrawable       82.63ms  x1
+    playsim            26.22ms  x1
+    display             1.59ms  x1  (wraps others)
     events              0.03ms  x1
-    (unaccounted)       0.79ms
-vid_frametrace  n=91  avg= 55.03ms ( 18.2 fps)  p50= 28.57  p95=143.43  p99=787.36  max=1029.71  >33ms=7 (7.7%)  >100ms=6
-vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.57  p95= 28.83  p99= 28.89  max=  28.97  >33ms=0 (0.0%)  >100ms=0
-vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.57  p95= 28.80  p99= 28.97  max=  30.39  >33ms=0 (0.0%)  >100ms=0
-vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.57  p95= 28.71  p99= 28.84  max=  28.93  >33ms=0 (0.0%)  >100ms=0
-vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.57  p95= 28.70  p99= 29.13  max=  29.55  >33ms=0 (0.0%)  >100ms=0
-vid_frametrace  n=175  avg= 28.58ms ( 35.0 fps)  p50= 28.57  p95= 28.70  p99= 28.85  max=  29.30  >33ms=0 (0.0%)  >100ms=0
-vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.58  p95= 28.71  p99= 28.86  max=  28.91  >33ms=0 (0.0%)  >100ms=0
-vid_stalltrace  interval=232.27ms  context=wipe
-    playsim           155.59ms  x1
-    levelload         125.95ms  x1
-    renderview         27.49ms  x1
-    precache           10.20ms  x1
-    events              2.89ms  x1
-    wipestart           1.08ms  x1
-    display             0.43ms  x1  (wraps others)
+    (unaccounted)       0.58ms
+vid_stalltrace  interval=193.27ms  context=wipe
+    playsim           116.65ms  x1
+    levelload          84.45ms  x1
+    renderview         26.55ms  x1
+    precache           14.24ms  x1
+    events              2.90ms  x1
+    wipestart           2.09ms  x1
+    display             0.38ms  x1  (wraps others)
     beginframe          0.13ms  x1  (wraps others)
     nextdrawable        0.01ms  x1
-    (unaccounted)     -90.93ms
-vid_stalltrace  interval=251.45ms  context=wipe
-    nextdrawable      220.60ms  x1
-    (unaccounted)      30.86ms
-vid_frametrace  n=158  avg= 31.65ms ( 31.6 fps)  p50= 28.59  p95= 30.15  p99= 92.60  max= 251.45  >33ms=3 (1.9%)  >100ms=2
-vid_frametrace  n=176  avg= 28.43ms ( 35.2 fps)  p50= 28.59  p95= 29.37  p99= 30.12  max=  31.09  >33ms=0 (0.0%)  >100ms=0
-vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.56  p95= 29.13  p99= 29.23  max=  33.79  >33ms=1 (0.6%)  >100ms=0
-vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.55  p95= 29.30  p99= 31.36  max=  31.77  >33ms=0 (0.0%)  >100ms=0
-vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.57  p95= 29.15  p99= 29.42  max=  30.08  >33ms=0 (0.0%)  >100ms=0
-vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.57  p95= 29.09  p99= 29.39  max=  29.69  >33ms=0 (0.0%)  >100ms=0
-vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.58  p95= 29.03  p99= 29.33  max=  29.63  >33ms=0 (0.0%)  >100ms=0
-vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.59  p95= 29.16  p99= 29.49  max=  29.68  >33ms=0 (0.0%)  >100ms=0
-vid_stalltrace  interval=1553.16ms
-    display             2.13ms  x1  (wraps others)
+    (unaccounted)     -53.63ms
+vid_frametrace  n=68  avg= 73.89ms ( 13.5 fps)  p50= 28.70  p95=214.59  p99=1023.69  max=1341.74  >33ms=8 (11.8%)  >100ms=6
+vid_frametrace  n=177  avg= 28.38ms ( 35.2 fps)  p50= 28.65  p95= 29.46  p99= 30.47  max=  32.59  >33ms=0 (0.0%)  >100ms=0
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.57  p95= 29.34  p99= 31.68  max=  34.14  >33ms=1 (0.6%)  >100ms=0
+vid_frametrace  n=176  avg= 28.58ms ( 35.0 fps)  p50= 28.58  p95= 29.34  p99= 30.75  max=  32.59  >33ms=0 (0.0%)  >100ms=0
+vid_frametrace  n=176  avg= 28.56ms ( 35.0 fps)  p50= 28.56  p95= 29.25  p99= 29.45  max=  30.81  >33ms=0 (0.0%)  >100ms=0
+vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.58  p95= 29.40  p99= 31.64  max=  54.92  >33ms=2 (1.1%)  >100ms=0
+vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.57  p95= 29.28  p99= 29.73  max=  31.12  >33ms=0 (0.0%)  >100ms=0
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.58  p95= 29.16  p99= 29.52  max=  29.65  >33ms=0 (0.0%)  >100ms=0
+vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.57  p95= 29.12  p99= 29.40  max=  31.21  >33ms=0 (0.0%)  >100ms=0
+vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.58  p95= 29.24  p99= 29.81  max=  33.61  >33ms=1 (0.6%)  >100ms=0
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.58  p95= 29.30  p99= 30.76  max=  31.42  >33ms=0 (0.0%)  >100ms=0
+vid_stalltrace  interval=138.61ms
+    renderview        110.61ms  x1
+    playsim            27.42ms  x1
+    display             1.11ms  x1  (wraps others)
+    beginframe          0.11ms  x1  (wraps others)
+    events              0.04ms  x1
+    nextdrawable        0.01ms  x1
+    (unaccounted)       0.51ms
+vid_frametrace  n=173  avg= 28.90ms ( 34.6 fps)  p50= 28.56  p95= 29.16  p99= 30.15  max= 138.61  >33ms=1 (0.6%)  >100ms=1
+vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.55  p95= 29.21  p99= 30.25  max=  31.86  >33ms=0 (0.0%)  >100ms=0
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.57  p95= 29.38  p99= 29.85  max=  31.42  >33ms=0 (0.0%)  >100ms=0
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.58  p95= 29.24  p99= 31.26  max=  31.94  >33ms=0 (0.0%)  >100ms=0
+vid_stalltrace  interval=154.92ms  context=wipe
+    playsim           116.55ms  x1
+    display             2.09ms  x1  (wraps others)
+    wipestart           0.92ms  x1
+    events              0.31ms  x1
+    beginframe          0.12ms  x1  (wraps others)
+    nextdrawable        0.01ms  x1
+    (unaccounted)      37.12ms
+vid_frametrace  n=171  avg= 29.26ms ( 34.2 fps)  p50= 28.62  p95= 30.03  p99= 30.73  max= 154.92  >33ms=2 (1.2%)  >100ms=1
+vid_stalltrace  interval=1555.49ms
+    display             1.56ms  x1  (wraps others)
+    nextdrawable        0.01ms  x1
+    (unaccounted)    1555.48ms
+vid_stalltrace  interval=264.92ms
     nextdrawable        0.02ms  x1
-    (unaccounted)    1553.13ms
-vid_frametrace  n=171  avg= 37.85ms ( 26.4 fps)  p50= 28.66  p95= 30.22  p99= 35.62  max=1553.16  >33ms=4 (2.3%)  >100ms=1
-vid_stalltrace  interval=278.30ms
-    nextdrawable        0.02ms  x1
-    (unaccounted)     278.29ms
+    (unaccounted)     264.90ms
