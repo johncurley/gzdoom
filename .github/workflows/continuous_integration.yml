@@ -3,6 +3,19 @@ name: Continuous Integration
 on: [push, pull_request]
 
 jobs:
+  # Pure source-text check -- no build. Catches the Metal native .metal source
+  # drifting from its inline C++ fallback-string copy, or from the CPU-side
+  # struct it shares a layout with (see the script's own docstring for the two
+  # real incidents that motivated it). Runs on every push/PR regardless of
+  # platform, since nothing here needs Metal or even a compiler.
+  shader-parity:
+    name: Metal shader parity
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v5
+    - name: Check native/fallback/CPU shader parity
+      run: python3 tools/check_shader_parity.py
+
   build:
     name: ${{ matrix.config.name }} | ${{ matrix.config.build_type }}
     runs-on: ${{ matrix.config.os }}
