@@ -1077,6 +1077,28 @@ Phases that contain other phases (`display`, `beginframe`) are marked `wrapper`
 and excluded from the accounted total; without that they double-counted and drove
 `(unaccounted)` to -1007.50ms.
 
+**Focus stamp result, 2026-08-17 -- the ~1s stalls are NOT focus loss.** With
+the live query in place, a controlled run splits cleanly:
+
+| interval | active | reading |
+|---|---|---|
+| 908.46ms, 862.81ms | 1 | focused, genuine stall, still unattributed |
+| 14076.70ms | 0 + FOCUS-CHANGED | the deactivation itself |
+| 266-268ms cadence | 0 | background throttle, not cost |
+
+So the ~900-1030ms class survives with the window focused and every phase near
+zero. Focus loss is excluded; the ~268ms family is confirmed as throttling and
+should be filtered out of any reading by its `active=0` stamp.
+
+**Correction to the nextDrawable attribution.** The capture-off play trace shows
+`nextdrawable` at **0.01-0.02ms** on the 1029.71ms and 1553.16ms intervals,
+while it is 92.71ms and 220.60ms on the 121ms and 251ms ones. So `nextDrawable`
+is real for the ~90-220ms class only. The earlier claim that it explained the
+~1s freezes came from a run where `beginframe` measured 1005ms *before*
+`nextDrawable` itself was instrumented -- the child was assumed to account for
+the parent, then confirmed on a 232ms stall and generalised. It does not hold
+for the ~1s class, whose cause is still open.
+
 **Contamination found in the first session:** `Metal GPU Frame Capture Enabled`
 appears in `trace.txt`. That line is emitted by Apple's framework, not our code,
 and only when `METAL_CAPTURE_ENABLED` is set -- the capture layer adds
@@ -2390,6 +2412,23 @@ input and the `d_main.cpp`-driven shader precompile all sit outside the bracket.
 on renderer cost alone, since its baseline is not pinned to the refresh rate.
 Note the converse defect: `vid_frametrace`'s p50 lands on the refresh interval
 because it includes the present wait, so its p50 is not a cost figure.
+
+**`AppActive` is stuck true on macOS -- the delegate notifications never fire.**
+`applicationDidBecomeActive:`/`applicationWillResignActive:` in
+`cocoa/i_main.mm` set the `AppActive` global, and neither runs: `DoMain` is
+launched inside a `dispatch_async(dispatch_get_main_queue(), ...)` block
+(`i_main.mm:334`) and never returns, so those notifications are never delivered.
+Measured 2026-08-17 by activating another application mid-run -- twice --
+with a `vid_stalltrace` focus stamp reading the global: `active=1` throughout,
+zero transitions. Replacing the read with a live `[NSApp isActive]` query
+(`I_AppIsActiveNative()`) made the same control report `active=0` and one
+`FOCUS-CHANGED` at the right moment.
+
+**Consequences not yet fixed** (behavioural, so deliberately separate from the
+instrument): `D_Display`'s `if (!AppActive && ...) return;` early-out never
+fires on macOS, and `vid_activeinbackground` is therefore inert -- the engine
+renders at full rate while in the background. Anything else reading `AppActive`
+on macOS is reading a constant.
 
 **An unfocused window is throttled to ~268ms per frame.** macOS throttles
 background rendering, and the result is a locked ~268ms cadence with every frame

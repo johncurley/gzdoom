@@ -286,6 +286,22 @@ ApplicationController *appCtrl;
 
 extern bool AppActive;
 
+// Live focus state, straight from AppKit.
+//
+// AppActive (the global above) is set by applicationDidBecomeActive: and
+// applicationWillResignActive: -- and measured 2026-08-17, NEITHER FIRES. DoMain
+// runs inside the dispatch_async main-queue block below and never returns, so
+// those delegate notifications are never delivered and AppActive stays true for
+// the whole session. Verified by activating another application mid-run twice:
+// vid_stalltrace recorded active=1 throughout and zero transitions.
+//
+// [NSApp isActive] is queried on the spot and does not depend on notification
+// delivery, so it reports the truth. Used by the vid_stalltrace focus stamp.
+// The stale global is left alone here: things read it (D_Display's early
+// return, vid_activeinbackground) and changing its behaviour is a separate,
+// behavioural fix -- see AGENTS.md.
+bool I_AppIsActiveNative() { return [NSApp isActive] ? true : false; }
+
 - (void)applicationDidBecomeActive:(NSNotification *)aNotification {
   ZD_UNUSED(aNotification);
 

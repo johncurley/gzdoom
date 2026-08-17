@@ -104,6 +104,23 @@ CVAR(Int, vid_stalltrace, 0, 0)
 // like a hole in the instrument rather than the explanation it actually is.
 static const char *g_loopContext = nullptr;
 
+// Focus state, for the vid_stalltrace stamp. D_Display early-returns when this
+// is false (unless vid_activeinbackground), so an unfocused window produces a
+// long interval in which no phase accumulates anything -- indistinguishable, in
+// the report alone, from a genuine stall in uninstrumented code. macOS also
+// throttles background rendering to a locked ~268ms cadence. Both were live
+// suspects for the ~1030ms and ~1553ms intervals that showed nextdrawable at
+// 0.01ms and every other phase at zero, which is why this is worth a field.
+extern bool AppActive;
+
+#ifdef __APPLE__
+// [NSApp isActive], queried live. AppActive is unreliable on macOS -- it is
+// stuck true because its delegate notifications are never delivered (see
+// i_main.mm). Report both so the discrepancy stays visible rather than being
+// silently papered over.
+extern bool I_AppIsActiveNative();
+#endif
+
 namespace
 {
 	// Fixed table, no allocation, names compared by pointer: every call site
@@ -120,6 +137,22 @@ namespace
 
 	constexpr int MAX_LOOP_PHASES = 16;
 	LoopPhaseBucket g_loopPhases[MAX_LOOP_PHASES];
+
+	// Sampled once per interval, so this catches a change between two Update()
+	// calls -- not every transition, but every transition that could explain an
+	// interval this report is printing.
+	bool g_lastAppActive = true;
+	bool g_focusChangedThisInterval = false;
+
+	// Prefer the live query where one exists; fall back to the global elsewhere.
+	bool LoopTraceAppIsActive()
+	{
+#ifdef __APPLE__
+		return I_AppIsActiveNative();
+#else
+		return AppActive;
+#endif
+	}
 
 	void AccumulateLoopPhase(const char *name, double ms, bool wrapper)
 	{
@@ -170,7 +203,14 @@ namespace
 			if (!g_loopPhases[order[i]].wrapper)
 				accounted += g_loopPhases[order[i]].ms;
 
-		fprintf(stderr, "vid_stalltrace  interval=%.2fms%s%s\n", intervalMs,
+		// A focus CHANGE during the interval is the interesting case: it means
+		// the window went away (or came back) while this frame was in flight,
+		// which is the OS descheduling the game rather than the renderer
+		// stalling. A steadily-inactive window is reported too, since its
+		// intervals are throttled and must not be read as cost.
+		fprintf(stderr, "vid_stalltrace  interval=%.2fms  active=%d%s%s%s\n",
+			intervalMs, LoopTraceAppIsActive() ? 1 : 0,
+			g_focusChangedThisInterval ? "  FOCUS-CHANGED" : "",
 			g_loopContext ? "  context=" : "",
 			g_loopContext ? g_loopContext : "");
 		for (int i = 0; i < count; i++)
@@ -317,6 +357,12 @@ void DFrameBuffer::TraceFrameInterval()
 
 	const float frameTimeMs = std::chrono::duration<float, std::milli>(now - mFrameTraceLastFrame).count();
 	mFrameTraceLastFrame = now;
+
+	{
+		const bool activeNow = LoopTraceAppIsActive();
+		g_focusChangedThisInterval = (activeNow != g_lastAppActive);
+		g_lastAppActive = activeNow;
+	}
 
 	// The phases accumulated since the previous Update() are exactly the ones
 	// that make up the interval just measured, so this is reported and cleared
