@@ -1,0 +1,106 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct Uniforms
+{
+    float InvGamma;
+    float Contrast;
+    float Brightness;
+    float Saturation;
+    int GrayFormula;
+    int WindowPositionParity;
+    float2 UVScale;
+    float2 UVOffset;
+    float ColorScale;
+    int HdrMode;
+};
+
+struct main0_out
+{
+    float4 FragColor [[color(0)]];
+};
+
+struct main0_in
+{
+    float2 TexCoord [[user(locn0)]];
+};
+
+static inline __attribute__((always_inline))
+float4 ApplyGamma(thread float4& c, constant Uniforms& _48)
+{
+    float4 _29 = c;
+    float3 _33 = fast::min(_29.xyz, float3(2.0));
+    c.x = _33.x;
+    c.y = _33.y;
+    c.z = _33.z;
+    float3 valgray;
+    if (_48.GrayFormula == 0)
+    {
+        valgray = ((float3((c.x + c.y) + c.z) * (1.0 - _48.Saturation)) / float3(3.0)) + (c.xyz * _48.Saturation);
+    }
+    else
+    {
+        if (_48.GrayFormula == 2)
+        {
+            valgray = mix(float3(powr(dot(powr(float3(c.xyz), float3(2.2000000476837158203125)), float3(0.2125999927520751953125, 0.715200006961822509765625, 0.072200000286102294921875)), 0.4545454680919647216796875)), c.xyz, float3(_48.Saturation));
+        }
+        else
+        {
+            valgray = mix(float3(dot(c.xyz, float3(0.300000011920928955078125, 0.560000002384185791015625, 0.14000000059604644775390625))), c.xyz, float3(_48.Saturation));
+        }
+    }
+    float3 val = (valgray * _48.Contrast) - float3((_48.Contrast - 1.0) * 0.5);
+    val += float3(_48.Brightness * 0.5);
+    val = powr(fast::max(val, float3(0.0)), float3(_48.InvGamma));
+    return float4(val, c.w);
+}
+
+static inline __attribute__((always_inline))
+float3 sRGBtoscRGBLinear(thread const float3& c)
+{
+    return powr(c, float3(2.2000000476837158203125)) * 1.10000002384185791015625;
+}
+
+static inline __attribute__((always_inline))
+float4 ApplyHdrMode(thread const float4& c, constant Uniforms& _48)
+{
+    if (_48.HdrMode == 0)
+    {
+        return c;
+    }
+    else
+    {
+        float3 param = c.xyz;
+        return float4(sRGBtoscRGBLinear(param), c.w);
+    }
+}
+
+static inline __attribute__((always_inline))
+float4 Dither(thread const float4& c, thread const float2& fragCoord, constant Uniforms& _48, texture2d<float> DitherTexture, sampler DitherTextureSmplr)
+{
+    if (_48.ColorScale == 0.0)
+    {
+        return c;
+    }
+    float2 texSize = float2(int2(DitherTexture.get_width(), DitherTexture.get_height()));
+    float threshold = DitherTexture.sample(DitherTextureSmplr, (fragCoord / texSize)).x;
+    return float4(floor((c.xyz * _48.ColorScale) + float3(threshold)) / float3(_48.ColorScale), c.w);
+}
+
+fragment main0_out main0(main0_in in [[stage_in]], constant Uniforms& _48 [[buffer(0)]], texture2d<float> InputTexture [[texture(0)]], texture2d<float> DitherTexture [[texture(1)]], sampler InputTextureSmplr [[sampler(0)]], sampler DitherTextureSmplr [[sampler(1)]], float4 gl_FragCoord [[position]])
+{
+    main0_out out = {};
+    float4 color = InputTexture.sample(InputTextureSmplr, ((in.TexCoord * _48.UVScale) + _48.UVOffset));
+    float4 param = color;
+    float4 _258 = ApplyGamma(param, _48);
+    float4 param_1 = _258;
+    float4 param_2 = ApplyHdrMode(param_1, _48);
+    float2 param_3 = gl_FragCoord.xy;
+    out.FragColor = float4((Dither(param_2, param_3, _48, DitherTexture, DitherTextureSmplr)).xyz, 1.0);
+    return out;
+}
+

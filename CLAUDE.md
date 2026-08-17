@@ -89,6 +89,23 @@ Run:
 ./build/gzdoom.app/Contents/MacOS/gzdoom
 ```
 
+**Metal ships pre-translated MSL.** `wadsrc/static/shaders/metal/generated/`
+holds the 92 engine shader stages already translated to MSL, so a cold start
+does no GLSL→SPIR-V→MSL work at all (measured: 1921ms → 0). After editing a
+GLSL shader, regenerate them or you silently pay that cost back for the stages
+you changed:
+
+```bash
+rm -f ~/Library/Application\ Support/zdoom/cache/*.msl
+./build/gzdoom.app/Contents/MacOS/gzdoom -iwad DOOM2.wad +mt_dumpshaders 1 +map MAP01
+python3 tools/collect_metal_shaders.py
+```
+
+Forgetting is safe, not silent-wrong: each filename carries the same source hash
+the engine computes, so a stale file simply never matches and that stage falls
+back to translating. Verified by renaming one file — exactly that stage
+re-translated, the other 91 did not.
+
 After changing anything under `wadsrc/` (shaders, menudef, other engine resources baked into the
 pk3), rebuild the pk3 explicitly — the shader/resource change will not appear otherwise:
 

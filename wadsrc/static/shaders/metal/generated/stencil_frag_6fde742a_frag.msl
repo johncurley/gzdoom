@@ -1,0 +1,96 @@
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct ViewpointUBO
+{
+    float4x4 ProjectionMatrix;
+    float4x4 ViewMatrix;
+    float4x4 NormalViewMatrix;
+    float4 uCameraPos;
+    float4 uClipLine;
+    float uGlobVis;
+    int uPalLightLevels;
+    int uViewHeight;
+    float uClipHeight;
+    float uClipHeightDirection;
+    int uShadowmapFilter;
+    int uLightBlendMode;
+    float uThickFogDistance;
+    float uThickFogMultiplier;
+};
+
+struct MatricesUBO
+{
+    float4x4 ModelMatrix;
+    float4x4 NormalModelMatrix;
+    float4x4 TextureMatrix;
+};
+
+struct StreamData
+{
+    float4 uObjectColor;
+    float4 uObjectColor2;
+    float4 uDynLightColor;
+    float4 uAddColor;
+    float4 uTextureAddColor;
+    float4 uTextureModulateColor;
+    float4 uTextureBlendColor;
+    float4 uFogColor;
+    float uDesaturationFactor;
+    float uInterpolationFactor;
+    float timer;
+    int useVertexData;
+    float4 uVertexColor;
+    float4 uVertexNormal;
+    float4 uGlowTopPlane;
+    float4 uGlowTopColor;
+    float4 uGlowBottomPlane;
+    float4 uGlowBottomColor;
+    float4 uGradientTopPlane;
+    float4 uGradientBottomPlane;
+    float4 uSplitTopPlane;
+    float4 uSplitBottomPlane;
+    float4 uDetailParms;
+    float4 uNpotEmulation;
+    float4 padding1;
+    float4 padding2;
+    float4 padding3;
+};
+
+struct StreamUBO
+{
+    StreamData data[170];
+};
+
+struct LightBufferSSO
+{
+    float4 lights[1];
+};
+
+struct BoneBufferSSO
+{
+    float4x4 bones[1];
+};
+
+struct PushConstants
+{
+    float4 group1;
+    float4 group2;
+    float4 group3;
+    float4 group4;
+};
+
+struct main0_out
+{
+    float4 FragColor [[color(0)]];
+};
+
+fragment main0_out main0()
+{
+    main0_out out = {};
+    out.FragColor = float4(1.0, 1.0, 1.0, 0.0);
+    return out;
+}
+

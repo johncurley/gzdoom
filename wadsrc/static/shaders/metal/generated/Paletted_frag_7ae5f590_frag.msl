@@ -1,0 +1,727 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct Material
+{
+    float4 Base;
+    float4 Bright;
+    float4 Glow;
+    float3 Normal;
+    float3 Specular;
+    float Glossiness;
+    float SpecularLevel;
+    float Metallic;
+    float Roughness;
+    float AO;
+};
+
+struct StreamData
+{
+    float4 uObjectColor;
+    float4 uObjectColor2;
+    float4 uDynLightColor;
+    float4 uAddColor;
+    float4 uTextureAddColor;
+    float4 uTextureModulateColor;
+    float4 uTextureBlendColor;
+    float4 uFogColor;
+    float uDesaturationFactor;
+    float uInterpolationFactor;
+    float timer;
+    int useVertexData;
+    float4 uVertexColor;
+    float4 uVertexNormal;
+    float4 uGlowTopPlane;
+    float4 uGlowTopColor;
+    float4 uGlowBottomPlane;
+    float4 uGlowBottomColor;
+    float4 uGradientTopPlane;
+    float4 uGradientBottomPlane;
+    float4 uSplitTopPlane;
+    float4 uSplitBottomPlane;
+    float4 uDetailParms;
+    float4 uNpotEmulation;
+    float4 padding1;
+    float4 padding2;
+    float4 padding3;
+};
+
+struct StreamUBO
+{
+    StreamData data[170];
+};
+
+struct PushConstants
+{
+    float4 group1;
+    float4 group2;
+    float4 group3;
+    float4 group4;
+};
+
+struct ViewpointUBO
+{
+    float4x4 ProjectionMatrix;
+    float4x4 ViewMatrix;
+    float4x4 NormalViewMatrix;
+    float4 uCameraPos;
+    float4 uClipLine;
+    float uGlobVis;
+    int uPalLightLevels;
+    int uViewHeight;
+    float uClipHeight;
+    float uClipHeightDirection;
+    int uShadowmapFilter;
+    int uLightBlendMode;
+    float uThickFogDistance;
+    float uThickFogMultiplier;
+};
+
+struct MatricesUBO
+{
+    float4x4 ModelMatrix;
+    float4x4 NormalModelMatrix;
+    float4x4 TextureMatrix;
+};
+
+struct LightBufferSSO
+{
+    float4 lights[1];
+};
+
+struct BoneBufferSSO
+{
+    float4x4 bones[1];
+};
+
+struct main0_out
+{
+    float4 FragColor [[color(0)]];
+    float4 FragFog [[color(1)]];
+    float4 FragNormal [[color(2)]];
+};
+
+struct main0_in
+{
+    float4 vTexCoord [[user(locn0)]];
+    float4 vColor [[user(locn1)]];
+    float4 pixelpos [[user(locn2)]];
+    float3 glowdist [[user(locn3)]];
+    float3 gradientdist [[user(locn4)]];
+    float4 vWorldNormal [[user(locn5)]];
+    float4 vEyeNormal [[user(locn6)]];
+    float3 vLightmap [[user(locn9)]];
+};
+
+static inline __attribute__((always_inline))
+float grayscale(thread const float4& color)
+{
+    return dot(color.xyz, float3(0.300000011920928955078125, 0.560000002384185791015625, 0.14000000059604644775390625));
+}
+
+static inline __attribute__((always_inline))
+float4 dodesaturate(thread const float4& texel, thread const float& factor)
+{
+    if (factor != 0.0)
+    {
+        float4 param = texel;
+        float gray = grayscale(param);
+        return mix(texel, float4(gray, gray, gray, texel.w), float4(factor));
+    }
+    else
+    {
+        return texel;
+    }
+}
+
+static inline __attribute__((always_inline))
+float4 ApplyTextureManipulation(thread float4& texel, thread const int& blendflags, constant StreamUBO& _138, constant PushConstants& _142)
+{
+    float4 param = texel;
+    float param_1 = _138.data[int(_142.group4.y)].uTextureModulateColor.w;
+    texel = dodesaturate(param, param_1);
+    if ((blendflags & 8) != 0)
+    {
+        float _176 = texel.x;
+        float _179 = texel.y;
+        float _183 = texel.z;
+        float3 _185 = float3(1.0 - _176, 1.0 - _179, 1.0 - _183);
+        texel.x = _185.x;
+        texel.y = _185.y;
+        texel.z = _185.z;
+    }
+    float4 _200 = texel;
+    float3 _202 = _200.xyz + _138.data[int(_142.group4.y)].uTextureAddColor.xyz;
+    texel.x = _202.x;
+    texel.y = _202.y;
+    texel.z = _202.z;
+    float4 _215 = texel;
+    float3 _217 = _215.xyz * _138.data[int(_142.group4.y)].uTextureModulateColor.xyz;
+    texel.x = _217.x;
+    texel.y = _217.y;
+    texel.z = _217.z;
+    float4 _224 = texel;
+    float3 _228 = fast::clamp(_224.xyz, float3(0.0), float3(1.0));
+    texel.x = _228.x;
+    texel.y = _228.y;
+    texel.z = _228.z;
+    if ((blendflags & 7) != 0)
+    {
+        float3 tcol = texel.xyz * 255.0;
+        float4 tint = _138.data[int(_142.group4.y)].uTextureBlendColor * 255.0;
+        switch (blendflags & 7)
+        {
+            case 2:
+            {
+                tcol.z = 255.0 - (((255.0 - tcol.z) * (255.0 - tint.x)) / 256.0);
+                tcol.y = 255.0 - (((255.0 - tcol.y) * (255.0 - tint.y)) / 256.0);
+                tcol.x = 255.0 - (((255.0 - tcol.x) * (255.0 - tint.z)) / 256.0);
+                break;
+            }
+            case 3:
+            {
+                float _355;
+                if (tcol.z < 128.0)
+                {
+                    _355 = (tcol.z * tint.z) / 128.0;
+                }
+                else
+                {
+                    _355 = 255.0 - (((255.0 - tcol.z) * (255.0 - tint.z)) / 128.0);
+                }
+                tcol.z = _355;
+                float _379;
+                if (tcol.y < 128.0)
+                {
+                    _379 = (tcol.y * tint.y) / 128.0;
+                }
+                else
+                {
+                    _379 = 255.0 - (((255.0 - tcol.y) * (255.0 - tint.y)) / 128.0);
+                }
+                tcol.y = _379;
+                float _403;
+                if (tcol.x < 128.0)
+                {
+                    _403 = (tcol.x * tint.x) / 128.0;
+                }
+                else
+                {
+                    _403 = 255.0 - (((255.0 - tcol.x) * (255.0 - tint.x)) / 128.0);
+                }
+                tcol.x = _403;
+                break;
+            }
+            case 4:
+            {
+                float _428;
+                if (tint.z < 128.0)
+                {
+                    _428 = (tcol.z * tint.z) / 128.0;
+                }
+                else
+                {
+                    _428 = 255.0 - (((255.0 - tcol.z) * (255.0 - tint.z)) / 128.0);
+                }
+                tcol.z = _428;
+                float _452;
+                if (tint.y < 128.0)
+                {
+                    _452 = (tcol.y * tint.y) / 128.0;
+                }
+                else
+                {
+                    _452 = 255.0 - (((255.0 - tcol.y) * (255.0 - tint.y)) / 128.0);
+                }
+                tcol.y = _452;
+                float _476;
+                if (tint.x < 128.0)
+                {
+                    _476 = (tcol.x * tint.x) / 128.0;
+                }
+                else
+                {
+                    _476 = 255.0 - (((255.0 - tcol.x) * (255.0 - tint.x)) / 128.0);
+                }
+                tcol.x = _476;
+                break;
+            }
+            default:
+            {
+                tcol.z = (tcol.z * (1.0 - _138.data[int(_142.group4.y)].uTextureBlendColor.w)) + (tint.z * _138.data[int(_142.group4.y)].uTextureBlendColor.w);
+                tcol.y = (tcol.y * (1.0 - _138.data[int(_142.group4.y)].uTextureBlendColor.w)) + (tint.y * _138.data[int(_142.group4.y)].uTextureBlendColor.w);
+                tcol.x = (tcol.x * (1.0 - _138.data[int(_142.group4.y)].uTextureBlendColor.w)) + (tint.x * _138.data[int(_142.group4.y)].uTextureBlendColor.w);
+                break;
+            }
+        }
+        float3 _501 = tcol / float3(255.0);
+        texel.x = _501.x;
+        texel.y = _501.y;
+        texel.z = _501.z;
+    }
+    return texel;
+}
+
+static inline __attribute__((always_inline))
+float4 desaturate(thread const float4& texel, constant StreamUBO& _138, constant PushConstants& _142)
+{
+    float4 param = texel;
+    float param_1 = _138.data[int(_142.group4.y)].uDesaturationFactor;
+    return dodesaturate(param, param_1);
+}
+
+static inline __attribute__((always_inline))
+float4 getTexel(thread const float2& st, constant StreamUBO& _138, constant PushConstants& _142, texture2d<float> tex, sampler texSmplr, thread float3& gradientdist)
+{
+    float4 texel = tex.sample(texSmplr, st);
+    switch (int(_142.group3.x) & 65535)
+    {
+        case 1:
+        {
+            texel.x = 1.0;
+            texel.y = 1.0;
+            texel.z = 1.0;
+            break;
+        }
+        case 2:
+        {
+            texel.w = 1.0;
+            break;
+        }
+        case 3:
+        {
+            texel = float4(1.0 - texel.x, 1.0 - texel.z, 1.0 - texel.y, texel.w);
+            break;
+        }
+        case 4:
+        {
+            float4 param = texel;
+            float gray = grayscale(param);
+            texel = float4(1.0, 1.0, 1.0, gray * texel.w);
+            break;
+        }
+        case 5:
+        {
+            bool _568 = st.y < 0.0;
+            bool _575;
+            if (!_568)
+            {
+                _575 = st.y > 1.0;
+            }
+            else
+            {
+                _575 = _568;
+            }
+            if (_575)
+            {
+                texel.w = 0.0;
+            }
+            break;
+        }
+        case 6:
+        {
+            texel = float4(1.0 - texel.x, 1.0 - texel.z, 1.0 - texel.y, 1.0);
+            break;
+        }
+        case 7:
+        {
+            return texel;
+        }
+    }
+    if ((int(_142.group3.x) & 524288) != 0)
+    {
+        bool _604 = st.y < 0.0;
+        bool _611;
+        if (!_604)
+        {
+            _611 = st.y > 1.0;
+        }
+        else
+        {
+            _611 = _604;
+        }
+        if (_611)
+        {
+            texel.w = 0.0;
+        }
+    }
+    int blendflags = int(_138.data[int(_142.group4.y)].uTextureAddColor.w);
+    if (blendflags != 0)
+    {
+        float4 param_1 = texel;
+        int param_2 = blendflags;
+        float4 _630 = ApplyTextureManipulation(param_1, param_2, _138, _142);
+        texel = _630;
+    }
+    float4 _637 = texel;
+    float3 _639 = _637.xyz + _138.data[int(_142.group4.y)].uAddColor.xyz;
+    texel.x = _639.x;
+    texel.y = _639.y;
+    texel.z = _639.z;
+    if (_138.data[int(_142.group4.y)].uObjectColor2.w == 0.0)
+    {
+        texel *= _138.data[int(_142.group4.y)].uObjectColor;
+    }
+    else
+    {
+        texel *= mix(_138.data[int(_142.group4.y)].uObjectColor, _138.data[int(_142.group4.y)].uObjectColor2, float4(gradientdist.z));
+    }
+    float4 param_3 = texel;
+    return desaturate(param_3, _138, _142);
+}
+
+static inline __attribute__((always_inline))
+float4 ProcessTexel(constant StreamUBO& _138, constant PushConstants& _142, texture2d<float> tex, sampler texSmplr, thread float3& gradientdist, thread float4& vTexCoord, texture2d<float> texture2, sampler texture2Smplr)
+{
+    float2 param = vTexCoord.xy;
+    float index = getTexel(param, _138, _142, tex, texSmplr, gradientdist).x;
+    index = ((index * 255.0) + 0.5) / 256.0;
+    float4 tex_1 = texture2.sample(texture2Smplr, float2(index, 0.5));
+    tex_1.w = 1.0;
+    return tex_1;
+}
+
+static inline __attribute__((always_inline))
+float3 ApplyNormalMap(thread const float2& texcoord, thread float4& vWorldNormal)
+{
+    return fast::normalize(vWorldNormal.xyz);
+}
+
+static inline __attribute__((always_inline))
+void SetupMaterial(thread Material& material, constant StreamUBO& _138, constant PushConstants& _142, texture2d<float> tex, sampler texSmplr, thread float3& gradientdist, thread float4& vWorldNormal, thread float4& vTexCoord, texture2d<float> texture2, sampler texture2Smplr)
+{
+    material.Base = ProcessTexel(_138, _142, tex, texSmplr, gradientdist, vTexCoord, texture2, texture2Smplr);
+    float2 param = vTexCoord.xy;
+    material.Normal = ApplyNormalMap(param, vWorldNormal);
+    material.Bright = texture2.sample(texture2Smplr, vTexCoord.xy);
+}
+
+static inline __attribute__((always_inline))
+float R_WallColormap(thread const float& lightnum, thread const float& z, thread const float3& normal, thread float4& pixelpos, constant ViewpointUBO& _702)
+{
+    float projection = 160.0;
+    float2 line_v1 = pixelpos.xz;
+    float2 line_normal = normal.xz;
+    float texscale = (projection * fast::clamp(dot(fast::normalize(_702.uCameraPos.xz - line_v1), line_normal), 0.0, 1.0)) / z;
+    float lightz = fast::clamp(16.0 * texscale, 0.0, 47.0);
+    float startmap = (15.0 - lightnum) * 4.0;
+    return startmap - (lightz * 0.5);
+}
+
+static inline __attribute__((always_inline))
+float R_PlaneColormap(thread const float& lightnum, thread const float& z)
+{
+    float lightz = fast::clamp(z / 16.0, 0.0, 127.0);
+    float startmap = (15.0 - lightnum) * 4.0;
+    float scale = 160.0 / (lightz + 1.0);
+    return startmap - (scale * 0.5);
+}
+
+static inline __attribute__((always_inline))
+float R_ZDoomColormap(thread const float& light, thread const float& z, constant ViewpointUBO& _702)
+{
+    float L = light * 255.0;
+    float vis = fast::min(_702.uGlobVis / z, 0.75);
+    float shade = 2.0 - ((L + 12.0) / 128.0);
+    float lightscale = shade - vis;
+    return lightscale * 31.0;
+}
+
+static inline __attribute__((always_inline))
+float R_DoomColormap(thread const float& light, thread const float& z, thread float4& pixelpos, constant ViewpointUBO& _702, thread float4& vWorldNormal)
+{
+    if ((_702.uPalLightLevels >> 16) == 16)
+    {
+        float lightnum = fast::clamp(light * 15.0, 0.0, 15.0);
+        if (dot(vWorldNormal.xyz, vWorldNormal.xyz) > 0.5)
+        {
+            float3 normal = fast::normalize(vWorldNormal.xyz);
+            float param = lightnum;
+            float param_1 = z;
+            float3 param_2 = normal;
+            float param_3 = lightnum;
+            float param_4 = z;
+            return mix(R_WallColormap(param, param_1, param_2, pixelpos, _702), R_PlaneColormap(param_3, param_4), abs(normal.y));
+        }
+        else
+        {
+            float param_5 = lightnum;
+            float param_6 = z;
+            return R_PlaneColormap(param_5, param_6);
+        }
+    }
+    else
+    {
+        float param_7 = light;
+        float param_8 = z;
+        return R_ZDoomColormap(param_7, param_8, _702);
+    }
+}
+
+static inline __attribute__((always_inline))
+float R_DoomLightingEquation(thread const float& light, constant PushConstants& _142, thread float4& pixelpos, constant ViewpointUBO& _702, thread float4& vWorldNormal)
+{
+    float z;
+    if (((_702.uPalLightLevels >> 8) & 255) == 2)
+    {
+        z = distance(pixelpos.xyz, _702.uCameraPos.xyz);
+    }
+    else
+    {
+        z = pixelpos.w;
+    }
+    if ((_702.uPalLightLevels >> 16) == 5)
+    {
+        float numShades = float(_702.uPalLightLevels & 255);
+        float curshade = (1.0 - light) * (numShades - 1.0);
+        float visibility = fast::max((_702.uGlobVis * _142.group2.z) * z, 0.0);
+        float shade = fast::clamp(curshade + visibility, 0.0, numShades - 1.0);
+        return fast::clamp(shade * _142.group2.w, 0.0, 1.0);
+    }
+    float param = light;
+    float param_1 = z;
+    float colormap = R_DoomColormap(param, param_1, pixelpos, _702, vWorldNormal);
+    if ((_702.uPalLightLevels & 255) != 0)
+    {
+        colormap = floor(colormap) + 0.5;
+    }
+    return fast::clamp(colormap, 0.0, 31.0) / 32.0;
+}
+
+static inline __attribute__((always_inline))
+float4 ProcessLight(thread const Material& material, thread const float4& color)
+{
+    return color;
+}
+
+static inline __attribute__((always_inline))
+float3 ProcessMaterialLight(thread const Material& material, thread const float3& color, constant StreamUBO& _138, constant PushConstants& _142)
+{
+    float4 param = _138.data[int(_142.group4.y)].uDynLightColor;
+    return material.Base.xyz * fast::clamp(color + desaturate(param, _138, _142).xyz, float3(0.0), float3(1.39999997615814208984375));
+}
+
+static inline __attribute__((always_inline))
+float4 getLightColor(thread const Material& material, thread const float& fogdist, thread const float& fogfactor, constant StreamUBO& _138, constant PushConstants& _142, thread float4& pixelpos, constant ViewpointUBO& _702, thread float4& vWorldNormal, thread float4& vColor, thread float3& glowdist, thread float3& vLightmap, texture2d_array<float> LightMap, sampler LightMapSmplr)
+{
+    float4 color = vColor;
+    if (_142.group2.x >= 0.0)
+    {
+        float param = _142.group2.x;
+        float newlightlevel = 1.0 - R_DoomLightingEquation(param, _142, pixelpos, _702, vWorldNormal);
+        float4 _934 = color;
+        float3 _936 = _934.xyz * newlightlevel;
+        color.x = _936.x;
+        color.y = _936.y;
+        color.z = _936.z;
+    }
+    else
+    {
+        if (int(_142.group3.z) > 0)
+        {
+            if (fogdist < _142.group2.w)
+            {
+                float4 _967 = color;
+                float3 _969 = _967.xyz * (_142.group2.z - ((fogdist / _142.group2.w) * (_142.group2.z - 1.0)));
+                color.x = _969.x;
+                color.y = _969.y;
+                color.z = _969.z;
+            }
+            float4 _977 = color;
+            float3 _981 = mix(float3(0.0), _977.xyz, float3(fogfactor));
+            color.x = _981.x;
+            color.y = _981.y;
+            color.z = _981.z;
+        }
+    }
+    bool _994 = _138.data[int(_142.group4.y)].uGlowTopColor.w > 0.0;
+    bool _1006;
+    if (_994)
+    {
+        _1006 = glowdist.x < _138.data[int(_142.group4.y)].uGlowTopColor.w;
+    }
+    else
+    {
+        _1006 = _994;
+    }
+    if (_1006)
+    {
+        float4 param_1 = _138.data[int(_142.group4.y)].uGlowTopColor * (1.0 - (glowdist.x / _138.data[int(_142.group4.y)].uGlowTopColor.w));
+        float4 _1027 = color;
+        float3 _1029 = _1027.xyz + desaturate(param_1, _138, _142).xyz;
+        color.x = _1029.x;
+        color.y = _1029.y;
+        color.z = _1029.z;
+    }
+    bool _1042 = _138.data[int(_142.group4.y)].uGlowBottomColor.w > 0.0;
+    bool _1053;
+    if (_1042)
+    {
+        _1053 = glowdist.y < _138.data[int(_142.group4.y)].uGlowBottomColor.w;
+    }
+    else
+    {
+        _1053 = _1042;
+    }
+    if (_1053)
+    {
+        float4 param_2 = _138.data[int(_142.group4.y)].uGlowBottomColor * (1.0 - (glowdist.y / _138.data[int(_142.group4.y)].uGlowBottomColor.w));
+        float4 _1074 = color;
+        float3 _1076 = _1074.xyz + desaturate(param_2, _138, _142).xyz;
+        color.x = _1076.x;
+        color.y = _1076.y;
+        color.z = _1076.z;
+    }
+    color = fast::min(color, float4(1.0));
+    float4 _1086 = color;
+    float3 _1094 = mix(_1086.xyz, material.Glow.xyz, float3(material.Glow.w));
+    color.x = _1094.x;
+    color.y = _1094.y;
+    color.z = _1094.z;
+    float4 _1101 = color;
+    float3 _1108 = fast::min(_1101.xyz + material.Bright.xyz, float3(1.0));
+    color.x = _1108.x;
+    color.y = _1108.y;
+    color.z = _1108.z;
+    Material param_3 = material;
+    float4 param_4 = color;
+    color = ProcessLight(param_3, param_4);
+    if (vLightmap.z >= 0.0)
+    {
+        float4 _1134 = color;
+        float3 _1136 = _1134.xyz + LightMap.sample(LightMapSmplr, vLightmap.xy, uint(rint(vLightmap.z))).xyz;
+        color.x = _1136.x;
+        color.y = _1136.y;
+        color.z = _1136.z;
+    }
+    Material param_5 = material;
+    float3 param_6 = color.xyz;
+    return float4(ProcessMaterialLight(param_5, param_6, _138, _142), material.Base.w * vColor.w);
+}
+
+static inline __attribute__((always_inline))
+float4 applyFog(thread const float4& frag, thread const float& fogfactor, constant StreamUBO& _138, constant PushConstants& _142)
+{
+    return float4(mix(_138.data[int(_142.group4.y)].uFogColor.xyz, frag.xyz, float3(fogfactor)), frag.w);
+}
+
+static inline __attribute__((always_inline))
+float3 AmbientOcclusionColor(constant StreamUBO& _138, constant PushConstants& _142, thread float4& pixelpos, constant ViewpointUBO& _702)
+{
+    float fogdist;
+    if (int(_142.group3.z) == (-1))
+    {
+        fogdist = fast::max(16.0, pixelpos.w);
+    }
+    else
+    {
+        fogdist = fast::max(16.0, distance(pixelpos.xyz, _702.uCameraPos.xyz));
+    }
+    if (_702.uThickFogDistance > 0.0)
+    {
+        if (fogdist > _702.uThickFogDistance)
+        {
+            fogdist += (_702.uThickFogMultiplier * (fogdist - _702.uThickFogDistance));
+        }
+    }
+    float fogfactor = exp2(_142.group2.y * fogdist);
+    return mix(_138.data[int(_142.group4.y)].uFogColor.xyz, float3(0.0), float3(fogfactor));
+}
+
+fragment main0_out main0(main0_in in [[stage_in]], constant ViewpointUBO& _702 [[buffer(17)]], constant StreamUBO& _138 [[buffer(20)]], constant PushConstants& _142 [[buffer(21)]], texture2d<float> tex [[texture(0)]], texture2d<float> texture2 [[texture(1)]], texture2d_array<float> LightMap [[texture(15)]], sampler texSmplr [[sampler(0)]], sampler texture2Smplr [[sampler(1)]], sampler LightMapSmplr [[sampler(15)]])
+{
+    main0_out out = {};
+    Material material;
+    material.Base = float4(0.0);
+    material.Bright = float4(0.0);
+    material.Glow = float4(0.0);
+    material.Normal = float3(0.0);
+    material.Specular = float3(0.0);
+    material.Glossiness = 0.0;
+    material.SpecularLevel = 0.0;
+    material.Metallic = 0.0;
+    material.Roughness = 0.0;
+    material.AO = 0.0;
+    Material param = material;
+    SetupMaterial(param, _138, _142, tex, texSmplr, in.gradientdist, in.vWorldNormal, in.vTexCoord, texture2, texture2Smplr);
+    material = param;
+    float4 frag = material.Base;
+    if (int(_142.group3.z) != (-3))
+    {
+        float fogdist = 0.0;
+        float fogfactor = 0.0;
+        if (int(_142.group3.z) != 0)
+        {
+            bool _1275 = int(_142.group3.z) == 1;
+            bool _1283;
+            if (!_1275)
+            {
+                _1283 = int(_142.group3.z) == (-1);
+            }
+            else
+            {
+                _1283 = _1275;
+            }
+            if (_1283)
+            {
+                fogdist = fast::max(16.0, in.pixelpos.w);
+            }
+            else
+            {
+                fogdist = fast::max(16.0, distance(in.pixelpos.xyz, _702.uCameraPos.xyz));
+            }
+            if (_702.uThickFogDistance > 0.0)
+            {
+                if (fogdist > _702.uThickFogDistance)
+                {
+                    fogdist += (_702.uThickFogMultiplier * (fogdist - _702.uThickFogDistance));
+                }
+            }
+            fogfactor = exp2(_142.group2.y * fogdist);
+        }
+        if ((int(_142.group3.x) & 65535) != 7)
+        {
+            Material param_1 = material;
+            float param_2 = fogdist;
+            float param_3 = fogfactor;
+            frag = getLightColor(param_1, param_2, param_3, _138, _142, in.pixelpos, _702, in.vWorldNormal, in.vColor, in.glowdist, in.vLightmap, LightMap, LightMapSmplr);
+            if (int(_142.group3.z) < 0)
+            {
+                float4 param_4 = frag;
+                float param_5 = fogfactor;
+                frag = applyFog(param_4, param_5, _138, _142);
+            }
+        }
+        else
+        {
+            frag = float4(_138.data[int(_142.group4.y)].uFogColor.xyz, (((1.0 - fogfactor) * frag.w) * 0.75) * in.vColor.w);
+        }
+    }
+    else
+    {
+        if ((int(_142.group3.x) & 65535) == 7)
+        {
+            float4 param_6 = frag;
+            float gray = grayscale(param_6);
+            float4 cm = (_138.data[int(_142.group4.y)].uObjectColor + ((_138.data[int(_142.group4.y)].uAddColor - _138.data[int(_142.group4.y)].uObjectColor) * gray)) * 2.0;
+            frag = float4(fast::clamp(cm.xyz, float3(0.0), float3(1.0)), frag.w);
+        }
+        Material param_7 = material;
+        float4 param_8 = in.vColor;
+        frag *= ProcessLight(param_7, param_8);
+        float4 _1418 = frag;
+        float3 _1426 = _1418.xyz + _138.data[int(_142.group4.y)].uFogColor.xyz;
+        frag.x = _1426.x;
+        frag.y = _1426.y;
+        frag.z = _1426.z;
+    }
+    out.FragColor = frag;
+    out.FragFog = float4(AmbientOcclusionColor(_138, _142, in.pixelpos, _702), 1.0);
+    out.FragNormal = float4((in.vEyeNormal.xyz * 0.5) + float3(0.5), 1.0);
+    return out;
+}
+

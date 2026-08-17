@@ -1,0 +1,1074 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+#pragma clang diagnostic ignored "-Wmissing-braces"
+
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+template<typename T, size_t Num>
+struct spvUnsafeArray
+{
+    T elements[Num ? Num : 1];
+    
+    thread T& operator [] (size_t pos) thread
+    {
+        return elements[pos];
+    }
+    constexpr const thread T& operator [] (size_t pos) const thread
+    {
+        return elements[pos];
+    }
+    
+    device T& operator [] (size_t pos) device
+    {
+        return elements[pos];
+    }
+    constexpr const device T& operator [] (size_t pos) const device
+    {
+        return elements[pos];
+    }
+    
+    constexpr const constant T& operator [] (size_t pos) const constant
+    {
+        return elements[pos];
+    }
+    
+    threadgroup T& operator [] (size_t pos) threadgroup
+    {
+        return elements[pos];
+    }
+    constexpr const threadgroup T& operator [] (size_t pos) const threadgroup
+    {
+        return elements[pos];
+    }
+};
+
+// Implementation of signed integer mod accurate to SPIR-V specification
+template<typename Tx, typename Ty>
+inline Tx spvSMod(Tx x, Ty y)
+{
+    Tx remainder = x - y * (x / y);
+    return select(Tx(remainder + y), remainder, remainder == 0 || (x >= 0) == (y >= 0));
+}
+
+struct Material
+{
+    float4 Base;
+    float4 Bright;
+    float4 Glow;
+    float3 Normal;
+    float3 Specular;
+    float Glossiness;
+    float SpecularLevel;
+    float Metallic;
+    float Roughness;
+    float AO;
+};
+
+struct StreamData
+{
+    float4 uObjectColor;
+    float4 uObjectColor2;
+    float4 uDynLightColor;
+    float4 uAddColor;
+    float4 uTextureAddColor;
+    float4 uTextureModulateColor;
+    float4 uTextureBlendColor;
+    float4 uFogColor;
+    float uDesaturationFactor;
+    float uInterpolationFactor;
+    float timer;
+    int useVertexData;
+    float4 uVertexColor;
+    float4 uVertexNormal;
+    float4 uGlowTopPlane;
+    float4 uGlowTopColor;
+    float4 uGlowBottomPlane;
+    float4 uGlowBottomColor;
+    float4 uGradientTopPlane;
+    float4 uGradientBottomPlane;
+    float4 uSplitTopPlane;
+    float4 uSplitBottomPlane;
+    float4 uDetailParms;
+    float4 uNpotEmulation;
+    float4 padding1;
+    float4 padding2;
+    float4 padding3;
+};
+
+struct StreamUBO
+{
+    StreamData data[170];
+};
+
+struct PushConstants
+{
+    float4 group1;
+    float4 group2;
+    float4 group3;
+    float4 group4;
+};
+
+struct ViewpointUBO
+{
+    float4x4 ProjectionMatrix;
+    float4x4 ViewMatrix;
+    float4x4 NormalViewMatrix;
+    float4 uCameraPos;
+    float4 uClipLine;
+    float uGlobVis;
+    int uPalLightLevels;
+    int uViewHeight;
+    float uClipHeight;
+    float uClipHeightDirection;
+    int uShadowmapFilter;
+    int uLightBlendMode;
+    float uThickFogDistance;
+    float uThickFogMultiplier;
+};
+
+struct LightBufferSSO
+{
+    float4 lights[1];
+};
+
+struct MatricesUBO
+{
+    float4x4 ModelMatrix;
+    float4x4 NormalModelMatrix;
+    float4x4 TextureMatrix;
+};
+
+struct BoneBufferSSO
+{
+    float4x4 bones[1];
+};
+
+constant spvUnsafeArray<float, 64> _2095 = spvUnsafeArray<float, 64>({ 0.015384615398943424224853515625, 0.5076923370361328125, 0.13846154510974884033203125, 0.630769252777099609375, 0.0461538471281528472900390625, 0.53846156597137451171875, 0.16923077404499053955078125, 0.66153848171234130859375, 0.75384616851806640625, 0.2615384757518768310546875, 0.876923084259033203125, 0.3846153914928436279296875, 0.78461539745330810546875, 0.2923077046871185302734375, 0.90769231319427490234375, 0.4153846204280853271484375, 0.20000000298023223876953125, 0.6923077106475830078125, 0.076923079788684844970703125, 0.5692307949066162109375, 0.23076923191547393798828125, 0.72307693958282470703125, 0.107692308723926544189453125, 0.60000002384185791015625, 0.9384615421295166015625, 0.4461538493633270263671875, 0.8153846263885498046875, 0.3230769336223602294921875, 0.96923077106475830078125, 0.4769230782985687255859375, 0.84615385532379150390625, 0.3538461625576019287109375, 0.0615384615957736968994140625, 0.553846180438995361328125, 0.18461538851261138916015625, 0.676923096179962158203125, 0.03076923079788684844970703125, 0.523076951503753662109375, 0.15384615957736968994140625, 0.646153867244720458984375, 0.800000011920928955078125, 0.3076923191547393798828125, 0.923076927661895751953125, 0.4307692348957061767578125, 0.769230782985687255859375, 0.2769230902194976806640625, 0.892307698726654052734375, 0.4000000059604644775390625, 0.24615384638309478759765625, 0.738461554050445556640625, 0.123076923191547393798828125, 0.615384638309478759765625, 0.21538461744785308837890625, 0.707692325115203857421875, 0.092307694256305694580078125, 0.584615409374237060546875, 0.984615385532379150390625, 0.4923076927661895751953125, 0.861538469791412353515625, 0.3692307770252227783203125, 0.953846156597137451171875, 0.4615384638309478759765625, 0.830769240856170654296875, 0.3384615480899810791015625 });
+
+struct main0_out
+{
+    float4 FragColor [[color(0)]];
+};
+
+struct main0_in
+{
+    float4 vTexCoord [[user(locn0)]];
+    float4 vColor [[user(locn1)]];
+    float4 pixelpos [[user(locn2)]];
+    float3 glowdist [[user(locn3)]];
+    float3 gradientdist [[user(locn4)]];
+    float4 vWorldNormal [[user(locn5)]];
+    float3 vLightmap [[user(locn9)]];
+};
+
+static inline __attribute__((always_inline))
+float grayscale(thread const float4& color)
+{
+    return dot(color.xyz, float3(0.300000011920928955078125, 0.560000002384185791015625, 0.14000000059604644775390625));
+}
+
+static inline __attribute__((always_inline))
+float4 dodesaturate(thread const float4& texel, thread const float& factor)
+{
+    if (factor != 0.0)
+    {
+        float4 param = texel;
+        float gray = grayscale(param);
+        return mix(texel, float4(gray, gray, gray, texel.w), float4(factor));
+    }
+    else
+    {
+        return texel;
+    }
+}
+
+static inline __attribute__((always_inline))
+float4 ApplyTextureManipulation(thread float4& texel, thread const int& blendflags, constant StreamUBO& _274, constant PushConstants& _278)
+{
+    float4 param = texel;
+    float param_1 = _274.data[int(_278.group4.y)].uTextureModulateColor.w;
+    texel = dodesaturate(param, param_1);
+    if ((blendflags & 8) != 0)
+    {
+        float _310 = texel.x;
+        float _313 = texel.y;
+        float _316 = texel.z;
+        float3 _318 = float3(1.0 - _310, 1.0 - _313, 1.0 - _316);
+        texel.x = _318.x;
+        texel.y = _318.y;
+        texel.z = _318.z;
+    }
+    float4 _333 = texel;
+    float3 _335 = _333.xyz + _274.data[int(_278.group4.y)].uTextureAddColor.xyz;
+    texel.x = _335.x;
+    texel.y = _335.y;
+    texel.z = _335.z;
+    float4 _348 = texel;
+    float3 _350 = _348.xyz * _274.data[int(_278.group4.y)].uTextureModulateColor.xyz;
+    texel.x = _350.x;
+    texel.y = _350.y;
+    texel.z = _350.z;
+    float4 _357 = texel;
+    float3 _361 = fast::clamp(_357.xyz, float3(0.0), float3(1.0));
+    texel.x = _361.x;
+    texel.y = _361.y;
+    texel.z = _361.z;
+    if ((blendflags & 7) != 0)
+    {
+        float3 tcol = texel.xyz * 255.0;
+        float4 tint = _274.data[int(_278.group4.y)].uTextureBlendColor * 255.0;
+        switch (blendflags & 7)
+        {
+            case 2:
+            {
+                tcol.z = 255.0 - (((255.0 - tcol.z) * (255.0 - tint.x)) / 256.0);
+                tcol.y = 255.0 - (((255.0 - tcol.y) * (255.0 - tint.y)) / 256.0);
+                tcol.x = 255.0 - (((255.0 - tcol.x) * (255.0 - tint.z)) / 256.0);
+                break;
+            }
+            case 3:
+            {
+                float _488;
+                if (tcol.z < 128.0)
+                {
+                    _488 = (tcol.z * tint.z) / 128.0;
+                }
+                else
+                {
+                    _488 = 255.0 - (((255.0 - tcol.z) * (255.0 - tint.z)) / 128.0);
+                }
+                tcol.z = _488;
+                float _512;
+                if (tcol.y < 128.0)
+                {
+                    _512 = (tcol.y * tint.y) / 128.0;
+                }
+                else
+                {
+                    _512 = 255.0 - (((255.0 - tcol.y) * (255.0 - tint.y)) / 128.0);
+                }
+                tcol.y = _512;
+                float _536;
+                if (tcol.x < 128.0)
+                {
+                    _536 = (tcol.x * tint.x) / 128.0;
+                }
+                else
+                {
+                    _536 = 255.0 - (((255.0 - tcol.x) * (255.0 - tint.x)) / 128.0);
+                }
+                tcol.x = _536;
+                break;
+            }
+            case 4:
+            {
+                float _561;
+                if (tint.z < 128.0)
+                {
+                    _561 = (tcol.z * tint.z) / 128.0;
+                }
+                else
+                {
+                    _561 = 255.0 - (((255.0 - tcol.z) * (255.0 - tint.z)) / 128.0);
+                }
+                tcol.z = _561;
+                float _585;
+                if (tint.y < 128.0)
+                {
+                    _585 = (tcol.y * tint.y) / 128.0;
+                }
+                else
+                {
+                    _585 = 255.0 - (((255.0 - tcol.y) * (255.0 - tint.y)) / 128.0);
+                }
+                tcol.y = _585;
+                float _609;
+                if (tint.x < 128.0)
+                {
+                    _609 = (tcol.x * tint.x) / 128.0;
+                }
+                else
+                {
+                    _609 = 255.0 - (((255.0 - tcol.x) * (255.0 - tint.x)) / 128.0);
+                }
+                tcol.x = _609;
+                break;
+            }
+            default:
+            {
+                tcol.z = (tcol.z * (1.0 - _274.data[int(_278.group4.y)].uTextureBlendColor.w)) + (tint.z * _274.data[int(_278.group4.y)].uTextureBlendColor.w);
+                tcol.y = (tcol.y * (1.0 - _274.data[int(_278.group4.y)].uTextureBlendColor.w)) + (tint.y * _274.data[int(_278.group4.y)].uTextureBlendColor.w);
+                tcol.x = (tcol.x * (1.0 - _274.data[int(_278.group4.y)].uTextureBlendColor.w)) + (tint.x * _274.data[int(_278.group4.y)].uTextureBlendColor.w);
+                break;
+            }
+        }
+        float3 _634 = tcol / float3(255.0);
+        texel.x = _634.x;
+        texel.y = _634.y;
+        texel.z = _634.z;
+    }
+    return texel;
+}
+
+static inline __attribute__((always_inline))
+float4 desaturate(thread const float4& texel, constant StreamUBO& _274, constant PushConstants& _278)
+{
+    float4 param = texel;
+    float param_1 = _274.data[int(_278.group4.y)].uDesaturationFactor;
+    return dodesaturate(param, param_1);
+}
+
+static inline __attribute__((always_inline))
+float4 getTexel(thread const float2& st, constant StreamUBO& _274, constant PushConstants& _278, texture2d<float> tex, sampler texSmplr, thread float3& gradientdist)
+{
+    float4 texel = tex.sample(texSmplr, st);
+    switch (int(_278.group3.x) & 65535)
+    {
+        case 1:
+        {
+            texel.x = 1.0;
+            texel.y = 1.0;
+            texel.z = 1.0;
+            break;
+        }
+        case 2:
+        {
+            texel.w = 1.0;
+            break;
+        }
+        case 3:
+        {
+            texel = float4(1.0 - texel.x, 1.0 - texel.z, 1.0 - texel.y, texel.w);
+            break;
+        }
+        case 4:
+        {
+            float4 param = texel;
+            float gray = grayscale(param);
+            texel = float4(1.0, 1.0, 1.0, gray * texel.w);
+            break;
+        }
+        case 5:
+        {
+            bool _701 = st.y < 0.0;
+            bool _708;
+            if (!_701)
+            {
+                _708 = st.y > 1.0;
+            }
+            else
+            {
+                _708 = _701;
+            }
+            if (_708)
+            {
+                texel.w = 0.0;
+            }
+            break;
+        }
+        case 6:
+        {
+            texel = float4(1.0 - texel.x, 1.0 - texel.z, 1.0 - texel.y, 1.0);
+            break;
+        }
+        case 7:
+        {
+            return texel;
+        }
+    }
+    if ((int(_278.group3.x) & 524288) != 0)
+    {
+        bool _737 = st.y < 0.0;
+        bool _744;
+        if (!_737)
+        {
+            _744 = st.y > 1.0;
+        }
+        else
+        {
+            _744 = _737;
+        }
+        if (_744)
+        {
+            texel.w = 0.0;
+        }
+    }
+    int blendflags = int(_274.data[int(_278.group4.y)].uTextureAddColor.w);
+    if (blendflags != 0)
+    {
+        float4 param_1 = texel;
+        int param_2 = blendflags;
+        float4 _763 = ApplyTextureManipulation(param_1, param_2, _274, _278);
+        texel = _763;
+    }
+    float4 _770 = texel;
+    float3 _772 = _770.xyz + _274.data[int(_278.group4.y)].uAddColor.xyz;
+    texel.x = _772.x;
+    texel.y = _772.y;
+    texel.z = _772.z;
+    if (_274.data[int(_278.group4.y)].uObjectColor2.w == 0.0)
+    {
+        texel *= _274.data[int(_278.group4.y)].uObjectColor;
+    }
+    else
+    {
+        texel *= mix(_274.data[int(_278.group4.y)].uObjectColor, _274.data[int(_278.group4.y)].uObjectColor2, float4(gradientdist.z));
+    }
+    float4 param_3 = texel;
+    return desaturate(param_3, _274, _278);
+}
+
+static inline __attribute__((always_inline))
+float3 ApplyNormalMap(thread const float2& texcoord, thread float4& vWorldNormal)
+{
+    return fast::normalize(vWorldNormal.xyz);
+}
+
+static inline __attribute__((always_inline))
+void SetMaterialProps(thread Material& material, thread const float2& texCoord, constant StreamUBO& _274, constant PushConstants& _278, texture2d<float> tex, sampler texSmplr, thread float3& gradientdist, thread float4& vWorldNormal, texture2d<float> texture2, sampler texture2Smplr, texture2d<float> texture3, sampler texture3Smplr, texture2d<float> texture4, sampler texture4Smplr)
+{
+    float2 param = texCoord;
+    material.Base = getTexel(param, _274, _278, tex, texSmplr, gradientdist);
+    float2 param_1 = texCoord;
+    material.Normal = ApplyNormalMap(param_1, vWorldNormal);
+    if ((int(_278.group3.x) & 65536) != 0)
+    {
+        float4 param_2 = texture2.sample(texture2Smplr, texCoord);
+        material.Bright = desaturate(param_2, _274, _278);
+    }
+    if ((int(_278.group3.x) & 131072) != 0)
+    {
+        float4 Detail = texture3.sample(texture3Smplr, (texCoord * _274.data[int(_278.group4.y)].uDetailParms.xy)) * _274.data[int(_278.group4.y)].uDetailParms.z;
+        float4 _1520 = material.Base;
+        float3 _1522 = _1520.xyz * Detail.xyz;
+        material.Base.x = _1522.x;
+        material.Base.y = _1522.y;
+        material.Base.z = _1522.z;
+    }
+    if ((int(_278.group3.x) & 262144) != 0)
+    {
+        float4 param_3 = texture4.sample(texture4Smplr, texCoord);
+        material.Glow = desaturate(param_3, _274, _278);
+    }
+}
+
+static inline __attribute__((always_inline))
+void SetupMaterial(thread Material& material, constant StreamUBO& _274, constant PushConstants& _278, texture2d<float> tex, sampler texSmplr, thread float3& gradientdist, thread float4& vWorldNormal, texture2d<float> texture2, sampler texture2Smplr, texture2d<float> texture3, sampler texture3Smplr, texture2d<float> texture4, sampler texture4Smplr, thread float4& vTexCoord)
+{
+    Material param = material;
+    float2 param_1 = vTexCoord.xy;
+    SetMaterialProps(param, param_1, _274, _278, tex, texSmplr, gradientdist, vWorldNormal, texture2, texture2Smplr, texture3, texture3Smplr, texture4, texture4Smplr);
+    material = param;
+}
+
+static inline __attribute__((always_inline))
+float R_WallColormap(thread const float& lightnum, thread const float& z, thread const float3& normal, thread float4& pixelpos, constant ViewpointUBO& _835)
+{
+    float projection = 160.0;
+    float2 line_v1 = pixelpos.xz;
+    float2 line_normal = normal.xz;
+    float texscale = (projection * fast::clamp(dot(fast::normalize(_835.uCameraPos.xz - line_v1), line_normal), 0.0, 1.0)) / z;
+    float lightz = fast::clamp(16.0 * texscale, 0.0, 47.0);
+    float startmap = (15.0 - lightnum) * 4.0;
+    return startmap - (lightz * 0.5);
+}
+
+static inline __attribute__((always_inline))
+float R_PlaneColormap(thread const float& lightnum, thread const float& z)
+{
+    float lightz = fast::clamp(z / 16.0, 0.0, 127.0);
+    float startmap = (15.0 - lightnum) * 4.0;
+    float scale = 160.0 / (lightz + 1.0);
+    return startmap - (scale * 0.5);
+}
+
+static inline __attribute__((always_inline))
+float R_ZDoomColormap(thread const float& light, thread const float& z, constant ViewpointUBO& _835)
+{
+    float L = light * 255.0;
+    float vis = fast::min(_835.uGlobVis / z, 0.75);
+    float shade = 2.0 - ((L + 12.0) / 128.0);
+    float lightscale = shade - vis;
+    return lightscale * 31.0;
+}
+
+static inline __attribute__((always_inline))
+float R_DoomColormap(thread const float& light, thread const float& z, thread float4& pixelpos, constant ViewpointUBO& _835, thread float4& vWorldNormal)
+{
+    if ((_835.uPalLightLevels >> 16) == 16)
+    {
+        float lightnum = fast::clamp(light * 15.0, 0.0, 15.0);
+        if (dot(vWorldNormal.xyz, vWorldNormal.xyz) > 0.5)
+        {
+            float3 normal = fast::normalize(vWorldNormal.xyz);
+            float param = lightnum;
+            float param_1 = z;
+            float3 param_2 = normal;
+            float param_3 = lightnum;
+            float param_4 = z;
+            return mix(R_WallColormap(param, param_1, param_2, pixelpos, _835), R_PlaneColormap(param_3, param_4), abs(normal.y));
+        }
+        else
+        {
+            float param_5 = lightnum;
+            float param_6 = z;
+            return R_PlaneColormap(param_5, param_6);
+        }
+    }
+    else
+    {
+        float param_7 = light;
+        float param_8 = z;
+        return R_ZDoomColormap(param_7, param_8, _835);
+    }
+}
+
+static inline __attribute__((always_inline))
+float R_DoomLightingEquation(thread const float& light, constant PushConstants& _278, thread float4& pixelpos, constant ViewpointUBO& _835, thread float4& vWorldNormal)
+{
+    float z;
+    if (((_835.uPalLightLevels >> 8) & 255) == 2)
+    {
+        z = distance(pixelpos.xyz, _835.uCameraPos.xyz);
+    }
+    else
+    {
+        z = pixelpos.w;
+    }
+    if ((_835.uPalLightLevels >> 16) == 5)
+    {
+        float numShades = float(_835.uPalLightLevels & 255);
+        float curshade = (1.0 - light) * (numShades - 1.0);
+        float visibility = fast::max((_835.uGlobVis * _278.group2.z) * z, 0.0);
+        float shade = fast::clamp(curshade + visibility, 0.0, numShades - 1.0);
+        return fast::clamp(shade * _278.group2.w, 0.0, 1.0);
+    }
+    float param = light;
+    float param_1 = z;
+    float colormap = R_DoomColormap(param, param_1, pixelpos, _835, vWorldNormal);
+    if ((_835.uPalLightLevels & 255) != 0)
+    {
+        colormap = floor(colormap) + 0.5;
+    }
+    return fast::clamp(colormap, 0.0, 31.0) / 32.0;
+}
+
+static inline __attribute__((always_inline))
+float4 ProcessLight(thread const Material& material, thread const float4& color)
+{
+    return color;
+}
+
+static inline __attribute__((always_inline))
+float spotLightAttenuation(thread const float4& lightpos, thread const float3& spotdir, thread const float& lightCosInnerAngle, thread const float& lightCosOuterAngle, thread float4& pixelpos)
+{
+    float3 lightDirection = fast::normalize(lightpos.xyz - pixelpos.xyz);
+    float cosDir = dot(lightDirection, spotdir);
+    return smoothstep(lightCosOuterAngle, lightCosInnerAngle, cosDir);
+}
+
+static inline __attribute__((always_inline))
+float shadowDirToU(thread const float2& dir)
+{
+    if (abs(dir.y) > abs(dir.x))
+    {
+        float x = (dir.x / dir.y) * 0.125;
+        if (dir.y >= 0.0)
+        {
+            return 0.125 + x;
+        }
+        else
+        {
+            return 0.625 + x;
+        }
+    }
+    else
+    {
+        float y = (dir.y / dir.x) * 0.125;
+        if (dir.x >= 0.0)
+        {
+            return 0.375 - y;
+        }
+        else
+        {
+            return 0.875 - y;
+        }
+    }
+}
+
+static inline __attribute__((always_inline))
+float sampleShadowmap(thread const float3& planePoint, thread const float& v, thread float4& vWorldNormal, texture2d<float> ShadowMap, sampler ShadowMapSmplr)
+{
+    float bias0 = 1.0;
+    float negD = dot(vWorldNormal.xyz, planePoint);
+    float3 ray = planePoint;
+    float2 isize = float2(int2(ShadowMap.get_width(), ShadowMap.get_height()));
+    float scale = isize.x * 0.25;
+    if (abs(ray.z) > abs(ray.x))
+    {
+        ray.y /= abs(ray.z);
+        ray.x /= abs(ray.z);
+        ray.x = (((floor(((ray.x + 1.0) * 0.5) * scale) + 0.5) / scale) * 2.0) - 1.0;
+        ray.z = sign(ray.z);
+    }
+    else
+    {
+        ray.y /= abs(ray.x);
+        ray.z /= abs(ray.x);
+        ray.z = (((floor(((ray.z + 1.0) * 0.5) * scale) + 0.5) / scale) * 2.0) - 1.0;
+        ray.x = sign(ray.x);
+    }
+    float t = (negD / dot(vWorldNormal.xyz, ray)) - bias0;
+    float2 dir = ray.xz * t;
+    float2 param = dir;
+    float u = shadowDirToU(param);
+    float dist2 = dot(dir, dir);
+    return step(dist2, ShadowMap.sample(ShadowMapSmplr, float2(u, v)).x);
+}
+
+static inline __attribute__((always_inline))
+float2 shadowUToDir(thread float& u)
+{
+    u *= 4.0;
+    float2 raydir;
+    switch (int(u))
+    {
+        case 0:
+        {
+            raydir = float2((u * 2.0) - 1.0, 1.0);
+            break;
+        }
+        case 1:
+        {
+            raydir = float2(1.0, 1.0 - ((u - 1.0) * 2.0));
+            break;
+        }
+        case 2:
+        {
+            raydir = float2(1.0 - ((u - 2.0) * 2.0), -1.0);
+            break;
+        }
+        case 3:
+        {
+            raydir = float2(-1.0, ((u - 3.0) * 2.0) - 1.0);
+            break;
+        }
+    }
+    return raydir;
+}
+
+static inline __attribute__((always_inline))
+float sampleShadowmapPCF(thread const float3& planePoint, thread const float& v, constant ViewpointUBO& _835, thread float4& vWorldNormal, texture2d<float> ShadowMap, sampler ShadowMapSmplr)
+{
+    float bias0 = 1.0;
+    float negD = dot(vWorldNormal.xyz, planePoint);
+    float3 ray = planePoint;
+    if (abs(ray.z) > abs(ray.x))
+    {
+        ray.y /= abs(ray.z);
+    }
+    else
+    {
+        ray.y /= abs(ray.x);
+    }
+    float2 isize = float2(int2(ShadowMap.get_width(), ShadowMap.get_height()));
+    float scale = isize.x;
+    float2 param = ray.xz;
+    float texelPos = floor(shadowDirToU(param) * scale);
+    float sum = 0.0;
+    float step_count = float(_835.uShadowmapFilter);
+    texelPos -= (step_count + 0.5);
+    float _1322 = -step_count;
+    for (float x = _1322; x <= step_count; x += 1.0)
+    {
+        float u = fract(texelPos / scale);
+        float param_1 = u;
+        float2 _1339 = shadowUToDir(param_1);
+        float2 dir = _1339;
+        ray.x = dir.x;
+        ray.z = dir.y;
+        float t = (negD / dot(vWorldNormal.xyz, ray)) - bias0;
+        dir = ray.xz * t;
+        float dist2 = dot(dir, dir);
+        sum += step(dist2, ShadowMap.sample(ShadowMapSmplr, float2(u, v)).x);
+        texelPos += 1.0;
+    }
+    return sum / ((float(_835.uShadowmapFilter) * 2.0) + 1.0);
+}
+
+static inline __attribute__((always_inline))
+float shadowmapAttenuation(thread const float4& lightpos, thread const float& shadowIndex, thread float4& pixelpos, constant ViewpointUBO& _835, thread float4& vWorldNormal, texture2d<float> ShadowMap, sampler ShadowMapSmplr)
+{
+    if (shadowIndex >= 1024.0)
+    {
+        return 1.0;
+    }
+    float3 planePoint = pixelpos.xyz - lightpos.xyz;
+    planePoint += float3(0.00999999977648258209228515625);
+    if (dot(planePoint.xz, planePoint.xz) < 1.0)
+    {
+        return 1.0;
+    }
+    float v = (shadowIndex + 0.5) / 1024.0;
+    if (_835.uShadowmapFilter <= 0)
+    {
+        float3 param = planePoint;
+        float param_1 = v;
+        return sampleShadowmap(param, param_1, vWorldNormal, ShadowMap, ShadowMapSmplr);
+    }
+    else
+    {
+        float3 param_2 = planePoint;
+        float param_3 = v;
+        return sampleShadowmapPCF(param_2, param_3, _835, vWorldNormal, ShadowMap, ShadowMapSmplr);
+    }
+}
+
+static inline __attribute__((always_inline))
+float shadowAttenuation(thread const float4& lightpos, thread const float& lightcolorA, thread float4& pixelpos, constant ViewpointUBO& _835, thread float4& vWorldNormal, texture2d<float> ShadowMap, sampler ShadowMapSmplr)
+{
+    float shadowIndex = abs(lightcolorA) - 1.0;
+    float4 param = lightpos;
+    float param_1 = shadowIndex;
+    return shadowmapAttenuation(param, param_1, pixelpos, _835, vWorldNormal, ShadowMap, ShadowMapSmplr);
+}
+
+static inline __attribute__((always_inline))
+float3 lightContribution(thread const int& i, thread const float3& normal, thread float4& pixelpos, constant ViewpointUBO& _835, thread float4& vWorldNormal, texture2d<float> ShadowMap, sampler ShadowMapSmplr, const device LightBufferSSO& _2124)
+{
+    float4 lightpos = _2124.lights[i];
+    float4 lightcolor = _2124.lights[i + 1];
+    float4 lightspot1 = _2124.lights[i + 2];
+    float4 lightspot2 = _2124.lights[i + 3];
+    float lightdistance = distance(lightpos.xyz, pixelpos.xyz);
+    if (lightpos.w < lightdistance)
+    {
+        return float3(0.0);
+    }
+    float3 lightdir = fast::normalize(lightpos.xyz - pixelpos.xyz);
+    float dotprod = dot(normal, lightdir);
+    if (dotprod < (-9.9999997473787516355514526367188e-05))
+    {
+        return float3(0.0);
+    }
+    float attenuation = fast::clamp((lightpos.w - lightdistance) / lightpos.w, 0.0, 1.0);
+    if (lightspot1.w == 1.0)
+    {
+        float4 param = lightpos;
+        float3 param_1 = lightspot1.xyz;
+        float param_2 = lightspot2.x;
+        float param_3 = lightspot2.y;
+        attenuation *= spotLightAttenuation(param, param_1, param_2, param_3, pixelpos);
+    }
+    if (lightcolor.w < 0.0)
+    {
+        attenuation *= fast::clamp(dotprod, 0.0, 1.0);
+    }
+    if (attenuation > 0.0)
+    {
+        float4 param_4 = lightpos;
+        float param_5 = lightcolor.w;
+        attenuation *= shadowAttenuation(param_4, param_5, pixelpos, _835, vWorldNormal, ShadowMap, ShadowMapSmplr);
+        return lightcolor.xyz * attenuation;
+    }
+    else
+    {
+        return float3(0.0);
+    }
+}
+
+static inline __attribute__((always_inline))
+float3 ProcessMaterialLight(thread const Material& material, thread const float3& color, constant StreamUBO& _274, constant PushConstants& _278, thread float4& pixelpos, constant ViewpointUBO& _835, thread float4& vWorldNormal, texture2d<float> ShadowMap, sampler ShadowMapSmplr, const device LightBufferSSO& _2124)
+{
+    float4 dynlight = _274.data[int(_278.group4.y)].uDynLightColor;
+    float3 normal = material.Normal;
+    if (int(_278.group3.w) >= 0)
+    {
+        int4 lightRange = int4(_2124.lights[int(_278.group3.w)]) + int4(int(_278.group3.w) + 1);
+        if (lightRange.z > lightRange.x)
+        {
+            for (int i = lightRange.x; i < lightRange.y; i += 4)
+            {
+                int param = i;
+                float3 param_1 = normal;
+                float4 _2284 = dynlight;
+                float3 _2286 = _2284.xyz + lightContribution(param, param_1, pixelpos, _835, vWorldNormal, ShadowMap, ShadowMapSmplr, _2124);
+                dynlight.x = _2286.x;
+                dynlight.y = _2286.y;
+                dynlight.z = _2286.z;
+            }
+            for (int i_1 = lightRange.y; i_1 < lightRange.z; i_1 += 4)
+            {
+                int param_2 = i_1;
+                float3 param_3 = normal;
+                float4 _2312 = dynlight;
+                float3 _2314 = _2312.xyz - lightContribution(param_2, param_3, pixelpos, _835, vWorldNormal, ShadowMap, ShadowMapSmplr, _2124);
+                dynlight.x = _2314.x;
+                dynlight.y = _2314.y;
+                dynlight.z = _2314.z;
+            }
+        }
+    }
+    float3 frag;
+    if (_835.uLightBlendMode == 1)
+    {
+        float4 param_4 = dynlight;
+        float3 lightcolor = color + desaturate(param_4, _274, _278).xyz;
+        frag = material.Base.xyz * ((lightcolor / float3(fast::max(fast::max(fast::max(lightcolor.x, lightcolor.y), lightcolor.z), 1.39999997615814208984375))) * 1.39999997615814208984375);
+    }
+    else
+    {
+        if (_835.uLightBlendMode == 2)
+        {
+            float4 param_5 = dynlight;
+            frag = material.Base.xyz * (color + desaturate(param_5, _274, _278).xyz);
+        }
+        else
+        {
+            float4 param_6 = dynlight;
+            frag = material.Base.xyz * fast::clamp(color + desaturate(param_6, _274, _278).xyz, float3(0.0), float3(1.39999997615814208984375));
+        }
+    }
+    if (int(_278.group3.w) >= 0)
+    {
+        int4 lightRange_1 = int4(_2124.lights[int(_278.group3.w)]) + int4(int(_278.group3.w) + 1);
+        if (lightRange_1.w > lightRange_1.z)
+        {
+            float4 addlight = float4(0.0);
+            for (int i_2 = lightRange_1.z; i_2 < lightRange_1.w; i_2 += 4)
+            {
+                int param_7 = i_2;
+                float3 param_8 = normal;
+                float4 _2429 = addlight;
+                float3 _2431 = _2429.xyz + lightContribution(param_7, param_8, pixelpos, _835, vWorldNormal, ShadowMap, ShadowMapSmplr, _2124);
+                addlight.x = _2431.x;
+                addlight.y = _2431.y;
+                addlight.z = _2431.z;
+            }
+            float4 param_9 = addlight;
+            frag = fast::clamp(frag + desaturate(param_9, _274, _278).xyz, float3(0.0), float3(1.0));
+        }
+    }
+    return frag;
+}
+
+static inline __attribute__((always_inline))
+float4 getLightColor(thread const Material& material, thread const float& fogdist, thread const float& fogfactor, constant StreamUBO& _274, constant PushConstants& _278, thread float4& pixelpos, constant ViewpointUBO& _835, thread float4& vWorldNormal, texture2d<float> ShadowMap, sampler ShadowMapSmplr, thread float4& vColor, thread float3& glowdist, thread float3& vLightmap, texture2d_array<float> LightMap, sampler LightMapSmplr, const device LightBufferSSO& _2124)
+{
+    float4 color = vColor;
+    if (_278.group2.x >= 0.0)
+    {
+        float param = _278.group2.x;
+        float newlightlevel = 1.0 - R_DoomLightingEquation(param, _278, pixelpos, _835, vWorldNormal);
+        float4 _1559 = color;
+        float3 _1561 = _1559.xyz * newlightlevel;
+        color.x = _1561.x;
+        color.y = _1561.y;
+        color.z = _1561.z;
+    }
+    else
+    {
+        if (int(_278.group3.z) > 0)
+        {
+            if (fogdist < _278.group2.w)
+            {
+                float4 _1592 = color;
+                float3 _1594 = _1592.xyz * (_278.group2.z - ((fogdist / _278.group2.w) * (_278.group2.z - 1.0)));
+                color.x = _1594.x;
+                color.y = _1594.y;
+                color.z = _1594.z;
+            }
+            float4 _1602 = color;
+            float3 _1606 = mix(float3(0.0), _1602.xyz, float3(fogfactor));
+            color.x = _1606.x;
+            color.y = _1606.y;
+            color.z = _1606.z;
+        }
+    }
+    bool _1619 = _274.data[int(_278.group4.y)].uGlowTopColor.w > 0.0;
+    bool _1631;
+    if (_1619)
+    {
+        _1631 = glowdist.x < _274.data[int(_278.group4.y)].uGlowTopColor.w;
+    }
+    else
+    {
+        _1631 = _1619;
+    }
+    if (_1631)
+    {
+        float4 param_1 = _274.data[int(_278.group4.y)].uGlowTopColor * (1.0 - (glowdist.x / _274.data[int(_278.group4.y)].uGlowTopColor.w));
+        float4 _1652 = color;
+        float3 _1654 = _1652.xyz + desaturate(param_1, _274, _278).xyz;
+        color.x = _1654.x;
+        color.y = _1654.y;
+        color.z = _1654.z;
+    }
+    bool _1667 = _274.data[int(_278.group4.y)].uGlowBottomColor.w > 0.0;
+    bool _1678;
+    if (_1667)
+    {
+        _1678 = glowdist.y < _274.data[int(_278.group4.y)].uGlowBottomColor.w;
+    }
+    else
+    {
+        _1678 = _1667;
+    }
+    if (_1678)
+    {
+        float4 param_2 = _274.data[int(_278.group4.y)].uGlowBottomColor * (1.0 - (glowdist.y / _274.data[int(_278.group4.y)].uGlowBottomColor.w));
+        float4 _1699 = color;
+        float3 _1701 = _1699.xyz + desaturate(param_2, _274, _278).xyz;
+        color.x = _1701.x;
+        color.y = _1701.y;
+        color.z = _1701.z;
+    }
+    color = fast::min(color, float4(1.0));
+    float4 _1711 = color;
+    float3 _1719 = mix(_1711.xyz, material.Glow.xyz, float3(material.Glow.w));
+    color.x = _1719.x;
+    color.y = _1719.y;
+    color.z = _1719.z;
+    float4 _1726 = color;
+    float3 _1733 = fast::min(_1726.xyz + material.Bright.xyz, float3(1.0));
+    color.x = _1733.x;
+    color.y = _1733.y;
+    color.z = _1733.z;
+    Material param_3 = material;
+    float4 param_4 = color;
+    color = ProcessLight(param_3, param_4);
+    if (vLightmap.z >= 0.0)
+    {
+        float4 _1759 = color;
+        float3 _1761 = _1759.xyz + LightMap.sample(LightMapSmplr, vLightmap.xy, uint(rint(vLightmap.z))).xyz;
+        color.x = _1761.x;
+        color.y = _1761.y;
+        color.z = _1761.z;
+    }
+    Material param_5 = material;
+    float3 param_6 = color.xyz;
+    return float4(ProcessMaterialLight(param_5, param_6, _274, _278, pixelpos, _835, vWorldNormal, ShadowMap, ShadowMapSmplr, _2124), material.Base.w * vColor.w);
+}
+
+static inline __attribute__((always_inline))
+float4 applyFog(thread const float4& frag, thread const float& fogfactor, constant StreamUBO& _274, constant PushConstants& _278)
+{
+    return float4(mix(_274.data[int(_278.group4.y)].uFogColor.xyz, frag.xyz, float3(fogfactor)), frag.w);
+}
+
+static inline __attribute__((always_inline))
+float3 rgb2hsv(thread const float3& c)
+{
+    float4 K = float4(0.0, -0.3333333432674407958984375, 0.666666686534881591796875, -1.0);
+    float4 p = mix(float4(c.zy, K.wz), float4(c.yz, K.xy), float4(step(c.z, c.y)));
+    float4 q = mix(float4(p.xyw, c.x), float4(c.x, p.yzx), float4(step(p.x, c.x)));
+    float d = q.x - fast::min(q.w, q.y);
+    float e = 1.0000000133514319600180897396058e-10;
+    return float3(abs(q.z + ((q.w - q.y) / ((6.0 * d) + e))), d / (q.x + e), q.x);
+}
+
+fragment main0_out main0(main0_in in [[stage_in]], const device LightBufferSSO& _2124 [[buffer(16)]], constant ViewpointUBO& _835 [[buffer(17)]], constant StreamUBO& _274 [[buffer(20)]], constant PushConstants& _278 [[buffer(21)]], texture2d<float> tex [[texture(0)]], texture2d<float> texture2 [[texture(1)]], texture2d<float> texture3 [[texture(2)]], texture2d<float> texture4 [[texture(3)]], texture2d<float> ShadowMap [[texture(14)]], texture2d_array<float> LightMap [[texture(15)]], sampler texSmplr [[sampler(0)]], sampler texture2Smplr [[sampler(1)]], sampler texture3Smplr [[sampler(2)]], sampler texture4Smplr [[sampler(3)]], sampler ShadowMapSmplr [[sampler(14)]], sampler LightMapSmplr [[sampler(15)]])
+{
+    main0_out out = {};
+    Material material;
+    material.Base = float4(0.0);
+    material.Bright = float4(0.0);
+    material.Glow = float4(0.0);
+    material.Normal = float3(0.0);
+    material.Specular = float3(0.0);
+    material.Glossiness = 0.0;
+    material.SpecularLevel = 0.0;
+    material.Metallic = 0.0;
+    material.Roughness = 0.0;
+    material.AO = 0.0;
+    Material param = material;
+    SetupMaterial(param, _274, _278, tex, texSmplr, in.gradientdist, in.vWorldNormal, texture2, texture2Smplr, texture3, texture3Smplr, texture4, texture4Smplr, in.vTexCoord);
+    material = param;
+    float4 frag = material.Base;
+    if (int(_278.group3.z) != (-3))
+    {
+        float fogdist = 0.0;
+        float fogfactor = 0.0;
+        if (int(_278.group3.z) != 0)
+        {
+            bool _1842 = int(_278.group3.z) == 1;
+            bool _1851;
+            if (!_1842)
+            {
+                _1851 = int(_278.group3.z) == (-1);
+            }
+            else
+            {
+                _1851 = _1842;
+            }
+            if (_1851)
+            {
+                fogdist = fast::max(16.0, in.pixelpos.w);
+            }
+            else
+            {
+                fogdist = fast::max(16.0, distance(in.pixelpos.xyz, _835.uCameraPos.xyz));
+            }
+            if (_835.uThickFogDistance > 0.0)
+            {
+                if (fogdist > _835.uThickFogDistance)
+                {
+                    fogdist += (_835.uThickFogMultiplier * (fogdist - _835.uThickFogDistance));
+                }
+            }
+            fogfactor = exp2(_278.group2.y * fogdist);
+        }
+        if ((int(_278.group3.x) & 65535) != 7)
+        {
+            Material param_1 = material;
+            float param_2 = fogdist;
+            float param_3 = fogfactor;
+            frag = getLightColor(param_1, param_2, param_3, _274, _278, in.pixelpos, _835, in.vWorldNormal, ShadowMap, ShadowMapSmplr, in.vColor, in.glowdist, in.vLightmap, LightMap, LightMapSmplr, _2124);
+            if (int(_278.group3.z) < 0)
+            {
+                float4 param_4 = frag;
+                float param_5 = fogfactor;
+                frag = applyFog(param_4, param_5, _274, _278);
+            }
+        }
+        else
+        {
+            frag = float4(_274.data[int(_278.group4.y)].uFogColor.xyz, (((1.0 - fogfactor) * frag.w) * 0.75) * in.vColor.w);
+        }
+    }
+    else
+    {
+        if ((int(_278.group3.x) & 65535) == 7)
+        {
+            float4 param_6 = frag;
+            float gray = grayscale(param_6);
+            float4 cm = (_274.data[int(_278.group4.y)].uObjectColor + ((_274.data[int(_278.group4.y)].uAddColor - _274.data[int(_278.group4.y)].uObjectColor) * gray)) * 2.0;
+            frag = float4(fast::clamp(cm.xyz, float3(0.0), float3(1.0)), frag.w);
+        }
+        Material param_7 = material;
+        float4 param_8 = in.vColor;
+        frag *= ProcessLight(param_7, param_8);
+        float4 _1988 = frag;
+        float3 _1996 = _1988.xyz + _274.data[int(_278.group4.y)].uFogColor.xyz;
+        frag.x = _1996.x;
+        frag.y = _1996.y;
+        frag.z = _1996.z;
+    }
+    out.FragColor = frag;
+    int index = (spvSMod(int(in.pixelpos.x), 8) * 8) + spvSMod(int(in.pixelpos.y), 8);
+    float3 param_9 = out.FragColor.xyz;
+    float3 fragHSV = rgb2hsv(param_9);
+    float brightness = fast::clamp(1.5 * fragHSV.z, 0.100000001490116119384765625, 1.0);
+    if (_2095[index] < brightness)
+    {
+        discard_fragment();
+    }
+    else
+    {
+        out.FragColor *= 0.5;
+    }
+    return out;
+}
+

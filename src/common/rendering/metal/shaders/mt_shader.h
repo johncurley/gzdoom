@@ -112,6 +112,13 @@ public:
 
 private:
   std::string GetCachePath(const std::string &key);
+  // Shared sanitiser for the cache path, the shipped lump name and the dump
+  // path -- see the definition for why they must not drift.
+  static std::string FilterShaderKey(const std::string &key);
+  // Pre-translated MSL from gzdoom.pk3, checked before the disk cache.
+  std::string LoadGeneratedMSL(const std::string &key);
+  // Writes a freshly translated stage out when mt_dumpshaders is set.
+  void DumpGeneratedMSL(const std::string &key, const std::string &msl);
   // Compile GLSL to SPIR-V (reuse Vulkan logic)
   std::vector<uint32_t>
   CompileGLSLToSPIRV(const std::string &source, const std::string &name,

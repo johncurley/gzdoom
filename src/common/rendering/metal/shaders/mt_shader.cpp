@@ -70,6 +70,23 @@ void RecordCompileStall(MetalRenderDevice *fb, const char *type, float ms,
 // shader in the engine, so it is a diagnostic, not a setting.
 CVAR(Bool, mt_msl_precise_math, false, 0)
 
+// Write every translated stage to <cache>/generated/ as it is produced, for
+// collection into wadsrc by tools/collect_metal_shaders.py.
+//
+// The point is to remove GLSL->SPIR-V->MSL translation from a cold start
+// entirely: measured 2026-08-17, that is 1.9s across 92 stages, paid after any
+// shader edit or cache wipe. Pre-translated MSL shipped in gzdoom.pk3 is
+// checked before the on-disk cache, so a normal launch never runs glslang or
+// SPIRV-Cross for the engine's own programs.
+//
+// Staleness is safe by construction: the lump name carries the same
+// SuperFastHash of source-plus-defines that the runtime computes, so an
+// out-of-date generated file simply does not match and the runtime falls
+// through to translating. Forgetting to regenerate costs 1.9s, it does not
+// render the wrong thing -- which is why this ships as MSL text rather than a
+// prebuilt metallib.
+CVAR(Bool, mt_dumpshaders, false, 0)
+
 // glslang includes for GLSL → SPIR-V compilation
 #include "glslang/glslang/Public/ShaderLang.h"
 #include "glslang/spirv/GlslangToSpv.h"
@@ -427,8 +444,12 @@ MtShaderManager::CompileShader(const std::string &name,
     std::string cachePath = GetCachePath(cacheKey);
     std::string vertexMSL;
 
-    std::ifstream vfile(cachePath);
-    if (vfile.is_open()) {
+    vertexMSL = LoadGeneratedMSL(cacheKey);
+
+    std::ifstream vfile(vertexMSL.empty() ? cachePath : std::string());
+    if (!vertexMSL.empty()) {
+      // shipped, pre-translated: nothing to do
+    } else if (vfile.is_open()) {
       std::stringstream ss;
       ss << vfile.rdbuf();
       vertexMSL = ss.str();
@@ -449,6 +470,7 @@ MtShaderManager::CompileShader(const std::string &name,
           TranslateSPIRVToMSL(vertexSPIRV, true, name + "_vert"); // Pass name
       RecordCompileStall(fb, "msl_translate", translateTimer.ElapsedMs(),
                          name + "_vert");
+      DumpGeneratedMSL(cacheKey, vertexMSL);
       if (vertexMSL.empty()) {
         if (module->function)
           ((MTL::Function *)module->function)->release();
@@ -502,8 +524,12 @@ MtShaderManager::CompileShader(const std::string &name,
     std::string cachePath = GetCachePath(cacheKey);
     std::string fragmentMSL;
 
-    std::ifstream ffile(cachePath);
-    if (ffile.is_open()) {
+    fragmentMSL = LoadGeneratedMSL(cacheKey);
+
+    std::ifstream ffile(fragmentMSL.empty() ? cachePath : std::string());
+    if (!fragmentMSL.empty()) {
+      // shipped, pre-translated: nothing to do
+    } else if (ffile.is_open()) {
       std::stringstream ss;
       ss << ffile.rdbuf();
       fragmentMSL = ss.str();
@@ -527,6 +553,7 @@ MtShaderManager::CompileShader(const std::string &name,
                                         name + "_frag"); // Pass name
       RecordCompileStall(fb, "msl_translate", translateTimer.ElapsedMs(),
                          name + "_frag");
+      DumpGeneratedMSL(cacheKey, fragmentMSL);
       if (fragmentMSL.empty()) {
         if (module->function)
           ((MTL::Function *)module->function)->release();
@@ -1325,16 +1352,60 @@ MtShaderManager::CreateComputePipeline(const char *functionName,
   return pso;
 }
 
+// One filter, used by the on-disk cache path, the shipped lump name and the
+// dump path alike. Program names contain spaces ("Warp 1", "Basic Fuzz"), so
+// they must be sanitised -- and if the three sites sanitised differently the
+// shipped MSL would never be found, silently, with only a 1.9s startup as the
+// symptom.
+std::string MtShaderManager::FilterShaderKey(const std::string &key) {
+  std::string out;
+  for (char c : key) {
+    if (isalnum((unsigned char)c) || c == '_' || c == '-')
+      out += c;
+  }
+  return out;
+}
+
 std::string MtShaderManager::GetCachePath(const std::string &key) {
   FString path = M_GetCachePath(true);
   path += "/mt_";
-  // Filter key for filesystem safety
-  for (char c : key) {
-    if (isalnum(c) || c == '_' || c == '-')
-      path += c;
-  }
+  path += FilterShaderKey(key).c_str();
   path += ".msl";
   return path.GetChars();
+}
+
+// Pre-translated MSL shipped in gzdoom.pk3. Checked before the on-disk cache
+// and before translation. Returns empty if absent, which is not an error: mod
+// shaders and any permutation not covered by the shipped set legitimately fall
+// through to the runtime path, and that path is never going away.
+std::string MtShaderManager::LoadGeneratedMSL(const std::string &key) {
+  std::string lumpname = "shaders/metal/generated/" + FilterShaderKey(key) + ".msl";
+  int lump = fileSystem.CheckNumForFullName(lumpname.c_str());
+  if (lump == -1)
+    return "";
+  auto data = fileSystem.ReadFile(lump);
+  return std::string((const char *)data.data(), data.size());
+}
+
+void MtShaderManager::DumpGeneratedMSL(const std::string &key,
+                                       const std::string &msl) {
+  if (!mt_dumpshaders || msl.empty())
+    return;
+
+  FString dir = M_GetCachePath(true);
+  dir += "/generated";
+  CreatePath(dir.GetChars());
+
+  std::string path = std::string(dir.GetChars()) + "/" +
+                     FilterShaderKey(key) + ".msl";
+  std::ofstream out(path);
+  if (out.is_open()) {
+    out << msl;
+    // stderr and unconditional: this is the proof that a dump run actually
+    // produced the file, and shaders compile before the console exists.
+    fprintf(stderr, "mt_dumpshaders  wrote %s (%zu bytes)\n",
+            path.c_str(), msl.size());
+  }
 }
 
 std::vector<uint32_t>

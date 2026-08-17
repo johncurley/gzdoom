@@ -1,0 +1,25 @@
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct main0_out
+{
+    float2 TexCoord [[user(locn0)]];
+    float4 gl_Position [[position]];
+};
+
+struct main0_in
+{
+    float4 PositionInProjection [[attribute(0)]];
+    float2 UV [[attribute(1)]];
+};
+
+vertex main0_out main0(main0_in in [[stage_in]])
+{
+    main0_out out = {};
+    out.gl_Position = in.PositionInProjection;
+    out.TexCoord = in.UV;
+    return out;
+}
+

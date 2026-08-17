@@ -1,0 +1,111 @@
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct PushConstants
+{
+    float4 group1;
+    float4 group2;
+    float4 group3;
+    float4 group4;
+};
+
+struct ViewpointUBO
+{
+    float4x4 ProjectionMatrix;
+    float4x4 ViewMatrix;
+    float4x4 NormalViewMatrix;
+    float4 uCameraPos;
+    float4 uClipLine;
+    float uGlobVis;
+    int uPalLightLevels;
+    int uViewHeight;
+    float uClipHeight;
+    float uClipHeightDirection;
+    int uShadowmapFilter;
+    int uLightBlendMode;
+    float uThickFogDistance;
+    float uThickFogMultiplier;
+};
+
+struct StreamData
+{
+    float4 uObjectColor;
+    float4 uObjectColor2;
+    float4 uDynLightColor;
+    float4 uAddColor;
+    float4 uTextureAddColor;
+    float4 uTextureModulateColor;
+    float4 uTextureBlendColor;
+    float4 uFogColor;
+    float uDesaturationFactor;
+    float uInterpolationFactor;
+    float timer;
+    int useVertexData;
+    float4 uVertexColor;
+    float4 uVertexNormal;
+    float4 uGlowTopPlane;
+    float4 uGlowTopColor;
+    float4 uGlowBottomPlane;
+    float4 uGlowBottomColor;
+    float4 uGradientTopPlane;
+    float4 uGradientBottomPlane;
+    float4 uSplitTopPlane;
+    float4 uSplitBottomPlane;
+    float4 uDetailParms;
+    float4 uNpotEmulation;
+    float4 padding1;
+    float4 padding2;
+    float4 padding3;
+};
+
+struct StreamUBO
+{
+    StreamData data[170];
+};
+
+struct MatricesUBO
+{
+    float4x4 ModelMatrix;
+    float4x4 NormalModelMatrix;
+    float4x4 TextureMatrix;
+};
+
+struct LightBufferSSO
+{
+    float4 lights[1];
+};
+
+struct BoneBufferSSO
+{
+    float4x4 bones[1];
+};
+
+struct main0_out
+{
+    float4 FragColor [[color(0)]];
+};
+
+struct main0_in
+{
+    float4 pixelpos [[user(locn2)]];
+};
+
+fragment main0_out main0(main0_in in [[stage_in]], constant ViewpointUBO& _40 [[buffer(17)]], constant StreamUBO& _63 [[buffer(20)]], constant PushConstants& _10 [[buffer(21)]])
+{
+    main0_out out = {};
+    float fogdist;
+    if (int(_10.group3.z) == (-1))
+    {
+        fogdist = in.pixelpos.w;
+    }
+    else
+    {
+        fogdist = fast::max(16.0, distance(in.pixelpos.xyz, _40.uCameraPos.xyz));
+    }
+    float fogfactor = exp2(_10.group2.y * fogdist);
+    out.FragColor = float4(_63.data[int(_10.group4.y)].uFogColor.xyz, 1.0 - fogfactor);
+    return out;
+}
+

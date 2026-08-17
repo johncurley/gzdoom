@@ -1,0 +1,324 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct BonesResult
+{
+    float3 Normal;
+    float4 Position;
+};
+
+struct MatricesUBO
+{
+    float4x4 ModelMatrix;
+    float4x4 NormalModelMatrix;
+    float4x4 TextureMatrix;
+};
+
+struct StreamData
+{
+    float4 uObjectColor;
+    float4 uObjectColor2;
+    float4 uDynLightColor;
+    float4 uAddColor;
+    float4 uTextureAddColor;
+    float4 uTextureModulateColor;
+    float4 uTextureBlendColor;
+    float4 uFogColor;
+    float uDesaturationFactor;
+    float uInterpolationFactor;
+    float timer;
+    int useVertexData;
+    float4 uVertexColor;
+    float4 uVertexNormal;
+    float4 uGlowTopPlane;
+    float4 uGlowTopColor;
+    float4 uGlowBottomPlane;
+    float4 uGlowBottomColor;
+    float4 uGradientTopPlane;
+    float4 uGradientBottomPlane;
+    float4 uSplitTopPlane;
+    float4 uSplitBottomPlane;
+    float4 uDetailParms;
+    float4 uNpotEmulation;
+    float4 padding1;
+    float4 padding2;
+    float4 padding3;
+};
+
+struct StreamUBO
+{
+    StreamData data[170];
+};
+
+struct PushConstants
+{
+    float4 group1;
+    float4 group2;
+    float4 group3;
+    float4 group4;
+};
+
+struct ViewpointUBO
+{
+    float4x4 ProjectionMatrix;
+    float4x4 ViewMatrix;
+    float4x4 NormalViewMatrix;
+    float4 uCameraPos;
+    float4 uClipLine;
+    float uGlobVis;
+    int uPalLightLevels;
+    int uViewHeight;
+    float uClipHeight;
+    float uClipHeightDirection;
+    int uShadowmapFilter;
+    int uLightBlendMode;
+    float uThickFogDistance;
+    float uThickFogMultiplier;
+};
+
+struct BoneBufferSSO
+{
+    float4x4 bones[1];
+};
+
+struct LightBufferSSO
+{
+    float4 lights[1];
+};
+
+struct main0_out
+{
+    float4 vTexCoord [[user(locn0)]];
+    float4 vColor [[user(locn1)]];
+    float4 pixelpos [[user(locn2)]];
+    float3 glowdist [[user(locn3)]];
+    float3 gradientdist [[user(locn4)]];
+    float4 vWorldNormal [[user(locn5)]];
+    float4 vEyeNormal [[user(locn6)]];
+    float3 vLightmap [[user(locn9)]];
+    float4 gl_Position [[position]];
+    float gl_PointSize [[point_size]];
+    float gl_ClipDistance [[clip_distance]] [5];
+    float gl_ClipDistance_0 [[user(clip0)]];
+    float gl_ClipDistance_1 [[user(clip1)]];
+    float gl_ClipDistance_2 [[user(clip2)]];
+    float gl_ClipDistance_3 [[user(clip3)]];
+    float gl_ClipDistance_4 [[user(clip4)]];
+};
+
+struct main0_in
+{
+    float4 aPosition [[attribute(0)]];
+    float2 aTexCoord [[attribute(1)]];
+    float4 aColor [[attribute(2)]];
+    float4 aVertex2 [[attribute(3)]];
+    float4 aNormal [[attribute(4)]];
+    float4 aNormal2 [[attribute(5)]];
+    float3 aLightmap [[attribute(6)]];
+    float4 aBoneWeight [[attribute(7)]];
+    uint4 aBoneSelector [[attribute(8)]];
+};
+
+static inline __attribute__((always_inline))
+void AddWeightedBone(thread const uint& boneIndex, thread const float& weight, thread float4& position, thread float3& normal, constant PushConstants& _63, thread float4& aNormal, const device BoneBufferSSO& _606, thread float4& aPosition)
+{
+    if (weight != 0.0)
+    {
+        float4x4 transform = _606.bones[int(_63.group4.x) + int(boneIndex)];
+        float3x3 rotation = float3x3(transform[0].xyz, transform[1].xyz, transform[2].xyz);
+        position += ((transform * aPosition) * weight);
+        normal += ((rotation * aNormal.xyz) * weight);
+    }
+}
+
+static inline __attribute__((always_inline))
+float3 GetAttrNormal(constant StreamUBO& _60, constant PushConstants& _63, thread float4& aNormal, thread float4& aNormal2)
+{
+    if ((_60.data[int(_63.group4.y)].useVertexData & 2) == 0)
+    {
+        return _60.data[int(_63.group4.y)].uVertexNormal.xyz;
+    }
+    else
+    {
+        return mix(aNormal.xyz, aNormal2.xyz, float3(_60.data[int(_63.group4.y)].uInterpolationFactor));
+    }
+}
+
+static inline __attribute__((always_inline))
+BonesResult ApplyBones(constant StreamUBO& _60, constant PushConstants& _63, thread float4& aNormal, thread float4& aNormal2, const device BoneBufferSSO& _606, thread float4& aPosition, thread float4& aBoneWeight, thread uint4& aBoneSelector)
+{
+    bool _645 = int(_63.group4.x) >= 0;
+    bool _652;
+    if (_645)
+    {
+        _652 = any(aBoneWeight != float4(0.0));
+    }
+    else
+    {
+        _652 = _645;
+    }
+    BonesResult result;
+    if (_652)
+    {
+        result.Position = float4(0.0);
+        result.Normal = float3(0.0);
+        float totalWeight = ((aBoneWeight.x + aBoneWeight.y) + aBoneWeight.z) + aBoneWeight.w;
+        float weightMultiplier = 1.0 / totalWeight;
+        float4 boneWeight = aBoneWeight * weightMultiplier;
+        uint param = aBoneSelector.x;
+        float param_1 = boneWeight.x;
+        float4 param_2 = result.Position;
+        float3 param_3 = result.Normal;
+        AddWeightedBone(param, param_1, param_2, param_3, _63, aNormal, _606, aPosition);
+        result.Position = param_2;
+        result.Normal = param_3;
+        uint param_4 = aBoneSelector.y;
+        float param_5 = boneWeight.y;
+        float4 param_6 = result.Position;
+        float3 param_7 = result.Normal;
+        AddWeightedBone(param_4, param_5, param_6, param_7, _63, aNormal, _606, aPosition);
+        result.Position = param_6;
+        result.Normal = param_7;
+        uint param_8 = aBoneSelector.z;
+        float param_9 = boneWeight.z;
+        float4 param_10 = result.Position;
+        float3 param_11 = result.Normal;
+        AddWeightedBone(param_8, param_9, param_10, param_11, _63, aNormal, _606, aPosition);
+        result.Position = param_10;
+        result.Normal = param_11;
+        uint param_12 = aBoneSelector.w;
+        float param_13 = boneWeight.w;
+        float4 param_14 = result.Position;
+        float3 param_15 = result.Normal;
+        AddWeightedBone(param_12, param_13, param_14, param_15, _63, aNormal, _606, aPosition);
+        result.Position = param_14;
+        result.Normal = param_15;
+        result.Position.w = 1.0;
+    }
+    else
+    {
+        result.Position = aPosition;
+        result.Normal = GetAttrNormal(_60, _63, aNormal, aNormal2);
+    }
+    return result;
+}
+
+vertex main0_out main0(main0_in in [[stage_in]], constant ViewpointUBO& _79 [[buffer(17)]], const device BoneBufferSSO& _606 [[buffer(18)]], constant MatricesUBO& _46 [[buffer(19)]], constant StreamUBO& _60 [[buffer(20)]], constant PushConstants& _63 [[buffer(21)]])
+{
+    main0_out out = {};
+    BonesResult bones = ApplyBones(_60, _63, in.aNormal, in.aNormal2, _606, in.aPosition, in.aBoneWeight, in.aBoneSelector);
+    float2 parmTexCoord = in.aTexCoord;
+    float4 parmPosition = bones.Position;
+    float4 worldcoord = _46.ModelMatrix * mix(parmPosition, in.aVertex2, float4(_60.data[int(_63.group4.y)].uInterpolationFactor));
+    float4 eyeCoordPos = _79.ViewMatrix * worldcoord;
+    if ((_60.data[int(_63.group4.y)].useVertexData & 1) == 0)
+    {
+        out.vColor = _60.data[int(_63.group4.y)].uVertexColor;
+    }
+    else
+    {
+        out.vColor = in.aColor;
+    }
+    out.vLightmap = in.aLightmap;
+    out.pixelpos.x = worldcoord.xyz.x;
+    out.pixelpos.y = worldcoord.xyz.y;
+    out.pixelpos.z = worldcoord.xyz.z;
+    out.pixelpos.w = (-eyeCoordPos.z) / eyeCoordPos.w;
+    bool _140 = _60.data[int(_63.group4.y)].uGlowTopColor.w > 0.0;
+    bool _151;
+    if (!_140)
+    {
+        _151 = _60.data[int(_63.group4.y)].uGlowBottomColor.w > 0.0;
+    }
+    else
+    {
+        _151 = _140;
+    }
+    if (_151)
+    {
+        float topatpoint = ((_60.data[int(_63.group4.y)].uGlowTopPlane.w + (_60.data[int(_63.group4.y)].uGlowTopPlane.x * worldcoord.x)) + (_60.data[int(_63.group4.y)].uGlowTopPlane.y * worldcoord.z)) * _60.data[int(_63.group4.y)].uGlowTopPlane.z;
+        float bottomatpoint = ((_60.data[int(_63.group4.y)].uGlowBottomPlane.w + (_60.data[int(_63.group4.y)].uGlowBottomPlane.x * worldcoord.x)) + (_60.data[int(_63.group4.y)].uGlowBottomPlane.y * worldcoord.z)) * _60.data[int(_63.group4.y)].uGlowBottomPlane.z;
+        out.glowdist.x = topatpoint - worldcoord.y;
+        out.glowdist.y = worldcoord.y - bottomatpoint;
+        out.glowdist.z = fast::clamp(out.glowdist.x / (topatpoint - bottomatpoint), 0.0, 1.0);
+    }
+    if (_60.data[int(_63.group4.y)].uObjectColor2.w != 0.0)
+    {
+        float topatpoint_1 = ((_60.data[int(_63.group4.y)].uGradientTopPlane.w + (_60.data[int(_63.group4.y)].uGradientTopPlane.x * worldcoord.x)) + (_60.data[int(_63.group4.y)].uGradientTopPlane.y * worldcoord.z)) * _60.data[int(_63.group4.y)].uGradientTopPlane.z;
+        float bottomatpoint_1 = ((_60.data[int(_63.group4.y)].uGradientBottomPlane.w + (_60.data[int(_63.group4.y)].uGradientBottomPlane.x * worldcoord.x)) + (_60.data[int(_63.group4.y)].uGradientBottomPlane.y * worldcoord.z)) * _60.data[int(_63.group4.y)].uGradientBottomPlane.z;
+        out.gradientdist.x = topatpoint_1 - worldcoord.y;
+        out.gradientdist.y = worldcoord.y - bottomatpoint_1;
+        out.gradientdist.z = fast::clamp(out.gradientdist.x / (topatpoint_1 - bottomatpoint_1), 0.0, 1.0);
+    }
+    float ClipDistance3;
+    float ClipDistance4;
+    if (_60.data[int(_63.group4.y)].uSplitBottomPlane.z != 0.0)
+    {
+        ClipDistance3 = (((_60.data[int(_63.group4.y)].uSplitTopPlane.w + (_60.data[int(_63.group4.y)].uSplitTopPlane.x * worldcoord.x)) + (_60.data[int(_63.group4.y)].uSplitTopPlane.y * worldcoord.z)) * _60.data[int(_63.group4.y)].uSplitTopPlane.z) - worldcoord.y;
+        ClipDistance4 = worldcoord.y - (((_60.data[int(_63.group4.y)].uSplitBottomPlane.w + (_60.data[int(_63.group4.y)].uSplitBottomPlane.x * worldcoord.x)) + (_60.data[int(_63.group4.y)].uSplitBottomPlane.y * worldcoord.z)) * _60.data[int(_63.group4.y)].uSplitBottomPlane.z);
+    }
+    float4 _407;
+    if (length(bones.Normal) > 9.9999997473787516355514526367188e-05)
+    {
+        _407 = float4(fast::normalize((_46.NormalModelMatrix * float4(fast::normalize(bones.Normal), 1.0)).xyz), 1.0);
+    }
+    else
+    {
+        _407 = float4(0.0);
+    }
+    out.vWorldNormal = _407;
+    float4 _434;
+    if (length(out.vWorldNormal.xyz) > 9.9999997473787516355514526367188e-05)
+    {
+        _434 = float4(fast::normalize((_79.NormalViewMatrix * float4(fast::normalize(out.vWorldNormal.xyz), 1.0)).xyz), 1.0);
+    }
+    else
+    {
+        _434 = float4(0.0);
+    }
+    out.vEyeNormal = _434;
+    out.vTexCoord = _46.TextureMatrix * float4(parmTexCoord, 0.0, 1.0);
+    out.gl_Position = _79.ProjectionMatrix * eyeCoordPos;
+    out.gl_Position.y = -out.gl_Position.y;
+    out.gl_Position.z = 0.5 * (out.gl_Position.w - out.gl_Position.z);
+    float ClipDistance0;
+    if (_79.uClipHeightDirection != 0.0)
+    {
+        ClipDistance0 = (worldcoord.y - _79.uClipHeight) * _79.uClipHeightDirection;
+    }
+    else
+    {
+        if (_79.uClipLine.x > (-1000000.0))
+        {
+            ClipDistance0 = (-(((worldcoord.z - _79.uClipLine.y) * _79.uClipLine.z) + ((_79.uClipLine.x - worldcoord.x) * _79.uClipLine.w))) + 3.0517578125e-05;
+        }
+        else
+        {
+            ClipDistance0 = 1.0;
+        }
+    }
+    float ClipDistance1 = worldcoord.y - _63.group1.x;
+    float ClipDistance2 = _63.group1.y - worldcoord.y;
+    if (all(_60.data[int(_63.group4.y)].uSplitTopPlane == float4(0.0)))
+    {
+        ClipDistance3 = 1.0;
+        ClipDistance4 = 1.0;
+    }
+    out.gl_ClipDistance[0] = ClipDistance0;
+    out.gl_ClipDistance[1] = ClipDistance1;
+    out.gl_ClipDistance[2] = ClipDistance2;
+    out.gl_ClipDistance[3] = ClipDistance3;
+    out.gl_ClipDistance[4] = ClipDistance4;
+    out.gl_PointSize = 1.0;
+    out.gl_ClipDistance_0 = out.gl_ClipDistance[0];
+    out.gl_ClipDistance_1 = out.gl_ClipDistance[1];
+    out.gl_ClipDistance_2 = out.gl_ClipDistance[2];
+    out.gl_ClipDistance_3 = out.gl_ClipDistance[3];
+    out.gl_ClipDistance_4 = out.gl_ClipDistance[4];
+    return out;
+}
+

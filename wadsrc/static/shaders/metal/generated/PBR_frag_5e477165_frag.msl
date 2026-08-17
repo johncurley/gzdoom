@@ -1,0 +1,1128 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct Material
+{
+    float4 Base;
+    float4 Bright;
+    float4 Glow;
+    float3 Normal;
+    float3 Specular;
+    float Glossiness;
+    float SpecularLevel;
+    float Metallic;
+    float Roughness;
+    float AO;
+};
+
+struct StreamData
+{
+    float4 uObjectColor;
+    float4 uObjectColor2;
+    float4 uDynLightColor;
+    float4 uAddColor;
+    float4 uTextureAddColor;
+    float4 uTextureModulateColor;
+    float4 uTextureBlendColor;
+    float4 uFogColor;
+    float uDesaturationFactor;
+    float uInterpolationFactor;
+    float timer;
+    int useVertexData;
+    float4 uVertexColor;
+    float4 uVertexNormal;
+    float4 uGlowTopPlane;
+    float4 uGlowTopColor;
+    float4 uGlowBottomPlane;
+    float4 uGlowBottomColor;
+    float4 uGradientTopPlane;
+    float4 uGradientBottomPlane;
+    float4 uSplitTopPlane;
+    float4 uSplitBottomPlane;
+    float4 uDetailParms;
+    float4 uNpotEmulation;
+    float4 padding1;
+    float4 padding2;
+    float4 padding3;
+};
+
+struct StreamUBO
+{
+    StreamData data[170];
+};
+
+struct PushConstants
+{
+    float4 group1;
+    float4 group2;
+    float4 group3;
+    float4 group4;
+};
+
+struct ViewpointUBO
+{
+    float4x4 ProjectionMatrix;
+    float4x4 ViewMatrix;
+    float4x4 NormalViewMatrix;
+    float4 uCameraPos;
+    float4 uClipLine;
+    float uGlobVis;
+    int uPalLightLevels;
+    int uViewHeight;
+    float uClipHeight;
+    float uClipHeightDirection;
+    int uShadowmapFilter;
+    int uLightBlendMode;
+    float uThickFogDistance;
+    float uThickFogMultiplier;
+};
+
+struct LightBufferSSO
+{
+    float4 lights[1];
+};
+
+struct MatricesUBO
+{
+    float4x4 ModelMatrix;
+    float4x4 NormalModelMatrix;
+    float4x4 TextureMatrix;
+};
+
+struct BoneBufferSSO
+{
+    float4x4 bones[1];
+};
+
+struct main0_out
+{
+    float4 FragColor [[color(0)]];
+    float4 FragFog [[color(1)]];
+    float4 FragNormal [[color(2)]];
+};
+
+struct main0_in
+{
+    float4 vTexCoord [[user(locn0)]];
+    float4 vColor [[user(locn1)]];
+    float4 pixelpos [[user(locn2)]];
+    float3 glowdist [[user(locn3)]];
+    float3 gradientdist [[user(locn4)]];
+    float4 vWorldNormal [[user(locn5)]];
+    float4 vEyeNormal [[user(locn6)]];
+    float3 vLightmap [[user(locn9)]];
+};
+
+static inline __attribute__((always_inline))
+float grayscale(thread const float4& color)
+{
+    return dot(color.xyz, float3(0.300000011920928955078125, 0.560000002384185791015625, 0.14000000059604644775390625));
+}
+
+static inline __attribute__((always_inline))
+float4 dodesaturate(thread const float4& texel, thread const float& factor)
+{
+    if (factor != 0.0)
+    {
+        float4 param = texel;
+        float gray = grayscale(param);
+        return mix(texel, float4(gray, gray, gray, texel.w), float4(factor));
+    }
+    else
+    {
+        return texel;
+    }
+}
+
+static inline __attribute__((always_inline))
+float4 ApplyTextureManipulation(thread float4& texel, thread const int& blendflags, constant StreamUBO& _211, constant PushConstants& _215)
+{
+    float4 param = texel;
+    float param_1 = _211.data[int(_215.group4.y)].uTextureModulateColor.w;
+    texel = dodesaturate(param, param_1);
+    if ((blendflags & 8) != 0)
+    {
+        float _249 = texel.x;
+        float _252 = texel.y;
+        float _256 = texel.z;
+        float3 _258 = float3(1.0 - _249, 1.0 - _252, 1.0 - _256);
+        texel.x = _258.x;
+        texel.y = _258.y;
+        texel.z = _258.z;
+    }
+    float4 _273 = texel;
+    float3 _275 = _273.xyz + _211.data[int(_215.group4.y)].uTextureAddColor.xyz;
+    texel.x = _275.x;
+    texel.y = _275.y;
+    texel.z = _275.z;
+    float4 _288 = texel;
+    float3 _290 = _288.xyz * _211.data[int(_215.group4.y)].uTextureModulateColor.xyz;
+    texel.x = _290.x;
+    texel.y = _290.y;
+    texel.z = _290.z;
+    float4 _297 = texel;
+    float3 _301 = fast::clamp(_297.xyz, float3(0.0), float3(1.0));
+    texel.x = _301.x;
+    texel.y = _301.y;
+    texel.z = _301.z;
+    if ((blendflags & 7) != 0)
+    {
+        float3 tcol = texel.xyz * 255.0;
+        float4 tint = _211.data[int(_215.group4.y)].uTextureBlendColor * 255.0;
+        switch (blendflags & 7)
+        {
+            case 2:
+            {
+                tcol.z = 255.0 - (((255.0 - tcol.z) * (255.0 - tint.x)) / 256.0);
+                tcol.y = 255.0 - (((255.0 - tcol.y) * (255.0 - tint.y)) / 256.0);
+                tcol.x = 255.0 - (((255.0 - tcol.x) * (255.0 - tint.z)) / 256.0);
+                break;
+            }
+            case 3:
+            {
+                float _428;
+                if (tcol.z < 128.0)
+                {
+                    _428 = (tcol.z * tint.z) / 128.0;
+                }
+                else
+                {
+                    _428 = 255.0 - (((255.0 - tcol.z) * (255.0 - tint.z)) / 128.0);
+                }
+                tcol.z = _428;
+                float _452;
+                if (tcol.y < 128.0)
+                {
+                    _452 = (tcol.y * tint.y) / 128.0;
+                }
+                else
+                {
+                    _452 = 255.0 - (((255.0 - tcol.y) * (255.0 - tint.y)) / 128.0);
+                }
+                tcol.y = _452;
+                float _476;
+                if (tcol.x < 128.0)
+                {
+                    _476 = (tcol.x * tint.x) / 128.0;
+                }
+                else
+                {
+                    _476 = 255.0 - (((255.0 - tcol.x) * (255.0 - tint.x)) / 128.0);
+                }
+                tcol.x = _476;
+                break;
+            }
+            case 4:
+            {
+                float _501;
+                if (tint.z < 128.0)
+                {
+                    _501 = (tcol.z * tint.z) / 128.0;
+                }
+                else
+                {
+                    _501 = 255.0 - (((255.0 - tcol.z) * (255.0 - tint.z)) / 128.0);
+                }
+                tcol.z = _501;
+                float _525;
+                if (tint.y < 128.0)
+                {
+                    _525 = (tcol.y * tint.y) / 128.0;
+                }
+                else
+                {
+                    _525 = 255.0 - (((255.0 - tcol.y) * (255.0 - tint.y)) / 128.0);
+                }
+                tcol.y = _525;
+                float _549;
+                if (tint.x < 128.0)
+                {
+                    _549 = (tcol.x * tint.x) / 128.0;
+                }
+                else
+                {
+                    _549 = 255.0 - (((255.0 - tcol.x) * (255.0 - tint.x)) / 128.0);
+                }
+                tcol.x = _549;
+                break;
+            }
+            default:
+            {
+                tcol.z = (tcol.z * (1.0 - _211.data[int(_215.group4.y)].uTextureBlendColor.w)) + (tint.z * _211.data[int(_215.group4.y)].uTextureBlendColor.w);
+                tcol.y = (tcol.y * (1.0 - _211.data[int(_215.group4.y)].uTextureBlendColor.w)) + (tint.y * _211.data[int(_215.group4.y)].uTextureBlendColor.w);
+                tcol.x = (tcol.x * (1.0 - _211.data[int(_215.group4.y)].uTextureBlendColor.w)) + (tint.x * _211.data[int(_215.group4.y)].uTextureBlendColor.w);
+                break;
+            }
+        }
+        float3 _574 = tcol / float3(255.0);
+        texel.x = _574.x;
+        texel.y = _574.y;
+        texel.z = _574.z;
+    }
+    return texel;
+}
+
+static inline __attribute__((always_inline))
+float4 desaturate(thread const float4& texel, constant StreamUBO& _211, constant PushConstants& _215)
+{
+    float4 param = texel;
+    float param_1 = _211.data[int(_215.group4.y)].uDesaturationFactor;
+    return dodesaturate(param, param_1);
+}
+
+static inline __attribute__((always_inline))
+float4 getTexel(thread const float2& st, constant StreamUBO& _211, constant PushConstants& _215, texture2d<float> tex, sampler texSmplr, thread float3& gradientdist)
+{
+    float4 texel = tex.sample(texSmplr, st);
+    switch (int(_215.group3.x) & 65535)
+    {
+        case 1:
+        {
+            texel.x = 1.0;
+            texel.y = 1.0;
+            texel.z = 1.0;
+            break;
+        }
+        case 2:
+        {
+            texel.w = 1.0;
+            break;
+        }
+        case 3:
+        {
+            texel = float4(1.0 - texel.x, 1.0 - texel.z, 1.0 - texel.y, texel.w);
+            break;
+        }
+        case 4:
+        {
+            float4 param = texel;
+            float gray = grayscale(param);
+            texel = float4(1.0, 1.0, 1.0, gray * texel.w);
+            break;
+        }
+        case 5:
+        {
+            bool _641 = st.y < 0.0;
+            bool _648;
+            if (!_641)
+            {
+                _648 = st.y > 1.0;
+            }
+            else
+            {
+                _648 = _641;
+            }
+            if (_648)
+            {
+                texel.w = 0.0;
+            }
+            break;
+        }
+        case 6:
+        {
+            texel = float4(1.0 - texel.x, 1.0 - texel.z, 1.0 - texel.y, 1.0);
+            break;
+        }
+        case 7:
+        {
+            return texel;
+        }
+    }
+    if ((int(_215.group3.x) & 524288) != 0)
+    {
+        bool _677 = st.y < 0.0;
+        bool _684;
+        if (!_677)
+        {
+            _684 = st.y > 1.0;
+        }
+        else
+        {
+            _684 = _677;
+        }
+        if (_684)
+        {
+            texel.w = 0.0;
+        }
+    }
+    int blendflags = int(_211.data[int(_215.group4.y)].uTextureAddColor.w);
+    if (blendflags != 0)
+    {
+        float4 param_1 = texel;
+        int param_2 = blendflags;
+        float4 _703 = ApplyTextureManipulation(param_1, param_2, _211, _215);
+        texel = _703;
+    }
+    float4 _710 = texel;
+    float3 _712 = _710.xyz + _211.data[int(_215.group4.y)].uAddColor.xyz;
+    texel.x = _712.x;
+    texel.y = _712.y;
+    texel.z = _712.z;
+    if (_211.data[int(_215.group4.y)].uObjectColor2.w == 0.0)
+    {
+        texel *= _211.data[int(_215.group4.y)].uObjectColor;
+    }
+    else
+    {
+        texel *= mix(_211.data[int(_215.group4.y)].uObjectColor, _211.data[int(_215.group4.y)].uObjectColor2, float4(gradientdist.z));
+    }
+    float4 param_3 = texel;
+    return desaturate(param_3, _211, _215);
+}
+
+static inline __attribute__((always_inline))
+float3x3 cotangent_frame(thread const float3& n, thread const float3& p, thread const float2& uv)
+{
+    float3 dp1 = dfdx(p);
+    float3 dp2 = dfdy(p);
+    float2 duv1 = dfdx(uv);
+    float2 duv2 = dfdy(uv);
+    float3 dp2perp = cross(n, dp2);
+    float3 dp1perp = cross(dp1, n);
+    float3 t = (dp2perp * duv1.x) + (dp1perp * duv2.x);
+    float3 b = (dp2perp * duv1.y) + (dp1perp * duv2.y);
+    float invmax = rsqrt(fast::max(dot(t, t), dot(b, b)));
+    return float3x3(float3(t * invmax), float3(b * invmax), float3(n));
+}
+
+static inline __attribute__((always_inline))
+float3 ApplyNormalMap(thread const float2& texcoord, thread float4& pixelpos, thread float4& vWorldNormal, texture2d<float> texture2, sampler texture2Smplr, thread float4& vTexCoord)
+{
+    float3 interpolatedNormal = fast::normalize(vWorldNormal.xyz);
+    float3 map = texture2.sample(texture2Smplr, texcoord).xyz;
+    map = ((map * 255.0) / float3(127.0)) - float3(1.007874011993408203125);
+    map.y = -map.y;
+    float3 param = interpolatedNormal;
+    float3 param_1 = pixelpos.xyz;
+    float2 param_2 = vTexCoord.xy;
+    float3x3 tbn = cotangent_frame(param, param_1, param_2);
+    float3 bumpedNormal = fast::normalize(tbn * map);
+    return bumpedNormal;
+}
+
+static inline __attribute__((always_inline))
+void SetMaterialProps(thread Material& material, thread const float2& texCoord, constant StreamUBO& _211, constant PushConstants& _215, texture2d<float> tex, sampler texSmplr, thread float3& gradientdist, thread float4& pixelpos, thread float4& vWorldNormal, texture2d<float> texture2, sampler texture2Smplr, thread float4& vTexCoord, texture2d<float> texture6, sampler texture6Smplr, texture2d<float> texture7, sampler texture7Smplr, texture2d<float> texture8, sampler texture8Smplr)
+{
+    float2 param = texCoord;
+    material.Base = getTexel(param, _211, _215, tex, texSmplr, gradientdist);
+    float2 param_1 = texCoord;
+    material.Normal = ApplyNormalMap(param_1, pixelpos, vWorldNormal, texture2, texture2Smplr, vTexCoord);
+    if ((int(_215.group3.x) & 65536) != 0)
+    {
+        float4 param_2 = texture6.sample(texture6Smplr, texCoord);
+        material.Bright = desaturate(param_2, _211, _215);
+    }
+    if ((int(_215.group3.x) & 131072) != 0)
+    {
+        float4 Detail = texture7.sample(texture7Smplr, (texCoord * _211.data[int(_215.group4.y)].uDetailParms.xy)) * _211.data[int(_215.group4.y)].uDetailParms.z;
+        float4 _1568 = material.Base;
+        float3 _1570 = _1568.xyz * Detail.xyz;
+        material.Base.x = _1570.x;
+        material.Base.y = _1570.y;
+        material.Base.z = _1570.z;
+    }
+    if ((int(_215.group3.x) & 262144) != 0)
+    {
+        float4 param_3 = texture8.sample(texture8Smplr, texCoord);
+        material.Glow = desaturate(param_3, _211, _215);
+    }
+}
+
+static inline __attribute__((always_inline))
+void SetupMaterial(thread Material& material, constant StreamUBO& _211, constant PushConstants& _215, texture2d<float> tex, sampler texSmplr, thread float3& gradientdist, thread float4& pixelpos, thread float4& vWorldNormal, texture2d<float> texture2, sampler texture2Smplr, thread float4& vTexCoord, texture2d<float> texture6, sampler texture6Smplr, texture2d<float> texture7, sampler texture7Smplr, texture2d<float> texture8, sampler texture8Smplr, texture2d<float> texture3, sampler texture3Smplr, texture2d<float> texture4, sampler texture4Smplr, texture2d<float> texture5, sampler texture5Smplr)
+{
+    Material param = material;
+    float2 param_1 = vTexCoord.xy;
+    SetMaterialProps(param, param_1, _211, _215, tex, texSmplr, gradientdist, pixelpos, vWorldNormal, texture2, texture2Smplr, vTexCoord, texture6, texture6Smplr, texture7, texture7Smplr, texture8, texture8Smplr);
+    material = param;
+    material.Metallic = texture3.sample(texture3Smplr, vTexCoord.xy).x;
+    material.Roughness = texture4.sample(texture4Smplr, vTexCoord.xy).x;
+    material.AO = texture5.sample(texture5Smplr, vTexCoord.xy).x;
+}
+
+static inline __attribute__((always_inline))
+float R_WallColormap(thread const float& lightnum, thread const float& z, thread const float3& normal, thread float4& pixelpos, constant ViewpointUBO& _775)
+{
+    float projection = 160.0;
+    float2 line_v1 = pixelpos.xz;
+    float2 line_normal = normal.xz;
+    float texscale = (projection * fast::clamp(dot(fast::normalize(_775.uCameraPos.xz - line_v1), line_normal), 0.0, 1.0)) / z;
+    float lightz = fast::clamp(16.0 * texscale, 0.0, 47.0);
+    float startmap = (15.0 - lightnum) * 4.0;
+    return startmap - (lightz * 0.5);
+}
+
+static inline __attribute__((always_inline))
+float R_PlaneColormap(thread const float& lightnum, thread const float& z)
+{
+    float lightz = fast::clamp(z / 16.0, 0.0, 127.0);
+    float startmap = (15.0 - lightnum) * 4.0;
+    float scale = 160.0 / (lightz + 1.0);
+    return startmap - (scale * 0.5);
+}
+
+static inline __attribute__((always_inline))
+float R_ZDoomColormap(thread const float& light, thread const float& z, constant ViewpointUBO& _775)
+{
+    float L = light * 255.0;
+    float vis = fast::min(_775.uGlobVis / z, 0.75);
+    float shade = 2.0 - ((L + 12.0) / 128.0);
+    float lightscale = shade - vis;
+    return lightscale * 31.0;
+}
+
+static inline __attribute__((always_inline))
+float R_DoomColormap(thread const float& light, thread const float& z, thread float4& pixelpos, constant ViewpointUBO& _775, thread float4& vWorldNormal)
+{
+    if ((_775.uPalLightLevels >> 16) == 16)
+    {
+        float lightnum = fast::clamp(light * 15.0, 0.0, 15.0);
+        if (dot(vWorldNormal.xyz, vWorldNormal.xyz) > 0.5)
+        {
+            float3 normal = fast::normalize(vWorldNormal.xyz);
+            float param = lightnum;
+            float param_1 = z;
+            float3 param_2 = normal;
+            float param_3 = lightnum;
+            float param_4 = z;
+            return mix(R_WallColormap(param, param_1, param_2, pixelpos, _775), R_PlaneColormap(param_3, param_4), abs(normal.y));
+        }
+        else
+        {
+            float param_5 = lightnum;
+            float param_6 = z;
+            return R_PlaneColormap(param_5, param_6);
+        }
+    }
+    else
+    {
+        float param_7 = light;
+        float param_8 = z;
+        return R_ZDoomColormap(param_7, param_8, _775);
+    }
+}
+
+static inline __attribute__((always_inline))
+float R_DoomLightingEquation(thread const float& light, constant PushConstants& _215, thread float4& pixelpos, constant ViewpointUBO& _775, thread float4& vWorldNormal)
+{
+    float z;
+    if (((_775.uPalLightLevels >> 8) & 255) == 2)
+    {
+        z = distance(pixelpos.xyz, _775.uCameraPos.xyz);
+    }
+    else
+    {
+        z = pixelpos.w;
+    }
+    if ((_775.uPalLightLevels >> 16) == 5)
+    {
+        float numShades = float(_775.uPalLightLevels & 255);
+        float curshade = (1.0 - light) * (numShades - 1.0);
+        float visibility = fast::max((_775.uGlobVis * _215.group2.z) * z, 0.0);
+        float shade = fast::clamp(curshade + visibility, 0.0, numShades - 1.0);
+        return fast::clamp(shade * _215.group2.w, 0.0, 1.0);
+    }
+    float param = light;
+    float param_1 = z;
+    float colormap = R_DoomColormap(param, param_1, pixelpos, _775, vWorldNormal);
+    if ((_775.uPalLightLevels & 255) != 0)
+    {
+        colormap = floor(colormap) + 0.5;
+    }
+    return fast::clamp(colormap, 0.0, 31.0) / 32.0;
+}
+
+static inline __attribute__((always_inline))
+float4 ProcessLight(thread const Material& material, thread const float4& color)
+{
+    return color;
+}
+
+static inline __attribute__((always_inline))
+float linearDistanceAttenuation(thread const float4& lightpos, thread float4& pixelpos)
+{
+    float lightdistance = distance(lightpos.xyz, pixelpos.xyz);
+    return fast::clamp((lightpos.w - lightdistance) / lightpos.w, 0.0, 1.0);
+}
+
+static inline __attribute__((always_inline))
+float spotLightAttenuation(thread const float4& lightpos, thread const float3& spotdir, thread const float& lightCosInnerAngle, thread const float& lightCosOuterAngle, thread float4& pixelpos)
+{
+    float3 lightDirection = fast::normalize(lightpos.xyz - pixelpos.xyz);
+    float cosDir = dot(lightDirection, spotdir);
+    return smoothstep(lightCosOuterAngle, lightCosInnerAngle, cosDir);
+}
+
+static inline __attribute__((always_inline))
+float shadowDirToU(thread const float2& dir)
+{
+    if (abs(dir.y) > abs(dir.x))
+    {
+        float x = (dir.x / dir.y) * 0.125;
+        if (dir.y >= 0.0)
+        {
+            return 0.125 + x;
+        }
+        else
+        {
+            return 0.625 + x;
+        }
+    }
+    else
+    {
+        float y = (dir.y / dir.x) * 0.125;
+        if (dir.x >= 0.0)
+        {
+            return 0.375 - y;
+        }
+        else
+        {
+            return 0.875 - y;
+        }
+    }
+}
+
+static inline __attribute__((always_inline))
+float sampleShadowmap(thread const float3& planePoint, thread const float& v, thread float4& vWorldNormal, texture2d<float> ShadowMap, sampler ShadowMapSmplr)
+{
+    float bias0 = 1.0;
+    float negD = dot(vWorldNormal.xyz, planePoint);
+    float3 ray = planePoint;
+    float2 isize = float2(int2(ShadowMap.get_width(), ShadowMap.get_height()));
+    float scale = isize.x * 0.25;
+    if (abs(ray.z) > abs(ray.x))
+    {
+        ray.y /= abs(ray.z);
+        ray.x /= abs(ray.z);
+        ray.x = (((floor(((ray.x + 1.0) * 0.5) * scale) + 0.5) / scale) * 2.0) - 1.0;
+        ray.z = sign(ray.z);
+    }
+    else
+    {
+        ray.y /= abs(ray.x);
+        ray.z /= abs(ray.x);
+        ray.z = (((floor(((ray.z + 1.0) * 0.5) * scale) + 0.5) / scale) * 2.0) - 1.0;
+        ray.x = sign(ray.x);
+    }
+    float t = (negD / dot(vWorldNormal.xyz, ray)) - bias0;
+    float2 dir = ray.xz * t;
+    float2 param = dir;
+    float u = shadowDirToU(param);
+    float dist2 = dot(dir, dir);
+    return step(dist2, ShadowMap.sample(ShadowMapSmplr, float2(u, v)).x);
+}
+
+static inline __attribute__((always_inline))
+float2 shadowUToDir(thread float& u)
+{
+    u *= 4.0;
+    float2 raydir;
+    switch (int(u))
+    {
+        case 0:
+        {
+            raydir = float2((u * 2.0) - 1.0, 1.0);
+            break;
+        }
+        case 1:
+        {
+            raydir = float2(1.0, 1.0 - ((u - 1.0) * 2.0));
+            break;
+        }
+        case 2:
+        {
+            raydir = float2(1.0 - ((u - 2.0) * 2.0), -1.0);
+            break;
+        }
+        case 3:
+        {
+            raydir = float2(-1.0, ((u - 3.0) * 2.0) - 1.0);
+            break;
+        }
+    }
+    return raydir;
+}
+
+static inline __attribute__((always_inline))
+float sampleShadowmapPCF(thread const float3& planePoint, thread const float& v, constant ViewpointUBO& _775, thread float4& vWorldNormal, texture2d<float> ShadowMap, sampler ShadowMapSmplr)
+{
+    float bias0 = 1.0;
+    float negD = dot(vWorldNormal.xyz, planePoint);
+    float3 ray = planePoint;
+    if (abs(ray.z) > abs(ray.x))
+    {
+        ray.y /= abs(ray.z);
+    }
+    else
+    {
+        ray.y /= abs(ray.x);
+    }
+    float2 isize = float2(int2(ShadowMap.get_width(), ShadowMap.get_height()));
+    float scale = isize.x;
+    float2 param = ray.xz;
+    float texelPos = floor(shadowDirToU(param) * scale);
+    float sum = 0.0;
+    float step_count = float(_775.uShadowmapFilter);
+    texelPos -= (step_count + 0.5);
+    float _1263 = -step_count;
+    for (float x = _1263; x <= step_count; x += 1.0)
+    {
+        float u = fract(texelPos / scale);
+        float param_1 = u;
+        float2 _1280 = shadowUToDir(param_1);
+        float2 dir = _1280;
+        ray.x = dir.x;
+        ray.z = dir.y;
+        float t = (negD / dot(vWorldNormal.xyz, ray)) - bias0;
+        dir = ray.xz * t;
+        float dist2 = dot(dir, dir);
+        sum += step(dist2, ShadowMap.sample(ShadowMapSmplr, float2(u, v)).x);
+        texelPos += 1.0;
+    }
+    return sum / ((float(_775.uShadowmapFilter) * 2.0) + 1.0);
+}
+
+static inline __attribute__((always_inline))
+float shadowmapAttenuation(thread const float4& lightpos, thread const float& shadowIndex, thread float4& pixelpos, constant ViewpointUBO& _775, thread float4& vWorldNormal, texture2d<float> ShadowMap, sampler ShadowMapSmplr)
+{
+    if (shadowIndex >= 1024.0)
+    {
+        return 1.0;
+    }
+    float3 planePoint = pixelpos.xyz - lightpos.xyz;
+    planePoint += float3(0.00999999977648258209228515625);
+    if (dot(planePoint.xz, planePoint.xz) < 1.0)
+    {
+        return 1.0;
+    }
+    float v = (shadowIndex + 0.5) / 1024.0;
+    if (_775.uShadowmapFilter <= 0)
+    {
+        float3 param = planePoint;
+        float param_1 = v;
+        return sampleShadowmap(param, param_1, vWorldNormal, ShadowMap, ShadowMapSmplr);
+    }
+    else
+    {
+        float3 param_2 = planePoint;
+        float param_3 = v;
+        return sampleShadowmapPCF(param_2, param_3, _775, vWorldNormal, ShadowMap, ShadowMapSmplr);
+    }
+}
+
+static inline __attribute__((always_inline))
+float shadowAttenuation(thread const float4& lightpos, thread const float& lightcolorA, thread float4& pixelpos, constant ViewpointUBO& _775, thread float4& vWorldNormal, texture2d<float> ShadowMap, sampler ShadowMapSmplr)
+{
+    float shadowIndex = abs(lightcolorA) - 1.0;
+    float4 param = lightpos;
+    float param_1 = shadowIndex;
+    return shadowmapAttenuation(param, param_1, pixelpos, _775, vWorldNormal, ShadowMap, ShadowMapSmplr);
+}
+
+static inline __attribute__((always_inline))
+float DistributionGGX(thread const float3& N, thread const float3& H, thread const float& roughness)
+{
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float NdotH = fast::max(dot(N, H), 0.0);
+    float NdotH2 = NdotH * NdotH;
+    float nom = a2;
+    float denom = (NdotH2 * (a2 - 1.0)) + 1.0;
+    denom = (3.1415927410125732421875 * denom) * denom;
+    return nom / denom;
+}
+
+static inline __attribute__((always_inline))
+float GeometrySchlickGGX(thread const float& NdotV, thread const float& roughness)
+{
+    float r = roughness + 1.0;
+    float k = (r * r) / 8.0;
+    float nom = NdotV;
+    float denom = (NdotV * (1.0 - k)) + k;
+    return nom / denom;
+}
+
+static inline __attribute__((always_inline))
+float GeometrySmith(thread const float3& N, thread const float3& V, thread const float3& L, thread const float& roughness)
+{
+    float NdotV = fast::max(dot(N, V), 0.0);
+    float NdotL = fast::max(dot(N, L), 0.0);
+    float param = NdotV;
+    float param_1 = roughness;
+    float ggx2 = GeometrySchlickGGX(param, param_1);
+    float param_2 = NdotL;
+    float param_3 = roughness;
+    float ggx1 = GeometrySchlickGGX(param_2, param_3);
+    return ggx1 * ggx2;
+}
+
+static inline __attribute__((always_inline))
+float3 fresnelSchlick(thread const float& cosTheta, thread const float3& F0)
+{
+    return F0 + ((float3(1.0) - F0) * powr(1.0 - cosTheta, 5.0));
+}
+
+static inline __attribute__((always_inline))
+float3 fresnelSchlickRoughness(thread const float& cosTheta, thread const float3& F0, thread const float& roughness)
+{
+    return F0 + ((fast::max(float3(1.0 - roughness), F0) - F0) * powr(1.0 - cosTheta, 5.0));
+}
+
+static inline __attribute__((always_inline))
+float3 ProcessMaterialLight(thread const Material& material, thread float3& ambientLight, constant StreamUBO& _211, constant PushConstants& _215, thread float4& pixelpos, constant ViewpointUBO& _775, thread float4& vWorldNormal, texture2d<float> ShadowMap, sampler ShadowMapSmplr, const device LightBufferSSO& _2350)
+{
+    float3 worldpos = pixelpos.xyz;
+    float3 albedo = powr(material.Base.xyz, float3(2.2000000476837158203125));
+    ambientLight = powr(ambientLight, float3(2.2000000476837158203125));
+    float metallic = material.Metallic;
+    float roughness = material.Roughness;
+    float ao = material.AO;
+    float3 N = material.Normal;
+    float3 V = fast::normalize(_775.uCameraPos.xyz - worldpos);
+    float3 F0 = mix(float3(0.039999999105930328369140625), albedo, float3(metallic));
+    float3 Lo = _211.data[int(_215.group4.y)].uDynLightColor.xyz;
+    if (int(_215.group3.w) >= 0)
+    {
+        int4 lightRange = int4(_2350.lights[int(_215.group3.w)]) + int4(int(_215.group3.w) + 1);
+        if (lightRange.z > lightRange.x)
+        {
+            for (int i = lightRange.x; i < lightRange.y; i += 4)
+            {
+                float4 lightpos = _2350.lights[i];
+                float4 lightcolor = _2350.lights[i + 1];
+                float4 lightspot1 = _2350.lights[i + 2];
+                float4 lightspot2 = _2350.lights[i + 3];
+                float3 L = fast::normalize(lightpos.xyz - worldpos);
+                float3 H = fast::normalize(V + L);
+                float4 param = lightpos;
+                float attenuation = linearDistanceAttenuation(param, pixelpos);
+                if (lightspot1.w == 1.0)
+                {
+                    float4 param_1 = lightpos;
+                    float3 param_2 = lightspot1.xyz;
+                    float param_3 = lightspot2.x;
+                    float param_4 = lightspot2.y;
+                    attenuation *= spotLightAttenuation(param_1, param_2, param_3, param_4, pixelpos);
+                }
+                if (lightcolor.w < 0.0)
+                {
+                    attenuation *= fast::clamp(dot(N, L), 0.0, 1.0);
+                }
+                if (attenuation > 0.0)
+                {
+                    float4 param_5 = lightpos;
+                    float param_6 = lightcolor.w;
+                    attenuation *= shadowAttenuation(param_5, param_6, pixelpos, _775, vWorldNormal, ShadowMap, ShadowMapSmplr);
+                    float3 radiance = lightcolor.xyz * attenuation;
+                    float3 param_7 = N;
+                    float3 param_8 = H;
+                    float param_9 = roughness;
+                    float NDF = DistributionGGX(param_7, param_8, param_9);
+                    float3 param_10 = N;
+                    float3 param_11 = V;
+                    float3 param_12 = L;
+                    float param_13 = roughness;
+                    float G = GeometrySmith(param_10, param_11, param_12, param_13);
+                    float param_14 = fast::clamp(dot(H, V), 0.0, 1.0);
+                    float3 param_15 = F0;
+                    float3 F = fresnelSchlick(param_14, param_15);
+                    float3 kS = F;
+                    float3 kD = (float3(1.0) - kS) * (1.0 - metallic);
+                    float3 nominator = F * (NDF * G);
+                    float denominator = (4.0 * fast::clamp(dot(N, V), 0.0, 1.0)) * fast::clamp(dot(N, L), 0.0, 1.0);
+                    float3 specular = nominator / float3(fast::max(denominator, 0.001000000047497451305389404296875));
+                    Lo += ((((kD * albedo) / float3(3.1415927410125732421875)) + specular) * radiance);
+                }
+            }
+            for (int i_1 = lightRange.y; i_1 < lightRange.z; i_1 += 4)
+            {
+                float4 lightpos_1 = _2350.lights[i_1];
+                float4 lightcolor_1 = _2350.lights[i_1 + 1];
+                float4 lightspot1_1 = _2350.lights[i_1 + 2];
+                float4 lightspot2_1 = _2350.lights[i_1 + 3];
+                float3 L_1 = fast::normalize(lightpos_1.xyz - worldpos);
+                float3 H_1 = fast::normalize(V + L_1);
+                float4 param_16 = lightpos_1;
+                float attenuation_1 = linearDistanceAttenuation(param_16, pixelpos);
+                if (lightspot1_1.w == 1.0)
+                {
+                    float4 param_17 = lightpos_1;
+                    float3 param_18 = lightspot1_1.xyz;
+                    float param_19 = lightspot2_1.x;
+                    float param_20 = lightspot2_1.y;
+                    attenuation_1 *= spotLightAttenuation(param_17, param_18, param_19, param_20, pixelpos);
+                }
+                if (lightcolor_1.w < 0.0)
+                {
+                    attenuation_1 *= fast::clamp(dot(N, L_1), 0.0, 1.0);
+                }
+                if (attenuation_1 > 0.0)
+                {
+                    float4 param_21 = lightpos_1;
+                    float param_22 = lightcolor_1.w;
+                    attenuation_1 *= shadowAttenuation(param_21, param_22, pixelpos, _775, vWorldNormal, ShadowMap, ShadowMapSmplr);
+                    float3 radiance_1 = lightcolor_1.xyz * attenuation_1;
+                    float3 param_23 = N;
+                    float3 param_24 = H_1;
+                    float param_25 = roughness;
+                    float NDF_1 = DistributionGGX(param_23, param_24, param_25);
+                    float3 param_26 = N;
+                    float3 param_27 = V;
+                    float3 param_28 = L_1;
+                    float param_29 = roughness;
+                    float G_1 = GeometrySmith(param_26, param_27, param_28, param_29);
+                    float param_30 = fast::clamp(dot(H_1, V), 0.0, 1.0);
+                    float3 param_31 = F0;
+                    float3 F_1 = fresnelSchlick(param_30, param_31);
+                    float3 kS_1 = F_1;
+                    float3 kD_1 = (float3(1.0) - kS_1) * (1.0 - metallic);
+                    float3 nominator_1 = F_1 * (NDF_1 * G_1);
+                    float denominator_1 = (4.0 * fast::clamp(dot(N, V), 0.0, 1.0)) * fast::clamp(dot(N, L_1), 0.0, 1.0);
+                    float3 specular_1 = nominator_1 / float3(fast::max(denominator_1, 0.001000000047497451305389404296875));
+                    Lo -= ((((kD_1 * albedo) / float3(3.1415927410125732421875)) + specular_1) * radiance_1);
+                }
+            }
+        }
+    }
+    float param_32 = fast::clamp(dot(N, V), 0.0, 1.0);
+    float3 param_33 = F0;
+    float param_34 = roughness;
+    float3 F_2 = fresnelSchlickRoughness(param_32, param_33, param_34);
+    float3 kS_2 = F_2;
+    float3 kD_2 = float3(1.0) - kS_2;
+    float3 irradiance = ambientLight;
+    float3 diffuse = irradiance * albedo;
+    float3 ambient = (kD_2 * diffuse) * ao;
+    float3 color = fast::max(ambient + Lo, float3(0.0));
+    return powr(color, float3(0.4545454680919647216796875));
+}
+
+static inline __attribute__((always_inline))
+float4 getLightColor(thread const Material& material, thread const float& fogdist, thread const float& fogfactor, constant StreamUBO& _211, constant PushConstants& _215, thread float4& pixelpos, constant ViewpointUBO& _775, thread float4& vWorldNormal, texture2d<float> ShadowMap, sampler ShadowMapSmplr, thread float4& vColor, thread float3& glowdist, thread float3& vLightmap, texture2d_array<float> LightMap, sampler LightMapSmplr, const device LightBufferSSO& _2350)
+{
+    float4 color = vColor;
+    if (_215.group2.x >= 0.0)
+    {
+        float param = _215.group2.x;
+        float newlightlevel = 1.0 - R_DoomLightingEquation(param, _215, pixelpos, _775, vWorldNormal);
+        float4 _1607 = color;
+        float3 _1609 = _1607.xyz * newlightlevel;
+        color.x = _1609.x;
+        color.y = _1609.y;
+        color.z = _1609.z;
+    }
+    else
+    {
+        if (int(_215.group3.z) > 0)
+        {
+            if (fogdist < _215.group2.w)
+            {
+                float4 _1640 = color;
+                float3 _1642 = _1640.xyz * (_215.group2.z - ((fogdist / _215.group2.w) * (_215.group2.z - 1.0)));
+                color.x = _1642.x;
+                color.y = _1642.y;
+                color.z = _1642.z;
+            }
+            float4 _1650 = color;
+            float3 _1654 = mix(float3(0.0), _1650.xyz, float3(fogfactor));
+            color.x = _1654.x;
+            color.y = _1654.y;
+            color.z = _1654.z;
+        }
+    }
+    bool _1667 = _211.data[int(_215.group4.y)].uGlowTopColor.w > 0.0;
+    bool _1679;
+    if (_1667)
+    {
+        _1679 = glowdist.x < _211.data[int(_215.group4.y)].uGlowTopColor.w;
+    }
+    else
+    {
+        _1679 = _1667;
+    }
+    if (_1679)
+    {
+        float4 param_1 = _211.data[int(_215.group4.y)].uGlowTopColor * (1.0 - (glowdist.x / _211.data[int(_215.group4.y)].uGlowTopColor.w));
+        float4 _1700 = color;
+        float3 _1702 = _1700.xyz + desaturate(param_1, _211, _215).xyz;
+        color.x = _1702.x;
+        color.y = _1702.y;
+        color.z = _1702.z;
+    }
+    bool _1715 = _211.data[int(_215.group4.y)].uGlowBottomColor.w > 0.0;
+    bool _1726;
+    if (_1715)
+    {
+        _1726 = glowdist.y < _211.data[int(_215.group4.y)].uGlowBottomColor.w;
+    }
+    else
+    {
+        _1726 = _1715;
+    }
+    if (_1726)
+    {
+        float4 param_2 = _211.data[int(_215.group4.y)].uGlowBottomColor * (1.0 - (glowdist.y / _211.data[int(_215.group4.y)].uGlowBottomColor.w));
+        float4 _1747 = color;
+        float3 _1749 = _1747.xyz + desaturate(param_2, _211, _215).xyz;
+        color.x = _1749.x;
+        color.y = _1749.y;
+        color.z = _1749.z;
+    }
+    color = fast::min(color, float4(1.0));
+    float4 _1759 = color;
+    float3 _1767 = mix(_1759.xyz, material.Glow.xyz, float3(material.Glow.w));
+    color.x = _1767.x;
+    color.y = _1767.y;
+    color.z = _1767.z;
+    float4 _1774 = color;
+    float3 _1781 = fast::min(_1774.xyz + material.Bright.xyz, float3(1.0));
+    color.x = _1781.x;
+    color.y = _1781.y;
+    color.z = _1781.z;
+    Material param_3 = material;
+    float4 param_4 = color;
+    color = ProcessLight(param_3, param_4);
+    if (vLightmap.z >= 0.0)
+    {
+        float4 _1807 = color;
+        float3 _1809 = _1807.xyz + LightMap.sample(LightMapSmplr, vLightmap.xy, uint(rint(vLightmap.z))).xyz;
+        color.x = _1809.x;
+        color.y = _1809.y;
+        color.z = _1809.z;
+    }
+    Material param_5 = material;
+    float3 param_6 = color.xyz;
+    float3 _1821 = ProcessMaterialLight(param_5, param_6, _211, _215, pixelpos, _775, vWorldNormal, ShadowMap, ShadowMapSmplr, _2350);
+    return float4(_1821, material.Base.w * vColor.w);
+}
+
+static inline __attribute__((always_inline))
+float4 applyFog(thread const float4& frag, thread const float& fogfactor, constant StreamUBO& _211, constant PushConstants& _215)
+{
+    return float4(mix(_211.data[int(_215.group4.y)].uFogColor.xyz, frag.xyz, float3(fogfactor)), frag.w);
+}
+
+static inline __attribute__((always_inline))
+float3 AmbientOcclusionColor(constant StreamUBO& _211, constant PushConstants& _215, thread float4& pixelpos, constant ViewpointUBO& _775)
+{
+    float fogdist;
+    if (int(_215.group3.z) == (-1))
+    {
+        fogdist = fast::max(16.0, pixelpos.w);
+    }
+    else
+    {
+        fogdist = fast::max(16.0, distance(pixelpos.xyz, _775.uCameraPos.xyz));
+    }
+    if (_775.uThickFogDistance > 0.0)
+    {
+        if (fogdist > _775.uThickFogDistance)
+        {
+            fogdist += (_775.uThickFogMultiplier * (fogdist - _775.uThickFogDistance));
+        }
+    }
+    float fogfactor = exp2(_215.group2.y * fogdist);
+    return mix(_211.data[int(_215.group4.y)].uFogColor.xyz, float3(0.0), float3(fogfactor));
+}
+
+fragment main0_out main0(main0_in in [[stage_in]], const device LightBufferSSO& _2350 [[buffer(16)]], constant ViewpointUBO& _775 [[buffer(17)]], constant StreamUBO& _211 [[buffer(20)]], constant PushConstants& _215 [[buffer(21)]], texture2d<float> tex [[texture(0)]], texture2d<float> texture2 [[texture(1)]], texture2d<float> texture3 [[texture(2)]], texture2d<float> texture4 [[texture(3)]], texture2d<float> texture5 [[texture(4)]], texture2d<float> texture6 [[texture(5)]], texture2d<float> texture7 [[texture(6)]], texture2d<float> texture8 [[texture(7)]], texture2d<float> ShadowMap [[texture(14)]], texture2d_array<float> LightMap [[texture(15)]], sampler texSmplr [[sampler(0)]], sampler texture2Smplr [[sampler(1)]], sampler texture3Smplr [[sampler(2)]], sampler texture4Smplr [[sampler(3)]], sampler texture5Smplr [[sampler(4)]], sampler texture6Smplr [[sampler(5)]], sampler texture7Smplr [[sampler(6)]], sampler texture8Smplr [[sampler(7)]], sampler ShadowMapSmplr [[sampler(14)]], sampler LightMapSmplr [[sampler(15)]])
+{
+    main0_out out = {};
+    Material material;
+    material.Base = float4(0.0);
+    material.Bright = float4(0.0);
+    material.Glow = float4(0.0);
+    material.Normal = float3(0.0);
+    material.Specular = float3(0.0);
+    material.Glossiness = 0.0;
+    material.SpecularLevel = 0.0;
+    material.Metallic = 0.0;
+    material.Roughness = 0.0;
+    material.AO = 0.0;
+    Material param = material;
+    SetupMaterial(param, _211, _215, tex, texSmplr, in.gradientdist, in.pixelpos, in.vWorldNormal, texture2, texture2Smplr, in.vTexCoord, texture6, texture6Smplr, texture7, texture7Smplr, texture8, texture8Smplr, texture3, texture3Smplr, texture4, texture4Smplr, texture5, texture5Smplr);
+    material = param;
+    float4 frag = material.Base;
+    if (frag.w <= _215.group3.y)
+    {
+        discard_fragment();
+    }
+    if (int(_215.group3.z) != (-3))
+    {
+        float fogdist = 0.0;
+        float fogfactor = 0.0;
+        if (int(_215.group3.z) != 0)
+        {
+            bool _1956 = int(_215.group3.z) == 1;
+            bool _1964;
+            if (!_1956)
+            {
+                _1964 = int(_215.group3.z) == (-1);
+            }
+            else
+            {
+                _1964 = _1956;
+            }
+            if (_1964)
+            {
+                fogdist = fast::max(16.0, in.pixelpos.w);
+            }
+            else
+            {
+                fogdist = fast::max(16.0, distance(in.pixelpos.xyz, _775.uCameraPos.xyz));
+            }
+            if (_775.uThickFogDistance > 0.0)
+            {
+                if (fogdist > _775.uThickFogDistance)
+                {
+                    fogdist += (_775.uThickFogMultiplier * (fogdist - _775.uThickFogDistance));
+                }
+            }
+            fogfactor = exp2(_215.group2.y * fogdist);
+        }
+        if ((int(_215.group3.x) & 65535) != 7)
+        {
+            Material param_1 = material;
+            float param_2 = fogdist;
+            float param_3 = fogfactor;
+            frag = getLightColor(param_1, param_2, param_3, _211, _215, in.pixelpos, _775, in.vWorldNormal, ShadowMap, ShadowMapSmplr, in.vColor, in.glowdist, in.vLightmap, LightMap, LightMapSmplr, _2350);
+            if (int(_215.group3.z) < 0)
+            {
+                float4 param_4 = frag;
+                float param_5 = fogfactor;
+                frag = applyFog(param_4, param_5, _211, _215);
+            }
+        }
+        else
+        {
+            frag = float4(_211.data[int(_215.group4.y)].uFogColor.xyz, (((1.0 - fogfactor) * frag.w) * 0.75) * in.vColor.w);
+        }
+    }
+    else
+    {
+        if ((int(_215.group3.x) & 65535) == 7)
+        {
+            float4 param_6 = frag;
+            float gray = grayscale(param_6);
+            float4 cm = (_211.data[int(_215.group4.y)].uObjectColor + ((_211.data[int(_215.group4.y)].uAddColor - _211.data[int(_215.group4.y)].uObjectColor) * gray)) * 2.0;
+            frag = float4(fast::clamp(cm.xyz, float3(0.0), float3(1.0)), frag.w);
+        }
+        Material param_7 = material;
+        float4 param_8 = in.vColor;
+        frag *= ProcessLight(param_7, param_8);
+        float4 _2099 = frag;
+        float3 _2107 = _2099.xyz + _211.data[int(_215.group4.y)].uFogColor.xyz;
+        frag.x = _2107.x;
+        frag.y = _2107.y;
+        frag.z = _2107.z;
+    }
+    out.FragColor = frag;
+    out.FragFog = float4(AmbientOcclusionColor(_211, _215, in.pixelpos, _775), 1.0);
+    out.FragNormal = float4((in.vEyeNormal.xyz * 0.5) + float3(0.5), 1.0);
+    return out;
+}
+

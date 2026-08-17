@@ -1173,6 +1173,50 @@ backend. If a 1s `nextdrawable` appears with NO matching present outlier, then
 `nextDrawable()` is blocking on something other than drawable availability, and
 that is a different investigation.
 
+**Pre-translated MSL now ships in the pk3 -- cold-start translation eliminated,
+2026-08-17.** `wadsrc/static/shaders/metal/generated/` holds all 92 engine
+stages as MSL text (2.3MB). `MtShaderManager::CompileShader` checks that lump
+set before the on-disk cache and before invoking glslang, so a cold `.msl` cache
+now costs:
+
+| | before | after |
+|---|---|---|
+| `msl_translate` | 1921.57ms (92) | **absent** |
+| `msl_tolib` | 116.28ms | 38.64ms |
+| total cold compile | ~2975ms | **~50ms** |
+
+Matrix suite PASS, so the shipped MSL renders identically to freshly translated
+MSL.
+
+**Staleness degrades to slow, never to wrong** -- the property that made this
+worth doing at all. Each filename carries the same `SuperFastHash` of source
+plus defines that the runtime computes, so an out-of-date file cannot match.
+Verified rather than assumed: renaming one generated file made exactly that
+stage re-translate (`msl_translate 1, 133.45ms, Basic Fuzz_frag_frag`) while the
+other 91 still loaded from the pk3. That is why this ships MSL **text** and not a
+prebuilt metallib -- a metallib would be a binary that can go stale without a
+per-stage fallback.
+
+Regeneration workflow is in `tools/collect_metal_shaders.py`'s docstring and
+`CLAUDE.md`. `mt_dumpshaders 1` writes freshly translated stages out; only
+*fresh* translations dump, so the `.msl` cache must be cleared first or the run
+produces nothing.
+
+**Not done, and deliberately:** `msl_tolib` (~39ms/launch) still runs, because
+MSL→`MTLLibrary` happens at runtime. Removing it needs the stages compiled into
+`native_shaders.metallib` at build time, which requires renaming SPIRV-Cross's
+`main0` entry point per stage so one library can hold all 92. That is the fiddly
+half of the work for the smaller half of the win -- ~39ms against the 1.9s
+already recovered.
+
+**Mod shaders were already precompiled at startup.** `CompileNextShader`'s state
+machine covers user shaders at `compileState == 2` (`mt_shader.cpp:672`), fed by
+the `usershaders` array that GLDEFS populates at wad load. So the
+"compile-while-drawing hazard" this work was originally scoped to remove was
+largely hypothetical: measured mid-play compile cost across a whole session was
+45ms. What remains genuinely on-demand is PSO creation, which depends on runtime
+render-state combinations and cannot be enumerated ahead -- 8.80ms warm.
+
 **The PSO binary archive works; the 257ms figure that prompted an investigation
 does not reproduce.** A warm launch had appeared to spend 257ms in `pso_compile`
 with one pipeline at 252.65ms, which suggested `mt_pipelines.bin` was not being

@@ -1,0 +1,181 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct BonesResult
+{
+    float3 Normal;
+    float4 Position;
+};
+
+struct MatricesUBO
+{
+    float4x4 ModelMatrix;
+    float4x4 NormalModelMatrix;
+    float4x4 TextureMatrix;
+};
+
+struct ViewpointUBO
+{
+    float4x4 ProjectionMatrix;
+    float4x4 ViewMatrix;
+    float4x4 NormalViewMatrix;
+    float4 uCameraPos;
+    float4 uClipLine;
+    float uGlobVis;
+    int uPalLightLevels;
+    int uViewHeight;
+    float uClipHeight;
+    float uClipHeightDirection;
+    int uShadowmapFilter;
+    int uLightBlendMode;
+    float uThickFogDistance;
+    float uThickFogMultiplier;
+};
+
+struct StreamData
+{
+    float4 uObjectColor;
+    float4 uObjectColor2;
+    float4 uDynLightColor;
+    float4 uAddColor;
+    float4 uTextureAddColor;
+    float4 uTextureModulateColor;
+    float4 uTextureBlendColor;
+    float4 uFogColor;
+    float uDesaturationFactor;
+    float uInterpolationFactor;
+    float timer;
+    int useVertexData;
+    float4 uVertexColor;
+    float4 uVertexNormal;
+    float4 uGlowTopPlane;
+    float4 uGlowTopColor;
+    float4 uGlowBottomPlane;
+    float4 uGlowBottomColor;
+    float4 uGradientTopPlane;
+    float4 uGradientBottomPlane;
+    float4 uSplitTopPlane;
+    float4 uSplitBottomPlane;
+    float4 uDetailParms;
+    float4 uNpotEmulation;
+    float4 padding1;
+    float4 padding2;
+    float4 padding3;
+};
+
+struct StreamUBO
+{
+    StreamData data[170];
+};
+
+struct PushConstants
+{
+    float4 group1;
+    float4 group2;
+    float4 group3;
+    float4 group4;
+};
+
+struct LightBufferSSO
+{
+    float4 lights[1];
+};
+
+struct BoneBufferSSO
+{
+    float4x4 bones[1];
+};
+
+struct main0_out
+{
+    float4 vTexCoord [[user(locn0)]];
+    float4 vColor [[user(locn1)]];
+    float3 vLightmap [[user(locn9)]];
+    float4 gl_Position [[position]];
+    float gl_PointSize [[point_size]];
+    float gl_ClipDistance [[clip_distance]] [5];
+    float gl_ClipDistance_0 [[user(clip0)]];
+    float gl_ClipDistance_1 [[user(clip1)]];
+    float gl_ClipDistance_2 [[user(clip2)]];
+    float gl_ClipDistance_3 [[user(clip3)]];
+    float gl_ClipDistance_4 [[user(clip4)]];
+};
+
+struct main0_in
+{
+    float4 aPosition [[attribute(0)]];
+    float2 aTexCoord [[attribute(1)]];
+    float4 aColor [[attribute(2)]];
+};
+
+static inline __attribute__((always_inline))
+BonesResult ApplyBones(thread float4& aPosition)
+{
+    BonesResult result;
+    result.Position = aPosition;
+    return result;
+}
+
+vertex main0_out main0(main0_in in [[stage_in]], constant ViewpointUBO& _42 [[buffer(17)]], constant MatricesUBO& _32 [[buffer(19)]], constant StreamUBO& _53 [[buffer(20)]], constant PushConstants& _56 [[buffer(21)]])
+{
+    main0_out out = {};
+    BonesResult bones = ApplyBones(in.aPosition);
+    float2 parmTexCoord = in.aTexCoord;
+    float4 parmPosition = bones.Position;
+    float4 worldcoord = _32.ModelMatrix * parmPosition;
+    float4 eyeCoordPos = _42.ViewMatrix * worldcoord;
+    if ((_53.data[int(_56.group4.y)].useVertexData & 1) == 0)
+    {
+        out.vColor = _53.data[int(_56.group4.y)].uVertexColor;
+    }
+    else
+    {
+        out.vColor = in.aColor;
+    }
+    out.vTexCoord = _32.TextureMatrix * float4(parmTexCoord, 0.0, 1.0);
+    out.gl_Position = _42.ProjectionMatrix * eyeCoordPos;
+    out.gl_Position.y = -out.gl_Position.y;
+    out.gl_Position.z = 0.5 * (out.gl_Position.w - out.gl_Position.z);
+    float ClipDistance0;
+    if (_42.uClipHeightDirection != 0.0)
+    {
+        ClipDistance0 = (worldcoord.y - _42.uClipHeight) * _42.uClipHeightDirection;
+    }
+    else
+    {
+        if (_42.uClipLine.x > (-1000000.0))
+        {
+            ClipDistance0 = (-(((worldcoord.z - _42.uClipLine.y) * _42.uClipLine.z) + ((_42.uClipLine.x - worldcoord.x) * _42.uClipLine.w))) + 3.0517578125e-05;
+        }
+        else
+        {
+            ClipDistance0 = 1.0;
+        }
+    }
+    float ClipDistance1 = worldcoord.y - _56.group1.x;
+    float ClipDistance2 = _56.group1.y - worldcoord.y;
+    float ClipDistance3;
+    float ClipDistance4;
+    if (all(_53.data[int(_56.group4.y)].uSplitTopPlane == float4(0.0)))
+    {
+        ClipDistance3 = 1.0;
+        ClipDistance4 = 1.0;
+    }
+    out.gl_ClipDistance[0] = ClipDistance0;
+    out.gl_ClipDistance[1] = ClipDistance1;
+    out.gl_ClipDistance[2] = ClipDistance2;
+    out.gl_ClipDistance[3] = ClipDistance3;
+    out.gl_ClipDistance[4] = ClipDistance4;
+    out.gl_PointSize = 1.0;
+    out.gl_ClipDistance_0 = out.gl_ClipDistance[0];
+    out.gl_ClipDistance_1 = out.gl_ClipDistance[1];
+    out.gl_ClipDistance_2 = out.gl_ClipDistance[2];
+    out.gl_ClipDistance_3 = out.gl_ClipDistance[3];
+    out.gl_ClipDistance_4 = out.gl_ClipDistance[4];
+    return out;
+}
+
