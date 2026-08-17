@@ -1,406 +1,566 @@
 DEBUG: main entered
-2026-08-17 13:08:40.693 gzdoom[13732:107536] Metal GPU Frame Capture Enabled
-vid_frametrace: reporting every 5s. p99 and the >100ms count are the hitching signal; avg is not.
-vid_stalltrace: breaking down any interval over 100ms by loop phase.
-mt_frametrace: reporting every 5s. p99 and the >100ms count are the hitching signal; avg is not.
-mt_present  latency=   68.61ms  outstanding=0
-mt_present  latency=  125.31ms  outstanding=0
-mt_present  latency=  115.59ms  outstanding=0
-vid_stalltrace  interval=132.41ms  active=1
-    playsim           129.34ms  x1
-    display             2.99ms  x1  (wraps others)
-    events              0.08ms  x1
-    beginframe          0.06ms  x1  (wraps others)
+2026-08-17 18:40:16.149 gzdoom[15857:148414] Metal GPU Frame Capture Enabled
+vid_frametrace: TRUE frame interval (Update to Update), every 5s. p99 and the >100ms count are the hitching signal; avg is not, and p50 sits on the refresh interval because the present wait is included.
+vid_stalltrace: loop-phase breakdown of any iteration over 100ms. Reported at the D_DoomLoop boundary, so the wipe and start screen fold into the enclosing iteration rather than reporting separately.
+mt_stall  drawablesize       0.00ms  [resize]  1440x900 -> 1024x768 (pool realloc)
+mt_frametrace: RENDERER BRACKET only (BeginFrame..EndFrame), every 5s. This is NOT the frame interval -- use vid_frametrace for that; playsim, level load and anything between frames are excluded here.
+mt_stall  present           71.59ms  [presented-handler]  outstanding=0
+mt_stall  present          139.34ms  [presented-handler]  outstanding=0
+mt_stall  present          112.09ms  [presented-handler]  outstanding=0
+vid_stalltrace  interval=136.61ms  active=1
+    playsim           133.37ms  x1
+    display             3.16ms  x1  (wraps others)
+    beginframe          0.08ms  x1  (wraps others)
+    events              0.07ms  x1
     presentframe        0.05ms  x1
     cmd_endframe        0.03ms  x1
     nextdrawable        0.02ms  x1
     pool_release        0.01ms  x1
-    (unaccounted)       2.88ms
-vid_stalltrace  interval=1025.88ms  active=1
-    display          1003.98ms  x1  (wraps others)
-    beginframe       1002.95ms  x1  (wraps others)
-    nextdrawable     1002.73ms  x1
-    playsim            21.83ms  x1
-    presentframe        0.07ms  x1
-    events              0.05ms  x1
+    (unaccounted)       3.05ms
+mt_stall  nextdrawable    1002.84ms  [acquire]  result=drawable outstanding=1
+vid_stalltrace  interval=1004.97ms  active=1
+    display          1004.16ms  x1  (wraps others)
+    nextdrawable     1002.84ms  x1
+    playsim             0.65ms  x1
+    events              0.15ms  x1
+    presentframe        0.08ms  x1
     cmd_endframe        0.04ms  x1
-    pool_release        0.02ms  x1
-    (unaccounted)       1.13ms
-vid_frametrace  n=63  avg= 79.85ms ( 12.5 fps)  p50= 31.38  p95=337.47  p99=887.55  max=1025.88  >33ms=9 (14.3%)  >100ms=7
-mt_frametrace  n=74  avg=  6.06ms (164.9 fps)  p50=  2.42  p95= 10.74  p99= 67.47  max=  76.07  >33ms=4 (5.4%)  >100ms=0
+    beginframe          0.04ms  x1  (wraps others)
+    pool_release        0.03ms  x1
+    (unaccounted)       1.18ms
+mt_stall  nextdrawable    1002.98ms  [acquire]  result=drawable outstanding=1
+vid_stalltrace  interval=1020.72ms  active=1
+    display          1004.05ms  x1  (wraps others)
+    nextdrawable     1002.98ms  x1
+    playsim            16.41ms  x1
+    presentframe        0.10ms  x1
+    cmd_endframe        0.09ms  x1
+    beginframe          0.07ms  x1  (wraps others)
+    pool_release        0.04ms  x1
+    events              0.03ms  x1
+    (unaccounted)       1.07ms
+vid_frametrace  n=35  avg=143.58ms (  7.0 fps)  p50= 28.67  p95=1004.96  p99=1027.70  max=1027.70  >33ms=8 (22.9%)  >100ms=6
+mt_frametrace  n=42  avg= 57.10ms ( 17.5 fps)  p50=  2.92  p95= 80.12  p99=1004.11  max=1004.11  >33ms=6 (14.3%)  >100ms=2
 mt_stalltrace totals (cumulative, at frametrace window)
   type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
-  compute_pso         7       1.89      0.38      0       0.00  SSAO ssao_compute (frame 0)
-  msl_tolib         101      48.65      2.72     11      11.58  Default_vert_vert (frame 0)
-  pp_pso             10       3.27      0.46     10       3.27  postprocess (frame 32)
-  pso_compile         6       3.56      1.33      6       3.56  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
-mt_seminflight  waits=74 signals=73 drift=-1
-mt_drawables  acquired=74 presented=72 lost=2  outstanding=2 peak=3  present_latency avg=17.54ms max=125.31ms
-vid_stalltrace  interval=1472.08ms  active=1
-    playsim            82.14ms  x1
-    levelload          53.06ms  x1
-    renderview         21.24ms  x1
-    precache            9.31ms  x1
-    presentframe        3.44ms  x43
-    events              2.29ms  x1
-    nextdrawable        1.56ms  x43
-    wipestart           1.53ms  x1
-    cmd_endframe        1.22ms  x43
-    pool_release        0.90ms  x43
-    beginframe          0.14ms  x1  (wraps others)
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile         6       3.00      0.88      6       3.00  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
+mt_pacing  sem(waits=42 signals=41 drift=-1)  drawables(acquired=42 lost=1 outstanding=1 peak=2)  present(avg=20.98ms max=139.34ms)
+vid_stalltrace  interval=1469.01ms  active=1
+    playsim            83.53ms  x1
+    levelload          53.72ms  x1
+    renderview         11.34ms  x1
+    precache            9.02ms  x1
+    presentframe        3.36ms  x43
+    events              2.69ms  x1
+    wipestart           1.57ms  x1
+    cmd_endframe        1.31ms  x43
+    nextdrawable        1.23ms  x43
+    pool_release        0.87ms  x43
+    beginframe          0.12ms  x1  (wraps others)
     drawable_release      0.02ms  x43
-    fpslimit            0.02ms  x43
-    (unaccounted)    1295.36ms
-mt_present  latency=   43.19ms  outstanding=2
-vid_frametrace  n=176  avg= 28.52ms ( 35.1 fps)  p50= 28.60  p95= 30.82  p99= 31.65  max=  33.32  >33ms=1 (0.6%)  >100ms=0
-mt_frametrace  n=177  avg=  3.64ms (274.8 fps)  p50=  3.45  p95=  4.78  p99=  5.43  max=   7.66  >33ms=0 (0.0%)  >100ms=0
+    fpslimit            0.01ms  x43
+    (unaccounted)    1300.34ms
+vid_frametrace  n=168  avg= 29.86ms ( 33.5 fps)  p50= 28.89  p95= 32.01  p99= 32.40  max= 146.14  >33ms=2 (1.2%)  >100ms=1
+mt_frametrace  n=173  avg=  3.44ms (290.8 fps)  p50=  3.51  p95=  4.93  p99=  6.13  max=   8.41  >33ms=0 (0.0%)  >100ms=0
 mt_stalltrace totals (cumulative, at frametrace window)
   type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
-  compute_pso         7       1.89      0.38      0       0.00  SSAO ssao_compute (frame 0)
-  msl_tolib         101      48.65      2.72     11      11.58  Default_vert_vert (frame 0)
-  pp_pso             10       3.27      0.46     10       3.27  postprocess (frame 32)
-  pso_compile         8       4.92      1.33      8       4.92  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
-mt_seminflight  waits=251 signals=250 drift=-1
-mt_drawables  acquired=251 presented=249 lost=2  outstanding=2 peak=3  present_latency avg=17.80ms max=125.31ms
-vid_frametrace  n=176  avg= 28.56ms ( 35.0 fps)  p50= 28.59  p95= 30.28  p99= 31.92  max=  35.77  >33ms=1 (0.6%)  >100ms=0
-mt_frametrace  n=175  avg=  3.63ms (275.3 fps)  p50=  3.56  p95=  4.51  p99=  4.92  max=   5.61  >33ms=0 (0.0%)  >100ms=0
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile         8       4.43      0.88      8       4.43  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
+mt_pacing  sem(waits=215 signals=214 drift=-1)  drawables(acquired=215 lost=1 outstanding=1 peak=2)  present(avg=17.64ms max=139.34ms)
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.60  p95= 30.21  p99= 31.41  max=  37.09  >33ms=2 (1.1%)  >100ms=0
+mt_frametrace  n=176  avg=  3.47ms (288.1 fps)  p50=  3.46  p95=  4.27  p99=  4.69  max=   6.46  >33ms=0 (0.0%)  >100ms=0
 mt_stalltrace totals (cumulative, at frametrace window)
   type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
-  compute_pso         7       1.89      0.38      0       0.00  SSAO ssao_compute (frame 0)
-  msl_tolib         101      48.65      2.72     11      11.58  Default_vert_vert (frame 0)
-  pp_pso             10       3.27      0.46     10       3.27  postprocess (frame 32)
-  pso_compile         8       4.92      1.33      8       4.92  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
-mt_seminflight  waits=426 signals=425 drift=-1
-mt_drawables  acquired=426 presented=424 lost=2  outstanding=2 peak=3  present_latency avg=17.73ms max=125.31ms
-mt_present  latency=   54.91ms  outstanding=2
-mt_present  latency=   67.91ms  outstanding=2
-mt_present  latency=   59.80ms  outstanding=2
-mt_present  latency=   74.88ms  outstanding=2
-vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.53  p95= 30.89  p99= 45.76  max=  60.01  >33ms=4 (2.3%)  >100ms=0
-mt_frametrace  n=175  avg=  3.40ms (294.1 fps)  p50=  3.37  p95=  4.03  p99=  4.97  max=   9.11  >33ms=0 (0.0%)  >100ms=0
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile         8       4.43      0.88      8       4.43  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
+mt_pacing  sem(waits=391 signals=390 drift=-1)  drawables(acquired=391 lost=1 outstanding=1 peak=2)  present(avg=18.00ms max=139.34ms)
+vid_frametrace  n=176  avg= 28.58ms ( 35.0 fps)  p50= 28.55  p95= 30.68  p99= 33.27  max=  36.29  >33ms=2 (1.1%)  >100ms=0
+mt_frametrace  n=175  avg=  3.46ms (289.0 fps)  p50=  3.37  p95=  4.22  p99=  5.26  max=   8.56  >33ms=0 (0.0%)  >100ms=0
 mt_stalltrace totals (cumulative, at frametrace window)
   type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
-  compute_pso         7       1.89      0.38      0       0.00  SSAO ssao_compute (frame 0)
-  msl_tolib         101      48.65      2.72     11      11.58  Default_vert_vert (frame 0)
-  pp_pso             10       3.27      0.46     10       3.27  postprocess (frame 32)
-  pso_compile         8       4.92      1.33      8       4.92  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
-mt_seminflight  waits=601 signals=600 drift=-1
-mt_drawables  acquired=601 presented=599 lost=2  outstanding=2 peak=3  present_latency avg=18.05ms max=125.31ms
-vid_frametrace  n=176  avg= 28.58ms ( 35.0 fps)  p50= 28.57  p95= 30.70  p99= 31.58  max=  35.72  >33ms=2 (1.1%)  >100ms=0
-mt_frametrace  n=176  avg=  3.30ms (302.6 fps)  p50=  3.26  p95=  4.22  p99=  4.57  max=   8.47  >33ms=0 (0.0%)  >100ms=0
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile         8       4.43      0.88      8       4.43  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
+mt_pacing  sem(waits=566 signals=565 drift=-1)  drawables(acquired=566 lost=1 outstanding=1 peak=2)  present(avg=18.16ms max=139.34ms)
+vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.54  p95= 31.14  p99= 32.14  max=  34.77  >33ms=1 (0.6%)  >100ms=0
+mt_frametrace  n=175  avg=  3.75ms (266.8 fps)  p50=  3.76  p95=  4.84  p99=  5.17  max=   8.30  >33ms=0 (0.0%)  >100ms=0
 mt_stalltrace totals (cumulative, at frametrace window)
   type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
-  compute_pso         7       1.89      0.38      0       0.00  SSAO ssao_compute (frame 0)
-  msl_tolib         101      48.65      2.72     11      11.58  Default_vert_vert (frame 0)
-  pp_pso             10       3.27      0.46     10       3.27  postprocess (frame 32)
-  pso_compile         8       4.92      1.33      8       4.92  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
-mt_seminflight  waits=777 signals=776 drift=-1
-mt_drawables  acquired=777 presented=775 lost=2  outstanding=2 peak=3  present_latency avg=18.03ms max=125.31ms
-vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.55  p95= 29.89  p99= 31.03  max=  31.62  >33ms=0 (0.0%)  >100ms=0
-mt_frametrace  n=176  avg=  3.15ms (317.4 fps)  p50=  3.14  p95=  3.72  p99=  4.23  max=   6.11  >33ms=0 (0.0%)  >100ms=0
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile         8       4.43      0.88      8       4.43  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
+mt_pacing  sem(waits=741 signals=740 drift=-1)  drawables(acquired=741 lost=1 outstanding=1 peak=2)  present(avg=18.20ms max=139.34ms)
+vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.58  p95= 30.92  p99= 32.58  max=  39.53  >33ms=2 (1.1%)  >100ms=0
+mt_frametrace  n=176  avg=  3.74ms (267.2 fps)  p50=  3.48  p95=  5.54  p99=  7.61  max=  14.38  >33ms=0 (0.0%)  >100ms=0
 mt_stalltrace totals (cumulative, at frametrace window)
   type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
-  compute_pso         7       1.89      0.38      0       0.00  SSAO ssao_compute (frame 0)
-  msl_tolib         101      48.65      2.72     11      11.58  Default_vert_vert (frame 0)
-  pp_pso             10       3.27      0.46     10       3.27  postprocess (frame 32)
-  pso_compile         8       4.92      1.33      8       4.92  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
-mt_seminflight  waits=953 signals=952 drift=-1
-mt_drawables  acquired=953 presented=951 lost=2  outstanding=2 peak=3  present_latency avg=17.99ms max=125.31ms
-vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.56  p95= 29.60  p99= 30.45  max=  31.49  >33ms=0 (0.0%)  >100ms=0
-mt_frametrace  n=175  avg=  3.17ms (315.6 fps)  p50=  3.15  p95=  3.62  p99=  3.84  max=   4.08  >33ms=0 (0.0%)  >100ms=0
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        12       8.41      1.70     12       8.41  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=917 signals=916 drift=-1)  drawables(acquired=917 lost=1 outstanding=1 peak=2)  present(avg=18.21ms max=139.34ms)
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.57  p95= 29.92  p99= 33.29  max=  34.66  >33ms=2 (1.1%)  >100ms=0
+mt_frametrace  n=176  avg=  3.22ms (310.9 fps)  p50=  3.10  p95=  4.13  p99=  4.65  max=   7.57  >33ms=0 (0.0%)  >100ms=0
 mt_stalltrace totals (cumulative, at frametrace window)
   type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
-  compute_pso         7       1.89      0.38      0       0.00  SSAO ssao_compute (frame 0)
-  msl_tolib         101      48.65      2.72     11      11.58  Default_vert_vert (frame 0)
-  pp_pso             10       3.27      0.46     10       3.27  postprocess (frame 32)
-  pso_compile         8       4.92      1.33      8       4.92  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
-mt_seminflight  waits=1128 signals=1127 drift=-1
-mt_drawables  acquired=1128 presented=1126 lost=2  outstanding=2 peak=3  present_latency avg=17.90ms max=125.31ms
-mt_present  latency=   43.27ms  outstanding=2
-mt_present  latency=   43.11ms  outstanding=2
-vid_frametrace  n=175  avg= 28.58ms ( 35.0 fps)  p50= 28.58  p95= 30.52  p99= 31.67  max=  39.55  >33ms=1 (0.6%)  >100ms=0
-mt_frametrace  n=176  avg=  3.35ms (298.8 fps)  p50=  3.25  p95=  4.27  p99=  4.51  max=   9.52  >33ms=0 (0.0%)  >100ms=0
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=1093 signals=1092 drift=-1)  drawables(acquired=1093 lost=1 outstanding=1 peak=2)  present(avg=18.12ms max=139.34ms)
+vid_frametrace  n=175  avg= 28.58ms ( 35.0 fps)  p50= 28.60  p95= 29.83  p99= 30.55  max=  31.31  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=175  avg=  3.71ms (269.4 fps)  p50=  3.72  p95=  4.71  p99=  5.01  max=   5.20  >33ms=0 (0.0%)  >100ms=0
 mt_stalltrace totals (cumulative, at frametrace window)
   type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
-  compute_pso         7       1.89      0.38      0       0.00  SSAO ssao_compute (frame 0)
-  msl_tolib         101      48.65      2.72     11      11.58  Default_vert_vert (frame 0)
-  pp_pso             10       3.27      0.46     10       3.27  postprocess (frame 32)
-  pso_compile         8       4.92      1.33      8       4.92  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
-mt_seminflight  waits=1304 signals=1303 drift=-1
-mt_drawables  acquired=1304 presented=1302 lost=2  outstanding=2 peak=3  present_latency avg=17.92ms max=125.31ms
-vid_stalltrace  interval=1428.22ms  active=1
-    playsim            41.63ms  x1
-    levelload          15.38ms  x1
-    precache            3.73ms  x1
-    presentframe        3.42ms  x43
-    events              2.24ms  x1
-    nextdrawable        1.54ms  x43
-    cmd_endframe        1.28ms  x43
-    wipestart           1.27ms  x1
-    renderview          1.20ms  x1
-    pool_release        0.86ms  x43
-    beginframe          0.13ms  x1  (wraps others)
-    drawable_release      0.02ms  x43
-    fpslimit            0.02ms  x43
-    (unaccounted)    1355.64ms
-mt_present  latency=   42.82ms  outstanding=2
-mt_present  latency=   43.00ms  outstanding=2
-mt_present  latency=   42.78ms  outstanding=2
-vid_frametrace  n=170  avg= 29.55ms ( 33.8 fps)  p50= 28.66  p95= 32.03  p99= 32.28  max=  92.25  >33ms=1 (0.6%)  >100ms=0
-mt_frametrace  n=170  avg=  3.42ms (292.2 fps)  p50=  3.45  p95=  3.71  p99=  3.89  max=  46.96  >33ms=1 (0.6%)  >100ms=0
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=1268 signals=1267 drift=-1)  drawables(acquired=1268 lost=1 outstanding=1 peak=2)  present(avg=18.35ms max=139.34ms)
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.56  p95= 29.96  p99= 30.89  max=  30.95  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=175  avg=  3.84ms (260.6 fps)  p50=  3.83  p95=  4.46  p99=  4.92  max=   5.87  >33ms=0 (0.0%)  >100ms=0
 mt_stalltrace totals (cumulative, at frametrace window)
   type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
-  compute_pso         7       1.89      0.38      0       0.00  SSAO ssao_compute (frame 0)
-  msl_tolib         101      48.65      2.72     11      11.58  Default_vert_vert (frame 0)
-  pp_pso             10       3.27      0.46     10       3.27  postprocess (frame 32)
-  pso_compile         8       4.92      1.33      8       4.92  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
-mt_seminflight  waits=1474 signals=1473 drift=-1
-mt_drawables  acquired=1474 presented=1472 lost=2  outstanding=2 peak=3  present_latency avg=17.91ms max=125.31ms
-mt_present  latency=   43.04ms  outstanding=2
-mt_present  latency=   43.09ms  outstanding=2
-mt_present  latency=   67.06ms  outstanding=1
-vid_frametrace  n=175  avg= 28.61ms ( 35.0 fps)  p50= 28.55  p95= 29.27  p99= 31.14  max=  70.18  >33ms=2 (1.1%)  >100ms=0
-mt_frametrace  n=176  avg=  3.45ms (290.1 fps)  p50=  3.48  p95=  3.73  p99=  3.84  max=   4.29  >33ms=0 (0.0%)  >100ms=0
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=1443 signals=1442 drift=-1)  drawables(acquired=1443 lost=1 outstanding=1 peak=2)  present(avg=18.55ms max=139.34ms)
+vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.55  p95= 29.76  p99= 30.40  max=  31.48  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=176  avg=  3.35ms (298.7 fps)  p50=  3.29  p95=  4.26  p99=  4.71  max=   6.32  >33ms=0 (0.0%)  >100ms=0
 mt_stalltrace totals (cumulative, at frametrace window)
   type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
-  compute_pso         7       1.89      0.38      0       0.00  SSAO ssao_compute (frame 0)
-  msl_tolib         101      48.65      2.72     11      11.58  Default_vert_vert (frame 0)
-  pp_pso             10       3.27      0.46     10       3.27  postprocess (frame 32)
-  pso_compile         8       4.92      1.33      8       4.92  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
-mt_seminflight  waits=1650 signals=1649 drift=-1
-mt_drawables  acquired=1650 presented=1648 lost=2  outstanding=2 peak=3  present_latency avg=17.99ms max=125.31ms
-mt_present  latency=   68.75ms  outstanding=2
-mt_present  latency=   83.44ms  outstanding=2
-vid_frametrace  n=175  avg= 28.58ms ( 35.0 fps)  p50= 28.57  p95= 30.24  p99= 34.75  max=  70.62  >33ms=3 (1.7%)  >100ms=0
-mt_frametrace  n=175  avg=  3.45ms (290.2 fps)  p50=  3.47  p95=  3.85  p99=  4.07  max=   4.74  >33ms=0 (0.0%)  >100ms=0
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=1619 signals=1618 drift=-1)  drawables(acquired=1619 lost=1 outstanding=1 peak=2)  present(avg=18.59ms max=139.34ms)
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.55  p95= 29.89  p99= 31.58  max=  33.40  >33ms=1 (0.6%)  >100ms=0
+mt_frametrace  n=175  avg=  3.18ms (314.0 fps)  p50=  3.22  p95=  3.72  p99=  3.99  max=   4.19  >33ms=0 (0.0%)  >100ms=0
 mt_stalltrace totals (cumulative, at frametrace window)
   type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
-  compute_pso         7       1.89      0.38      0       0.00  SSAO ssao_compute (frame 0)
-  msl_tolib         101      48.65      2.72     11      11.58  Default_vert_vert (frame 0)
-  pp_pso             10       3.27      0.46     10       3.27  postprocess (frame 32)
-  pso_compile         8       4.92      1.33      8       4.92  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
-mt_seminflight  waits=1825 signals=1824 drift=-1
-mt_drawables  acquired=1825 presented=1822 lost=3  outstanding=3 peak=3  present_latency avg=18.05ms max=125.31ms
-vid_frametrace  n=176  avg= 28.53ms ( 35.0 fps)  p50= 28.57  p95= 29.64  p99= 30.78  max=  31.11  >33ms=0 (0.0%)  >100ms=0
-mt_frametrace  n=175  avg=  3.45ms (290.0 fps)  p50=  3.47  p95=  3.72  p99=  3.82  max=   4.65  >33ms=0 (0.0%)  >100ms=0
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=1794 signals=1793 drift=-1)  drawables(acquired=1794 lost=1 outstanding=1 peak=2)  present(avg=18.58ms max=139.34ms)
+vid_frametrace  n=175  avg= 28.58ms ( 35.0 fps)  p50= 28.58  p95= 30.10  p99= 31.09  max=  34.75  >33ms=1 (0.6%)  >100ms=0
+mt_frametrace  n=175  avg=  3.35ms (298.6 fps)  p50=  3.17  p95=  4.39  p99=  4.75  max=   4.95  >33ms=0 (0.0%)  >100ms=0
 mt_stalltrace totals (cumulative, at frametrace window)
   type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
-  compute_pso         7       1.89      0.38      0       0.00  SSAO ssao_compute (frame 0)
-  msl_tolib         101      48.65      2.72     11      11.58  Default_vert_vert (frame 0)
-  pp_pso             10       3.27      0.46     10       3.27  postprocess (frame 32)
-  pso_compile         8       4.92      1.33      8       4.92  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
-mt_seminflight  waits=2000 signals=1999 drift=-1
-mt_drawables  acquired=2000 presented=1998 lost=2  outstanding=2 peak=3  present_latency avg=18.02ms max=125.31ms
-vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.58  p95= 29.65  p99= 31.08  max=  31.14  >33ms=0 (0.0%)  >100ms=0
-mt_frametrace  n=176  avg=  3.41ms (293.0 fps)  p50=  3.48  p95=  3.80  p99=  4.00  max=   4.22  >33ms=0 (0.0%)  >100ms=0
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=1969 signals=1968 drift=-1)  drawables(acquired=1969 lost=1 outstanding=1 peak=2)  present(avg=18.53ms max=139.34ms)
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.64  p95= 29.97  p99= 31.62  max=  33.15  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=176  avg=  3.41ms (293.1 fps)  p50=  3.31  p95=  4.52  p99=  5.05  max=   6.02  >33ms=0 (0.0%)  >100ms=0
 mt_stalltrace totals (cumulative, at frametrace window)
   type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
-  compute_pso         7       1.89      0.38      0       0.00  SSAO ssao_compute (frame 0)
-  msl_tolib         101      48.65      2.72     11      11.58  Default_vert_vert (frame 0)
-  pp_pso             10       3.27      0.46     10       3.27  postprocess (frame 32)
-  pso_compile         8       4.92      1.33      8       4.92  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
-mt_seminflight  waits=2176 signals=2175 drift=-1
-mt_drawables  acquired=2176 presented=2174 lost=2  outstanding=2 peak=3  present_latency avg=18.01ms max=125.31ms
-vid_frametrace  n=176  avg= 28.56ms ( 35.0 fps)  p50= 28.55  p95= 29.80  p99= 31.02  max=  31.08  >33ms=0 (0.0%)  >100ms=0
-mt_frametrace  n=175  avg=  3.42ms (292.1 fps)  p50=  3.48  p95=  3.79  p99=  4.05  max=   4.62  >33ms=0 (0.0%)  >100ms=0
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=2145 signals=2144 drift=-1)  drawables(acquired=2145 lost=1 outstanding=1 peak=2)  present(avg=18.48ms max=139.34ms)
+vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.56  p95= 30.08  p99= 30.99  max=  32.67  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=175  avg=  3.76ms (265.8 fps)  p50=  3.79  p95=  4.44  p99=  4.80  max=   4.87  >33ms=0 (0.0%)  >100ms=0
 mt_stalltrace totals (cumulative, at frametrace window)
   type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
-  compute_pso         7       1.89      0.38      0       0.00  SSAO ssao_compute (frame 0)
-  msl_tolib         101      48.65      2.72     11      11.58  Default_vert_vert (frame 0)
-  pp_pso             10       3.27      0.46     10       3.27  postprocess (frame 32)
-  pso_compile         8       4.92      1.33      8       4.92  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
-mt_seminflight  waits=2351 signals=2350 drift=-1
-mt_drawables  acquired=2351 presented=2349 lost=2  outstanding=2 peak=3  present_latency avg=18.02ms max=125.31ms
-mt_present  latency=   72.20ms  outstanding=2
-mt_present  latency=   50.29ms  outstanding=2
-mt_present  latency=   87.58ms  outstanding=2
-mt_present  latency=   61.69ms  outstanding=1
-mt_present  latency=   83.01ms  outstanding=2
-vid_frametrace  n=175  avg= 28.61ms ( 34.9 fps)  p50= 28.55  p95= 30.27  p99= 51.38  max=  68.61  >33ms=3 (1.7%)  >100ms=0
-mt_frametrace  n=176  avg=  3.47ms (288.5 fps)  p50=  3.49  p95=  3.78  p99=  4.23  max=   5.54  >33ms=0 (0.0%)  >100ms=0
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=2320 signals=2319 drift=-1)  drawables(acquired=2320 lost=1 outstanding=1 peak=2)  present(avg=18.55ms max=139.34ms)
+vid_frametrace  n=175  avg= 28.58ms ( 35.0 fps)  p50= 28.58  p95= 30.00  p99= 31.63  max=  32.02  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=175  avg=  4.01ms (249.2 fps)  p50=  3.98  p95=  4.84  p99=  5.63  max=   6.75  >33ms=0 (0.0%)  >100ms=0
 mt_stalltrace totals (cumulative, at frametrace window)
   type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
-  compute_pso         7       1.89      0.38      0       0.00  SSAO ssao_compute (frame 0)
-  msl_tolib         101      48.65      2.72     11      11.58  Default_vert_vert (frame 0)
-  pp_pso             10       3.27      0.46     10       3.27  postprocess (frame 32)
-  pso_compile         8       4.92      1.33      8       4.92  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
-mt_seminflight  waits=2527 signals=2526 drift=-1
-mt_drawables  acquired=2527 presented=2525 lost=2  outstanding=2 peak=3  present_latency avg=18.12ms max=125.31ms
-mt_present  latency=   42.80ms  outstanding=2
-mt_present  latency=   42.85ms  outstanding=2
-vid_frametrace  n=176  avg= 28.54ms ( 35.0 fps)  p50= 28.55  p95= 29.44  p99= 30.87  max=  31.67  >33ms=0 (0.0%)  >100ms=0
-mt_frametrace  n=176  avg=  3.49ms (286.3 fps)  p50=  3.50  p95=  3.76  p99=  4.20  max=   6.62  >33ms=0 (0.0%)  >100ms=0
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=2495 signals=2494 drift=-1)  drawables(acquired=2495 lost=1 outstanding=1 peak=2)  present(avg=18.60ms max=139.34ms)
+vid_frametrace  n=176  avg= 28.56ms ( 35.0 fps)  p50= 28.63  p95= 30.45  p99= 31.89  max=  34.16  >33ms=1 (0.6%)  >100ms=0
+mt_frametrace  n=176  avg=  3.74ms (267.1 fps)  p50=  3.75  p95=  4.68  p99=  5.07  max=   5.44  >33ms=0 (0.0%)  >100ms=0
 mt_stalltrace totals (cumulative, at frametrace window)
   type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
-  compute_pso         7       1.89      0.38      0       0.00  SSAO ssao_compute (frame 0)
-  msl_tolib         101      48.65      2.72     11      11.58  Default_vert_vert (frame 0)
-  pp_pso             10       3.27      0.46     10       3.27  postprocess (frame 32)
-  pso_compile         8       4.92      1.33      8       4.92  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
-mt_seminflight  waits=2703 signals=2702 drift=-1
-mt_drawables  acquired=2703 presented=2701 lost=2  outstanding=2 peak=3  present_latency avg=18.14ms max=125.31ms
-mt_present  latency=   42.96ms  outstanding=2
-vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.57  p95= 29.22  p99= 30.68  max=  31.00  >33ms=0 (0.0%)  >100ms=0
-mt_frametrace  n=175  avg=  3.47ms (287.8 fps)  p50=  3.49  p95=  3.73  p99=  3.90  max=   4.95  >33ms=0 (0.0%)  >100ms=0
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=2671 signals=2670 drift=-1)  drawables(acquired=2671 lost=1 outstanding=1 peak=2)  present(avg=18.65ms max=139.34ms)
+mt_stall  present           44.41ms  [presented-handler]  outstanding=1
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.59  p95= 30.09  p99= 31.18  max=  31.76  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=176  avg=  3.68ms (272.1 fps)  p50=  3.77  p95=  4.53  p99=  4.90  max=   5.47  >33ms=0 (0.0%)  >100ms=0
 mt_stalltrace totals (cumulative, at frametrace window)
   type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
-  compute_pso         7       1.89      0.38      0       0.00  SSAO ssao_compute (frame 0)
-  msl_tolib         101      48.65      2.72     11      11.58  Default_vert_vert (frame 0)
-  pp_pso             10       3.27      0.46     10       3.27  postprocess (frame 32)
-  pso_compile         8       4.92      1.33      8       4.92  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
-mt_seminflight  waits=2878 signals=2877 drift=-1
-mt_drawables  acquired=2878 presented=2876 lost=2  outstanding=2 peak=3  present_latency avg=18.09ms max=125.31ms
-mt_present  latency=   63.01ms  outstanding=2
-mt_present  latency=   41.81ms  outstanding=2
-mt_present  latency=   70.66ms  outstanding=2
-mt_present  latency=   71.58ms  outstanding=2
-mt_present  latency=   58.31ms  outstanding=2
-vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.58  p95= 30.03  p99= 40.69  max=  57.87  >33ms=3 (1.7%)  >100ms=0
-mt_frametrace  n=176  avg=  3.38ms (295.7 fps)  p50=  3.47  p95=  3.68  p99=  3.79  max=   4.45  >33ms=0 (0.0%)  >100ms=0
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=2847 signals=2846 drift=-1)  drawables(acquired=2847 lost=1 outstanding=1 peak=2)  present(avg=18.69ms max=139.34ms)
+mt_stall  present           43.21ms  [presented-handler]  outstanding=1
+vid_frametrace  n=175  avg= 28.58ms ( 35.0 fps)  p50= 28.58  p95= 30.34  p99= 32.04  max=  33.99  >33ms=2 (1.1%)  >100ms=0
+mt_frametrace  n=175  avg=  3.31ms (302.3 fps)  p50=  3.13  p95=  4.28  p99=  4.63  max=   4.70  >33ms=0 (0.0%)  >100ms=0
 mt_stalltrace totals (cumulative, at frametrace window)
   type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
-  compute_pso         7       1.89      0.38      0       0.00  SSAO ssao_compute (frame 0)
-  msl_tolib         101      48.65      2.72     11      11.58  Default_vert_vert (frame 0)
-  pp_pso             10       3.27      0.46     10       3.27  postprocess (frame 32)
-  pso_compile         8       4.92      1.33      8       4.92  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
-mt_seminflight  waits=3054 signals=3053 drift=-1
-mt_drawables  acquired=3054 presented=3052 lost=2  outstanding=2 peak=3  present_latency avg=18.09ms max=125.31ms
-vid_frametrace  n=175  avg= 28.58ms ( 35.0 fps)  p50= 28.59  p95= 30.29  p99= 31.23  max=  31.81  >33ms=0 (0.0%)  >100ms=0
-mt_frametrace  n=175  avg=  3.58ms (279.0 fps)  p50=  3.51  p95=  4.22  p99=  5.07  max=   6.41  >33ms=0 (0.0%)  >100ms=0
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=3022 signals=3021 drift=-1)  drawables(acquired=3022 lost=1 outstanding=1 peak=2)  present(avg=18.71ms max=139.34ms)
+vid_frametrace  n=176  avg= 28.56ms ( 35.0 fps)  p50= 28.55  p95= 30.04  p99= 30.89  max=  32.57  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=176  avg=  3.26ms (307.1 fps)  p50=  3.09  p95=  4.35  p99=  4.65  max=   5.69  >33ms=0 (0.0%)  >100ms=0
 mt_stalltrace totals (cumulative, at frametrace window)
   type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
-  compute_pso         7       1.89      0.38      0       0.00  SSAO ssao_compute (frame 0)
-  msl_tolib         101      48.65      2.72     11      11.58  Default_vert_vert (frame 0)
-  pp_pso             10       3.27      0.46     10       3.27  postprocess (frame 32)
-  pso_compile         8       4.92      1.33      8       4.92  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
-mt_seminflight  waits=3229 signals=3228 drift=-1
-mt_drawables  acquired=3229 presented=3227 lost=2  outstanding=2 peak=3  present_latency avg=18.07ms max=125.31ms
-vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.57  p95= 30.49  p99= 31.24  max=  36.37  >33ms=2 (1.1%)  >100ms=0
-mt_frametrace  n=175  avg=  3.42ms (292.5 fps)  p50=  3.46  p95=  4.12  p99=  4.59  max=   6.91  >33ms=0 (0.0%)  >100ms=0
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=3198 signals=3197 drift=-1)  drawables(acquired=3198 lost=1 outstanding=1 peak=2)  present(avg=18.67ms max=139.34ms)
+mt_stall  present           42.98ms  [presented-handler]  outstanding=1
+vid_frametrace  n=175  avg= 28.58ms ( 35.0 fps)  p50= 28.57  p95= 29.85  p99= 31.06  max=  33.52  >33ms=1 (0.6%)  >100ms=0
+mt_frametrace  n=176  avg=  3.36ms (297.2 fps)  p50=  3.33  p95=  4.09  p99=  4.52  max=   9.26  >33ms=0 (0.0%)  >100ms=0
 mt_stalltrace totals (cumulative, at frametrace window)
   type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
-  compute_pso         7       1.89      0.38      0       0.00  SSAO ssao_compute (frame 0)
-  msl_tolib         101      48.65      2.72     11      11.58  Default_vert_vert (frame 0)
-  pp_pso             10       3.27      0.46     10       3.27  postprocess (frame 32)
-  pso_compile         8       4.92      1.33      8       4.92  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
-mt_seminflight  waits=3404 signals=3403 drift=-1
-mt_drawables  acquired=3404 presented=3402 lost=2  outstanding=2 peak=3  present_latency avg=18.05ms max=125.31ms
-vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.61  p95= 30.02  p99= 31.15  max=  33.00  >33ms=0 (0.0%)  >100ms=0
-mt_frametrace  n=175  avg=  3.39ms (294.8 fps)  p50=  3.40  p95=  4.08  p99=  4.36  max=   4.75  >33ms=0 (0.0%)  >100ms=0
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=3374 signals=3373 drift=-1)  drawables(acquired=3374 lost=1 outstanding=1 peak=2)  present(avg=18.63ms max=139.34ms)
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.58  p95= 29.73  p99= 30.98  max=  31.45  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=175  avg=  3.44ms (290.6 fps)  p50=  3.44  p95=  4.03  p99=  4.33  max=   4.58  >33ms=0 (0.0%)  >100ms=0
 mt_stalltrace totals (cumulative, at frametrace window)
   type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
-  compute_pso         7       1.89      0.38      0       0.00  SSAO ssao_compute (frame 0)
-  msl_tolib         101      48.65      2.72     11      11.58  Default_vert_vert (frame 0)
-  pp_pso             10       3.27      0.46     10       3.27  postprocess (frame 32)
-  pso_compile         8       4.92      1.33      8       4.92  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
-mt_seminflight  waits=3579 signals=3578 drift=-1
-mt_drawables  acquired=3579 presented=3577 lost=2  outstanding=2 peak=3  present_latency avg=18.05ms max=125.31ms
-vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.54  p95= 31.45  p99= 33.40  max=  35.98  >33ms=5 (2.9%)  >100ms=0
-mt_frametrace  n=176  avg=  3.70ms (270.4 fps)  p50=  3.73  p95=  4.38  p99=  4.86  max=   8.44  >33ms=0 (0.0%)  >100ms=0
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=3549 signals=3548 drift=-1)  drawables(acquired=3549 lost=1 outstanding=1 peak=2)  present(avg=18.62ms max=139.34ms)
+vid_frametrace  n=176  avg= 28.56ms ( 35.0 fps)  p50= 28.57  p95= 29.53  p99= 31.11  max=  32.35  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=176  avg=  3.25ms (307.6 fps)  p50=  3.17  p95=  3.93  p99=  4.64  max=   5.13  >33ms=0 (0.0%)  >100ms=0
 mt_stalltrace totals (cumulative, at frametrace window)
   type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
-  compute_pso         7       1.89      0.38      0       0.00  SSAO ssao_compute (frame 0)
-  msl_tolib         101      48.65      2.72     11      11.58  Default_vert_vert (frame 0)
-  pp_pso             10       3.27      0.46     10       3.27  postprocess (frame 32)
-  pso_compile         8       4.92      1.33      8       4.92  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
-mt_seminflight  waits=3755 signals=3754 drift=-1
-mt_drawables  acquired=3755 presented=3753 lost=2  outstanding=2 peak=3  present_latency avg=18.05ms max=125.31ms
-mt_present  latency=   61.73ms  outstanding=2
-mt_present  latency=   40.58ms  outstanding=2
-mt_present  latency=   55.45ms  outstanding=2
-mt_present  latency=   65.88ms  outstanding=2
-mt_present  latency=   58.08ms  outstanding=2
-vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.53  p95= 30.86  p99= 40.94  max=  47.85  >33ms=5 (2.8%)  >100ms=0
-mt_frametrace  n=176  avg=  3.58ms (279.2 fps)  p50=  3.43  p95=  4.88  p99=  7.18  max=  13.18  >33ms=0 (0.0%)  >100ms=0
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=3725 signals=3724 drift=-1)  drawables(acquired=3725 lost=1 outstanding=1 peak=2)  present(avg=18.60ms max=139.34ms)
+mt_stall  present           42.05ms  [presented-handler]  outstanding=1
+vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.60  p95= 30.60  p99= 32.96  max=  33.51  >33ms=1 (0.6%)  >100ms=0
+mt_frametrace  n=175  avg=  3.41ms (293.6 fps)  p50=  3.32  p95=  4.24  p99=  4.67  max=   5.02  >33ms=0 (0.0%)  >100ms=0
 mt_stalltrace totals (cumulative, at frametrace window)
   type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
-  compute_pso         7       1.89      0.38      0       0.00  SSAO ssao_compute (frame 0)
-  msl_tolib         101      48.65      2.72     11      11.58  Default_vert_vert (frame 0)
-  pp_pso             10       3.27      0.46     10       3.27  postprocess (frame 32)
-  pso_compile        12       8.47      1.33     12       8.47  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
-mt_seminflight  waits=3931 signals=3930 drift=-1
-mt_drawables  acquired=3931 presented=3929 lost=2  outstanding=2 peak=3  present_latency avg=18.12ms max=125.31ms
-vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.58  p95= 29.97  p99= 31.13  max=  31.67  >33ms=0 (0.0%)  >100ms=0
-mt_frametrace  n=175  avg=  3.30ms (302.8 fps)  p50=  3.19  p95=  4.35  p99=  4.94  max=   5.50  >33ms=0 (0.0%)  >100ms=0
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=3900 signals=3899 drift=-1)  drawables(acquired=3900 lost=1 outstanding=1 peak=2)  present(avg=18.57ms max=139.34ms)
+vid_frametrace  n=175  avg= 28.58ms ( 35.0 fps)  p50= 28.57  p95= 30.47  p99= 31.19  max=  32.21  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=175  avg=  3.40ms (294.3 fps)  p50=  3.38  p95=  4.12  p99=  4.45  max=   4.71  >33ms=0 (0.0%)  >100ms=0
 mt_stalltrace totals (cumulative, at frametrace window)
   type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
-  compute_pso         7       1.89      0.38      0       0.00  SSAO ssao_compute (frame 0)
-  msl_tolib         101      48.65      2.72     11      11.58  Default_vert_vert (frame 0)
-  pp_pso             10       3.27      0.46     10       3.27  postprocess (frame 32)
-  pso_compile        13       9.33      1.33     13       9.33  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
-mt_seminflight  waits=4106 signals=4105 drift=-1
-mt_drawables  acquired=4106 presented=4104 lost=2  outstanding=2 peak=3  present_latency avg=18.13ms max=125.31ms
-vid_frametrace  n=172  avg= 29.07ms ( 34.4 fps)  p50= 28.59  p95= 31.31  p99= 35.78  max=  93.33  >33ms=5 (2.9%)  >100ms=0
-mt_frametrace  n=171  avg=  4.01ms (249.1 fps)  p50=  3.85  p95=  4.65  p99=  8.05  max=  47.81  >33ms=1 (0.6%)  >100ms=0
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=4075 signals=4074 drift=-1)  drawables(acquired=4075 lost=1 outstanding=1 peak=2)  present(avg=18.55ms max=139.34ms)
+mt_stall  present           43.23ms  [presented-handler]  outstanding=1
+mt_stall  present           43.07ms  [presented-handler]  outstanding=1
+vid_frametrace  n=175  avg= 28.58ms ( 35.0 fps)  p50= 28.58  p95= 29.36  p99= 30.52  max=  30.58  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=176  avg=  3.11ms (321.9 fps)  p50=  3.11  p95=  3.41  p99=  3.62  max=   4.14  >33ms=0 (0.0%)  >100ms=0
 mt_stalltrace totals (cumulative, at frametrace window)
   type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
-  compute_pso         7       1.89      0.38      0       0.00  SSAO ssao_compute (frame 0)
-  msl_tolib         101      48.65      2.72     11      11.58  Default_vert_vert (frame 0)
-  pp_pso             10       3.27      0.46     10       3.27  postprocess (frame 32)
-  pso_compile        13       9.33      1.33     13       9.33  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
-mt_seminflight  waits=4277 signals=4276 drift=-1
-mt_drawables  acquired=4277 presented=4275 lost=2  outstanding=2 peak=3  present_latency avg=18.14ms max=125.31ms
-vid_stalltrace  interval=1433.63ms  active=1
-    playsim            42.02ms  x1
-    levelload          15.79ms  x1
-    nextdrawable       11.62ms  x43
-    precache            3.79ms  x1
-    presentframe        3.51ms  x43
-    events              1.86ms  x1
-    wipestart           1.47ms  x1
-    cmd_endframe        1.41ms  x43
-    renderview          1.26ms  x1
-    pool_release        0.91ms  x43
-    beginframe          0.16ms  x1  (wraps others)
-    drawable_release      0.02ms  x43
-    fpslimit            0.02ms  x43
-    (unaccounted)    1349.96ms
-vid_frametrace  n=111  avg= 47.20ms ( 21.2 fps)  p50= 28.91  p95= 35.71  p99=268.08  max=1533.11  >33ms=7 (6.3%)  >100ms=3
-mt_frametrace  n=104  avg=  4.28ms (233.8 fps)  p50=  3.74  p95=  6.60  p99=  6.95  max=  17.66  >33ms=0 (0.0%)  >100ms=0
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=4251 signals=4250 drift=-1)  drawables(acquired=4251 lost=1 outstanding=1 peak=2)  present(avg=18.52ms max=139.34ms)
+mt_stall  present           43.22ms  [presented-handler]  outstanding=1
+vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.58  p95= 29.65  p99= 32.16  max=  34.94  >33ms=2 (1.1%)  >100ms=0
+mt_frametrace  n=176  avg=  3.19ms (313.1 fps)  p50=  3.10  p95=  3.50  p99=  6.94  max=  11.36  >33ms=0 (0.0%)  >100ms=0
 mt_stalltrace totals (cumulative, at frametrace window)
   type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
-  compute_pso         7       1.89      0.38      0       0.00  SSAO ssao_compute (frame 0)
-  msl_tolib         101      48.65      2.72     11      11.58  Default_vert_vert (frame 0)
-  pp_pso             10       3.27      0.46     10       3.27  postprocess (frame 32)
-  pso_compile        13       9.33      1.33     13       9.33  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
-mt_seminflight  waits=4381 signals=4380 drift=-1
-mt_drawables  acquired=4381 presented=4378 lost=3  outstanding=3 peak=3  present_latency avg=18.17ms max=125.31ms
-vid_frametrace  n=19  avg=267.97ms (  3.7 fps)  p50=267.99  p95=268.15  p99=268.21  max= 268.21  >33ms=19 (100.0%)  >100ms=19
-mt_frametrace  n=19  avg=  1.25ms (797.5 fps)  p50=  1.23  p95=  1.43  p99=  1.49  max=   1.49  >33ms=0 (0.0%)  >100ms=0
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=4427 signals=4426 drift=-1)  drawables(acquired=4427 lost=1 outstanding=1 peak=2)  present(avg=18.50ms max=139.34ms)
+vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.57  p95= 29.11  p99= 29.49  max=  30.36  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=175  avg=  3.09ms (323.3 fps)  p50=  3.08  p95=  3.36  p99=  3.55  max=   3.62  >33ms=0 (0.0%)  >100ms=0
 mt_stalltrace totals (cumulative, at frametrace window)
   type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
-  compute_pso         7       1.89      0.38      0       0.00  SSAO ssao_compute (frame 0)
-  msl_tolib         101      48.65      2.72     11      11.58  Default_vert_vert (frame 0)
-  pp_pso             10       3.27      0.46     10       3.27  postprocess (frame 32)
-  pso_compile        13       9.33      1.33     13       9.33  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
-mt_seminflight  waits=4400 signals=4399 drift=-1
-mt_drawables  acquired=4400 presented=4397 lost=3  outstanding=3 peak=3  present_latency avg=18.15ms max=125.31ms
-vid_frametrace  n=19  avg=267.99ms (  3.7 fps)  p50=268.00  p95=268.65  p99=268.92  max= 268.92  >33ms=19 (100.0%)  >100ms=19
-mt_frametrace  n=19  avg=  1.27ms (789.3 fps)  p50=  1.21  p95=  1.41  p99=  1.80  max=   1.80  >33ms=0 (0.0%)  >100ms=0
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=4602 signals=4601 drift=-1)  drawables(acquired=4602 lost=1 outstanding=1 peak=2)  present(avg=18.47ms max=139.34ms)
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.59  p95= 29.64  p99= 30.66  max=  30.83  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=176  avg=  3.03ms (329.8 fps)  p50=  3.09  p95=  3.32  p99=  3.41  max=   3.72  >33ms=0 (0.0%)  >100ms=0
 mt_stalltrace totals (cumulative, at frametrace window)
   type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
-  compute_pso         7       1.89      0.38      0       0.00  SSAO ssao_compute (frame 0)
-  msl_tolib         101      48.65      2.72     11      11.58  Default_vert_vert (frame 0)
-  pp_pso             10       3.27      0.46     10       3.27  postprocess (frame 32)
-  pso_compile        13       9.33      1.33     13       9.33  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
-mt_seminflight  waits=4419 signals=4418 drift=-1
-mt_drawables  acquired=4419 presented=4416 lost=3  outstanding=3 peak=3  present_latency avg=18.12ms max=125.31ms
-vid_frametrace  n=19  avg=267.99ms (  3.7 fps)  p50=268.00  p95=268.06  p99=268.25  max= 268.25  >33ms=19 (100.0%)  >100ms=19
-mt_frametrace  n=19  avg=  1.23ms (814.7 fps)  p50=  1.21  p95=  1.32  p99=  1.44  max=   1.44  >33ms=0 (0.0%)  >100ms=0
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=4778 signals=4777 drift=-1)  drawables(acquired=4778 lost=1 outstanding=1 peak=2)  present(avg=18.45ms max=139.34ms)
+vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.60  p95= 30.33  p99= 30.76  max=  31.06  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=175  avg=  3.05ms (327.4 fps)  p50=  3.11  p95=  3.36  p99=  4.32  max=   4.46  >33ms=0 (0.0%)  >100ms=0
 mt_stalltrace totals (cumulative, at frametrace window)
   type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
-  compute_pso         7       1.89      0.38      0       0.00  SSAO ssao_compute (frame 0)
-  msl_tolib         101      48.65      2.72     11      11.58  Default_vert_vert (frame 0)
-  pp_pso             10       3.27      0.46     10       3.27  postprocess (frame 32)
-  pso_compile        13       9.33      1.33     13       9.33  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
-mt_seminflight  waits=4438 signals=4437 drift=-1
-mt_drawables  acquired=4438 presented=4435 lost=3  outstanding=3 peak=3  present_latency avg=18.10ms max=125.31ms
-vid_frametrace  n=19  avg=268.00ms (  3.7 fps)  p50=268.01  p95=268.06  p99=268.09  max= 268.09  >33ms=19 (100.0%)  >100ms=19
-mt_frametrace  n=19  avg=  1.21ms (825.6 fps)  p50=  1.21  p95=  1.28  p99=  1.31  max=   1.31  >33ms=0 (0.0%)  >100ms=0
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=4953 signals=4952 drift=-1)  drawables(acquired=4953 lost=1 outstanding=1 peak=2)  present(avg=18.44ms max=139.34ms)
+vid_frametrace  n=176  avg= 28.56ms ( 35.0 fps)  p50= 28.56  p95= 30.17  p99= 30.74  max=  36.15  >33ms=1 (0.6%)  >100ms=0
+mt_frametrace  n=176  avg=  2.86ms (349.3 fps)  p50=  3.06  p95=  3.48  p99=  3.99  max=  10.64  >33ms=0 (0.0%)  >100ms=0
 mt_stalltrace totals (cumulative, at frametrace window)
   type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
-  compute_pso         7       1.89      0.38      0       0.00  SSAO ssao_compute (frame 0)
-  msl_tolib         101      48.65      2.72     11      11.58  Default_vert_vert (frame 0)
-  pp_pso             10       3.27      0.46     10       3.27  postprocess (frame 32)
-  pso_compile        13       9.33      1.33     13       9.33  eff=-1 state=0 vfmt=202776 blend=33751553 alpha=1 fmt=80 (frame 0)
-mt_seminflight  waits=4457 signals=4456 drift=-1
-mt_drawables  acquired=4457 presented=4454 lost=3  outstanding=3 peak=3  present_latency avg=18.07ms max=125.31ms
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=5129 signals=5128 drift=-1)  drawables(acquired=5129 lost=1 outstanding=1 peak=2)  present(avg=18.45ms max=139.34ms)
+mt_stall  present           43.03ms  [presented-handler]  outstanding=1
+vid_frametrace  n=175  avg= 28.58ms ( 35.0 fps)  p50= 28.57  p95= 29.65  p99= 30.52  max=  31.21  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=175  avg=  2.88ms (347.4 fps)  p50=  3.07  p95=  3.33  p99=  3.45  max=   3.71  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=5304 signals=5303 drift=-1)  drawables(acquired=5304 lost=1 outstanding=1 peak=2)  present(avg=18.45ms max=139.34ms)
+mt_stall  present           43.09ms  [presented-handler]  outstanding=1
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.59  p95= 29.69  p99= 30.80  max=  30.97  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=175  avg=  3.05ms (327.7 fps)  p50=  3.10  p95=  3.38  p99=  3.46  max=   3.95  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=5479 signals=5478 drift=-1)  drawables(acquired=5479 lost=2 outstanding=2 peak=2)  present(avg=18.43ms max=139.34ms)
+mt_stall  present           43.47ms  [presented-handler]  outstanding=1
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.57  p95= 29.88  p99= 30.71  max=  30.91  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=176  avg=  3.07ms (325.8 fps)  p50=  3.11  p95=  3.38  p99=  3.51  max=   4.35  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=5655 signals=5654 drift=-1)  drawables(acquired=5655 lost=1 outstanding=1 peak=2)  present(avg=18.40ms max=139.34ms)
+vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.58  p95= 29.33  p99= 30.81  max=  30.89  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=175  avg=  3.06ms (327.3 fps)  p50=  3.09  p95=  3.31  p99=  3.40  max=   3.79  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=5830 signals=5829 drift=-1)  drawables(acquired=5830 lost=1 outstanding=1 peak=2)  present(avg=18.37ms max=139.34ms)
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.58  p95= 30.06  p99= 30.67  max=  32.77  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=176  avg=  3.09ms (323.5 fps)  p50=  3.10  p95=  3.50  p99=  4.46  max=   6.03  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=6006 signals=6005 drift=-1)  drawables(acquired=6006 lost=1 outstanding=1 peak=2)  present(avg=18.36ms max=139.34ms)
+vid_frametrace  n=176  avg= 28.58ms ( 35.0 fps)  p50= 28.58  p95= 30.62  p99= 31.16  max=  31.40  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=176  avg=  2.99ms (334.3 fps)  p50=  3.10  p95=  3.39  p99=  4.20  max=   4.58  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=6182 signals=6181 drift=-1)  drawables(acquired=6182 lost=1 outstanding=1 peak=2)  present(avg=18.36ms max=139.34ms)
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.56  p95= 30.14  p99= 30.70  max=  32.47  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=175  avg=  2.99ms (334.3 fps)  p50=  3.11  p95=  3.45  p99=  4.07  max=   5.74  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=6357 signals=6356 drift=-1)  drawables(acquired=6357 lost=1 outstanding=1 peak=2)  present(avg=18.36ms max=139.34ms)
+mt_stall  present           42.79ms  [presented-handler]  outstanding=1
+vid_frametrace  n=176  avg= 28.56ms ( 35.0 fps)  p50= 28.57  p95= 30.44  p99= 30.97  max=  31.26  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=176  avg=  2.97ms (336.4 fps)  p50=  3.11  p95=  3.44  p99=  4.02  max=   4.13  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=6533 signals=6532 drift=-1)  drawables(acquired=6533 lost=1 outstanding=1 peak=2)  present(avg=18.35ms max=139.34ms)
+vid_frametrace  n=174  avg= 28.74ms ( 34.8 fps)  p50= 28.59  p95= 29.83  p99= 33.29  max=  68.14  >33ms=2 (1.1%)  >100ms=0
+mt_frametrace  n=175  avg=  3.67ms (272.6 fps)  p50=  3.12  p95=  3.94  p99= 21.07  max=  45.15  >33ms=2 (1.1%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=6708 signals=6707 drift=-1)  drawables(acquired=6708 lost=1 outstanding=1 peak=2)  present(avg=18.33ms max=139.34ms)
+vid_frametrace  n=176  avg= 28.56ms ( 35.0 fps)  p50= 28.59  p95= 29.65  p99= 30.79  max=  31.59  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=176  avg=  2.99ms (334.5 fps)  p50=  3.11  p95=  3.55  p99=  3.77  max=   4.02  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=6884 signals=6883 drift=-1)  drawables(acquired=6884 lost=1 outstanding=1 peak=2)  present(avg=18.31ms max=139.34ms)
+mt_stall  present           43.09ms  [presented-handler]  outstanding=1
+vid_frametrace  n=175  avg= 28.58ms ( 35.0 fps)  p50= 28.54  p95= 30.41  p99= 30.93  max=  31.03  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=175  avg=  2.98ms (335.7 fps)  p50=  3.09  p95=  3.37  p99=  3.54  max=   3.74  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=7059 signals=7058 drift=-1)  drawables(acquired=7059 lost=1 outstanding=1 peak=2)  present(avg=18.29ms max=139.34ms)
+vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.55  p95= 30.44  p99= 30.67  max=  30.87  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=176  avg=  3.07ms (325.9 fps)  p50=  3.09  p95=  3.42  p99=  3.92  max=   4.84  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=7235 signals=7234 drift=-1)  drawables(acquired=7235 lost=1 outstanding=1 peak=2)  present(avg=18.28ms max=139.34ms)
+vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.58  p95= 29.84  p99= 30.75  max=  31.87  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=176  avg=  3.05ms (328.1 fps)  p50=  3.10  p95=  3.35  p99=  3.46  max=   4.26  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=7411 signals=7410 drift=-1)  drawables(acquired=7411 lost=1 outstanding=1 peak=2)  present(avg=18.27ms max=139.34ms)
+mt_stall  present           42.65ms  [presented-handler]  outstanding=1
+mt_stall  present           41.77ms  [presented-handler]  outstanding=1
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.58  p95= 29.64  p99= 30.49  max=  30.88  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=175  avg=  2.94ms (340.7 fps)  p50=  3.08  p95=  3.35  p99=  3.64  max=   3.97  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=7586 signals=7585 drift=-1)  drawables(acquired=7586 lost=1 outstanding=1 peak=2)  present(avg=18.27ms max=139.34ms)
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.58  p95= 29.68  p99= 30.79  max=  30.99  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=176  avg=  3.09ms (324.0 fps)  p50=  3.11  p95=  3.78  p99=  4.14  max=   4.48  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=7762 signals=7761 drift=-1)  drawables(acquired=7762 lost=1 outstanding=1 peak=2)  present(avg=18.28ms max=139.34ms)
+mt_stall  present           42.98ms  [presented-handler]  outstanding=1
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.57  p95= 30.44  p99= 30.81  max=  35.14  >33ms=1 (0.6%)  >100ms=0
+mt_frametrace  n=176  avg=  3.09ms (324.1 fps)  p50=  3.13  p95=  3.47  p99=  3.92  max=   8.81  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=7938 signals=7937 drift=-1)  drawables(acquired=7938 lost=1 outstanding=1 peak=2)  present(avg=18.28ms max=139.34ms)
+vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.55  p95= 30.50  p99= 30.85  max=  30.98  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=176  avg=  3.01ms (332.6 fps)  p50=  3.11  p95=  3.40  p99=  3.50  max=   4.61  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=8114 signals=8113 drift=-1)  drawables(acquired=8114 lost=1 outstanding=1 peak=2)  present(avg=18.26ms max=139.34ms)
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.59  p95= 29.83  p99= 30.54  max=  30.87  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=175  avg=  3.07ms (326.1 fps)  p50=  3.10  p95=  3.43  p99=  3.81  max=   4.31  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=8289 signals=8288 drift=-1)  drawables(acquired=8289 lost=1 outstanding=1 peak=2)  present(avg=18.25ms max=139.34ms)
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.58  p95= 29.69  p99= 30.61  max=  31.04  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=176  avg=  3.06ms (326.7 fps)  p50=  3.11  p95=  3.50  p99=  4.12  max=   4.63  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=8465 signals=8464 drift=-1)  drawables(acquired=8465 lost=1 outstanding=1 peak=2)  present(avg=18.24ms max=139.34ms)
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.58  p95= 29.14  p99= 29.92  max=  30.78  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=176  avg=  3.10ms (322.7 fps)  p50=  3.10  p95=  3.39  p99=  3.72  max=   3.81  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=8641 signals=8640 drift=-1)  drawables(acquired=8641 lost=1 outstanding=1 peak=2)  present(avg=18.24ms max=139.34ms)
+vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.59  p95= 29.28  p99= 30.71  max=  30.83  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=175  avg=  3.10ms (322.2 fps)  p50=  3.12  p95=  3.48  p99=  3.64  max=   4.56  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=8816 signals=8815 drift=-1)  drawables(acquired=8816 lost=1 outstanding=1 peak=2)  present(avg=18.25ms max=139.34ms)
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.56  p95= 29.04  p99= 30.59  max=  30.72  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=175  avg=  3.10ms (322.3 fps)  p50=  3.12  p95=  3.38  p99=  3.49  max=   3.63  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=8991 signals=8990 drift=-1)  drawables(acquired=8991 lost=1 outstanding=1 peak=2)  present(avg=18.25ms max=139.34ms)
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.58  p95= 29.30  p99= 30.90  max=  31.01  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=176  avg=  3.11ms (321.3 fps)  p50=  3.11  p95=  3.43  p99=  3.74  max=   4.31  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=9167 signals=9166 drift=-1)  drawables(acquired=9167 lost=1 outstanding=1 peak=2)  present(avg=18.23ms max=139.34ms)
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.57  p95= 29.48  p99= 30.14  max=  58.87  >33ms=1 (0.6%)  >100ms=0
+mt_frametrace  n=175  avg=  3.11ms (321.1 fps)  p50=  3.12  p95=  3.39  p99=  3.85  max=   5.27  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=9342 signals=9341 drift=-1)  drawables(acquired=9342 lost=1 outstanding=1 peak=2)  present(avg=18.22ms max=139.34ms)
+vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.56  p95= 29.14  p99= 30.37  max=  30.95  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=175  avg=  3.12ms (321.0 fps)  p50=  3.12  p95=  3.43  p99=  3.58  max=   4.74  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       2.00      0.41      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      39.16      3.28     11       1.15  Default_vert_vert (frame 0)
+  pp_pso             10       2.37      0.40     10       2.37  postprocess (frame 0)
+  pso_compile        13       9.57      1.70     13       9.57  eff=-1 state=0 vfmt=271396 blend=197121 alpha=0 fmt=80 (frame 793)
+mt_pacing  sem(waits=9517 signals=9516 drift=-1)  drawables(acquired=9517 lost=1 outstanding=1 peak=2)  present(avg=18.21ms max=139.34ms)

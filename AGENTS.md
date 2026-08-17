@@ -1161,6 +1161,51 @@ backend. If a 1s `nextdrawable` appears with NO matching present outlier, then
 `nextDrawable()` is blocking on something other than drawable availability, and
 that is a different investigation.
 
+**Verification of the late-acquisition change: it REDUCED the freeze but did not
+eliminate it.** 55-window play session, 2026-08-17:
+
+```
+mt_stall  nextdrawable    1002.84ms  [acquire]  result=drawable outstanding=1
+mt_stall  nextdrawable    1002.98ms  [acquire]  result=drawable outstanding=1
+```
+
+Both still ~1002ms, both with one drawable outstanding of three configured, both
+now inside `display` (`display 1004.16ms` wrapping `nextdrawable 1002.84ms`) --
+i.e. the acquisition did move to swapchain-use time and blocked there anyway.
+**The layer blocks even when asked late.**
+
+Frequency did fall. `>100ms` frames per frametrace window: **0.350 -> 0.127**,
+and the 1s events specifically **0.10 -> 0.036 per window**. Treat that as
+suggestive only: the two sessions had different content and length, and this is
+not a controlled A/B. What is not ambiguous is that the stall still happens.
+
+**Why this is probably not fixable from inside the backend.** The layer is
+configured correctly and the configuration is applied, not merely intended:
+`setMaximumDrawableCount(3)`, `setDisplaySyncEnabled(false)`,
+`setAllowsNextDrawableTimeout(true)` (`mt_renderdevice.cpp:229-233`). Only one
+drawable is outstanding when it blocks, so two are free. And `result=drawable`
+means it waited ~1002ms and then *succeeded* -- it did not hit the nil timeout.
+A wait released at almost exactly the timeout interval, while the resource being
+waited for was available throughout, points at something outside the process.
+
+**Options, none of them a clean fix:**
+
+1. **Accept and mitigate exposure.** The deferral already did this and is worth
+   keeping on its own merits. Further reduction would mean acquiring even later,
+   but the swapchain is needed by the first pass that targets it, so there is
+   little room left.
+2. **Correlate with system activity.** Log wall-clock timestamps on the stall
+   and check Console.app / `powermetrics` for what else the machine was doing.
+   Cheap, and would confirm or kill the external-cause theory.
+3. **Stop blocking the loop.** There is no non-blocking `nextDrawable`, so this
+   would mean restructuring presentation, which is a large change for a defect
+   that is not ours.
+
+**Do not treat the late-acquisition change as a failure.** It is correct by
+Apple's own guidance, it is image-neutral (verified against a stashed control),
+and it reduced the observed rate. It just is not sufficient, because the cause is
+not on this side of the API.
+
 **Late drawable acquisition, implemented 2026-08-17.** `nextDrawable()` moved
 out of `BeginFrame` -- where it made the render thread wait on `CAMetalLayer`
 before any of the frame's work -- to `MetalRenderDevice::AcquireDrawable()`,
