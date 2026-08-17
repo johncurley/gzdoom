@@ -1090,6 +1090,36 @@ So the ~900-1030ms class survives with the window focused and every phase near
 zero. Focus loss is excluded; the ~268ms family is confirmed as throttling and
 should be filtered out of any reading by its `active=0` stamp.
 
+**The post-`Update()` tail is exonerated, and most "~1s stalls" were the
+startup screen.** Phases added inside `MetalRenderDevice::Update()` --
+`presentframe`, `cmd_endframe`, `fpslimit`, `pool_release`, `drawable_release`,
+`mt_endframe`, `capture_end` -- because everything after `Super::Update()` runs
+past the interval timestamp and was covered by nothing. All of it measures
+**0.01-0.09ms**. The autorelease-pool-drain hypothesis was wrong.
+
+The run instead showed that `display` was **absent** from every unattributed
+interval while `presentframe` read 0.02ms -- a frame happened, but not one
+driven by `D_DoomLoop`. Labelling `FStartScreen::Render` with a `VLoopContext`
+resolved it:
+
+```
+interval=1258.58ms  active=1  context=startscreen
+interval= 267.93ms  active=1  context=startscreen
+interval=1005.97ms  active=1                        <- the real one
+```
+
+So the alarming intervals in unattended launches are startup-screen refreshes,
+not gameplay stalls. **This also corrects the ~268ms entry above**: that cadence
+is `FStartScreen::Render`'s own `minwaittime` throttle ("slow down drawing the
+start screen if we're on a slow GPU", which *doubles* each time it trips), not
+background throttling. Both were true in the control run that conflated them --
+the window was inactive AND on the start screen. Background throttling is real
+and carries `active=0`; the ~268ms cadence carries `context=startscreen`.
+
+**What survives:** one in-loop `interval=1005.97ms  active=1` with no context and
+every phase near zero. That is the genuine remaining stall, and it is now the
+only unexplained shape left in the frame.
+
 **Correction to the nextDrawable attribution.** The capture-off play trace shows
 `nextdrawable` at **0.01-0.02ms** on the 1029.71ms and 1553.16ms intervals,
 while it is 92.71ms and 220.60ms on the 121ms and 251ms ones. So `nextDrawable`

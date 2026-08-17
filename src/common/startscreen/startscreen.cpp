@@ -651,6 +651,12 @@ void FStartScreen::Render(bool force) {
       V_OutputResized(screen->GetWidth(), screen->GetHeight());
     }
 
+    // vid_stalltrace: the startup/loading screen drives screen->Update() from
+    // here rather than from D_DoomLoop, so its intervals contain no "display"
+    // phase and reported as 100% unaccounted -- the shape that made the ~1s
+    // stalls look like they had no cause at all.
+    VLoopContext startContext("startscreen");
+
     screen->FrameTime = nowtime;
     screen->BeginFrame();
     twod->ClearClipRect();

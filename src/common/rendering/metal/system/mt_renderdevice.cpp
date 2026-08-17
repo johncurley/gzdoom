@@ -367,7 +367,10 @@ void MetalRenderDevice::Update() {
     if (mMtRenderState)
       mMtRenderState->EndRenderPass();
 
-    PresentFrame(mCurrentDrawable);
+    {
+      VLoopPhase phase("presentframe");
+      PresentFrame(mCurrentDrawable);
+    }
 
     // Force synchronous flush during startup to ensure loading screen
     // and progress bar updates are 100% visible and correctly tiled.
@@ -377,33 +380,56 @@ void MetalRenderDevice::Update() {
   }
 
   if (mCommands) {
+    VLoopPhase phase("cmd_endframe");
     mCommands->EndFrame();
   }
 
   if (!mVSync) {
+    // Deliberate sleep, not a stall: with cl_capfps this holds 35fps and is
+    // most of a healthy frame. Phased anyway because a timer fault here would
+    // present exactly as the unattributed ~1s intervals do -- loop fast, every
+    // other phase near zero, one long gap.
+    VLoopPhase phase("fpslimit");
     this->FPSLimit();
   }
 
   twod->Clear();
 
   Super::Update();
-  pool->release();
+
+  // Everything below runs AFTER Super::Update(), which is where the frame
+  // interval timestamp is taken -- so it lands in the NEXT interval and was
+  // covered by no phase until now. That made it the last uninstrumented region
+  // of the frame, and the leading suspect for the ~1s stalls.
+  {
+    VLoopPhase phase("pool_release");
+    pool->release();
+  }
 
   // Release drawable AFTER the pool is popped to ensure any references
   // in the pool (like in RenderPassDescriptors) are already gone.
   if (mCurrentDrawable) {
+    VLoopPhase phase("drawable_release");
     mCurrentDrawable->release();
     mCurrentDrawable = nullptr;
   }
 
-  if (mDebugManager)
+  if (mDebugManager) {
+    VLoopPhase phase("mt_endframe");
     mDebugManager->EndFrame();
+  }
 
   mInFrame = false;
 
   // After the drawable is released and the frame is fully closed out, so the
   // trace contains the present as well as the scene and postprocess work.
-  MtCaptureEndFrameIfCapturing();
+  {
+    // Capture-layer work, in the suspect region. The layer is enabled on every
+    // run of this build (see AGENTS.md), so this is the one phase that ties the
+    // still-outstanding capture-on/off A/B to a specific cost.
+    VLoopPhase phase("capture_end");
+    MtCaptureEndFrameIfCapturing();
+  }
 }
 
 void MetalRenderDevice::PresentFrame(void *drawablePtr) {
