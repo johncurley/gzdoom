@@ -492,6 +492,57 @@ rendering. Untried: a nested server with real GLAMOR-backed GL passthrough
 it) instead of `Xvfb`. Until then this item stays genuinely untested — not
 negative, and not close to being closed by trying again the same way.
 
+**Attempted 2026-08-18 with `Xephyr` — same class of failure, not the
+`Xvfb`/Mesa one, and this item is still untested.** `xorg-server-xephyr`
+installed clean. `Xephyr :N -screen 1280x1024x24 -resizeable -ac` plus `twm`
+reproduces the target condition correctly — `xprop -root _NET_SUPPORTED`
+confirms no EWMH, same as the `Xvfb` setup — but the launcher-path `gzdoom`
+process never reaches `OnClientMessage` here either. It hangs earlier, and not
+even at a consistent place: three separate fresh `Xephyr` instances (a fresh
+display number each time, ruling out state carried over from killing a prior
+stuck client, which was the first hypothesis) produced three different stall
+sites under `gdb -p <pid> -batch -ex "thread apply all bt"`:
+
+1. `XOpenDisplay` → `xcb_connect_to_fd` → `poll()`, before the connection even
+   completes (`X11Connection::X11Connection`).
+2. `XGetGeometry` → `_XReply` → `xcb_wait_for_reply64` → `poll()`, during the
+   first repaint (`X11DisplayWindow::GetClientFrame`, via
+   `X11Connection::CheckNeedsUpdate`).
+3. `XPutImage` → `_XSend` → `xcb_writev` → `poll()`, on the **write** side this
+   time (`X11DisplayWindow::PresentBitmap`).
+
+Three different Xlib round trips, all inside the same `poll()`-on-the-wire
+shape, argue against a single gzdoom-owned bug at a fixed call site — a real
+defect at one of these sites would stall there every time, not migrate. Tried
+routing around the one host-specific wrinkle in the `Xephyr` log
+(`_amdgpu_device_initialize: amdgpu_query_info(ACCEL_WORKING) failed (-13)`,
+logged on every launch) with `-dumb` (disables `Xephyr`'s own hardware
+acceleration entirely) — same third stall site, so that failure line is not
+the cause, or at least not the whole of it.
+
+**Confirmed server-side, not client-side, with the same discriminator the
+`Xvfb` finding used**: while stall #3 was in progress, `timeout 5 xdpyinfo`
+against the *same* `Xephyr` display also timed out — a client with no relation
+to `gzdoom` or to ZWidget, asking nothing but the server's own info. `gdb`
+against the `Xephyr` process itself at that moment showed its main thread
+idle in `epoll_wait()`, its normal wait-for-work state, not stuck processing
+anything. So the whole server had stopped servicing every client, `gzdoom`'s
+included — the exact "one stuck client wedges the display for everyone"
+signature already on record for `Xvfb`, now confirmed on `Xephyr` too, on this
+machine.
+
+**Consequence: this is very likely not two coincidentally-similar bugs but one
+class of problem** — nested/software X servers on this specific host (Mesa +
+amdgpu driver stack, under XWayland) do not reliably keep servicing a real
+Xlib client through a startup sequence, regardless of which server. Untried
+and the next thing worth trying if this is picked up again: a *non-nested*
+second physical/virtual seat, or a different machine's X server over the
+network, to separate "nested server on this host" from "X server on this
+host" as the actual variable. Until then, the `WM_TAKE_FOCUS`-while-unviewable
+case stays genuinely untested — no local harness has gotten a real ZWidget
+client past its own startup on this box, and that has now been shown twice,
+by two different mechanisms, not to be for want of patience.
+
 The two sites are mutually exclusive on the axis nobody recorded: whether the
 observing session had an EWMH window manager. Under bare Xvfb, site A is
 certain and site B unreachable; under KWin (including XWayland), site A's branch
