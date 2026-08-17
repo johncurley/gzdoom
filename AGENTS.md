@@ -39,6 +39,10 @@ it is unusual).
   (only two shaders are hand-written MSL; ~50 engine programs still compile
   GLSL→SPIR-V→MSL live on first hit). Confirm with `mt_frametrace` before
   reaching for the metallib fix already scoped under "Shader strategy".
+- **Current handoff:** `docs/handoff-linux-2026-08-17.md` — what the Linux box
+  should do first (verify the platform-keyed matrix baseline), the fatal X11
+  `BadMatch` as the highest-value item there, and what this session's
+  backend-agnostic instruments mean for that platform.
 - **Previous handoff:** `docs/handoff-matrix-2026-08-12.md` — the matrix suite
   made trustworthy (map choice by measurement, the status-bar-face
   nondeterminism, three silent failures made loud).
