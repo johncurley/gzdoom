@@ -1173,6 +1173,32 @@ backend. If a 1s `nextdrawable` appears with NO matching present outlier, then
 `nextDrawable()` is blocking on something other than drawable availability, and
 that is a different investigation.
 
+**Ashes validates the shipped MSL set -- and cannot validate the mod-shader
+path.** Run 2026-08-17, `Ashes2063Enriched2_23.pk3` on DOOM2, cold `.msl` cache:
+`msl_translate` **absent**, `msl_tolib` exactly **92** -- the same stages as a
+stock launch. The shipped set covers Ashes completely; no permutation gap.
+
+But none of the three Ashes mods present here (`Ashes2063Enriched2_23`,
+`AshesAfterglow1_16`, `AshesHardReset_105`) defines **any** custom shader --
+zero `.fp`/`.vp` lumps, zero GLDEFS shader blocks. So they exercise only the
+engine's own programs, and the runtime translation path for mod shaders remains
+**unvalidated by a real mod**. That path is not dead code (the state machine
+covers it at `compileState == 2`), it is simply untested here. Finding a mod that
+ships custom GLSL would be the test.
+
+**A diagnostic distinction worth keeping: `outstanding` separates real
+backpressure from the freeze pathology.** Ashes is heavier and hits
+`nextdrawable` waits up to **125.37ms with `outstanding=3`** -- all three
+drawables genuinely in flight, which is a correct wait for a GPU that is behind.
+The mid-play freeze looks structurally different: **~1002ms with
+`outstanding=1`**, i.e. two drawables free. Same instrument, same field, opposite
+meanings. When reading a `nextdrawable` line, check `outstanding` before
+concluding anything: at the pool size it is backpressure, below it the block is
+unexplained.
+
+Note also that `mt_stalltrace 1` produced 3284 lines in 60s. Use 40 or higher
+for a play session; 1 is for a bounded diagnostic run.
+
 **Pre-translated MSL now ships in the pk3 -- cold-start translation eliminated,
 2026-08-17.** `wadsrc/static/shaders/metal/generated/` holds all 92 engine
 stages as MSL text (2.3MB). `MtShaderManager::CompileShader` checks that lump
