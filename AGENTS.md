@@ -1161,6 +1161,38 @@ backend. If a 1s `nextdrawable` appears with NO matching present outlier, then
 `nextDrawable()` is blocking on something other than drawable availability, and
 that is a different investigation.
 
+**ROOT CAUSE BOUNDARY: `nextDrawable()` blocks with drawables free. The
+constraint is below the backend, not in it.** Long play session, 4457 frames,
+plus a follow-up run with outcome logging. Every mechanical explanation is now
+excluded by measurement:
+
+| hypothesis | evidence against |
+|---|---|
+| drawable leak | `lost` oscillates 2-3, never grows, over 4457 frames |
+| late retirement | worst retirement all session **125.31ms**, against a **1002.73ms** block |
+| nil timeout | `result=drawable` -- it waits and succeeds, never returns nil |
+| pool reallocation | `mt_drawablesize` fired **zero** times |
+| pool exhaustion | blocked **195.75ms with `outstanding=1`** of 3 configured |
+
+That last row is the decisive one: two drawables were free and `nextDrawable()`
+still blocked for 195ms. Availability is not the constraint, so the blocking is
+inside `CAMetalLayer`/WindowServer -- below anything this renderer controls.
+
+**What this means for a fix.** There is probably no bug to find in the Metal
+backend. The actionable defect is *where* the drawable is acquired:
+`MetalRenderDevice::BeginFrame()` takes it at the very start of the frame, so
+the render thread is held hostage by the layer before any scene work has been
+done. Apple's own guidance is to acquire the drawable **as late as possible** --
+immediately before the present blit, not at frame start. Deferring acquisition
+would let the entire frame's CPU and GPU work proceed during the window in which
+the layer would otherwise be making us wait, which converts a 1-second freeze
+into (at worst) a late present.
+
+That is a real change to frame structure, not a one-liner: `mCurrentDrawable` is
+consulted for the present-blit target and the drawable's texture dimensions, so
+the acquisition point and everything reading it would need to move together. It
+should be measured with the instruments above rather than assumed to help.
+
 **Still open: WHY the pool starves.** The GPU is finishing frames in ~1.1ms
 (`mt_frametrace` p50), three drawables are configured
 (`maximumDrawableCount`, `mt_renderdevice.cpp:230`), backpressure is correct, and

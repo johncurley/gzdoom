@@ -637,6 +637,17 @@ void MetalRenderDevice::BeginFrame() {
           SetVirtualSize(scaledWidth, scaledHeight);
           V_OutputResized(scaledWidth, scaledHeight);
           if (mVertexData) mVertexData->OutputResized(scaledWidth, scaledHeight);
+          // Any drawable-size change makes CAMetalLayer reallocate its pool,
+          // and nextDrawable() blocks while that happens. Logged unconditionally
+          // when tracing: a resize immediately before a long block would be the
+          // whole explanation, and this should be silent during steady play.
+          if (mt_stalltrace > 0) {
+            fprintf(stderr,
+                    "mt_drawablesize  %.0fx%.0f -> %.0fx%.0f  (pool realloc)\n",
+                    (double)metalLayer->drawableSize().width,
+                    (double)metalLayer->drawableSize().height,
+                    (double)targetDrawableW, (double)targetDrawableH);
+          }
           metalLayer->setDrawableSize(CGSizeMake(targetDrawableW, targetDrawableH));
           SetViewportRects(nullptr);
         }
@@ -654,10 +665,31 @@ void MetalRenderDevice::BeginFrame() {
       // the ~1000-1025ms freezes found on 2026-08-17. Timed separately from the
       // inflight-frames semaphore above -- that one has its own timeout and did
       // NOT fire during those freezes, which is what pointed here.
-      VLoopPhase drawablePhase("nextdrawable");
-      mCurrentDrawable = (CA::MetalDrawable *)metalLayer->nextDrawable();
+      const auto acquireStart = std::chrono::steady_clock::now();
+      {
+        VLoopPhase drawablePhase("nextdrawable");
+        mCurrentDrawable = (CA::MetalDrawable *)metalLayer->nextDrawable();
+      }
       if (mCurrentDrawable)
         RecordDrawableAcquired();
+
+      // Did it time out, or just wait? nextDrawable() returns nil after ~1s
+      // when it cannot produce a drawable at all -- a categorically different
+      // event from a long wait that eventually succeeds, and the session of
+      // 2026-08-17 showed a 1002.73ms block while no drawable took more than
+      // 125.31ms to retire, so availability was not the constraint. Logging
+      // the outcome distinguishes "starved" from "the layer could not serve
+      // us", which point at different fixes.
+      if (mt_stalltrace > 0) {
+        const double waitMs = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - acquireStart).count();
+        if (waitMs >= (double)mt_stalltrace) {
+          fprintf(stderr,
+                  "mt_nextdrawable  wait=%8.2fms  result=%s  outstanding=%d\n",
+                  waitMs, mCurrentDrawable ? "drawable" : "NIL-TIMEOUT",
+                  GetDrawablesOutstanding());
+        }
+      }
 
       if (mCurrentDrawable && mFrameCount < 10) {
         mFrameCount++;
