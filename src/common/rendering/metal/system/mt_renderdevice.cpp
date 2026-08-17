@@ -77,18 +77,6 @@ static constexpr int kDefaultMaxFramesInFlight = 3;
 
 EXTERN_CVAR(Int, mt_stalltrace)
 
-static CVReturn MetalDisplayLinkCallback(CVDisplayLinkRef,
-                                         const CVTimeStamp *,
-                                         const CVTimeStamp *,
-                                         CVOptionFlags,
-                                         CVOptionFlags *,
-                                         void *displayLinkContext) {
-  auto fb = static_cast<MetalRenderDevice *>(displayLinkContext);
-  if (fb)
-    fb->NotifyDisplayTick();
-  return kCVReturnSuccess;
-}
-
 EXTERN_CVAR(Int, gl_tonemap)
 EXTERN_CVAR(Int, screenblocks)
 EXTERN_CVAR(Bool, cl_capfps)
@@ -105,7 +93,6 @@ void MetalPrintLog(const char *typestr, const std::string &msg) {
 MetalRenderDevice::MetalRenderDevice(void *hMonitor, bool fullscreen)
     : Super(hMonitor, fullscreen) {
   mInflightFramesSemaphore = dispatch_semaphore_create(kDefaultMaxFramesInFlight);
-  mDisplayLinkSemaphore = dispatch_semaphore_create(0);
   mPipelineNbr = 3;
   device = std::make_shared<MetalDevice>();
   device->device = MTL::CreateSystemDefaultDevice();
@@ -123,7 +110,6 @@ MetalRenderDevice::MetalRenderDevice(void *hMonitor, bool fullscreen)
 
 MetalRenderDevice::~MetalRenderDevice() {
   mIsDestroyed = true;
-  StopDisplayLink();
 
   // Safely reset all post-processing backend resources while we are still alive
   PPResource::ResetAll();
@@ -187,10 +173,6 @@ MetalRenderDevice::~MetalRenderDevice() {
 
   if (mInFrame) {
     dispatch_semaphore_signal(mInflightFramesSemaphore);
-  }
-  if (mDisplayLinkSemaphore) {
-    dispatch_release(mDisplayLinkSemaphore);
-    mDisplayLinkSemaphore = nullptr;
   }
   dispatch_release(mInflightFramesSemaphore);
 }
@@ -538,67 +520,6 @@ void MetalRenderDevice::PresentFrame(void *drawablePtr) {
   commandBuffer->presentDrawable(drawable);
 }
 
-void MetalRenderDevice::StartDisplayLink() {
-#ifdef __APPLE__
-  if (mDisplayLink && CVDisplayLinkIsRunning(mDisplayLink))
-    return;
-
-  if (!mDisplayLink) {
-    CVReturn result = CVDisplayLinkCreateWithActiveCGDisplays(&mDisplayLink);
-    if (result != kCVReturnSuccess || !mDisplayLink) {
-      Printf(PRINT_LOG, "Metal: Failed to create CVDisplayLink (%d)\n",
-             (int)result);
-      mDisplayLink = nullptr;
-      return;
-    }
-    CVDisplayLinkSetOutputCallback(mDisplayLink, MetalDisplayLinkCallback,
-                                   this);
-  }
-
-  CVReturn result = CVDisplayLinkStart(mDisplayLink);
-  if (result != kCVReturnSuccess)
-    Printf(PRINT_LOG, "Metal: Failed to start CVDisplayLink (%d)\n",
-           (int)result);
-#endif
-}
-
-void MetalRenderDevice::StopDisplayLink() {
-#ifdef __APPLE__
-  if (mDisplayLink) {
-    if (CVDisplayLinkIsRunning(mDisplayLink))
-      CVDisplayLinkStop(mDisplayLink);
-    CVDisplayLinkRelease(mDisplayLink);
-    mDisplayLink = nullptr;
-  }
-#endif
-}
-
-void MetalRenderDevice::NotifyDisplayTick() {
-#ifdef __APPLE__
-  if (mDisplayLinkSemaphore)
-    dispatch_semaphore_signal(mDisplayLinkSemaphore);
-#endif
-}
-
-void MetalRenderDevice::WaitForDisplayTick() {
-#ifdef __APPLE__
-  if (!mDisplayLinkSemaphore || !mDisplayLink ||
-      !CVDisplayLinkIsRunning(mDisplayLink))
-    return;
-
-  while (dispatch_semaphore_wait(mDisplayLinkSemaphore,
-                                 DISPATCH_TIME_NOW) == 0) {
-  }
-
-  if (dispatch_semaphore_wait(
-          mDisplayLinkSemaphore,
-          dispatch_time(DISPATCH_TIME_NOW, 1000 * NSEC_PER_MSEC)) != 0) {
-    if (mDebugManager)
-      mDebugManager->RecordStall("displaylink_timeout", 1000.0f);
-  }
-#endif
-}
-
 void MetalRenderDevice::BeginFrame() {
   // Registry frame boundary. It lives HERE, not in MtRenderBuffers::BeginFrame,
   // because that runs again for every render-to-texture: measured 2026-08-16, a
@@ -797,7 +718,6 @@ void MetalRenderDevice::SetVSync(bool vsync) {
     CA::MetalLayer *metalLayer = (CA::MetalLayer *)nativeHandle.metalLayer;
     metalLayer->setDisplaySyncEnabled(vsync);
   }
-  StopDisplayLink();
 #endif
 }
 

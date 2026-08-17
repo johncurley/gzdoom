@@ -6,7 +6,6 @@
 #include "mt_ao.h"
 
 #ifdef __APPLE__
-#include <CoreVideo/CVDisplayLink.h>
 #include <atomic>
 #include <dispatch/dispatch.h>
 #endif
@@ -206,7 +205,6 @@ public:
 
   bool GetVSync() { return mVSync; }
   void SetVSync(bool vsync) override;
-  void NotifyDisplayTick();
 
   void Draw2D() override;
 
@@ -243,9 +241,6 @@ private:
   void PrintStartupLog();
   void CopyScreenToBuffer(int w, int h, uint8_t *data) override;
   void PresentFrame(void *drawable);
-  void StartDisplayLink();
-  void StopDisplayLink();
-  void WaitForDisplayTick();
 
   // Manager instances (following Vulkan pattern)
   std::unique_ptr<MtCommandBufferManager> mCommands;
@@ -269,8 +264,6 @@ private:
   int mFrameCount = 0;
 #ifdef __APPLE__
   dispatch_semaphore_t mInflightFramesSemaphore;
-  dispatch_semaphore_t mDisplayLinkSemaphore = nullptr;
-  CVDisplayLinkRef mDisplayLink = nullptr;
 #else
   void* mInflightFramesSemaphore = nullptr;
 #endif

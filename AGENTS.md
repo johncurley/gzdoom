@@ -942,9 +942,21 @@ Needs hardware, so it may block on availability rather than effort.
 The last open row of the Metal-versus-OpenGL parity table: ~0.047 in occlusion
 units. Detail under **Open items** below.
 
-### 5. Intermittent freezing in real gameplay — suspect: runtime shader compilation
+### 5. Intermittent freezing in real gameplay — CAUSE FOUND: `nextDrawable()` blocks ~1s
 
-**New 2026-08-16**, reported from real play, not measured yet. Freezing "now and
+**Resolved to a cause 2026-08-17, not to a fix.** `CA::MetalLayer::nextDrawable()`
+blocks for ~1002ms mid-play, with two of three drawables free and the wait
+released at almost exactly the timeout interval before *succeeding*. Full
+evidence chain below. The original suspect in this item's title -- runtime shader
+compilation -- is **excluded by measurement**: 45ms across an entire session.
+Late acquisition (Apple's recommended structure) reduced the rate but did not
+remove it, because the block is not on this side of the API.
+
+Next cheap step, untried: run with `+vid_vsync 1`. Presentation currently uses
+the un-synced path (`displaySyncEnabled=false`) with no periodic pacing of any
+kind, which is where a missed wakeup is most plausible. One CVAR, no code.
+
+**Original framing, 2026-08-16**, reported from real play, not measured yet. Freezing "now and
 again" during normal gameplay, not reproduced or characterised on this machine —
 raised on the Linux side of this session, deferred here since it needs macOS
 hardware and the user's own play session to chase.
@@ -1160,6 +1172,20 @@ on it (deeper pool, or tolerate a nil drawable) rather than to find a bug in the
 backend. If a 1s `nextdrawable` appears with NO matching present outlier, then
 `nextDrawable()` is blocking on something other than drawable availability, and
 that is a different investigation.
+
+**The CVDisplayLink subsystem was dead code, removed 2026-08-17.**
+`StartDisplayLink()` had **no callers anywhere**, `SetVSync()` called
+`StopDisplayLink()` unconditionally (even when enabling vsync), so the link was
+never running, `WaitForDisplayTick()` always early-returned on
+`CVDisplayLinkIsRunning`, and `mDisplayLinkSemaphore` was never signalled. ~60
+lines that read as a working frame-pacing subsystem and did nothing.
+
+This also explains a negative result that was puzzled over repeatedly while
+hunting the freeze: `displaylink_timeout` never fired in any trace because the
+link never ran, not because the display tick was healthy. Deleted rather than
+wired up -- nothing depended on it, and if presentation pacing turns out to
+matter (see the `vid_vsync 1` test above) it should be designed deliberately
+rather than resurrected. Verified: matrix suite PASS after removal.
 
 **Verification of the late-acquisition change: it REDUCED the freeze but did not
 eliminate it.** 55-window play session, 2026-08-17:
