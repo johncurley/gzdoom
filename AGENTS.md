@@ -1272,48 +1272,54 @@ Regeneration workflow is in `tools/collect_metal_shaders.py`'s docstring and
 *fresh* translations dump, so the `.msl` cache must be cleared first or the run
 produces nothing.
 
-**`msl_tolib`: ATTEMPTED AND REVERTED 2026-08-17. Read this before trying
-again.** Compiling the 92 pre-translated stages into `native_shaders.metallib`
-and taking the function straight from it does remove all remaining shader work
-from a cold start -- and then the engine stops producing frames.
+**`msl_tolib` eliminated 2026-08-17 — the 92 stages are compiled into
+`native_shaders.metallib` at build time.** First attempt crashed and was
+reverted; the crash log identified the cause exactly and the fix was one line.
+Cold-start shader work is now **zero**:
 
-What worked, all verified:
+| | original | shipped MSL | + metallib |
+|---|---|---|---|
+| `msl_translate` | 1921.57ms | absent | absent |
+| `msl_tolib` | 116.28ms | 38.64ms | **absent** |
+| total cold compile | ~2975ms | ~50ms | **~21.6ms** |
 
-- A `\bmain0\b` rewrite per stage gives unique symbols. Exactly one bare
-  `main0` per generated file (the entry point); `main0_in`/`main0_out` are types,
-  module-local to each `.air`, no collision when linked.
-- `xcrun metal -c` on a generated stage takes **0.16-0.18s** once the module
-  cache is warm. The first compile measures 8.5s; that is cache creation, and
-  reading it as the per-stage cost makes the whole idea look unaffordable when it
-  is not. 92 stages added ~8s to an incremental build.
-- The metallib contained all 92 renamed symbols, confirmed with
-  `xcrun metal-nm | grep " T s_"`.
-- `msl_translate` **0** and `msl_tolib` **0** on a cold `.msl` cache. The
-  mechanism works.
+The remainder is `compute_pso` 11.50ms, `pso_compile` 6.50ms, `pp_pso` 3.64ms --
+pipeline creation, which no amount of shader precompilation removes.
 
-What broke: **no frames.** Every matrix config reported NO CAPTURE, and each
-run's log stops at "Init complete." without reaching the 120-frame screenshot.
-The tell was visible earlier and ignored twice -- those runs printed **zero
-`mt_frametrace` windows**, which cannot happen if frames are advancing. Cause
-not established; reverted rather than left in.
+**The crash, because the surrounding code makes the same mistake safely.**
+`NS::String::string(const char*, encoding)` sends `+stringWithCString:encoding:`
+and returns an **autoreleased** object. Releasing it is an over-release, and the
+first attempt did, so `-[_MTLLibrary newFunctionWithNameInternal:]` read freed
+memory while looking the name up in its function dictionary.
 
-**One real bug was found and fixed along the way, and it will recur.** The MSL
-acquisition chain is `if (!msl.empty()) ... else if (diskcache) ... else
-translate`. Setting `module->function` from the metallib leaves `msl` empty, so
-the chain falls through to **translate anyway** and then discards the result,
-because the later library-compile step is guarded on `module->function`. The
-emptiness of the MSL string cannot distinguish "not needed" from "not found
-yet". Guard the acquisition chain on `module->function`, not on the string.
+Why this file's *existing* `funcName->release()` calls have never crashed:
+they pass `"main0"`, short enough to be a **tagged pointer**, and release on a
+tagged pointer is a no-op. The new symbols are ~30 characters, so they are real
+heap objects and the same code is fatal. **Do not read the surrounding
+`->release()` calls as evidence that releasing is correct.**
 
-**Prior for the next attempt:** the win is ~39ms/launch against a change that
-touches shader-module lifetime (`module->library` now aliases the shared native
-library and is retained per module -- release paths and `ClearCache()` are the
-obvious place to look), and the previous entry's own judgement was that this is
-"the fiddly half of the work for the smaller half of the win". That judgement
-looks correct. Do not restart this without a specific hypothesis for the frame
-stall.
+**The reverted attempt's symptom was a frame stall, and the tell was ignored
+twice.** Both measurement runs printed **zero `mt_frametrace` windows** while
+reporting the hoped-for 0/0 shader numbers. Zero windows cannot happen if frames
+advance. The number that confirmed the goal and the number that showed the
+renderer was dead sat in the same output.
 
-**Mod shaders were already precompiled at startup.** `CompileNextShader`'s state
+Verified after the fix: **matrix PASS twice**, six frametrace windows, both
+shader phases at zero. Build cost is ~8s incremental for 92 stages
+(`xcrun metal -c` is 0.16-0.18s warm; the 8.5s first compile is module-cache
+creation, and mistaking that for the per-stage cost makes this look unaffordable
+when it is not).
+
+**Not verified: the metallib-layer staleness fallback.** The MSL-layer fallback
+*is* verified per-stage. For the metallib the reasoning is the same hash
+mechanism -- the symbol embeds the source hash, so a changed shader means an
+absent symbol and a fall-through to shipped MSL and then translation -- but the
+test that was meant to prove it renamed a permutation this configuration does not
+request, so it showed nothing either way. **Re-run cmake after regenerating MSL**
+(the glob is configure-time), and treat the fallback as reasoned rather than
+measured until someone breaks a hash that is actually in use.
+
+**Mod shaders were already precompiled at startup.****Mod shaders were already precompiled at startup.** `CompileNextShader`'s state
 machine covers user shaders at `compileState == 2` (`mt_shader.cpp:672`), fed by
 the `usershaders` array that GLDEFS populates at wad load. So the
 "compile-while-drawing hazard" this work was originally scoped to remove was

@@ -115,6 +115,11 @@ private:
   // Shared sanitiser for the cache path, the shipped lump name and the dump
   // path -- see the definition for why they must not drift.
   static std::string FilterShaderKey(const std::string &key);
+  // Symbol for a stage inside native_shaders.metallib; must match
+  // tools/rename_metal_entrypoint.py.
+  static std::string GeneratedSymbolName(const std::string &key);
+  // Pre-compiled stage from native_shaders.metallib, or nullptr.
+  MTL::Function *LoadPrecompiledFunction(const std::string &key);
   // Pre-translated MSL from gzdoom.pk3, checked before the disk cache.
   std::string LoadGeneratedMSL(const std::string &key);
   // Writes a freshly translated stage out when mt_dumpshaders is set.

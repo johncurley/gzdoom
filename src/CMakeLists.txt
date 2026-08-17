@@ -863,6 +863,28 @@ if (HAVE_METAL AND APPLE)
 		common/rendering/metal/shaders/native/mt_bloom.metal
 	)
 
+	# Pre-translated engine shaders, compiled into the same metallib.
+	#
+	# wadsrc/static/shaders/metal/generated/*.msl already removes runtime
+	# GLSL->SPIR-V->MSL translation (1.9s cold). Compiling them here removes the
+	# remaining MSL->MTLLibrary step too (~39ms/launch), because the engine can
+	# take the function straight out of native_shaders.metallib.
+	#
+	# SPIRV-Cross names every entry point main0, so each stage's function is
+	# renamed to a unique symbol first -- one metallib cannot hold 92 functions
+	# called main0. The symbol is "s_" + the filename stem with '-' mapped to
+	# '_', and mt_shader.cpp's GeneratedSymbolName() derives the same string.
+	# Only the bare identifier is rewritten; main0_in/main0_out are types and are
+	# module-local to each .air.
+	#
+	# Staleness stays safe because the stem carries the source hash: edit a
+	# shader and the metallib no longer holds that symbol, so the runtime falls
+	# through to the shipped MSL and then to translating.
+	#
+	# Globbed at configure time -- after regenerating the MSL set, re-run cmake.
+	file(GLOB METAL_GENERATED_MSL
+		${CMAKE_CURRENT_SOURCE_DIR}/../wadsrc/static/shaders/metal/generated/*.msl)
+
 	set (METAL_NATIVE_AIR_FILES)
 	set (METAL_NATIVE_MODULE_CACHE ${CMAKE_CURRENT_BINARY_DIR}/metal-module-cache)
 	foreach (METAL_NATIVE_SHADER ${METAL_NATIVE_SHADER_SOURCES})
@@ -879,6 +901,32 @@ if (HAVE_METAL AND APPLE)
 			VERBATIM)
 		list(APPEND METAL_NATIVE_AIR_FILES ${METAL_NATIVE_AIR})
 	endforeach()
+
+	find_program(PYTHON3_FOR_MSL python3)
+	if (PYTHON3_FOR_MSL AND METAL_GENERATED_MSL)
+		set(METAL_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/metal-generated)
+		foreach (MSL ${METAL_GENERATED_MSL})
+			get_filename_component(MSL_STEM ${MSL} NAME_WE)
+			set(GEN_METAL ${METAL_GEN_DIR}/${MSL_STEM}.metal)
+			set(GEN_AIR ${METAL_GEN_DIR}/${MSL_STEM}.air)
+			add_custom_command(OUTPUT ${GEN_AIR}
+				COMMAND ${CMAKE_COMMAND} -E make_directory ${METAL_GEN_DIR}
+				COMMAND ${CMAKE_COMMAND} -E make_directory ${METAL_NATIVE_MODULE_CACHE}
+				COMMAND ${PYTHON3_FOR_MSL}
+					${CMAKE_CURRENT_SOURCE_DIR}/../tools/rename_metal_entrypoint.py
+					${MSL} ${GEN_METAL}
+				COMMAND xcrun -sdk macosx metal -std=macos-metal2.0
+					-fmodules-cache-path=${METAL_NATIVE_MODULE_CACHE}
+					-c ${GEN_METAL} -o ${GEN_AIR}
+				DEPENDS ${MSL}
+					${CMAKE_CURRENT_SOURCE_DIR}/../tools/rename_metal_entrypoint.py
+				COMMENT "Compiling pre-translated Metal stage ${MSL_STEM}"
+				VERBATIM)
+			list(APPEND METAL_NATIVE_AIR_FILES ${GEN_AIR})
+		endforeach()
+		list(LENGTH METAL_GENERATED_MSL METAL_GENERATED_COUNT)
+		message(STATUS "Metal: ${METAL_GENERATED_COUNT} pre-translated shader stages will be linked into native_shaders.metallib")
+	endif()
 
 	set(METAL_NATIVE_LIBRARY ${CMAKE_CURRENT_BINARY_DIR}/native_shaders.metallib)
 	add_custom_command(OUTPUT ${METAL_NATIVE_LIBRARY}

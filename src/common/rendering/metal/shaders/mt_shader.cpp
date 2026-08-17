@@ -444,10 +444,26 @@ MtShaderManager::CompileShader(const std::string &name,
     std::string cachePath = GetCachePath(cacheKey);
     std::string vertexMSL;
 
-    vertexMSL = LoadGeneratedMSL(cacheKey);
+    // Fastest path: the stage is already compiled inside the metallib.
+    if (MTL::Function *fn = LoadPrecompiledFunction(cacheKey)) {
+      module->library = LoadNativeLibrary()->retain();
+      module->function = fn;
+      module->entryPoint = GeneratedSymbolName(cacheKey);
+      module->isReady = true;
+    }
 
-    std::ifstream vfile(vertexMSL.empty() ? cachePath : std::string());
-    if (!vertexMSL.empty()) {
+    // Everything below is MSL acquisition, pointless once the metallib has
+    // given us the function. Guarded on module->function and NOT on
+    // vertexMSL.empty(): an empty string cannot distinguish "not needed" from
+    // "not found yet", and reading it as the latter made the precompiled path
+    // translate the shader and then discard the result.
+    if (!module->function)
+      vertexMSL = LoadGeneratedMSL(cacheKey);
+
+    std::ifstream vfile((module->function || !vertexMSL.empty())
+                            ? std::string()
+                            : cachePath);
+    if (module->function || !vertexMSL.empty()) {
       // shipped, pre-translated: nothing to do
     } else if (vfile.is_open()) {
       std::stringstream ss;
@@ -486,7 +502,8 @@ MtShaderManager::CompileShader(const std::string &name,
       }
     }
 
-    // Step 3: MSL → MTLLibrary
+    // Step 3: MSL → MTLLibrary. Skipped when the metallib already provided it.
+    if (!module->function) {
     module->library = CompileMSLToLibrary(vertexMSL, name + "_vert");
     if (!module->library) {
       Printf(PRINT_LOG,
@@ -510,6 +527,7 @@ MtShaderManager::CompileShader(const std::string &name,
 
     module->entryPoint = "main0";
     module->isReady = true;
+    }
   }
 
   // Compile fragment shader: GLSL → SPIR-V → MSL → MTLLibrary
@@ -524,10 +542,19 @@ MtShaderManager::CompileShader(const std::string &name,
     std::string cachePath = GetCachePath(cacheKey);
     std::string fragmentMSL;
 
-    fragmentMSL = LoadGeneratedMSL(cacheKey);
+    // Fastest path, as for the vertex stage above.
+    if (MTL::Function *fn = LoadPrecompiledFunction(cacheKey)) {
+      module->fragmentLibrary = LoadNativeLibrary()->retain();
+      module->fragmentFunction = fn;
+    }
 
-    std::ifstream ffile(fragmentMSL.empty() ? cachePath : std::string());
-    if (!fragmentMSL.empty()) {
+    if (!module->fragmentFunction)
+      fragmentMSL = LoadGeneratedMSL(cacheKey);
+
+    std::ifstream ffile((module->fragmentFunction || !fragmentMSL.empty())
+                            ? std::string()
+                            : cachePath);
+    if (module->fragmentFunction || !fragmentMSL.empty()) {
       // shipped, pre-translated: nothing to do
     } else if (ffile.is_open()) {
       std::stringstream ss;
@@ -569,7 +596,8 @@ MtShaderManager::CompileShader(const std::string &name,
       }
     }
 
-    // Step 3: MSL → MTLLibrary
+    // Step 3: MSL → MTLLibrary. Skipped when the metallib already provided it.
+    if (!module->fragmentFunction) {
     module->fragmentLibrary = CompileMSLToLibrary(fragmentMSL, name + "_frag");
     if (!module->fragmentLibrary) {
       Printf(PRINT_LOG,
@@ -599,6 +627,7 @@ MtShaderManager::CompileShader(const std::string &name,
       if (module->library)
         module->library->release();
       return nullptr;
+    }
     }
   }
 
@@ -1372,6 +1401,44 @@ std::string MtShaderManager::GetCachePath(const std::string &key) {
   path += FilterShaderKey(key).c_str();
   path += ".msl";
   return path.GetChars();
+}
+
+// Symbol under which a pre-translated stage appears in native_shaders.metallib.
+// Must match tools/rename_metal_entrypoint.py exactly.
+std::string MtShaderManager::GeneratedSymbolName(const std::string &key) {
+  std::string sym = "s_" + FilterShaderKey(key);
+  for (char &c : sym) {
+    if (c == '-')
+      c = '_';
+  }
+  return sym;
+}
+
+// A pre-compiled stage taken straight out of native_shaders.metallib -- no MSL
+// and no Metal front-end compile. Returns nullptr when the symbol is absent,
+// which is normal for mod shaders and for any stage whose source changed since
+// the metallib was built.
+//
+// DO NOT release the NS::String. `NS::String::string(const char*, encoding)`
+// sends +stringWithCString:encoding: and returns an AUTORELEASED object we do
+// not own; releasing it is an over-release. That crashed here on the first
+// attempt (2026-08-17) inside -[_MTLLibrary newFunctionWithNameInternal:], which
+// reads the name while looking it up in the library's function dictionary.
+//
+// Note why the same pattern elsewhere in this file has never crashed: those call
+// sites pass "main0", which is short enough to become a TAGGED POINTER, and
+// release on a tagged pointer is a no-op. Symbols here are ~30 characters, so
+// they are real heap objects and the bug is fatal. Do not take the surrounding
+// code's `->release()` calls as evidence that releasing is correct.
+MTL::Function *MtShaderManager::LoadPrecompiledFunction(const std::string &key) {
+  MTL::Library *nativeLib = LoadNativeLibrary();
+  if (!nativeLib)
+    return nullptr;
+
+  const std::string symbol = GeneratedSymbolName(key);
+  NS::String *nsName =
+      NS::String::string(symbol.c_str(), NS::UTF8StringEncoding);
+  return nativeLib->newFunction(nsName);
 }
 
 // Pre-translated MSL shipped in gzdoom.pk3. Checked before the on-disk cache
