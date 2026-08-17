@@ -81,6 +81,22 @@ Backend-agnostic, so all of it is live on Linux too:
   wrong on a Wayland/X11 backend the same three behaviours break: background
   rendering, `vid_lowerinbackground`, and haptics.
 
+## Landed after this document was first written
+
+Two macOS-only changes that a Linux checkout will nevertheless notice:
+
+- **`wadsrc/static/shaders/metal/generated/` is ~2.3MB of pre-translated MSL,
+  92 files.** Shipped in `gzdoom.pk3`, and compiled into
+  `native_shaders.metallib` at build time so a macOS cold start does no shader
+  work at all. Inert on Linux — the whole block is inside
+  `if (HAVE_METAL AND APPLE)` — but it is why the pk3 grew and why `wadsrc`
+  gained a directory that has nothing to do with GL or Vulkan.
+- **The CMake glob for those files is configure-time.** If anyone regenerates
+  the MSL set, `cmake` must be re-run or the metallib keeps the old stages. Only
+  matters on Apple.
+
+Nothing here changes the GL or Vulkan paths, and no Linux task depends on it.
+
 ## Traps this session added to `AGENTS.md`, worth reading before measuring
 
 - An **unfocused window** is throttled to a locked ~268ms cadence, and the
