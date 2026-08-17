@@ -73,6 +73,49 @@ public:
   std::atomic<uint64_t> mSemWaits{0};
   std::atomic<uint64_t> mSemSignals{0};
 
+  // Drawable lifecycle audit. nextDrawable() blocks for a full second when no
+  // drawable is free, and the open question is why: a drawable acquired but
+  // never presented (outstanding climbs and stays up) behaves differently from
+  // one presented but retired late by the compositor (latency spikes while
+  // outstanding stays bounded). Those are different bugs with different fixes,
+  // and only the presented-handler can tell them apart.
+  //
+  // Presented handlers fire on a system thread, hence atomics throughout.
+  std::atomic<int> mDrawablesOutstanding{0};
+  std::atomic<int> mDrawablesPeakOutstanding{0};
+  std::atomic<uint64_t> mDrawablesAcquired{0};
+  std::atomic<uint64_t> mDrawablesPresented{0};
+  std::atomic<uint64_t> mPresentLatencyUsTotal{0};
+  std::atomic<uint64_t> mPresentLatencyUsMax{0};
+
+  void RecordDrawableAcquired() {
+    const int now = mDrawablesOutstanding.fetch_add(1, std::memory_order_relaxed) + 1;
+    mDrawablesAcquired.fetch_add(1, std::memory_order_relaxed);
+    int peak = mDrawablesPeakOutstanding.load(std::memory_order_relaxed);
+    while (now > peak &&
+           !mDrawablesPeakOutstanding.compare_exchange_weak(peak, now,
+                                                            std::memory_order_relaxed)) {
+    }
+  }
+
+  void RecordDrawablePresented(uint64_t latencyUs) {
+    mDrawablesOutstanding.fetch_sub(1, std::memory_order_relaxed);
+    mDrawablesPresented.fetch_add(1, std::memory_order_relaxed);
+    mPresentLatencyUsTotal.fetch_add(latencyUs, std::memory_order_relaxed);
+    uint64_t prev = mPresentLatencyUsMax.load(std::memory_order_relaxed);
+    while (latencyUs > prev &&
+           !mPresentLatencyUsMax.compare_exchange_weak(prev, latencyUs,
+                                                       std::memory_order_relaxed)) {
+    }
+  }
+
+  int GetDrawablesOutstanding() const { return mDrawablesOutstanding.load(std::memory_order_relaxed); }
+  int GetDrawablesPeak() const { return mDrawablesPeakOutstanding.load(std::memory_order_relaxed); }
+  uint64_t GetDrawablesAcquired() const { return mDrawablesAcquired.load(std::memory_order_relaxed); }
+  uint64_t GetDrawablesPresented() const { return mDrawablesPresented.load(std::memory_order_relaxed); }
+  uint64_t GetPresentLatencyUsTotal() const { return mPresentLatencyUsTotal.load(std::memory_order_relaxed); }
+  uint64_t GetPresentLatencyUsMax() const { return mPresentLatencyUsMax.load(std::memory_order_relaxed); }
+
   void RecordSemWait() { mSemWaits.fetch_add(1, std::memory_order_relaxed); }
   void RecordSemSignal() { mSemSignals.fetch_add(1, std::memory_order_relaxed); }
   uint64_t GetSemWaits() const { return mSemWaits.load(std::memory_order_relaxed); }

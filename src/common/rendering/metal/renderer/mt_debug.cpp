@@ -602,6 +602,22 @@ void MtDebugManager::TraceFrameInterval(float frameTimeMs) {
             "mt_seminflight  waits=%llu signals=%llu drift=%+lld\n",
             (unsigned long long)waits, (unsigned long long)signals,
             (long long)signals - (long long)waits);
+
+    // Drawable lifecycle. "lost" is the number acquired that never reported
+    // presented: if that climbs, drawables are leaking and nextDrawable() will
+    // eventually starve permanently. If it stays at 0-1 (one in flight) while
+    // present latency spikes, the compositor is retiring them late instead.
+    const uint64_t acquired = fb->GetDrawablesAcquired();
+    const uint64_t presented = fb->GetDrawablesPresented();
+    const uint64_t latTotal = fb->GetPresentLatencyUsTotal();
+    fprintf(stderr,
+            "mt_drawables  acquired=%llu presented=%llu lost=%lld  "
+            "outstanding=%d peak=%d  present_latency avg=%.2fms max=%.2fms\n",
+            (unsigned long long)acquired, (unsigned long long)presented,
+            (long long)acquired - (long long)presented,
+            fb->GetDrawablesOutstanding(), fb->GetDrawablesPeak(),
+            presented ? (double)latTotal / (double)presented / 1000.0 : 0.0,
+            (double)fb->GetPresentLatencyUsMax() / 1000.0);
   }
 
   mTraceSamples.clear();

@@ -75,6 +75,8 @@
 // as the timeout guard in BeginFrame.
 static constexpr int kDefaultMaxFramesInFlight = 3;
 
+EXTERN_CVAR(Int, mt_stalltrace)
+
 static CVReturn MetalDisplayLinkCallback(CVDisplayLinkRef,
                                          const CVTimeStamp *,
                                          const CVTimeStamp *,
@@ -442,6 +444,35 @@ void MetalRenderDevice::PresentFrame(void *drawablePtr) {
     return;
 
   auto commandBuffer = (MTL::CommandBuffer *)cmdBufPtr;
+
+  // Present-to-presented latency. Measured from the presentDrawable() call, not
+  // from acquisition, so it isolates the compositor's half: how long after we
+  // hand the drawable over does it actually reach the screen and return to the
+  // pool. If nextDrawable() starves while this stays small, drawables are being
+  // lost rather than delayed.
+  const auto presentCallTime = std::chrono::steady_clock::now();
+  MetalRenderDevice *self = this;
+  drawable->addPresentedHandler(
+      MTL::DrawablePresentedHandlerFunction([self, presentCallTime](MTL::Drawable *) {
+        const uint64_t latencyUs =
+            (uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - presentCallTime).count();
+        self->RecordDrawablePresented(latencyUs);
+
+        // Per-event outlier log, gated on mt_stalltrace's threshold. The
+        // aggregate max cannot show whether a 1-second nextDrawable() stall
+        // pairs with a 1-second retirement -- that pairing is what separates
+        // "the compositor held our drawable" from "something else entirely".
+        // stderr from a system thread: fprintf is thread-safe, and this only
+        // fires on outliers.
+        const int thresholdMs = mt_stalltrace;
+        if (thresholdMs > 0 && latencyUs >= (uint64_t)thresholdMs * 1000ull) {
+          fprintf(stderr,
+                  "mt_present  latency=%8.2fms  outstanding=%d\n",
+                  (double)latencyUs / 1000.0, self->GetDrawablesOutstanding());
+        }
+      }));
+
   commandBuffer->presentDrawable(drawable);
 }
 
@@ -625,6 +656,8 @@ void MetalRenderDevice::BeginFrame() {
       // NOT fire during those freezes, which is what pointed here.
       VLoopPhase drawablePhase("nextdrawable");
       mCurrentDrawable = (CA::MetalDrawable *)metalLayer->nextDrawable();
+      if (mCurrentDrawable)
+        RecordDrawableAcquired();
 
       if (mCurrentDrawable && mFrameCount < 10) {
         mFrameCount++;

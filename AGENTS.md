@@ -1125,6 +1125,42 @@ mis-aligned report (see the boundary fix above). Aligned reporting restores the
 original conclusion. Lesson worth keeping: an instrument defect can manufacture a
 convincing refutation, not just a convincing false positive.
 
+**Drawable lifecycle instrumented 2026-08-17 (`mt_drawables`, `mt_present`) --
+drawables are retired LATE, not lost.** `addPresentedHandler` now times every
+present from the `presentDrawable()` call to the presented callback, with
+per-event outlier logging gated on `mt_stalltrace`'s threshold. Over 1624 frames:
+
+```
+mt_drawables  acquired=1624 presented=1623 lost=1  outstanding=1 peak=2
+              present_latency avg=14.24ms max=130.96ms
+```
+
+- **No leak.** `lost` holds at 1 -- the single frame in flight -- across the
+  whole run, and peak outstanding is **2 of 3** configured drawables. The pool is
+  never exhausted by leakage, which kills the "acquired but never presented"
+  hypothesis outright.
+- **Retirement is the variable.** Average present latency is 14.24ms, but the
+  max is **130.96ms**, and the `nextdrawable` stalls in the same run were
+  149.22ms and 91.32ms. Those track each other: a drawable that takes 131ms to
+  retire is a drawable unavailable for 131ms.
+- Per-event outliers confirm the spread is real rather than a single artifact:
+  76.14, 126.52, 97.60, 61.52, 61.74, 62.42ms.
+
+**Not a vsync mismatch.** `mVSync` defaults false and
+`setDisplaySyncEnabled(mVSync)` is applied at layer setup
+(`mt_renderdevice.cpp:228`), so display sync is off as the CVAR intends. The
+~14ms average is scanout latency, not a sync wait.
+
+**The pairing is not yet captured.** No `nextdrawable` stall coincided with a
+logged `mt_present` outlier in an unattended run, and the 1-second case needs a
+real play session. What would settle it: an `mt_present` line near 1000ms
+alongside a `nextdrawable` of ~1002ms. If retirement stalls for a second, the
+cause is below us -- WindowServer/compositor -- and the fix is to stop blocking
+on it (deeper pool, or tolerate a nil drawable) rather than to find a bug in the
+backend. If a 1s `nextdrawable` appears with NO matching present outlier, then
+`nextDrawable()` is blocking on something other than drawable availability, and
+that is a different investigation.
+
 **Still open: WHY the pool starves.** The GPU is finishing frames in ~1.1ms
 (`mt_frametrace` p50), three drawables are configured
 (`maximumDrawableCount`, `mt_renderdevice.cpp:230`), backpressure is correct, and
