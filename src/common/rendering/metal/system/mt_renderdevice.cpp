@@ -717,6 +717,21 @@ void MetalRenderDevice::SetVSync(bool vsync) {
   if (nativeHandle.metalLayer) {
     CA::MetalLayer *metalLayer = (CA::MetalLayer *)nativeHandle.metalLayer;
     metalLayer->setDisplaySyncEnabled(vsync);
+
+    // Proof of execution, deliberately unconditional and on stderr.
+    //
+    // A vid_vsync A/B is worthless without it: this is reached both from the
+    // vid_vsync CUSTOM_CVAR callback and from an unconditional call during
+    // video init (v_video.cpp), and whether a command-line "+vid_vsync 1"
+    // lands before or after that init call decides which value the layer
+    // actually ends up with. Reasoning about the order is exactly the mistake
+    // this fork keeps paying for -- print the value the layer really got.
+    fprintf(stderr, "mt_vsync  displaySyncEnabled=%s\n",
+            metalLayer->displaySyncEnabled() ? "YES" : "NO");
+  } else {
+    fprintf(stderr, "mt_vsync  requested=%s but NO METAL LAYER yet "
+                    "(setting did not reach the layer)\n",
+            vsync ? "YES" : "NO");
   }
 #endif
 }

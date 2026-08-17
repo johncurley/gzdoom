@@ -1173,6 +1173,45 @@ backend. If a 1s `nextdrawable` appears with NO matching present outlier, then
 `nextDrawable()` is blocking on something other than drawable availability, and
 that is a different investigation.
 
+**`vid_vsync 1` does NOT fix it -- hypothesis refuted 2026-08-17.** The
+un-synced presentation path was the leading theory: no display sync, no display
+link, `cl_capfps` sleeping on its own schedule, therefore no periodic pacing and
+a plausible place for a missed wakeup. Tested, with proof of execution
+(`mt_vsync displaySyncEnabled=YES`, printed unconditionally from `SetVSync` --
+added precisely because a command-line `+vid_vsync 1` racing the unconditional
+`SetVSync` call in `v_video.cpp:460` could otherwise have left the arm
+unapplied and the null result meaningless):
+
+```
+mt_stall  nextdrawable    1003.29ms  [acquire]  result=drawable outstanding=1
+mt_stall  nextdrawable     219.51ms  [acquire]  result=drawable outstanding=1
+```
+
+Same ~1003ms, same one-of-three outstanding. Display sync is not the variable.
+
+**The exclusion list is now essentially complete.** The stall is independent of:
+shader compilation (45ms/session), focus (`active=1`), the capture layer
+(reproduces with it off), drawable leakage (`lost` bounded), late retirement
+(max 130ms against a 1002ms block), pool exhaustion (2 of 3 free), pool
+reallocation (`mt_drawablesize` silent), the post-`Update` tail (0.01-0.09ms),
+acquisition timing (late acquisition reduced but did not remove it), and now
+display sync.
+
+What remains is the shape itself: **always ~1002-1003ms, then success.** That
+precision is the whole remaining clue -- a wait released by a fixed one-second
+timer rather than by the resource it claims to want, for a resource that was
+available throughout. `setAllowsNextDrawableTimeout(true)` makes one second the
+layer's own timeout, so the most economical reading is that `nextDrawable()`
+waits for a signal that never arrives, times out, and then serves a drawable it
+could have served immediately.
+
+**Recommendation: stop here and accept it.** Every lever inside the process has
+been pulled and measured. The remaining work would be restructuring presentation
+to never block the game loop -- large, and for a defect that is not ours on
+hardware Apple no longer supports. Keep the late-acquisition change (correct,
+image-neutral, lower rate) and the instruments (they make any recurrence a
+two-minute diagnosis instead of a session).
+
 **The CVDisplayLink subsystem was dead code, removed 2026-08-17.**
 `StartDisplayLink()` had **no callers anywhere**, `SetVSync()` called
 `StopDisplayLink()` unconditionally (even when enabling vsync), so the link was
