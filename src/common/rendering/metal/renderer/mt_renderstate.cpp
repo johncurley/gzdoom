@@ -1352,8 +1352,17 @@ void MtRenderState::SetRenderTarget(MTL::Texture *image,
   EndRenderPass();
 
   bool isSwapChain = (image == nullptr);
-  if (isSwapChain && fb->mCurrentDrawable) {
-    image = (MTL::Texture *)fb->mCurrentDrawable->texture();
+  if (isSwapChain) {
+    // Lazy acquisition. The drawable is no longer taken at frame start (see
+    // MetalRenderDevice::AcquireDrawable), so anything that actually targets
+    // the swapchain has to ask for it here. Without this the target resolves
+    // to null and BeginRenderPass silently skips the pass -- caught by the
+    // matrix suite as a global mean_lum shift of 21.856 -> 21.632, with every
+    // relation still holding, which is exactly what a silently-dropped pass
+    // looks like.
+    fb->AcquireDrawable();
+    if (fb->mCurrentDrawable)
+      image = (MTL::Texture *)fb->mCurrentDrawable->texture();
   }
 
   mRenderTarget.Image = image;
@@ -1400,8 +1409,10 @@ void MtRenderState::BeginRenderPass() {
   EndRenderPass(); // Ensure previous encoder is ended
 
   MTL::Texture *targetTex = mRenderTarget.Image;
-  if (mRenderTarget.IsSwapChain && fb->mCurrentDrawable) {
-    targetTex = (MTL::Texture *)fb->mCurrentDrawable->texture();
+  if (mRenderTarget.IsSwapChain) {
+    fb->AcquireDrawable(); // lazy; see SetRenderTarget above
+    if (fb->mCurrentDrawable)
+      targetTex = (MTL::Texture *)fb->mCurrentDrawable->texture();
   }
 
   if (!targetTex) {

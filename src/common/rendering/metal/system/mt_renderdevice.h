@@ -226,6 +226,10 @@ public:
 
   CA::MetalDrawable *mCurrentDrawable = nullptr;
 
+  // Acquires mCurrentDrawable if not already held. Called at present time, not
+  // frame start -- see the definition for why.
+  bool AcquireDrawable();
+
   MTL::SharedEvent *mGpuEvent = nullptr;
   uint64_t mNextEventValue = 1;
   float mZNear = 5.0f;

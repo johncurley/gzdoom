@@ -349,6 +349,10 @@ void MetalRenderDevice::Update() {
 
   Flush3D.Unclock();
 
+  // Late acquisition: everything above this point ran without holding a
+  // drawable. If the layer makes us wait now, the frame's work is already done.
+  AcquireDrawable();
+
   if (mCurrentDrawable) {
     auto drawableTexture = mCurrentDrawable->texture();
     int width = (int)drawableTexture->width();
@@ -432,6 +436,63 @@ void MetalRenderDevice::Update() {
     VLoopPhase phase("capture_end");
     MtCaptureEndFrameIfCapturing();
   }
+}
+
+// Acquire the swapchain drawable, as late as possible.
+//
+// This used to run at the top of BeginFrame, which meant the render thread
+// waited on CAMetalLayer before doing ANY of the frame's work. Measured
+// 2026-08-17, nextDrawable() blocked for 1002.73ms mid-play while no drawable
+// took more than 125.31ms to retire and only 1 of 3 was outstanding -- so the
+// block is not about availability and cannot be fixed from this side. What CAN
+// be fixed is when we pay for it: acquiring immediately before the present blit
+// lets the scene, postprocess and 2D work all proceed first, so a slow layer
+// costs a late present rather than a frozen frame.
+//
+// Idempotent: returns true if a drawable is already held, so the wipe path
+// (which re-enters through Update) behaves as before.
+bool MetalRenderDevice::AcquireDrawable() {
+#ifdef __APPLE__
+  if (mCurrentDrawable)
+    return true;
+
+  CocoaNativeHandle nativeHandle = GetNativeHandle();
+  if (!nativeHandle.metalLayer)
+    return false;
+
+  auto *metalLayer = (CA::MetalLayer *)nativeHandle.metalLayer;
+
+  const auto acquireStart = std::chrono::steady_clock::now();
+  {
+    VLoopPhase drawablePhase("nextdrawable");
+    mCurrentDrawable = (CA::MetalDrawable *)metalLayer->nextDrawable();
+  }
+  if (mCurrentDrawable)
+    RecordDrawableAcquired();
+
+  // Outcome, not just duration: nextDrawable() returns nil after ~1s when it
+  // cannot serve us at all, which is a different event from a long wait that
+  // succeeds.
+  if (mt_stalltrace > 0) {
+    const double waitMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - acquireStart).count();
+    if (waitMs >= (double)mt_stalltrace) {
+      fprintf(stderr,
+              "mt_stall  %-14s %8.2fms  [acquire]  result=%s outstanding=%d\n",
+              "nextdrawable", waitMs,
+              mCurrentDrawable ? "drawable" : "NIL-TIMEOUT",
+              GetDrawablesOutstanding());
+    }
+  }
+
+  if (!mCurrentDrawable)
+    return false;
+
+  mCurrentDrawable->retain();
+  return true;
+#else
+  return false;
+#endif
 }
 
 void MetalRenderDevice::PresentFrame(void *drawablePtr) {
@@ -663,56 +724,30 @@ void MetalRenderDevice::BeginFrame() {
           metalLayer->setDrawableSize(CGSizeMake(targetDrawableW, targetDrawableH));
       }
 
-      // vid_stalltrace: nextDrawable() blocks when the drawable pool is
-      // exhausted and gives up after ~1 second, which is the exact signature of
-      // the ~1000-1025ms freezes found on 2026-08-17. Timed separately from the
-      // inflight-frames semaphore above -- that one has its own timeout and did
-      // NOT fire during those freezes, which is what pointed here.
-      const auto acquireStart = std::chrono::steady_clock::now();
-      {
-        VLoopPhase drawablePhase("nextdrawable");
-        mCurrentDrawable = (CA::MetalDrawable *)metalLayer->nextDrawable();
-      }
-      if (mCurrentDrawable)
-        RecordDrawableAcquired();
-
-      // Did it time out, or just wait? nextDrawable() returns nil after ~1s
-      // when it cannot produce a drawable at all -- a categorically different
-      // event from a long wait that eventually succeeds, and the session of
-      // 2026-08-17 showed a 1002.73ms block while no drawable took more than
-      // 125.31ms to retire, so availability was not the constraint. Logging
-      // the outcome distinguishes "starved" from "the layer could not serve
-      // us", which point at different fixes.
-      if (mt_stalltrace > 0) {
-        const double waitMs = std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - acquireStart).count();
-        if (waitMs >= (double)mt_stalltrace) {
-          fprintf(stderr,
-                  "mt_stall  %-14s %8.2fms  [acquire]  result=%s outstanding=%d\n",
-                  "nextdrawable", waitMs,
-                  mCurrentDrawable ? "drawable" : "NIL-TIMEOUT",
-                  GetDrawablesOutstanding());
-        }
-      }
-
-      if (mCurrentDrawable && mFrameCount < 10) {
+      if (mFrameCount < 10)
         mFrameCount++;
-      }
     }
-
-    if (!mCurrentDrawable) {
-      mInFrame = false;
-      return;
-    }
-
-    mCurrentDrawable->retain();
   }
 
   // Retina Fix: Initialize screen buffers with the PHYSICAL drawable size.
-  // This ensures the G-buffer matches the physical resolution of the window.
-  auto drawableTexture = mCurrentDrawable->texture();
-  int physicalWidth = (int)drawableTexture->width();
-  int physicalHeight = (int)drawableTexture->height();
+  //
+  // Taken from the LAYER, not from an acquired drawable. The drawable's texture
+  // has exactly the layer's drawableSize, so this needs no acquisition -- which
+  // is what lets the acquisition move to present time. See AcquireDrawable().
+  int physicalWidth = 0;
+  int physicalHeight = 0;
+  {
+    CocoaNativeHandle nativeHandle = GetNativeHandle();
+    if (nativeHandle.metalLayer) {
+      auto *metalLayer = (CA::MetalLayer *)nativeHandle.metalLayer;
+      physicalWidth = (int)metalLayer->drawableSize().width;
+      physicalHeight = (int)metalLayer->drawableSize().height;
+    }
+    if (physicalWidth <= 0 || physicalHeight <= 0) {
+      physicalWidth = GetWidth();
+      physicalHeight = GetHeight();
+    }
+  }
 
   // Pipeline buffers are physical drawable-sized. Scene buffers use the
   // logical screen viewport, matching the GL/Vulkan postprocess contract.

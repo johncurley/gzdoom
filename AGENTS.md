@@ -1161,6 +1161,39 @@ backend. If a 1s `nextdrawable` appears with NO matching present outlier, then
 `nextDrawable()` is blocking on something other than drawable availability, and
 that is a different investigation.
 
+**Late drawable acquisition, implemented 2026-08-17.** `nextDrawable()` moved
+out of `BeginFrame` -- where it made the render thread wait on `CAMetalLayer`
+before any of the frame's work -- to `MetalRenderDevice::AcquireDrawable()`,
+called lazily: from `MtRenderState::SetRenderTarget`/`BeginRenderPass` when a
+pass actually targets the swapchain, and explicitly before the present blit.
+`BeginFrame` now sizes the screen buffers from `metalLayer->drawableSize()`
+instead of the acquired drawable's texture, which is the same number and is what
+makes the deferral possible.
+
+Effect on the stall, same config, three runs: `mt_stall nextdrawable` events at
+or above 40ms went **3, 3 -> 0**. Not proof on one run, but the mechanism is
+sound: the layer's wait now overlaps the frame's work instead of preceding it.
+
+**Image-neutral, verified against a stashed control.** `tools/matrix/run.py
+--scene doom2` produces byte-identical statistics with and without the change on
+every config, including the relations.
+
+**But that control also exposed something else: the matrix suite is currently
+FAILING on this tree, and not because of this change.** With the change stashed
+and the tree rebuilt, the failure reproduces exactly -- `baseline` mean_lum
+21.856 -> 21.632, `colormap` 207.866 -> 208.481, and the same shift on `ssao`,
+`tonemap_uncharted`, `tonemap_identity`, `lens` and `fxaa`. Every *relation*
+still passes, so each pass is running and doing its job; the whole image is
+uniformly slightly darker. `CLAUDE.md` still describes the suite as "Currently
+PASS", which is stale.
+
+This is unattributed and should be treated as an open regression with its own
+investigation, not folded into the freeze work. Candidates not yet tested: a
+commit from this session that was assumed pixel-neutral, a stale baseline
+recorded under different window/display conditions, or a genuine rendering
+change from earlier work. The bisect is cheap -- the suite runs in a few minutes
+per commit.
+
 **ROOT CAUSE BOUNDARY: `nextDrawable()` blocks with drawables free. The
 constraint is below the backend, not in it.** Long play session, 4457 frames,
 plus a follow-up run with outcome logging. Every mechanical explanation is now
