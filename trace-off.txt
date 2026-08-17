@@ -1,75 +1,204 @@
 DEBUG: main entered
 vid_frametrace: reporting every 5s. p99 and the >100ms count are the hitching signal; avg is not.
 vid_stalltrace: breaking down any interval over 100ms by loop phase.
-vid_stalltrace  interval=421.35ms
-    nextdrawable        1.08ms  x1
-    (unaccounted)     420.26ms
-vid_stalltrace  interval=214.59ms
-    nextdrawable        0.54ms  x1
-    (unaccounted)     214.04ms
-vid_stalltrace  interval=1341.74ms
-    nextdrawable        0.55ms  x1
-    (unaccounted)    1341.20ms
-vid_stalltrace  interval=1023.69ms
-    playsim           158.53ms  x1
-    beginframe          0.08ms  x1  (wraps others)
-    events              0.05ms  x1
+mt_frametrace: reporting every 5s. p99 and the >100ms count are the hitching signal; avg is not.
+vid_stalltrace  interval=140.42ms  active=1
+    playsim           137.27ms  x1
+    display             3.08ms  x1  (wraps others)
+    events              0.06ms  x1
+    beginframe          0.04ms  x1  (wraps others)
+    presentframe        0.02ms  x1
     nextdrawable        0.02ms  x1
-    (unaccounted)     865.09ms
-vid_stalltrace  interval=109.46ms
-    beginframe         82.70ms  x1  (wraps others)
-    nextdrawable       82.63ms  x1
-    playsim            26.22ms  x1
-    display             1.59ms  x1  (wraps others)
-    events              0.03ms  x1
-    (unaccounted)       0.58ms
-vid_stalltrace  interval=193.27ms  context=wipe
-    playsim           116.65ms  x1
-    levelload          84.45ms  x1
-    renderview         26.55ms  x1
-    precache           14.24ms  x1
-    events              2.90ms  x1
-    wipestart           2.09ms  x1
-    display             0.38ms  x1  (wraps others)
-    beginframe          0.13ms  x1  (wraps others)
-    nextdrawable        0.01ms  x1
-    (unaccounted)     -53.63ms
-vid_frametrace  n=68  avg= 73.89ms ( 13.5 fps)  p50= 28.70  p95=214.59  p99=1023.69  max=1341.74  >33ms=8 (11.8%)  >100ms=6
-vid_frametrace  n=177  avg= 28.38ms ( 35.2 fps)  p50= 28.65  p95= 29.46  p99= 30.47  max=  32.59  >33ms=0 (0.0%)  >100ms=0
-vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.57  p95= 29.34  p99= 31.68  max=  34.14  >33ms=1 (0.6%)  >100ms=0
-vid_frametrace  n=176  avg= 28.58ms ( 35.0 fps)  p50= 28.58  p95= 29.34  p99= 30.75  max=  32.59  >33ms=0 (0.0%)  >100ms=0
-vid_frametrace  n=176  avg= 28.56ms ( 35.0 fps)  p50= 28.56  p95= 29.25  p99= 29.45  max=  30.81  >33ms=0 (0.0%)  >100ms=0
-vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.58  p95= 29.40  p99= 31.64  max=  54.92  >33ms=2 (1.1%)  >100ms=0
-vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.57  p95= 29.28  p99= 29.73  max=  31.12  >33ms=0 (0.0%)  >100ms=0
-vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.58  p95= 29.16  p99= 29.52  max=  29.65  >33ms=0 (0.0%)  >100ms=0
-vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.57  p95= 29.12  p99= 29.40  max=  31.21  >33ms=0 (0.0%)  >100ms=0
-vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.58  p95= 29.24  p99= 29.81  max=  33.61  >33ms=1 (0.6%)  >100ms=0
-vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.58  p95= 29.30  p99= 30.76  max=  31.42  >33ms=0 (0.0%)  >100ms=0
-vid_stalltrace  interval=138.61ms
-    renderview        110.61ms  x1
-    playsim            27.42ms  x1
-    display             1.11ms  x1  (wraps others)
-    beginframe          0.11ms  x1  (wraps others)
-    events              0.04ms  x1
-    nextdrawable        0.01ms  x1
-    (unaccounted)       0.51ms
-vid_frametrace  n=173  avg= 28.90ms ( 34.6 fps)  p50= 28.56  p95= 29.16  p99= 30.15  max= 138.61  >33ms=1 (0.6%)  >100ms=1
-vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.55  p95= 29.21  p99= 30.25  max=  31.86  >33ms=0 (0.0%)  >100ms=0
-vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.57  p95= 29.38  p99= 29.85  max=  31.42  >33ms=0 (0.0%)  >100ms=0
-vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.58  p95= 29.24  p99= 31.26  max=  31.94  >33ms=0 (0.0%)  >100ms=0
-vid_stalltrace  interval=154.92ms  context=wipe
-    playsim           116.55ms  x1
-    display             2.09ms  x1  (wraps others)
-    wipestart           0.92ms  x1
-    events              0.31ms  x1
+    cmd_endframe        0.01ms  x1
+    pool_release        0.01ms  x1
+    (unaccounted)       3.02ms
+vid_frametrace  n=87  avg= 57.48ms ( 17.4 fps)  p50= 28.63  p95=151.29  p99=766.04  max=1011.57  >33ms=9 (10.3%)  >100ms=6
+mt_frametrace  n=100  avg=  3.49ms (286.5 fps)  p50=  0.74  p95=  9.14  p99= 61.54  max=  76.74  >33ms=4 (4.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       1.47      0.29      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      35.35      1.59     11       1.86  Default_vert_vert (frame 0)
+  pp_pso             10       1.90      0.67     10       1.90  postprocess (frame 0)
+  pso_compile         6       3.02      1.42      6       3.02  eff=-1 state=0 vfmt=204832 blend=257 alpha=0 fmt=80 (frame 67)
+vid_stalltrace  interval=1448.32ms  active=1
+    playsim            88.01ms  x1
+    nextdrawable       70.54ms  x43
+    levelload          57.90ms  x1
+    renderview         17.13ms  x1
+    precache           10.48ms  x1
+    events              2.50ms  x1
+    wipestart           1.10ms  x1
+    presentframe        0.78ms  x43
+    cmd_endframe        0.54ms  x43
+    pool_release        0.37ms  x43
     beginframe          0.12ms  x1  (wraps others)
-    nextdrawable        0.01ms  x1
-    (unaccounted)      37.12ms
-vid_frametrace  n=171  avg= 29.26ms ( 34.2 fps)  p50= 28.62  p95= 30.03  p99= 30.73  max= 154.92  >33ms=2 (1.2%)  >100ms=1
-vid_stalltrace  interval=1555.49ms
-    display             1.56ms  x1  (wraps others)
-    nextdrawable        0.01ms  x1
-    (unaccounted)    1555.48ms
-vid_stalltrace  interval=264.92ms
-    nextdrawable        0.02ms  x1
-    (unaccounted)     264.90ms
+    drawable_release      0.01ms  x43
+    fpslimit            0.01ms  x43
+    (unaccounted)    1198.94ms
+vid_frametrace  n=176  avg= 28.44ms ( 35.2 fps)  p50= 28.63  p95= 29.57  p99= 30.09  max=  33.85  >33ms=1 (0.6%)  >100ms=0
+mt_frametrace  n=177  avg=  1.26ms (790.7 fps)  p50=  1.13  p95=  1.94  p99=  2.79  max=   3.97  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       1.47      0.29      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      35.35      1.59     11       1.86  Default_vert_vert (frame 0)
+  pp_pso             10       1.90      0.67     10       1.90  postprocess (frame 0)
+  pso_compile         8       3.51      1.42      8       3.51  eff=-1 state=0 vfmt=204832 blend=257 alpha=0 fmt=80 (frame 67)
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.57  p95= 29.45  p99= 31.15  max=  32.59  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=175  avg=  1.20ms (829.9 fps)  p50=  1.10  p95=  1.61  p99=  2.07  max=   4.67  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       1.47      0.29      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      35.35      1.59     11       1.86  Default_vert_vert (frame 0)
+  pp_pso             10       1.90      0.67     10       1.90  postprocess (frame 0)
+  pso_compile         8       3.51      1.42      8       3.51  eff=-1 state=0 vfmt=204832 blend=257 alpha=0 fmt=80 (frame 67)
+vid_frametrace  n=176  avg= 28.58ms ( 35.0 fps)  p50= 28.59  p95= 29.39  p99= 31.36  max=  31.88  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=175  avg=  1.24ms (809.5 fps)  p50=  1.15  p95=  1.65  p99=  2.18  max=   2.92  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       1.47      0.29      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      35.35      1.59     11       1.86  Default_vert_vert (frame 0)
+  pp_pso             10       1.90      0.67     10       1.90  postprocess (frame 0)
+  pso_compile         8       3.51      1.42      8       3.51  eff=-1 state=0 vfmt=204832 blend=257 alpha=0 fmt=80 (frame 67)
+vid_frametrace  n=176  avg= 28.56ms ( 35.0 fps)  p50= 28.56  p95= 30.27  p99= 31.18  max=  32.59  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=175  avg=  1.48ms (675.1 fps)  p50=  1.30  p95=  2.17  p99=  3.41  max=   5.77  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       1.47      0.29      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      35.35      1.59     11       1.86  Default_vert_vert (frame 0)
+  pp_pso             10       1.90      0.67     10       1.90  postprocess (frame 0)
+  pso_compile        12       4.55      1.42     12       4.55  eff=-1 state=0 vfmt=204832 blend=257 alpha=0 fmt=80 (frame 67)
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.57  p95= 29.38  p99= 29.81  max=  30.66  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=176  avg=  1.12ms (890.1 fps)  p50=  1.02  p95=  1.69  p99=  1.96  max=   2.00  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       1.47      0.29      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      35.35      1.59     11       1.86  Default_vert_vert (frame 0)
+  pp_pso             10       1.90      0.67     10       1.90  postprocess (frame 0)
+  pso_compile        13       4.81      1.42     13       4.81  eff=-1 state=0 vfmt=204832 blend=257 alpha=0 fmt=80 (frame 67)
+vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.58  p95= 29.09  p99= 29.81  max=  33.00  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=175  avg=  1.13ms (887.5 fps)  p50=  1.03  p95=  1.53  p99=  1.88  max=   2.63  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       1.47      0.29      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      35.35      1.59     11       1.86  Default_vert_vert (frame 0)
+  pp_pso             10       1.90      0.67     10       1.90  postprocess (frame 0)
+  pso_compile        13       4.81      1.42     13       4.81  eff=-1 state=0 vfmt=204832 blend=257 alpha=0 fmt=80 (frame 67)
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.58  p95= 29.09  p99= 29.60  max=  29.90  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=175  avg=  1.12ms (891.7 fps)  p50=  1.04  p95=  1.57  p99=  1.76  max=   2.13  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       1.47      0.29      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      35.35      1.59     11       1.86  Default_vert_vert (frame 0)
+  pp_pso             10       1.90      0.67     10       1.90  postprocess (frame 0)
+  pso_compile        13       4.81      1.42     13       4.81  eff=-1 state=0 vfmt=204832 blend=257 alpha=0 fmt=80 (frame 67)
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.56  p95= 29.13  p99= 29.80  max=  31.27  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=176  avg=  1.16ms (863.9 fps)  p50=  1.11  p95=  1.49  p99=  1.68  max=   1.81  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       1.47      0.29      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      35.35      1.59     11       1.86  Default_vert_vert (frame 0)
+  pp_pso             10       1.90      0.67     10       1.90  postprocess (frame 0)
+  pso_compile        13       4.81      1.42     13       4.81  eff=-1 state=0 vfmt=204832 blend=257 alpha=0 fmt=80 (frame 67)
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.54  p95= 29.40  p99= 31.26  max=  59.39  >33ms=2 (1.1%)  >100ms=0
+mt_frametrace  n=175  avg=  1.23ms (811.7 fps)  p50=  1.16  p95=  1.68  p99=  2.14  max=   3.42  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       1.47      0.29      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      35.35      1.59     11       1.86  Default_vert_vert (frame 0)
+  pp_pso             10       1.90      0.67     10       1.90  postprocess (frame 0)
+  pso_compile        13       4.81      1.42     13       4.81  eff=-1 state=0 vfmt=204832 blend=257 alpha=0 fmt=80 (frame 67)
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.55  p95= 29.43  p99= 31.30  max=  43.33  >33ms=1 (0.6%)  >100ms=0
+mt_frametrace  n=175  avg=  1.14ms (878.4 fps)  p50=  1.07  p95=  1.55  p99=  1.90  max=   2.21  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       1.47      0.29      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      35.35      1.59     11       1.86  Default_vert_vert (frame 0)
+  pp_pso             10       1.90      0.67     10       1.90  postprocess (frame 0)
+  pso_compile        13       4.81      1.42     13       4.81  eff=-1 state=0 vfmt=204832 blend=257 alpha=0 fmt=80 (frame 67)
+vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.56  p95= 29.06  p99= 29.56  max=  32.18  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=176  avg=  1.07ms (935.5 fps)  p50=  1.01  p95=  1.37  p99=  1.78  max=   4.46  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       1.47      0.29      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      35.35      1.59     11       1.86  Default_vert_vert (frame 0)
+  pp_pso             10       1.90      0.67     10       1.90  postprocess (frame 0)
+  pso_compile        13       4.81      1.42     13       4.81  eff=-1 state=0 vfmt=204832 blend=257 alpha=0 fmt=80 (frame 67)
+vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.57  p95= 29.22  p99= 31.19  max=  31.84  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=175  avg=  1.12ms (895.5 fps)  p50=  1.03  p95=  1.58  p99=  1.70  max=   1.96  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       1.47      0.29      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      35.35      1.59     11       1.86  Default_vert_vert (frame 0)
+  pp_pso             10       1.90      0.67     10       1.90  postprocess (frame 0)
+  pso_compile        13       4.81      1.42     13       4.81  eff=-1 state=0 vfmt=204832 blend=257 alpha=0 fmt=80 (frame 67)
+vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.60  p95= 29.20  p99= 29.47  max=  29.94  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=176  avg=  1.33ms (754.1 fps)  p50=  1.30  p95=  1.73  p99=  1.94  max=   2.37  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       1.47      0.29      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      35.35      1.59     11       1.86  Default_vert_vert (frame 0)
+  pp_pso             10       1.90      0.67     10       1.90  postprocess (frame 0)
+  pso_compile        13       4.81      1.42     13       4.81  eff=-1 state=0 vfmt=204832 blend=257 alpha=0 fmt=80 (frame 67)
+vid_frametrace  n=175  avg= 28.59ms ( 35.0 fps)  p50= 28.59  p95= 29.19  p99= 29.75  max=  31.33  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=176  avg=  1.26ms (796.5 fps)  p50=  1.18  p95=  1.68  p99=  1.84  max=   1.96  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       1.47      0.29      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      35.35      1.59     11       1.86  Default_vert_vert (frame 0)
+  pp_pso             10       1.90      0.67     10       1.90  postprocess (frame 0)
+  pso_compile        13       4.81      1.42     13       4.81  eff=-1 state=0 vfmt=204832 blend=257 alpha=0 fmt=80 (frame 67)
+vid_frametrace  n=176  avg= 28.55ms ( 35.0 fps)  p50= 28.55  p95= 29.12  p99= 29.58  max=  30.21  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=176  avg=  1.14ms (878.7 fps)  p50=  1.07  p95=  1.47  p99=  1.97  max=   2.82  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       1.47      0.29      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      35.35      1.59     11       1.86  Default_vert_vert (frame 0)
+  pp_pso             10       1.90      0.67     10       1.90  postprocess (frame 0)
+  pso_compile        13       4.81      1.42     13       4.81  eff=-1 state=0 vfmt=204832 blend=257 alpha=0 fmt=80 (frame 67)
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.58  p95= 29.18  p99= 29.31  max=  32.22  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=175  avg=  1.15ms (871.2 fps)  p50=  1.10  p95=  1.55  p99=  1.83  max=   2.33  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       1.47      0.29      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      35.35      1.59     11       1.86  Default_vert_vert (frame 0)
+  pp_pso             10       1.90      0.67     10       1.90  postprocess (frame 0)
+  pso_compile        13       4.81      1.42     13       4.81  eff=-1 state=0 vfmt=204832 blend=257 alpha=0 fmt=80 (frame 67)
+vid_frametrace  n=175  avg= 28.57ms ( 35.0 fps)  p50= 28.56  p95= 29.06  p99= 29.25  max=  29.94  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=176  avg=  1.08ms (926.6 fps)  p50=  1.05  p95=  1.44  p99=  1.60  max=   1.74  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       1.47      0.29      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      35.35      1.59     11       1.86  Default_vert_vert (frame 0)
+  pp_pso             10       1.90      0.67     10       1.90  postprocess (frame 0)
+  pso_compile        13       4.81      1.42     13       4.81  eff=-1 state=0 vfmt=204832 blend=257 alpha=0 fmt=80 (frame 67)
+vid_frametrace  n=176  avg= 28.57ms ( 35.0 fps)  p50= 28.58  p95= 29.05  p99= 29.25  max=  29.38  >33ms=0 (0.0%)  >100ms=0
+mt_frametrace  n=175  avg=  1.05ms (953.7 fps)  p50=  1.01  p95=  1.33  p99=  1.52  max=   1.58  >33ms=0 (0.0%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       1.47      0.29      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      35.35      1.59     11       1.86  Default_vert_vert (frame 0)
+  pp_pso             10       1.90      0.67     10       1.90  postprocess (frame 0)
+  pso_compile        13       4.81      1.42     13       4.81  eff=-1 state=0 vfmt=204832 blend=257 alpha=0 fmt=80 (frame 67)
+vid_frametrace  n=168  avg= 29.86ms ( 33.5 fps)  p50= 28.66  p95= 29.69  p99= 35.58  max= 165.61  >33ms=3 (1.8%)  >100ms=1
+vid_stalltrace  interval=1445.30ms  active=1
+    nextdrawable      135.69ms  x43
+    playsim            41.64ms  x1
+    levelload          14.04ms  x1
+    precache            4.10ms  x1
+    events              2.09ms  x1
+    wipestart           0.96ms  x1
+    renderview          0.85ms  x1
+    presentframe        0.76ms  x43
+    cmd_endframe        0.51ms  x43
+    pool_release        0.39ms  x43
+    beginframe          0.11ms  x1  (wraps others)
+    drawable_release      0.01ms  x43
+    fpslimit            0.01ms  x43
+    (unaccounted)    1244.25ms
+mt_frametrace  n=169  avg=  1.39ms (718.8 fps)  p50=  1.12  p95=  1.64  p99=  1.97  max=  41.93  >33ms=1 (0.6%)  >100ms=0
+mt_stalltrace totals (cumulative, at frametrace window)
+  type            count   total_ms    max_ms  inFrm   inFrm_ms  worst
+  compute_pso         7       1.47      0.29      0       0.00  SSAO ssao_compute (frame 0)
+  msl_tolib         101      35.35      1.59     11       1.86  Default_vert_vert (frame 0)
+  pp_pso             10       1.90      0.67     10       1.90  postprocess (frame 0)
+  pso_compile        13       4.81      1.42     13       4.81  eff=-1 state=0 vfmt=204832 blend=257 alpha=0 fmt=80 (frame 67)

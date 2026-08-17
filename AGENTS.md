@@ -1090,6 +1090,42 @@ So the ~900-1030ms class survives with the window focused and every phase near
 zero. Focus loss is excluded; the ~268ms family is confirmed as throttling and
 should be filtered out of any reading by its `active=0` stamp.
 
+**The multi-second level-transition stalls are the screen wipe, by design.**
+Long play trace, capture-off, 2026-08-17. Two intervals of 1448.32ms and
+1445.30ms, both `active=1`, both carrying **x43** on every per-Update phase
+(`nextdrawable`, `presentframe`, `cmd_endframe`, `pool_release`,
+`drawable_release`, `fpslimit`) against x1 on the loop-body phases. That is 43
+Update iterations inside one loop boundary: the wipe loop driving
+`screen->Update()` itself and folding into its enclosing iteration, exactly the
+trade-off `V_LoopTraceBoundary()` documents.
+
+The unaccounted remainder is the wipe's own pacing, and the arithmetic closes:
+
+| | value |
+|---|---|
+| unaccounted | 1198.94ms / 1244.25ms |
+| steps | 43 |
+| per step | 27.88ms / 28.94ms |
+| floor imposed by `wipe.cpp` | 25ms |
+
+`Wipe_Run`'s else-branch is `do { I_WaitVBL(2); } while (diff < 1)` where
+`diff = (now - wipestart) * 40 / 1000`, so each step cannot complete in under
+25ms. **`cl_capfps=true` is what selects that branch** -- the condition is
+`if (wiper->Interpolatable() && !cl_capfps)`. A ~43-tic wipe at 25ms per tic is
+a ~1.1s transition, which is stock Doom timing, not a renderer stall.
+
+**Gameplay itself was clean in this session:** 19 consecutive windows at
+p50 28.57ms with `>33ms=0` in most, worst outliers 165.61 / 59.39 / 43.33.
+`mt_frametrace` (renderer bracket) read p50=0.74ms, max=76.74 -- the renderer is
+not what stalls. The only non-wipe breakdown was `playsim 137.27ms`, engine-side.
+
+**The open question is now perceptual, not instrumental.** A wipe is an
+animation; a player should see a melt, not a freeze. If the reported freezes
+coincide with level transitions, the bug is that the wipe is *not animating* on
+Metal -- presenting a static frame for ~1.2s, which would feel exactly like a
+freeze -- and that is a visual question, not a timing one. If the freezes happen
+mid-play instead, this trace does not contain one, and the wipe is a red herring.
+
 **The inflight-semaphore leak theory: proposed from code reading, REFUTED by
 measurement.** The wait on `mInflightFramesSemaphore` is guarded twice
 (`BeginFrame` early-returns on `mInFrame`, and only waits when it actually
