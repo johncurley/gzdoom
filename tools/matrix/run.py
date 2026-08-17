@@ -101,6 +101,43 @@ PLATFORM_KEY = "darwin" if sys.platform == "darwin" else (
 DEGENERATE_MEAN = 1.0
 
 
+def stored_platforms():
+    """Platform keys present in baseline.json, newest format only."""
+    if not os.path.exists(BASELINE):
+        return []
+    doc = json.load(open(BASELINE))
+    return sorted(doc.get("platforms", {}))
+
+
+def load_baseline_for_platform():
+    """This platform's baseline, or None.
+
+    Baselines are keyed by platform because they are NOT portable: the same
+    source on a different GPU, driver and backend produces a different image,
+    and comparing across machines reports every config as changed. That reads
+    as a catastrophic regression and is nothing of the kind -- it happened on
+    2026-08-17, when a macOS/Metal run was checked against a baseline recorded
+    on Linux/AMD/OpenGL and reported a uniform mean_lum shift on every config
+    while every relation still passed. AGENTS.md had warned in prose that the
+    baseline must not be shared between machines; prose is not a mechanism.
+
+    The legacy flat format (top-level "configs") is refused rather than
+    guessed at, because attributing it to the wrong platform would recreate
+    exactly the false regression this keying exists to prevent.
+    """
+    if not os.path.exists(BASELINE):
+        return None
+    doc = json.load(open(BASELINE))
+    if "platforms" in doc:
+        return doc["platforms"].get(PLATFORM_KEY)
+    if "configs" in doc:
+        print(f"\nbaseline.json is in the old un-keyed format and cannot be "
+              f"attributed to a platform.")
+        print(f"  Re-record it on each machine with --update-baseline.")
+        return None
+    return None
+
+
 def platform_launch(spec, base="launch"):
     """`launch` merged with any `launch_<platform>` block.
 
@@ -483,8 +520,8 @@ def main():
             print("and every future run would agree with it. Fix, then re-record.")
             return 2
         old = {}
-        if os.path.exists(BASELINE):
-            prev = json.load(open(BASELINE))
+        prev = load_baseline_for_platform() or {}
+        if prev:
             # Merging across scenes would leave one file holding signatures of
             # two different viewpoints, indistinguishable from each other and
             # both wrong for whichever scene ran next. A scene change replaces.
@@ -502,19 +539,42 @@ def main():
         old.update({k: v for k, v in sigs.items() if v and k not in rel_only})
         for k in rel_only:
             old.pop(k, None)
+        doc = {}
+        if os.path.exists(BASELINE):
+            doc = json.load(open(BASELINE))
+        doc.setdefault("note", "Golden-image signatures, keyed by platform. "
+                               "See tools/matrix/run.py.")
+        doc.setdefault("platforms", {})
+        doc.pop("configs", None)   # legacy flat form, now migrated
+        doc.pop("scene", None)
+        doc.pop("recorded", None)
+        doc["platforms"][PLATFORM_KEY] = {
+            "recorded": time.strftime("%Y-%m-%d %H:%M"),
+            "scene": scene,
+            "configs": old,
+        }
         with open(BASELINE, "w") as f:
-            json.dump({"note": "Golden-image signatures. See tools/matrix/run.py.",
-                       "recorded": time.strftime("%Y-%m-%d %H:%M"),
-                       "scene": scene,
-                       "configs": old}, f, indent=2, sort_keys=True)
-        print(f"\nbaseline recorded for {len(sigs)} configurations -> {BASELINE}")
+            json.dump(doc, f, indent=2, sort_keys=True)
+        print(f"\nbaseline recorded for {len(sigs)} configurations "
+              f"[platform {PLATFORM_KEY}] -> {BASELINE}")
         return 0
 
     if not os.path.exists(BASELINE):
         print("\nno baseline yet. Record one with --update-baseline.")
         return 1 if rel_fail else 0
 
-    stored = json.load(open(BASELINE))
+    stored = load_baseline_for_platform()
+    if stored is None:
+        print(f"\nno baseline for platform {PLATFORM_KEY!r} yet "
+              f"(recorded: {', '.join(stored_platforms()) or 'none'}).")
+        print("  Signatures are NOT comparable across machines: a different GPU,")
+        print("  driver and backend produce a different image from identical code.")
+        print("  Record one here with --update-baseline.")
+        print("\n" + ("PASS (relations only)" if not rel_fail else "FAIL"))
+        if rel_fail:
+            print("  broken relations:    " + ", ".join(sorted(set(rel_fail))))
+        return 1 if rel_fail else 0
+
     base_scene = stored.get("scene", "default")
     if base_scene != scene:
         # Comparing anyway would report a DIFF for every config, which reads as

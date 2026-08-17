@@ -1,49 +1,101 @@
 {
-  "configs": {
-    "baseline": {
-      "h": 480,
-      "mean_lum": 21.8557,
-      "pixels_md5": "4b46f46117f9bf3d7c0dffbf87abf4e0",
-      "w": 640
+  "note": "Golden-image signatures, keyed by platform. See tools/matrix/run.py.",
+  "platforms": {
+    "darwin": {
+      "configs": {
+        "baseline": {
+          "h": 572,
+          "mean_lum": 21.6318,
+          "pixels_md5": "634abb327f2b9fac6882ae5eedb37da8",
+          "w": 800
+        },
+        "colormap": {
+          "h": 572,
+          "mean_lum": 208.4809,
+          "pixels_md5": "01abff7da0036233648df1f4661086d0",
+          "w": 800
+        },
+        "fxaa": {
+          "h": 572,
+          "mean_lum": 21.6241,
+          "pixels_md5": "f3f97b131f79a00d46c4f4693e4a94b5",
+          "w": 800
+        },
+        "lens": {
+          "h": 572,
+          "mean_lum": 21.3845,
+          "pixels_md5": "527a2c237370516ffabaab5a9be615dc",
+          "w": 800
+        },
+        "ssao": {
+          "h": 572,
+          "mean_lum": 20.8564,
+          "pixels_md5": "a3ede912a4dc27e806a1ba3d95e82b19",
+          "w": 800
+        },
+        "tonemap_identity": {
+          "h": 572,
+          "mean_lum": 21.6318,
+          "pixels_md5": "634abb327f2b9fac6882ae5eedb37da8",
+          "w": 800
+        },
+        "tonemap_uncharted": {
+          "h": 572,
+          "mean_lum": 13.2549,
+          "pixels_md5": "ad6046f6076ae483e24be6cda850e923",
+          "w": 800
+        }
+      },
+      "recorded": "2026-08-17 18:33",
+      "scene": "doom2"
     },
-    "colormap": {
-      "h": 480,
-      "mean_lum": 207.8656,
-      "pixels_md5": "8aef6887df66d33a99a18437c2d10b3e",
-      "w": 640
-    },
-    "fxaa": {
-      "h": 480,
-      "mean_lum": 21.8486,
-      "pixels_md5": "f756dd37d3c5fe4b069d34c1d54df330",
-      "w": 640
-    },
-    "lens": {
-      "h": 480,
-      "mean_lum": 21.551,
-      "pixels_md5": "d83d7b24f0d5b7f8be1bd55904f27384",
-      "w": 640
-    },
-    "ssao": {
-      "h": 480,
-      "mean_lum": 21.0885,
-      "pixels_md5": "ca21963040322b159e555930c3fb8f80",
-      "w": 640
-    },
-    "tonemap_identity": {
-      "h": 480,
-      "mean_lum": 21.8557,
-      "pixels_md5": "4b46f46117f9bf3d7c0dffbf87abf4e0",
-      "w": 640
-    },
-    "tonemap_uncharted": {
-      "h": 480,
-      "mean_lum": 13.3964,
-      "pixels_md5": "3a32d46e67e8221e6578154e52c2b938",
-      "w": 640
+    "linux": {
+      "configs": {
+        "baseline": {
+          "h": 480,
+          "mean_lum": 21.8557,
+          "pixels_md5": "4b46f46117f9bf3d7c0dffbf87abf4e0",
+          "w": 640
+        },
+        "colormap": {
+          "h": 480,
+          "mean_lum": 207.8656,
+          "pixels_md5": "8aef6887df66d33a99a18437c2d10b3e",
+          "w": 640
+        },
+        "fxaa": {
+          "h": 480,
+          "mean_lum": 21.8486,
+          "pixels_md5": "f756dd37d3c5fe4b069d34c1d54df330",
+          "w": 640
+        },
+        "lens": {
+          "h": 480,
+          "mean_lum": 21.551,
+          "pixels_md5": "d83d7b24f0d5b7f8be1bd55904f27384",
+          "w": 640
+        },
+        "ssao": {
+          "h": 480,
+          "mean_lum": 21.0885,
+          "pixels_md5": "ca21963040322b159e555930c3fb8f80",
+          "w": 640
+        },
+        "tonemap_identity": {
+          "h": 480,
+          "mean_lum": 21.8557,
+          "pixels_md5": "4b46f46117f9bf3d7c0dffbf87abf4e0",
+          "w": 640
+        },
+        "tonemap_uncharted": {
+          "h": 480,
+          "mean_lum": 13.3964,
+          "pixels_md5": "3a32d46e67e8221e6578154e52c2b938",
+          "w": 640
+        }
+      },
+      "recorded": "2026-08-16 15:16",
+      "scene": "doom2"
     }
-  },
-  "note": "Golden-image signatures. See tools/matrix/run.py.",
-  "recorded": "2026-08-16 15:16",
-  "scene": "doom2"
+  }
 }

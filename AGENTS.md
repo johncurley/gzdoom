@@ -1178,21 +1178,32 @@ sound: the layer's wait now overlaps the frame's work instead of preceding it.
 --scene doom2` produces byte-identical statistics with and without the change on
 every config, including the relations.
 
-**But that control also exposed something else: the matrix suite is currently
-FAILING on this tree, and not because of this change.** With the change stashed
-and the tree rebuilt, the failure reproduces exactly -- `baseline` mean_lum
-21.856 -> 21.632, `colormap` 207.866 -> 208.481, and the same shift on `ssao`,
-`tonemap_uncharted`, `tonemap_identity`, `lens` and `fxaa`. Every *relation*
-still passes, so each pass is running and doing its job; the whole image is
-uniformly slightly darker. `CLAUDE.md` still describes the suite as "Currently
-PASS", which is stale.
+**A matrix "regression" that was not one -- RESOLVED 2026-08-17.** The control
+run above reported every config changed (`baseline` mean_lum 21.856 -> 21.632,
+`colormap` 207.866 -> 208.481) with every relation still passing, and this file
+briefly recorded it as an open regression on the branch. It was not.
 
-This is unattributed and should be treated as an open regression with its own
-investigation, not folded into the freeze work. Candidates not yet tested: a
-commit from this session that was assumed pixel-neutral, a stale baseline
-recorded under different window/display conditions, or a genuine rendering
-change from earlier work. The bisect is cheap -- the suite runs in a few minutes
-per commit.
+`baseline.json` held the **Linux** baseline. Its `mean_lum 21.8557` and
+`pixels_md5 4b46f461...` are exactly the AMD/Mesa/OpenGL state recorded on the
+Linux box on 2026-08-16 and documented above. A macOS/Metal build was being
+compared against a Linux/GL golden image, so of course every config differed and
+every relation still held -- the passes were all working, the machine was
+different. No bisect was needed; one look at the baseline's provenance answered
+it.
+
+**Fixed structurally, because prose did not hold.** This file already warned
+that a baseline "must not be shared between machines"; the tool did not enforce
+it. `baseline.json` is now keyed by platform (`platforms.darwin`,
+`platforms.linux`), mirroring the `launch_<platform>` mechanism `configs.json`
+already used. Recording on one machine no longer overwrites the other, and a run
+with no baseline for its own platform says so and reports `PASS (relations
+only)` instead of a catastrophic-looking FAIL. The legacy flat format is refused
+rather than guessed at -- attributing it to the wrong platform would recreate
+the exact false regression the keying prevents.
+
+macOS baseline recorded, scene `doom2`, 10 configurations: the suite now reads
+**PASS** on this machine. `CLAUDE.md`'s "Currently PASS" is true again, and true
+per-platform.
 
 **ROOT CAUSE BOUNDARY: `nextDrawable()` blocks with drawables free. The
 constraint is below the backend, not in it.** Long play session, 4457 frames,
