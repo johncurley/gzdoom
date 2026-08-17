@@ -589,6 +589,21 @@ void MtDebugManager::TraceFrameInterval(float frameTimeMs) {
   if (mt_stalltrace > 0)
     PrintStallSummary("cumulative, at frametrace window");
 
+  // Inflight-semaphore balance, printed every window so drift over time is
+  // visible rather than needing a CCMD at the right moment. waits happen only
+  // when BeginFrame actually acquires a drawable; signals happen for every
+  // command buffer EndFrame commits, i.e. every Update(). Sustained positive
+  // drift means the semaphore is gaining permits it never earned, so
+  // backpressure decays and nextDrawable() starves.
+  if (fb) {
+    const uint64_t waits = fb->GetSemWaits();
+    const uint64_t signals = fb->GetSemSignals();
+    fprintf(stderr,
+            "mt_seminflight  waits=%llu signals=%llu drift=%+lld\n",
+            (unsigned long long)waits, (unsigned long long)signals,
+            (long long)signals - (long long)waits);
+  }
+
   mTraceSamples.clear();
   mTraceWindowStart = now;
 }
@@ -833,6 +848,23 @@ CCMD(mt_stalls)
            "millisecond threshold (e.g. 5) and replay.\n");
 
   debug->PrintStallSummary("mt_stalls");
+
+  // Inflight-semaphore balance. waits happen only when BeginFrame actually
+  // acquires a drawable; signals happen for every command buffer EndFrame
+  // commits, which is every Update(). A positive drift means the semaphore has
+  // gained permits it never had to earn -- backpressure decays, the CPU runs
+  // ahead of the GPU, and nextDrawable() starves. Drift should be 0 or, at
+  // most, the frames currently in flight.
+  if (auto fb = GetActiveMetalRenderDevice()) {
+    const uint64_t waits = fb->GetSemWaits();
+    const uint64_t signals = fb->GetSemSignals();
+    fprintf(stderr,
+            "mt_stalls  inflight-semaphore  waits=%llu signals=%llu drift=%+lld"
+            "  (drift > frames-in-flight means backpressure is gone)\n",
+            (unsigned long long)waits, (unsigned long long)signals,
+            (long long)signals - (long long)waits);
+  }
+
   Printf(PRINT_HIGH, "Metal stall attribution written to stderr.\n");
 }
 

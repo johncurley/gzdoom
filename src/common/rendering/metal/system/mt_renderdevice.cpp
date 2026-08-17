@@ -538,6 +538,7 @@ void MetalRenderDevice::BeginFrame() {
     // pool and creates large timing spikes.
     {
       auto semWaitStart = std::chrono::high_resolution_clock::now();
+      RecordSemWait();
       if (dispatch_semaphore_wait(
               mInflightFramesSemaphore,
               dispatch_time(DISPATCH_TIME_NOW, 1000 * NSEC_PER_MSEC)) != 0) {

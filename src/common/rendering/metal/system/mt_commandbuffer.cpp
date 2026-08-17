@@ -96,9 +96,12 @@ void MtCommandBufferManager::EndFrame() {
   dispatch_semaphore_t sem = fb->GetInflightSemaphore();
 
   // Add the signal handler BEFORE commit
+  MetalRenderDevice *device = fb;
   cb->addCompletedHandler([=](MTL::CommandBuffer* buffer) {
       if (sem) {
           dispatch_semaphore_signal(sem);
+          if (device)
+            device->RecordSemSignal();
       }
   });
 

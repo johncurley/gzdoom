@@ -1090,6 +1090,34 @@ So the ~900-1030ms class survives with the window focused and every phase near
 zero. Focus loss is excluded; the ~268ms family is confirmed as throttling and
 should be filtered out of any reading by its `active=0` stamp.
 
+**The inflight-semaphore leak theory: proposed from code reading, REFUTED by
+measurement.** The wait on `mInflightFramesSemaphore` is guarded twice
+(`BeginFrame` early-returns on `mInFrame`, and only waits when it actually
+acquires a drawable) while the signal is attached in
+`MtCommandBufferManager::EndFrame()`, which every `Update()` reaches
+unconditionally. That asymmetry is real in the source, and it would explain the
+observed stall exactly: permits accumulate, backpressure decays, the CPU runs
+ahead, and `nextDrawable()` starves. It also explained why `semaphore_timeout`
+never fires -- an over-signalled semaphore never blocks.
+
+Instrumented with paired atomic counters (`mt_seminflight`, printed every
+`mt_frametrace` window). Result over 1334 frames:
+
+```
+mt_seminflight  waits=162  signals=161  drift=-1
+mt_seminflight  waits=1334 signals=1333 drift=-1
+```
+
+**Drift is a stable -1** -- one frame in flight, which is correct. No leak. The
+theory is dead as stated.
+
+**Caveat on scope, not a rescue of the theory:** that run was idle MAP01 with no
+map change, so the specific suspect path -- `mCurrentDrawable` already set, which
+the code comments attribute to wipes -- was never exercised. A session with level
+transitions would test it, and the counters now print automatically every window,
+so any real play trace answers it for free. Do not treat this as confirmation of
+a leak during wipes; treat it as untested there and refuted everywhere else.
+
 **The phase report was mis-attributed by one interval (fixed 2026-08-17).**
 Reporting happened inside `TraceFrameInterval`, i.e. inside `Update()`. Any phase
 whose destructor runs after the `Update()` nested within it -- `display` wraps

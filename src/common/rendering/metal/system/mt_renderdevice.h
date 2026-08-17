@@ -7,6 +7,7 @@
 
 #ifdef __APPLE__
 #include <CoreVideo/CVDisplayLink.h>
+#include <atomic>
 #include <dispatch/dispatch.h>
 #endif
 
@@ -61,6 +62,22 @@ public:
   std::shared_ptr<MetalDevice> device;
   MtVersionManager mVersionManager;
   std::mutex mRecycleMutex;
+
+  // Inflight-semaphore balance audit. The wait happens in BeginFrame() and is
+  // guarded twice (early-out on mInFrame, and only when acquiring a drawable);
+  // the signal happens in MtCommandBufferManager::EndFrame(), which every
+  // Update() reaches unconditionally. If those two counts diverge, the
+  // semaphore gains permits it never had to earn, backpressure decays, the CPU
+  // runs ahead and nextDrawable() starves -- which is the stall actually
+  // observed. Signalled from Metal's completion-handler thread, hence atomic.
+  std::atomic<uint64_t> mSemWaits{0};
+  std::atomic<uint64_t> mSemSignals{0};
+
+  void RecordSemWait() { mSemWaits.fetch_add(1, std::memory_order_relaxed); }
+  void RecordSemSignal() { mSemSignals.fetch_add(1, std::memory_order_relaxed); }
+  uint64_t GetSemWaits() const { return mSemWaits.load(std::memory_order_relaxed); }
+  uint64_t GetSemSignals() const { return mSemSignals.load(std::memory_order_relaxed); }
+
   bool mIsDestroyed = false;
 
   // Resource recycling bin to keep buffers alive until GPU is done
