@@ -85,7 +85,7 @@ Verified against OpenGL at the aobug viewpoint (AshesHardReset MAP01,
 | Model vertex normals | signed packing; mean delta vs GL 0.626 (was 31.216) |
 | Palette-tonemap LUT | invalidates correctly on restart / CVAR change |
 | Linear depth | mean |diff| 0.18 |
-| SSAO attenuation | **~0.047 in occlusion units still diverges — open, see below** |
+| SSAO attenuation | ~0.047 occlusion units, unexplained after five excluded suspects. Sub-perceptual (0.392/255 mean, <1% of px at max strength); `crossbackend.py` 12/12 OK. **Recommend closing** — see below |
 
 ### Launcher
 
@@ -956,9 +956,9 @@ compilation -- is **excluded by measurement**: 45ms across an entire session.
 Late acquisition (Apple's recommended structure) reduced the rate but did not
 remove it, because the block is not on this side of the API.
 
-Next cheap step, untried: run with `+vid_vsync 1`. Presentation currently uses
-the un-synced path (`displaySyncEnabled=false`) with no periodic pacing of any
-kind, which is where a missed wakeup is most plausible. One CVAR, no code.
+`+vid_vsync 1` was the next cheap step and has now been **tried and refuted**
+(2026-08-17, with `mt_vsync` proof of execution). Display sync is not the
+variable. See the full exclusion list below.
 
 **Original framing, 2026-08-16**, reported from real play, not measured yet. Freezing "now and
 again" during normal gameplay, not reproduced or characterised on this machine —
@@ -1987,12 +1987,34 @@ min/max/clamp differ **only** on NaN, so an identical frame proves **no NaN is
 reaching those guards** either. Do not re-test the NaN theory; this was its test.
 
 So the residual is not the compute kernel, not `fast::` precision, and not a NaN.
-What remains from the original lead is `LinearDepthTexture`'s **sampler state**
-— the one item on that list never actually measured — and the possibility that
-the ~0.047 figure is an artefact of the AO-isolation method that produced it
-rather than of the renderer. Whoever picks this up should consider re-deriving
-the measurement before hunting further; three specific suspects have now died
-and that raises the prior on the measurement itself.
+
+**`LinearDepthTexture`'s sampler state is also excluded, 2026-08-17 — by code
+reading, no launches needed.** It was the last concrete suspect and it fit the
+signature well (the divergence scales with sampling radius, and distant samples
+are the ones that land between texels where filter mode matters). Both backends
+resolve the same shared request identically:
+
+| | GL | Metal |
+|---|---|---|
+| request | `PPFilterMode::Nearest`, `PPWrapMode::Clamp` (default args, `hw_postprocess.cpp:902`) | same, shared code |
+| filter | `GL_NEAREST` (`gl_renderbuffers.cpp:866`) | `SamplerMinMagFilterNearest` (`mt_sampler.cpp`, key 0) |
+| wrap | `GL_CLAMP_TO_EDGE` (`:867`) | `SamplerAddressModeClampToEdge` (key 3) |
+
+`AddressU=3` is not one of the `ApplyClampModeFilterOverrides` cases (4-9), so
+nothing rewrites the filter behind it either.
+
+**Four suspects have now died and the prior belongs on the measurement.** The
+remaining hypothesis is the one the previous entry raised: that ~0.047 is an
+artefact of the AO-isolation method rather than of the renderer.
+
+**Recommendation: close this row as bounded-and-unexplained rather than spend
+more on it.** The magnitude argues for it — mean **0.392/255**, max 11, on under
+1% of pixels *at maximum AO strength*, which is sub-perceptual; and
+`crossbackend.py`, the Metal-vs-GL oracle whose whole job is catching exactly
+this, reports **12/12 OK**. Re-deriving the isolation measurement is the only
+remaining step and it is several launches of work to put a confidence interval on
+a difference no one can see. Worth doing only if a *visible* AO disagreement ever
+shows up, in which case this entry is the map of where not to look again.
 
 **The "~2x on Intel" premise for the compute AO guard does not reproduce.**
 Measured 2026-08-15. `mt_postprocess.cpp:528` justifies disabling compute AO on
