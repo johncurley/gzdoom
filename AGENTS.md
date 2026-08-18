@@ -36,7 +36,24 @@ it is unusual).
   hand: start `docs/frame-graph-resources.md`'s resource registry (backend-
   neutral, no scheduler, no Metal-specific decisions, fully verifiable on
   Linux) and **stop there** — the actual graph/scheduler and anything doing
-  Metal memory aliasing waits for item 3. Not started as of this writing.
+  Metal memory aliasing waits for item 3. **Started 2026-08-19** — phase 1
+  (`FrameResources`: `Declare`/`Touch`/`BeginFrame`/`ValidateFrame`/`Dump`) is
+  in `common/rendering/hwrenderer/frame/hw_resources.h`, shared off
+  `DFrameBuffer::Resources()` per open question 2 (Vulkan/GL analysis was
+  already closed, so the shared location has more than one user). `r_resources`
+  and `r_resource_validate` added. Wired into `VkRenderBuffers` only (`Declare`
+  at all six creation sites: `SceneColor`/`SceneDepthStencil`/`SceneNormal`/
+  `SceneFog`/`PipelineImage[0..1]`/`PipelineDepthStencil`) — chosen over
+  `MtRenderBuffers` because Metal doesn't compile on this Linux box; open
+  question 4's "simplest resources first" still applies, Vulkan's render
+  buffers are this session's equivalent. Verified for real: builds clean,
+  and `r_resources` was run against the RX 550 (not Xvfb — Xvfb has no DRI3,
+  Vulkan surface creation fails there) and printed correct per-resource sizes
+  and a 1.3 MB total at startup resolution. **`Touch` is not wired anywhere
+  yet** — every resource reports untouched, which is expected and not a bug;
+  no bind call sites have been instrumented. Not done: GL wiring, the AO
+  module (Metal-only, needs item 3 first anyway), and `Touch` calls at any
+  bind site — all left for the next session per "stop there."
 - **Current handoff:** `docs/handoff-macos-2026-08-18.md` — written from the
   Linux side once this session's audit tranche (item 14) closed out. Confirms
   nothing here touches Cocoa/Metal, restates macOS priority order (item 3,

@@ -38,6 +38,7 @@
 #include <vector>
 #include <chrono>
 #include "basics.h"
+#include "hwrenderer/frame/hw_resources.h"
 #include "vectors.h"
 #include "m_png.h"
 #include "renderstyle.h"
@@ -149,6 +150,7 @@ public:
 	FLightBuffer *mLights = nullptr;			// Dynamic lights
 	BoneBuffer* mBones = nullptr;				// Model bones
 	IShadowMap mShadowMap;
+	FrameResources mResources;					// frame graph resource registry (phase 1: record + report)
 
 	int mGameScreenWidth = 0;
 	int mGameScreenHeight = 0;
@@ -173,6 +175,7 @@ public:
 	{
 		mShadowMap.SetAABBTree(tree);
 	}
+	FrameResources &Resources() { return mResources; }
 	virtual void SetLevelMesh(hwrenderer::LevelMesh *mesh) { }
 	bool allowSSBO() const
 	{
