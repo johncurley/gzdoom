@@ -1023,6 +1023,82 @@ would have ruled out gzdoom for up front.
 
 ---
 
+### 14. Fresh independent audit, 2026-08-18 — 7 findings; #1 and #5 fixed, #2/3/4/6/7 open
+
+With items 1-13 all closed or blocked on hardware this session doesn't have,
+ran a genuinely independent audit sweep: `docs/audits/audit-contract-linux.md`
+revised for the current state of the tree (the 2026-08-12 version had drifted
+into actively wrong guidance — see that file's revision note), then handed to
+a fresh agent with no access to this session's context, instructed not to
+read `AGENTS.md` until its findings were written. Full report:
+`docs/audits/findings-linux-2026-08-18.md`.
+
+**Fixed this session:**
+
+- **Finding 1 (HIGH, correctness)** — `X11DisplayWindow::OnFocusOut` did not
+  synthesize key-up events for held keys the way Wayland's
+  `keyboard_handle_leave` deliberately does, with a comment explaining why:
+  focus loss releases every held key per protocol, and the compositor/server
+  will not send the individual key-up events to a window that no longer has
+  focus. Concrete, spot-checked-against-source symptom: alt-tab (or any
+  focus change) while holding a key, release the key on a different window,
+  refocus, press the same key again — the stale `keyRoutes` entry in
+  `nativevideo.cpp` makes the fresh press look like an auto-repeat of an
+  already-held key, and the real `EV_KeyDown` is silently dropped. Self-heals
+  on the next full press/release of that key, so not a permanently stuck
+  key — but a real, reproducible one-keypress loss with an ordinary trigger.
+  Fixed by giving `OnFocusOut` the same treatment as Wayland: snapshot and
+  clear `keyState`, synthesize `OnWindowKeyUp` for every key that was down,
+  before delivering `OnWindowDeactivated()`. `zwidget-subtree` — needs the
+  cherry-pick-and-publish procedure to reach dpjudas, same as items 10/11.
+- **Finding 5 (LOW, maintainability)** — unconditional debug `fprintf`s in
+  `OnFocusIn`/`OnFocusOut` (empirically reproduced by the audit, not just
+  read) and a `LogToDisk` helper in `gl_sysfb.cpp` appending
+  `"Initializing EGL..."` and friends to `/tmp/gzdoom_debug.log` on every
+  single launch, unbounded, no rotation, no opt-out. Removed the two X11
+  fprintfs; removed `LogToDisk` entirely, converting its failure-path calls
+  (four of them) to `fprintf(stderr, ...)` matching the style already used
+  by the rest of `InitEGL`'s error paths, and deleting the two pure-noise
+  success-path calls outright (`"Initializing EGL..."`,
+  `"Calling InitEGL for X11..."`, `"InitEGL for X11 succeeded."`) since
+  `[NATIVE] EGL initialized successfully` already covers that. Verified: a
+  forced-GL smoke launch (`+vid_preferbackend 0` -- needed because
+  `HAVE_VULKAN` auto-detects ON on this machine now, per the revised audit
+  contract's environment notes, so the default active backend is Vulkan and
+  a plain launch never touches `InitEGL` at all)
+  exercises the full `InitEGL` path, prints `GL_VERSION` correctly, and
+  `/tmp/gzdoom_debug.log` is never recreated.
+
+**Still open, not acted on this session:**
+
+- **Finding 2 (MEDIUM, protocol)** — the `WM_TAKE_FOCUS`/viewability guard
+  (item 5's fix) narrows the `BadMatch` race to a single round-trip gap
+  rather than closing it formally, and no process-wide error handler exists
+  outside the narrow one around `XShmAttach` — a hit would still be fatal via
+  Xlib's default `exit(1)`. Reasoned from code/ICCCM only; the `twm` harness
+  that would exercise it is the thing item 13 found broken.
+- **Finding 3 (MEDIUM, correctness)** — `pendingActivate` is a sticky,
+  un-cancelable boolean; a `Hide()`-then-later-unrelated-`Show()` sequence
+  could discharge a stale activation. Not proven live against any current
+  call site — may be latent rather than actively wrong today.
+- **Finding 4 (LOW/INFO, protocol)** — `_NET_ACTIVE_WINDOW` sends
+  `CurrentTime` rather than an event timestamp; deviates from EWMH's
+  recommendation, though extremely common practice and not observable as
+  broken under KWin.
+- **Finding 6 (MEDIUM, low-confidence)** — theme auto-detection has no
+  positive "light" signal from GTK (only a dark-theme override is checked),
+  so an out-of-the-box light GTK desktop with no `kdeglobals` and no
+  `.Xresources` override gets the hardcoded dark palette under `ui_theme 0`.
+  Could not verify on this KDE machine without disturbing the working
+  desktop's config files.
+- **Finding 7 (MEDIUM)** — the GLX fallback path in `gl_sysfb.cpp` fails
+  completely silently at three points (`InitGLX()` false, `glXChooseVisual`
+  null, `glXCreateContext` unchecked before `glXMakeCurrent`) — the same
+  "black frame, nothing in the log" shape as this subsystem's costliest
+  historical bug class, per the audit contract's own framing. Narrow
+  precondition (only reachable if EGL fails or isn't compiled in) and never
+  exercised on this hardware, so not verified live.
+
 ## Tasks — macOS
 
 Written 2026-08-14 at the end of a Linux session, as the entry point for the

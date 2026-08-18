@@ -162,13 +162,6 @@ IDataBuffer *SystemGLFrameBuffer::CreateDataBuffer(int bindingpoint, bool ssbo,
   return new OpenGLRenderer::GLDataBuffer(bindingpoint, ssbo);
 }
 
-#include <fstream>
-void LogToDisk(const char *msg) {
-  std::ofstream f("/tmp/gzdoom_debug.log", std::ios::app);
-  if (f.is_open())
-    f << msg << std::endl;
-}
-
 #ifdef HAVE_WAYLAND_EGL
 
 typedef EGLDisplay (*PFN_EGLGETDISPLAY)(EGLNativeDisplayType display_id);
@@ -212,8 +205,6 @@ static PFN_EGLTERMINATE zd_eglTerminate = nullptr;
 static PFN_EGLSWAPBUFFERS zd_eglSwapBuffers = nullptr;
 
 bool SystemGLFrameBuffer::InitEGL(void *native_display, void *native_window) {
-  LogToDisk("Initializing EGL...");
-
   static void *egl_lib = nullptr;
   if (!egl_lib) {
     egl_lib = dlopen("libEGL.so.1", RTLD_NOW | RTLD_LOCAL);
@@ -222,13 +213,13 @@ bool SystemGLFrameBuffer::InitEGL(void *native_display, void *native_window) {
   }
 
   if (!egl_lib) {
-    LogToDisk("EGL: Failed to load libEGL.so.1");
+    fprintf(stderr, "EGL: Failed to load libEGL.so.1\n");
     return false;
   }
 
   void *egl_gpa = dlsym(egl_lib, "eglGetProcAddress");
   if (!egl_gpa) {
-    LogToDisk("EGL: Failed to find eglGetProcAddress");
+    fprintf(stderr, "EGL: Failed to find eglGetProcAddress\n");
     return false;
   }
   
@@ -250,13 +241,13 @@ bool SystemGLFrameBuffer::InitEGL(void *native_display, void *native_window) {
   zd_eglSwapBuffers = (PFN_EGLSWAPBUFFERS)dlsym(egl_lib, "eglSwapBuffers");
 
   if (!gladLoadEGLLoader((GLADloadproc)egl_gpa)) {
-    LogToDisk("EGL: Failed to initialize GLAD EGL loader");
+    fprintf(stderr, "EGL: Failed to initialize GLAD EGL loader\n");
   }
 
   EGLDisplay egl_dpy = zd_eglGetDisplay((EGLNativeDisplayType)native_display);
   mEglDisplay = (void *)egl_dpy;
   if (egl_dpy == EGL_NO_DISPLAY) {
-    LogToDisk("EGL: Failed to get display!");
+    fprintf(stderr, "EGL: Failed to get display!\n");
     return false;
   }
   // ... rest of the function ...
@@ -408,9 +399,7 @@ SystemGLFrameBuffer::SystemGLFrameBuffer(void *display, void *surface,
   } else {
     if (display && surface) {
       Window window = (Window)(uintptr_t)surface;
-      LogToDisk("Calling InitEGL for X11...");
       if (InitEGL(display, (void *)window)) {
-        LogToDisk("InitEGL for X11 succeeded.");
         return;
       }
       if (InitGLX()) {
