@@ -30,25 +30,23 @@ This is genuinely gating, not just next on a list: everything downstream
 needs a known-good Apple Silicon baseline to measure against, or a
 correctness bug discovered later can't be attributed to the right cause.
 
-**Item 5, intermittent freezing, is resolved to a cause but not a fix, and
-what's left is a perceptual question, not a measurement one.**
+**Item 5, intermittent freezing, is resolved to a cause but not a fix.**
 `nextDrawable()` blocking below the renderer's control is confirmed with a
 full evidence chain (`AGENTS.md` Tasks — macOS item 5) — drawable leak, late
 retirement, nil timeout, and pool exhaustion are all excluded by
 measurement. Late acquisition (Apple's recommended structure) reduced the
 rate but did not remove it, because the constraint is in
-`CAMetalLayer`/WindowServer, not this codebase. The last open thread traced
-it to the level-transition wipe: `cl_capfps` selects a ~25ms-per-tic pacing
-branch that makes a ~43-tic wipe take ~1.1s by design, and gameplay itself
-read clean in the last measured session (19 consecutive 1s windows,
-`p50=28.57ms`, `>33ms=0` in most). **The open question is whether the wipe
-is actually animating (a melt) or presenting a static frame for that ~1.1s
-(which would look exactly like a freeze to a player) — a visual question
-nothing here can answer without a screen to watch it on.** If reported
-freezes coincide with level transitions, check that first. If they happen
-mid-play instead, the recorded trace does not contain one and it may be a
-different, still-unfound issue — don't assume the wipe explanation covers
-every report.
+`CAMetalLayer`/WindowServer, not this codebase.
+
+The level-transition wipe was a candidate second explanation — `cl_capfps`
+selects a ~25ms-per-tic pacing branch that makes a ~43-tic wipe take ~1.1s
+by design, long enough to read as a freeze if it were presenting a static
+frame instead of animating. **Confirmed by eye during the last macOS
+tranche: the wipe animates correctly, not a freeze.** That explanation is
+closed. Any freeze still reported is therefore a mid-play one, which is not
+a new unknown — it's the `nextDrawable()` block above, still mitigated, not
+eliminated. The open work on this item is closing that gap, not finding a
+second cause.
 
 **Item 4, SSAO attenuation residual, is smallest and lowest priority.** ~0.047
 in occlusion units, the last open row of the Metal-vs-OpenGL parity table.

@@ -1911,12 +1911,18 @@ p50 28.57ms with `>33ms=0` in most, worst outliers 165.61 / 59.39 / 43.33.
 `mt_frametrace` (renderer bracket) read p50=0.74ms, max=76.74 -- the renderer is
 not what stalls. The only non-wipe breakdown was `playsim 137.27ms`, engine-side.
 
-**The open question is now perceptual, not instrumental.** A wipe is an
-animation; a player should see a melt, not a freeze. If the reported freezes
-coincide with level transitions, the bug is that the wipe is *not animating* on
-Metal -- presenting a static frame for ~1.2s, which would feel exactly like a
-freeze -- and that is a visual question, not a timing one. If the freezes happen
-mid-play instead, this trace does not contain one, and the wipe is a red herring.
+**The open question was perceptual, not instrumental, and it's answered:
+the wipe animates correctly.** A wipe is an animation; the concern was
+whether a player sees a melt or a static frame held for ~1.1-1.2s, which
+would feel exactly like a freeze despite being correct engine-side timing.
+Confirmed by eye (real play, last macOS tranche): it animates, not a freeze.
+So the wipe explanation for reported freezes is **excluded** at the
+level-transition case specifically. Any freeze still reported is therefore a
+mid-play one -- which is not a new unknown, it's the `nextDrawable()` block
+this item already root-caused above, still mitigated (late acquisition) but
+not eliminated. Don't reach for the wipe again for a level-transition
+report; the open work on this item is closing the `nextDrawable()` gap
+itself, not finding a second cause.
 
 **The inflight-semaphore leak theory: proposed from code reading, REFUTED by
 measurement.** The wait on `mInflightFramesSemaphore` is guarded twice
