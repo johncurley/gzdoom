@@ -9,6 +9,7 @@
 #include <X11/keysymdef.h>
 #include <X11/XKBlib.h>
 #include <X11/extensions/XInput2.h>
+#include <X11/extensions/XShm.h>
 #include <map>
 
 class X11DisplayWindow : public DisplayWindow
@@ -142,6 +143,8 @@ private:
 		void* pixels = nullptr;
 		int width = 0;
 		int height = 0;
+		XShmSegmentInfo shmInfo = {};
+		bool usingShm = false;
 	} backbuffer;
 
 	bool needsUpdate = false;

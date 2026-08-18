@@ -545,9 +545,13 @@ by two different mechanisms, not to be for want of patience.
 
 **Correction, same day, after trying the non-nested seat this section asked
 for: the "nested server" attribution above was wrong.** Real hardware `Xorg`
-(not `Xephyr`, not `Xvfb`) hit the identical whole-server-wedge signature.
-See item 13 below — the deadlock is real, reproduces on demand, and the
-variable is a window manager being present, not server nesting.
+(not `Xephyr`, not `Xvfb`) hit the identical whole-server-wedge signature, and
+the variable is a window manager being present, not server nesting. See item
+13 below for the full chase — it goes further and ends up exonerating gzdoom
+entirely: a bare Xlib client with no gzdoom/ZWidget code reproduces the same
+wedge under `twm` on this machine, so the `WM_TAKE_FOCUS`-while-unviewable
+case here stays untested, but for a host-environment reason, not a gzdoom
+one.
 
 The two sites are mutually exclusive on the axis nobody recorded: whether the
 observing session had an EWMH window manager. Under bare Xvfb, site A is
@@ -879,14 +883,13 @@ file's neighbourhood.
 Linux renderer changes can now be judged for smoothness the same way macOS ones
 can, not just by a person's impression.
 
-### 13. The X11 launcher's first paint can deadlock the whole server — new, severe, found testing item 5
+### 13. A whole-server X11 deadlock under `twm` — CLOSED as not-our-bug, 2026-08-18
 
-**Found 2026-08-18, testing item 5's last untested case, on a target
-completely different from what that item was chasing.** Not the
-`WM_TAKE_FOCUS`-while-unviewable race — a separate, more serious bug: the
-launcher's first repaint (`X11DisplayWindow::PresentBitmap`'s `XPutImage` of
-the whole backbuffer) can deadlock the **entire X connection**, for every
-client on the display, not just `gzdoom`.
+**Found 2026-08-18 testing item 5's last untested case, chased hard, and
+ultimately traced to something outside gzdoom's code entirely.** Keeping the
+full investigation rather than just the conclusion, because the false turn in
+the middle is itself the useful part: it produced a real improvement
+(`XShmPutImage`) that's worth keeping despite not being the fix for this.
 
 **First seen on `Xephyr`, corrected there, then reproduced identically on
 real hardware `Xorg`.** Item 5's "Attempted 2026-08-18 with Xephyr" entry
@@ -953,27 +956,70 @@ other. Not yet proven at the protocol level — no `xtrace`/`strace` on this
 box (see item 5's tooling note) — but it is the only mechanism consistent
 with every observation above, including the no-WM control passing clean.
 
-**Consequence: this outranks the case item 5 was actually chasing.** The
-`WM_TAKE_FOCUS`-while-unviewable question got an incidental real-world
-answer along the way — the one clean human run reached gameplay under `twm`
-with no `BadMatch` and no crash, so that guard is working — but a launcher
-that can permanently wedge the entire X server on first paint, under any
-decorating window manager, unattended, is a correctness bug independent of
-that question and a much bigger deal for anyone running this backend outside
-a compositor that happens to avoid the race (KWin/XWayland has not reproduced
-it in any test run so far, but was also never tested unattended for this
-specific window).
+**The leading hypothesis at the time was a client-side write pattern: `PresentBitmap`
+sends the whole backbuffer as one large synchronous `XPutImage` without
+returning to the event-read loop, and if `twm`'s window-reparenting event
+burst lands mid-write, both ends could in principle block on each other.**
+Implemented the standard fix for exactly that shape of problem: `XShmPutImage`
+(MIT-SHM) instead of streaming the image through the protocol socket at all,
+dlopen'd the same way every other X11 dependency in this backend is
+(`libXext.so.6`, optional — `X11Dynamic::HasShm` gates it, falls back to the
+original `XPutImage` path if the library or the per-connection `XShmAttach`
+isn't available). `XShmAttach` failure is caught with a narrowly-scoped
+temporary `XSetErrorHandler`, not left to the default handler's `exit(1)` —
+see the `BadMatch` trap above for why that matters. Compiled clean, no
+warnings in the touched files.
 
-**Not fixed. Next steps for whoever picks this up:** get protocol-level
-visibility (`xtrace`, or Xorg `-logverbose` cranked up, or `strace` once
-available — none present on this box as of this session) to see the actual
-last request the server processed before going idle; and/or make
-`PresentBitmap` not hold a giant synchronous write across the point where the
-client should be draining events — chunking the `XPutImage`, moving to
-`MIT-SHM` (`XShmPutImage`), or interleaving an explicit event-drain are the
-candidate fixes, in ascending order of invasiveness. This is stock ZWidget
-code, not fork-specific — belongs in the same upstream conversation as items
-10/11, once characterized further.
+**Rebuilt, re-tested against a fresh `Xorg :1` + `twm` session, fully
+automated, zero interaction — still hung.** Same whole-server signature
+(`xdpyinfo` from a separate process also timed out). `gdb` showed the stall
+had moved to `XShmQueryExtension` itself, inside `CreateBackbuffer`, **before
+any image data is sent at all** — a few-byte request expecting a small
+reply, nowhere near the giant write the fix targeted. That is the tell: if a
+trivially small request stalls at the same point a giant write did in
+earlier runs, the request's size and shape were never the actual variable.
+
+**Decisive test: a 30-line bare Xlib program with zero gzdoom/ZWidget code —
+`XOpenDisplay`, `XCreateSimpleWindow`, `XMapWindow`, `XFlush`, sleep 3s, one
+`XQueryExtension` round trip — reproduces the identical whole-server
+deadlock**, run as the *first* client against a freshly started `Xorg`/`twm`
+pair (confirmed fresh: killed and restarted the session first, since an
+earlier attempt had unknowingly inherited a server already wedged by a prior
+`kill -9` — the same "killing a stuck client corrupts the server for
+everyone" effect already on record for `Xvfb`, now seen a third time, on
+`Xorg`, from killing a `gzdoom` process by hand mid-hang).
+
+**This exonerates gzdoom and ZWidget entirely.** Whatever wedges the
+connection happens on or shortly after mapping a plain window under `twm`,
+independent of which client created the window and independent of what that
+client does afterward — the `XShmPutImage` change was real and worth keeping
+(avoiding a giant synchronous protocol write is correct practice regardless),
+but it was never going to fix this, because this was never gzdoom's bug. The
+defect, whatever it is, lives in `twm`, in this machine's `Xorg`/kernel/driver
+stack, or in some interaction between them — not in this fork's code, and not
+in stock ZWidget.
+
+**Practically: this does not block anything.** `twm` is essentially unused in
+real deployments — it was only ever installed here as a synthetic,
+easy-to-get non-EWMH window manager to exercise `Activate()`'s fallback
+branch (see item 5). No real-world compositor (KWin, GNOME, sway/XWayland,
+i3) has reproduced this in any test run on this branch. It does mean this
+`twm` harness is unreliable for further use on this box: the
+`WM_TAKE_FOCUS`-while-unviewable case item 5 was actually trying to test
+remains genuinely untested, and now for a *different, better-understood*
+reason than the earlier `Xvfb`/`Xephyr` write-ups gave — not "no harness
+survives startup here," but "the one non-EWMH harness available here has an
+unrelated host-level defect that fires before the code under test even runs."
+Testing that case for real needs either a different, real non-EWMH window
+manager (`fvwm`, `blackbox`, etc. — untried), or a different machine.
+
+**Kept:** the `XShmPutImage` change (`x11_dynamic.h`, `x11_remap.h`,
+`x11_display_window.h/.cpp`) — genuine robustness improvement, not reverted.
+**Not kept:** the theory that motivated it. Worth remembering next time a
+whole-server X11 wedge shows up: confirm with a bare Xlib client *before*
+attributing it to the application under test — this session spent a full
+implement-rebuild-retest cycle on a fix for a bug that a 30-line reproducer
+would have ruled out gzdoom for up front.
 
 ---
 
