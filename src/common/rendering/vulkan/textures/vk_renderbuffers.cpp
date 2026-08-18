@@ -281,6 +281,8 @@ void VkRenderBuffers::CreateSceneNormal(int width, int height, VkSampleCountFlag
 VulkanFramebuffer* VkRenderBuffers::GetOutput(VkPPRenderPassSetup* passSetup, const PPOutput& output, WhichDepthStencil stencilTest, int& framebufferWidth, int& framebufferHeight)
 {
 	VkTextureImage* tex = fb->GetTextureManager()->GetTexture(output.Type, output.Texture);
+	if (const char *name = fb->GetTextureManager()->GetTextureResourceName(output.Type))
+		fb->Resources().Touch(name, true);
 
 	VkImageView view;
 	std::unique_ptr<VulkanFramebuffer>* framebufferptr = nullptr;

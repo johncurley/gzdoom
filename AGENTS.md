@@ -36,24 +36,53 @@ it is unusual).
   hand: start `docs/frame-graph-resources.md`'s resource registry (backend-
   neutral, no scheduler, no Metal-specific decisions, fully verifiable on
   Linux) and **stop there** — the actual graph/scheduler and anything doing
-  Metal memory aliasing waits for item 3. **Started 2026-08-19** — phase 1
-  (`FrameResources`: `Declare`/`Touch`/`BeginFrame`/`ValidateFrame`/`Dump`) is
-  in `common/rendering/hwrenderer/frame/hw_resources.h`, shared off
+  Metal memory aliasing waits for item 3. **Started 2026-08-19, phase 1+2
+  now cover both Linux backends.** `FrameResources` (`Declare`/`Touch`/
+  `BeginFrame`/`ValidateFrame`/`Dump`) lives in
+  `common/rendering/hwrenderer/frame/hw_resources.h`, shared off
   `DFrameBuffer::Resources()` per open question 2 (Vulkan/GL analysis was
   already closed, so the shared location has more than one user). `r_resources`
-  and `r_resource_validate` added. Wired into `VkRenderBuffers` only (`Declare`
-  at all six creation sites: `SceneColor`/`SceneDepthStencil`/`SceneNormal`/
-  `SceneFog`/`PipelineImage[0..1]`/`PipelineDepthStencil`) — chosen over
-  `MtRenderBuffers` because Metal doesn't compile on this Linux box; open
-  question 4's "simplest resources first" still applies, Vulkan's render
-  buffers are this session's equivalent. Verified for real: builds clean,
-  and `r_resources` was run against the RX 550 (not Xvfb — Xvfb has no DRI3,
-  Vulkan surface creation fails there) and printed correct per-resource sizes
-  and a 1.3 MB total at startup resolution. **`Touch` is not wired anywhere
-  yet** — every resource reports untouched, which is expected and not a bug;
-  no bind call sites have been instrumented. Not done: GL wiring, the AO
-  module (Metal-only, needs item 3 first anyway), and `Touch` calls at any
-  bind site — all left for the next session per "stop there."
+  and `r_resource_validate` added.
+
+  **Declare** wired into both `VkRenderBuffers` and `FGLRenderBuffers` at
+  every creation site (`SceneColor`/`SceneDepthStencil`/`SceneNormal`/
+  `SceneFog`/`PipelineImage[0..1]`/`PipelineDepthStencil`) — Vulkan and GL
+  stood in for `MtRenderBuffers` (open question 4's "simplest resources
+  first") because Metal doesn't compile on this Linux box. GL needed one
+  extra wrinkle Vulkan didn't: `CreateScene`'s four branches (MSAA ×
+  `gl_ssao`) each back a different subset with a texture or a renderbuffer,
+  and when there's no MSAA, `SceneColor` doesn't exist as its own object —
+  it aliases `PipelineImage[0]`, declared as both names pointing at the same
+  handle. `CreateScene` now `Forget()`s all four Scene* names before
+  re-declaring only what that branch actually creates, so toggling
+  `gl_ssao` off doesn't leave a stale `SceneFog`/`SceneNormal` entry behind.
+
+  **Touch** wired at both backends' real bind choke points, not scattered
+  per postprocess pass: Vulkan gets one function,
+  `VkTextureManager::GetTextureResourceName()`, mirroring `GetTexture`'s
+  `PPTextureType` dispatch, called from `VkDescriptorSetManager::GetInput`
+  (read) and `VkRenderBuffers::GetOutput` (write); GL has no equivalent
+  resolver so `Touch` calls live directly in `FGLRenderBuffers`'
+  `BindSceneFB`/`BindSceneColorTexture`/`BindSceneFogTexture`/
+  `BindSceneNormalTexture`/`BindSceneDepthTexture`/`BindCurrentTexture`/
+  `BindCurrentFB`/`BindNextFB`. `PPTexture`/`SwapChain`/`ShadowMap` aren't
+  declared yet on either backend, so they're skipped, not touched.
+
+  Verified for real, not just compiled: both backends built clean and ran
+  five real seconds of actual DOOM2 MAP01 gameplay on the RX 550 (Wayland,
+  not Xvfb — Xvfb has no DRI3, Vulkan surface creation fails there) with no
+  crash. Separately, the exact CI smoke-test command (Xvfb, X11, `+quit`,
+  GL) was run locally with `+r_resource_validate 1 +r_resources` before
+  `+quit`: `PipelineImage[0]` already shows `w`/`r` even under `+quit`'s
+  short-circuit — some minimal pipeline draw happens before quit, so this
+  is confirmed live, not just plausible from code reading — and zero
+  `stale size:` lines. CI (`continuous_integration.yml`) now runs that same
+  addition and fails the job on any `stale size:` line; deliberately not
+  gated on "untouched," since most resources are legitimately never bound
+  this early and asserting the report is fully empty would be a permanent
+  false failure. Not done: the AO module and Metal wiring (both blocked on
+  item 3 regardless), and `PPTexture` instances aren't declared as
+  resources at all yet — left for whenever the next session picks this up.
 - **Current handoff:** `docs/handoff-macos-2026-08-18.md` — written from the
   Linux side once this session's audit tranche (item 14) closed out. Confirms
   nothing here touches Cocoa/Metal, restates macOS priority order (item 3,

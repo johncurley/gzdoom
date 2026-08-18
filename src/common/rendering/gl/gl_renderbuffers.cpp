@@ -39,6 +39,24 @@ CVAR(Int, gl_multisample, 1, CVAR_ARCHIVE|CVAR_GLOBALCONFIG);
 namespace OpenGLRenderer
 {
 
+static ResourceFormat GLToResourceFormat(GLuint format)
+{
+	switch (format)
+	{
+	case GL_RGBA16F:          return ResourceFormat::RGBA16F;
+	case GL_RGBA8:             return ResourceFormat::RGBA8;
+	case GL_DEPTH24_STENCIL8: return ResourceFormat::D24S8;
+	// GL_RGB10_A2 has no dedicated enum entry; RGBA8 is the closest 4-byte label.
+	case GL_RGB10_A2:          return ResourceFormat::RGBA8;
+	default:                   return ResourceFormat::Unknown;
+	}
+}
+
+static void *GLResourceHandle(GLuint handle)
+{
+	return (void *)(uintptr_t)handle;
+}
+
 //==========================================================================
 //
 // Initialize render buffers and textures used in rendering passes
@@ -162,6 +180,10 @@ void FGLRenderBuffers::Setup(int width, int height, int sceneWidth, int sceneHei
 	mSceneWidth = sceneWidth;
 	mSceneHeight = sceneHeight;
 
+	// Pipeline/Scene buffers below are allocated at (width, height), the pipeline
+	// size -- see the matching note in VkRenderBuffers::BeginFrame.
+	screen->Resources().BeginFrame(width, height);
+
 	glBindTexture(GL_TEXTURE_2D, textureBinding);
 	glActiveTexture(activeTex);
 	glBindRenderbuffer(GL_RENDERBUFFER, 0);
@@ -191,6 +213,16 @@ void FGLRenderBuffers::CreateScene(int width, int height, int samples, bool need
 {
 	ClearScene();
 
+	// Which of these four exist, and what backs them (texture vs renderbuffer,
+	// aliasing PipelineImage[0] or not), depends on the branch below -- so
+	// forget all four first and only re-declare the ones this branch actually
+	// creates. Otherwise a stale entry survives e.g. SSAO being turned off.
+	auto &resources = screen->Resources();
+	resources.Forget("SceneColor");
+	resources.Forget("SceneDepthStencil");
+	resources.Forget("SceneFog");
+	resources.Forget("SceneNormal");
+
 	if (samples > 1)
 	{
 		if (needsSceneTextures)
@@ -201,6 +233,15 @@ void FGLRenderBuffers::CreateScene(int width, int height, int samples, bool need
 			mSceneNormalTex = Create2DMultisampleTexture("SceneNormal", GL_RGB10_A2, width, height, samples, false);
 			mSceneFB = CreateFrameBuffer("SceneFB", mSceneMultisampleTex, {}, {}, mSceneDepthStencilTex, true);
 			mSceneDataFB = CreateFrameBuffer("SceneGBufferFB", mSceneMultisampleTex, mSceneFogTex, mSceneNormalTex, mSceneDepthStencilTex, true);
+
+			resources.Declare({ "SceneColor", "FGLRenderBuffers", width, height, samples,
+				ResourceFormat::RGBA16F, { SizeRule::SceneFull } }, GLResourceHandle(mSceneMultisampleTex.handle));
+			resources.Declare({ "SceneDepthStencil", "FGLRenderBuffers", width, height, samples,
+				ResourceFormat::D24S8, { SizeRule::SceneFull } }, GLResourceHandle(mSceneDepthStencilTex.handle));
+			resources.Declare({ "SceneFog", "FGLRenderBuffers", width, height, samples,
+				ResourceFormat::RGBA8, { SizeRule::SceneFull } }, GLResourceHandle(mSceneFogTex.handle));
+			resources.Declare({ "SceneNormal", "FGLRenderBuffers", width, height, samples,
+				GLToResourceFormat(GL_RGB10_A2), { SizeRule::SceneFull } }, GLResourceHandle(mSceneNormalTex.handle));
 		}
 		else
 		{
@@ -208,6 +249,11 @@ void FGLRenderBuffers::CreateScene(int width, int height, int samples, bool need
 			mSceneDepthStencilBuf = CreateRenderBuffer("SceneDepthStencil", GL_DEPTH24_STENCIL8, width, height, samples);
 			mSceneFB = CreateFrameBuffer("SceneFB", mSceneMultisampleBuf, mSceneDepthStencilBuf);
 			mSceneDataFB = CreateFrameBuffer("SceneGBufferFB", mSceneMultisampleBuf, mSceneDepthStencilBuf);
+
+			resources.Declare({ "SceneColor", "FGLRenderBuffers", width, height, samples,
+				ResourceFormat::RGBA16F, { SizeRule::SceneFull } }, GLResourceHandle(mSceneMultisampleBuf.handle));
+			resources.Declare({ "SceneDepthStencil", "FGLRenderBuffers", width, height, samples,
+				ResourceFormat::D24S8, { SizeRule::SceneFull } }, GLResourceHandle(mSceneDepthStencilBuf.handle));
 		}
 	}
 	else
@@ -219,12 +265,28 @@ void FGLRenderBuffers::CreateScene(int width, int height, int samples, bool need
 			mSceneNormalTex = Create2DTexture("SceneNormal", GL_RGB10_A2, width, height);
 			mSceneFB = CreateFrameBuffer("SceneFB", mPipelineTexture[0], {}, {}, mSceneDepthStencilTex, false);
 			mSceneDataFB = CreateFrameBuffer("SceneGBufferFB", mPipelineTexture[0], mSceneFogTex, mSceneNormalTex, mSceneDepthStencilTex, false);
+
+			// No MSAA: the scene renders straight into PipelineImage[0], already
+			// declared in CreatePipeline -- alias it under the SceneColor name too.
+			resources.Declare({ "SceneColor", "FGLRenderBuffers", width, height, 1,
+				ResourceFormat::RGBA16F, { SizeRule::SceneFull } }, GLResourceHandle(mPipelineTexture[0].handle));
+			resources.Declare({ "SceneDepthStencil", "FGLRenderBuffers", width, height, 1,
+				ResourceFormat::D24S8, { SizeRule::SceneFull } }, GLResourceHandle(mSceneDepthStencilTex.handle));
+			resources.Declare({ "SceneFog", "FGLRenderBuffers", width, height, 1,
+				ResourceFormat::RGBA8, { SizeRule::SceneFull } }, GLResourceHandle(mSceneFogTex.handle));
+			resources.Declare({ "SceneNormal", "FGLRenderBuffers", width, height, 1,
+				GLToResourceFormat(GL_RGB10_A2), { SizeRule::SceneFull } }, GLResourceHandle(mSceneNormalTex.handle));
 		}
 		else
 		{
 			mSceneDepthStencilBuf = CreateRenderBuffer("SceneDepthStencil", GL_DEPTH24_STENCIL8, width, height);
 			mSceneFB = CreateFrameBuffer("SceneFB", mPipelineTexture[0], mSceneDepthStencilBuf);
 			mSceneDataFB = CreateFrameBuffer("SceneGBufferFB", mPipelineTexture[0], mSceneDepthStencilBuf);
+
+			resources.Declare({ "SceneColor", "FGLRenderBuffers", width, height, 1,
+				ResourceFormat::RGBA16F, { SizeRule::SceneFull } }, GLResourceHandle(mPipelineTexture[0].handle));
+			resources.Declare({ "SceneDepthStencil", "FGLRenderBuffers", width, height, 1,
+				ResourceFormat::D24S8, { SizeRule::SceneFull } }, GLResourceHandle(mSceneDepthStencilBuf.handle));
 		}
 	}
 }
@@ -241,10 +303,16 @@ void FGLRenderBuffers::CreatePipeline(int width, int height)
 	ClearEyeBuffers();
 
 	mPipelineDepthStencilBuf = CreateRenderBuffer("PipelineDepthStencil", GL_DEPTH24_STENCIL8, width, height);
+	screen->Resources().Declare({ "PipelineDepthStencil", "FGLRenderBuffers", width, height, 1,
+		ResourceFormat::D24S8, { SizeRule::SceneFull } }, GLResourceHandle(mPipelineDepthStencilBuf.handle));
+
 	for (int i = 0; i < NumPipelineTextures; i++)
 	{
 		mPipelineTexture[i] = Create2DTexture("PipelineTexture", GL_RGBA16F, width, height);
 		mPipelineFB[i] = CreateFrameBuffer("PipelineFB", mPipelineTexture[i], mPipelineDepthStencilBuf);
+
+		screen->Resources().Declare({ i == 0 ? "PipelineImage[0]" : "PipelineImage[1]", "FGLRenderBuffers",
+			width, height, 1, ResourceFormat::RGBA16F, { SizeRule::SceneFull } }, GLResourceHandle(mPipelineTexture[i].handle));
 	}
 }
 
@@ -658,6 +726,14 @@ void FGLRenderBuffers::CreateShadowMap()
 void FGLRenderBuffers::BindSceneFB(bool sceneData)
 {
 	glBindFramebuffer(GL_FRAMEBUFFER, sceneData ? mSceneDataFB.handle : mSceneFB.handle);
+	auto &resources = screen->Resources();
+	resources.Touch("SceneColor", true);
+	resources.Touch("SceneDepthStencil", true);
+	if (sceneData)
+	{
+		resources.Touch("SceneFog", true);
+		resources.Touch("SceneNormal", true);
+	}
 }
 
 //==========================================================================
@@ -673,6 +749,7 @@ void FGLRenderBuffers::BindSceneColorTexture(int index)
 		glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, mSceneMultisampleTex.handle);
 	else
 		glBindTexture(GL_TEXTURE_2D, mPipelineTexture[0].handle);
+	screen->Resources().Touch("SceneColor", false);
 }
 
 //==========================================================================
@@ -688,6 +765,7 @@ void FGLRenderBuffers::BindSceneFogTexture(int index)
 		glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, mSceneFogTex.handle);
 	else
 		glBindTexture(GL_TEXTURE_2D, mSceneFogTex.handle);
+	screen->Resources().Touch("SceneFog", false);
 }
 
 //==========================================================================
@@ -703,6 +781,7 @@ void FGLRenderBuffers::BindSceneNormalTexture(int index)
 		glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, mSceneNormalTex.handle);
 	else
 		glBindTexture(GL_TEXTURE_2D, mSceneNormalTex.handle);
+	screen->Resources().Touch("SceneNormal", false);
 }
 
 //==========================================================================
@@ -718,6 +797,7 @@ void FGLRenderBuffers::BindSceneDepthTexture(int index)
 		glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, mSceneDepthStencilTex.handle);
 	else
 		glBindTexture(GL_TEXTURE_2D, mSceneDepthStencilTex.handle);
+	screen->Resources().Touch("SceneDepthStencil", false);
 }
 
 //==========================================================================
@@ -729,6 +809,7 @@ void FGLRenderBuffers::BindSceneDepthTexture(int index)
 void FGLRenderBuffers::BindCurrentTexture(int index, int filter, int wrap)
 {
 	mPipelineTexture[mCurrentPipelineTexture].Bind(index, filter, wrap);
+	screen->Resources().Touch(mCurrentPipelineTexture == 0 ? "PipelineImage[0]" : "PipelineImage[1]", false);
 }
 
 //==========================================================================
@@ -740,6 +821,7 @@ void FGLRenderBuffers::BindCurrentTexture(int index, int filter, int wrap)
 void FGLRenderBuffers::BindCurrentFB()
 {
 	mPipelineFB[mCurrentPipelineTexture].Bind();
+	screen->Resources().Touch(mCurrentPipelineTexture == 0 ? "PipelineImage[0]" : "PipelineImage[1]", true);
 }
 
 //==========================================================================
@@ -752,6 +834,7 @@ void FGLRenderBuffers::BindNextFB()
 {
 	int out = (mCurrentPipelineTexture + 1) % NumPipelineTextures;
 	mPipelineFB[out].Bind();
+	screen->Resources().Touch(out == 0 ? "PipelineImage[0]" : "PipelineImage[1]", true);
 }
 
 //==========================================================================
