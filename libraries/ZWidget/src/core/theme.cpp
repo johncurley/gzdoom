@@ -502,6 +502,50 @@ bool detected = false;
 			}
 		}
 
+		// 2b. GNOME/GTK color-scheme via gsettings -- a genuine positive
+		// signal either way, unlike the settings.ini check above (which can
+		// only say "dark" or "we don't know"). Without this, an out-of-the-
+		// box light GTK/GNOME desktop with no kdeglobals and no explicit
+		// prefer-dark-theme override fell all the way through to this
+		// function's hardcoded dark defaults -- the opposite of what "auto"
+		// is supposed to do. Mirrors the same gsettings query this fork's
+		// own I_IsDarkMode() (src/common/platform/posix/native/i_system.cpp)
+		// already uses; duplicated rather than called directly so this file
+		// stays free of a fork-specific dependency, since it is a published
+		// subtree.
+		if (!detected)
+		{
+			FILE* pipe = popen("gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null", "r");
+			if (pipe)
+			{
+				char buffer[128] = {};
+				if (fgets(buffer, sizeof(buffer), pipe) && buffer[0] != 0)
+				{
+					std::string result(buffer);
+					if (result.find("dark") != std::string::npos)
+					{
+						detected = true;
+					}
+					else if (result.find("'default'") != std::string::npos || result.find("'prefer-light'") != std::string::npos)
+					{
+						// Explicit light signal: seed from LightWidgetTheme's
+						// background/foreground rather than leaving the dark
+						// defaults in place. The luminance-based derivation
+						// below (`if (detected)`) then builds the rest of the
+						// palette to match, exactly as it would for a real
+						// detected light background from KDE or Xresources.
+						bgMain = Colorf::fromRgb(0xF0F0F0);
+						fgMain = Colorf::fromRgb(0x191919);
+						detected = true;
+					}
+					// Anything else (gsettings not found, key unset, GNOME
+					// not in use) is "we don't know" -- leave detected false
+					// and fall through to the remaining probes.
+				}
+				pclose(pipe);
+			}
+		}
+
 		// 3. Xresources, for setups with no desktop environment at all
 		if (home && !detected)
 		{

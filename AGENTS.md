@@ -1023,7 +1023,7 @@ would have ruled out gzdoom for up front.
 
 ---
 
-### 14. Fresh independent audit, 2026-08-18 — 7 findings; #1 and #5 fixed, #2/3/4/6/7 open
+### 14. Fresh independent audit, 2026-08-18 — 7 findings; #1/#5/#6/#7 fixed, #2/3/4 open (deliberately)
 
 With items 1-13 all closed or blocked on hardware this session doesn't have,
 ran a genuinely independent audit sweep: `docs/audits/audit-contract-linux.md`
@@ -1068,36 +1068,86 @@ read `AGENTS.md` until its findings were written. Full report:
   a plain launch never touches `InitEGL` at all)
   exercises the full `InitEGL` path, prints `GL_VERSION` correctly, and
   `/tmp/gzdoom_debug.log` is never recreated.
+- **Finding 6 (MEDIUM, low-confidence)** — theme auto-detection had no
+  positive "light" signal from GTK/GNOME (only a dark-theme override was
+  checked), so an out-of-the-box light GTK desktop with no `kdeglobals` and
+  no `.Xresources` override got the hardcoded dark palette under
+  `ui_theme 0`. Fixed with the same `gsettings get
+  org.gnome.desktop.interface color-scheme` query this fork's own
+  `I_IsDarkMode()` (`i_system.cpp`) already uses — duplicated rather than
+  called directly so `theme.cpp` stays free of a fork-specific dependency,
+  since it's published-subtree code. An explicit non-dark result now seeds
+  `bgMain`/`fgMain` from `LightWidgetTheme`'s colors and sets `detected`,
+  which lets the existing luminance-based derivation below build the rest of
+  the palette correctly — no new derivation logic needed, just feeding it a
+  light seed instead of leaving the dark defaults in place. Verified the
+  command and its quoted-output format directly on this machine
+  (`gsettings get org.gnome.desktop.interface color-scheme` → `'prefer-dark'`,
+  confirming the substring match against real dconf output); could not
+  verify the light branch end-to-end without disturbing this KDE desktop's
+  real config (`kdeglobals` fires first here regardless, so the new code
+  path isn't reachable in a normal launch on this box either way) — code
+  compiles clean and reasoning holds, same evidentiary bar the audit itself
+  used for this finding.
+- **Finding 7 (MEDIUM)** — the GLX fallback path in `gl_sysfb.cpp` (both
+  constructors have one) failed completely silently at three points:
+  `InitGLX()` returning false, `glXChooseVisual` returning null, and
+  `glXCreateContext`'s result never checked before being handed to
+  `glXMakeCurrent` — the same "black frame, nothing in the log" shape as
+  this subsystem's costliest historical bug class, per the audit contract's
+  own framing. Added `fprintf(stderr, ...)` on all three failure branches in
+  both constructors, matching the style `InitEGL`'s error paths already use,
+  plus a success message on the first constructor's block (which was
+  missing one the second already had). Compiles clean; the GLX path itself
+  still can't be exercised live on this hardware since EGL always succeeds
+  first — same limitation the audit noted, unchanged by this fix.
 
-**Still open, not acted on this session:**
+**Still open, deliberately not chased further:**
 
 - **Finding 2 (MEDIUM, protocol)** — the `WM_TAKE_FOCUS`/viewability guard
   (item 5's fix) narrows the `BadMatch` race to a single round-trip gap
   rather than closing it formally, and no process-wide error handler exists
   outside the narrow one around `XShmAttach` — a hit would still be fatal via
-  Xlib's default `exit(1)`. Reasoned from code/ICCCM only; the `twm` harness
-  that would exercise it is the thing item 13 found broken.
+  Xlib's default `exit(1)`. Reasoned from code/ICCCM only.
 - **Finding 3 (MEDIUM, correctness)** — `pendingActivate` is a sticky,
   un-cancelable boolean; a `Hide()`-then-later-unrelated-`Show()` sequence
   could discharge a stale activation. Not proven live against any current
-  call site — may be latent rather than actively wrong today.
+  call site — may be latent rather than actively wrong today; the audit
+  could not find a call site that actually produces the triggering sequence.
 - **Finding 4 (LOW/INFO, protocol)** — `_NET_ACTIVE_WINDOW` sends
   `CurrentTime` rather than an event timestamp; deviates from EWMH's
   recommendation, though extremely common practice and not observable as
   broken under KWin.
-- **Finding 6 (MEDIUM, low-confidence)** — theme auto-detection has no
-  positive "light" signal from GTK (only a dark-theme override is checked),
-  so an out-of-the-box light GTK desktop with no `kdeglobals` and no
-  `.Xresources` override gets the hardcoded dark palette under `ui_theme 0`.
-  Could not verify on this KDE machine without disturbing the working
-  desktop's config files.
-- **Finding 7 (MEDIUM)** — the GLX fallback path in `gl_sysfb.cpp` fails
-  completely silently at three points (`InitGLX()` false, `glXChooseVisual`
-  null, `glXCreateContext` unchecked before `glXMakeCurrent`) — the same
-  "black frame, nothing in the log" shape as this subsystem's costliest
-  historical bug class, per the audit contract's own framing. Narrow
-  precondition (only reachable if EGL fails or isn't compiled in) and never
-  exercised on this hardware, so not verified live.
+
+**Tried and abandoned, 2026-08-18: a non-EWMH WM harness to dynamically
+verify Findings 2/3 and item 5's residual case.** `twm` (item 13) was already
+known broken here for reasons outside this codebase. `blackbox` 0.77 turned
+out to have grown full EWMH support (`_NET_ACTIVE_WINDOW` present) somewhere
+in its history — not useful for this test, though a clean run under it (a
+bare Xlib client, real reparenting/decoration, no hang) is a second
+independent confirmation that item 13's deadlock was `twm`-specific, not a
+property of this host in general. `evilwm` (AUR, genuinely ICCCM-only, no
+EWMH) installed clean but crashed within ~35ms of every launch attempt for an
+unknown reason — `Xorg`'s own log shows nothing but routine driver-probe
+noise around the crash, and `evilwm`'s own stderr wasn't captured since the
+session was started interactively. Also hit two real process-management
+traps worth remembering if this is picked up again: **`startx`/`xinit`
+terminates the whole X server when its client (the WM) exits** — do not kill
+the WM process expecting the server to survive, start a fresh session
+instead; and **`systemd-logind` can leave input device file descriptors
+stuck ("not releasing fd ... still in use") across a `kill -TERM` on
+`Xorg`**, which then blocks the *next* session from acquiring them — a fresh
+login (not just a fresh `startx` in the same shell) clears it.
+
+**Decided not to keep chasing this.** None of Findings 2/3/4 or item 5's
+residual case are live, confirmed-broken behavior under any window manager
+anyone would actually run (KWin, GNOME, sway, i3 — all EWMH, all clean in
+every test so far); Finding 3's own audit note says it may not be reachable
+by any current caller at all. The contract's own evidence standard treats
+"reasoned from code and spec, not dynamically verified" as a legitimate,
+named outcome, not a gap — and that's what all three now are. Revisit only
+if a non-EWMH WM becomes available for some other reason; not worth further
+dedicated setup effort for this alone.
 
 ## Tasks — macOS
 

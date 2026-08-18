@@ -358,9 +358,18 @@ SystemGLFrameBuffer::SystemGLFrameBuffer(void *hMonitor, bool fullscreen)
       if (vi) {
         GLXContext context =
             zd_glXCreateContext((Display*)X11NativeDisplay, vi, NULL, GL_TRUE);
-        zd_glXMakeCurrent((Display*)X11NativeDisplay, window, context);
+        if (context) {
+          zd_glXMakeCurrent((Display*)X11NativeDisplay, window, context);
+          fprintf(stderr, "[NATIVE] GLX initialized successfully\n");
+        } else {
+          fprintf(stderr, "GLX: Failed to create context!\n");
+        }
         if (zd_XFree) zd_XFree(vi);
+      } else {
+        fprintf(stderr, "GLX: Failed to choose visual!\n");
       }
+    } else {
+      fprintf(stderr, "GLX: Failed to initialize (libGL.so.1 not found or required symbols missing)!\n");
     }
   }
 }
@@ -409,11 +418,19 @@ SystemGLFrameBuffer::SystemGLFrameBuffer(void *display, void *surface,
         XVisualInfo *vi = zd_glXChooseVisual((Display *)display, screen, visual_attribs);
         if (vi) {
           GLXContext context = zd_glXCreateContext((Display *)display, vi, NULL, GL_TRUE);
-          zd_glXMakeCurrent((Display *)display, window, context);
-          fprintf(stderr, "[NATIVE] GLX initialized successfully\n");
+          if (context) {
+            zd_glXMakeCurrent((Display *)display, window, context);
+            fprintf(stderr, "[NATIVE] GLX initialized successfully\n");
+          } else {
+            fprintf(stderr, "GLX: Failed to create context!\n");
+          }
           if (zd_XFree)
             zd_XFree(vi);
+        } else {
+          fprintf(stderr, "GLX: Failed to choose visual!\n");
         }
+      } else {
+        fprintf(stderr, "GLX: Failed to initialize (libGL.so.1 not found or required symbols missing)!\n");
       }
     }
   }
