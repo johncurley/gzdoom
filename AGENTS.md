@@ -543,6 +543,12 @@ case stays genuinely untested — no local harness has gotten a real ZWidget
 client past its own startup on this box, and that has now been shown twice,
 by two different mechanisms, not to be for want of patience.
 
+**Correction, same day, after trying the non-nested seat this section asked
+for: the "nested server" attribution above was wrong.** Real hardware `Xorg`
+(not `Xephyr`, not `Xvfb`) hit the identical whole-server-wedge signature.
+See item 13 below — the deadlock is real, reproduces on demand, and the
+variable is a window manager being present, not server nesting.
+
 The two sites are mutually exclusive on the axis nobody recorded: whether the
 observing session had an EWMH window manager. Under bare Xvfb, site A is
 certain and site B unreachable; under KWin (including XWayland), site A's branch
@@ -872,6 +878,102 @@ file's neighbourhood.
 
 Linux renderer changes can now be judged for smoothness the same way macOS ones
 can, not just by a person's impression.
+
+### 13. The X11 launcher's first paint can deadlock the whole server — new, severe, found testing item 5
+
+**Found 2026-08-18, testing item 5's last untested case, on a target
+completely different from what that item was chasing.** Not the
+`WM_TAKE_FOCUS`-while-unviewable race — a separate, more serious bug: the
+launcher's first repaint (`X11DisplayWindow::PresentBitmap`'s `XPutImage` of
+the whole backbuffer) can deadlock the **entire X connection**, for every
+client on the display, not just `gzdoom`.
+
+**First seen on `Xephyr`, corrected there, then reproduced identically on
+real hardware `Xorg`.** Item 5's "Attempted 2026-08-18 with Xephyr" entry
+above concluded this was a nested/software-server artifact, the same class as
+the `Xvfb`/Mesa EGL hang. **That attribution was wrong.** A real, non-nested
+`Xorg` session (`xorg-server`, `AMDGPU(0)` DDX, hardware GLAMOR confirmed in
+the log — `glamor X acceleration enabled on AMD Radeon RX 550`, not a
+software fallback) on a spare VT, running only `twm`, hit the identical
+signature: `gzdoom` launched via `startx` on `:1` produced no output past
+`X11Dynamic: Successfully loaded libX11.so.6` and never returned. So the
+"nested server" variable is eliminated; what's actually common to every
+failing case is **a window manager present** (`twm`), not the server
+implementation.
+
+**Deterministic under automated (no-interaction) launch — 5 for 5, not
+intermittent in the way it first looked.** Every fully automated attempt
+(zero mouse/keyboard activity after exec) hung solid:
+
+1. `gdb -p <pid> -batch -ex "thread apply all bt"` on `gzdoom` moved between
+   three different call sites across separate runs — `XOpenDisplay`,
+   `XGetGeometry` (`X11DisplayWindow::GetClientFrame`, mid-repaint), and
+   `XPutImage` (`PresentBitmap`) — all inside the same `poll()`-on-the-wire
+   shape (`xcb_writev`/`xcb_wait_for_reply64`/`xcb_connect_to_fd`).
+2. **Confirmed server-wide, not `gzdoom`-specific**, twice independently: a
+   plain `xdpyinfo` against the same display timed out while `gzdoom` was
+   stuck, and a from-scratch 20-line C program doing nothing but
+   `XOpenDisplay` + `XWarpPointer` + `XFlush` **also hung on connect**, while
+   `gzdoom` sat frozen on the same display. A server that can still accept
+   new clients would not do that — this is the whole dispatch loop stuck, not
+   one client being backpressured.
+3. `gdb` against the `Xorg` process itself, mid-hang, showed its main thread
+   idle in `epoll_wait()` — not computing, not blocked inside a request
+   handler, just not waking up for anything, including a brand-new
+   connection attempt on its listening socket.
+
+**One human-driven run did not hang, and does not contradict the above.**
+Asked the user to run the identical binary against the identical `:1`
+session themselves; on one earlier attempt they had to kill it (hung, matching
+the pattern above), but a later attempt worked, needing a mouse hover over
+the launcher window before it painted anything. Tested whether "any
+subsequent server activity" un-sticks an active hang: warped the pointer with
+the same C program against a `gzdoom` process that was already stuck — the
+warp program hung too, on the same server. That rules out "a later event
+kicks it loose" as the mechanism, which means the successful human run most
+likely never entered the race at all, and the mouse-hover requirement is a
+**separate, more benign issue** — the window not painting until it receives
+an `EnterNotify`/`MotionNotify`, unrelated to the deadlock.
+
+**What actually gates the deadlock, from evidence already on record above:**
+under **bare Xvfb with no window manager at all**, the same "Measured, bare
+Xvfb, launcher path" verification (see item 5, `2026-08-14`) ran the launcher
+unattended for the **full 25 seconds** with no hang. Only once a WM (`twm`)
+was introduced did every automated run fail. `twm` reparents every client
+into a decoration frame on map, generating a burst of `ReparentNotify` /
+`ConfigureNotify` (and depending on config, `Expose`) the client must read
+before it returns to writing. The shape this points at: `PresentBitmap`
+writes the entire backbuffer as one large synchronous `XPutImage` without
+returning to `X11Connection::ProcessEvents`'s read loop until the write
+completes; if the WM's reparenting burst arrives while that write is in
+flight and fills the client's own receive buffer, and the server's classic
+`IgnoreClient`-style backpressure (stop reading a client's requests once its
+own output to that client is backlogged) engages, both ends block on each
+other. Not yet proven at the protocol level — no `xtrace`/`strace` on this
+box (see item 5's tooling note) — but it is the only mechanism consistent
+with every observation above, including the no-WM control passing clean.
+
+**Consequence: this outranks the case item 5 was actually chasing.** The
+`WM_TAKE_FOCUS`-while-unviewable question got an incidental real-world
+answer along the way — the one clean human run reached gameplay under `twm`
+with no `BadMatch` and no crash, so that guard is working — but a launcher
+that can permanently wedge the entire X server on first paint, under any
+decorating window manager, unattended, is a correctness bug independent of
+that question and a much bigger deal for anyone running this backend outside
+a compositor that happens to avoid the race (KWin/XWayland has not reproduced
+it in any test run so far, but was also never tested unattended for this
+specific window).
+
+**Not fixed. Next steps for whoever picks this up:** get protocol-level
+visibility (`xtrace`, or Xorg `-logverbose` cranked up, or `strace` once
+available — none present on this box as of this session) to see the actual
+last request the server processed before going idle; and/or make
+`PresentBitmap` not hold a giant synchronous write across the point where the
+client should be draining events — chunking the `XPutImage`, moving to
+`MIT-SHM` (`XShmPutImage`), or interleaving an explicit event-drain are the
+candidate fixes, in ascending order of invasiveness. This is stock ZWidget
+code, not fork-specific — belongs in the same upstream conversation as items
+10/11, once characterized further.
 
 ---
 
