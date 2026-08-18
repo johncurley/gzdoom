@@ -31,19 +31,31 @@ it is unusual).
   entangled with the waylandpp→C-bindings replacement, so the branch pushed is
   the full `wayland-c-bindings` (12 commits, `zwidget-wayland-c-bindings-clean`
   on the fork) — see Tasks — Linux item 5.
-- **Current handoff:** `docs/handoff-ao-2026-08-16.md` — the AO session. macOS
+- **Current handoff:** `docs/handoff-macos-2026-08-18.md` — written from the
+  Linux side once this session's audit tranche (item 14) closed out. Confirms
+  nothing here touches Cocoa/Metal, restates macOS priority order (item 3,
+  Apple Silicon validation, is gating — everything downstream needs a known-
+  good Apple Silicon baseline, including the frame graph work), and is
+  explicit that the frame graph starts **after** item 3 has a real answer,
+  not on an arbitrary schedule.
+- **Previous handoff:** `docs/handoff-ao-2026-08-16.md` — the AO session. macOS
   items 1 and 2 closed, the compute-AO cost premise retired, three SSAO-residual
   suspects killed, and **one new unresolved bug found: compute AO is bistable**.
-  Start there. **New Tasks — macOS item 5**, from real play rather than
+  **New Tasks — macOS item 5**, from real play rather than
   measurement: intermittent freezing, suspect is runtime shader compilation
   (only two shaders are hand-written MSL; ~50 engine programs still compile
   GLSL→SPIR-V→MSL live on first hit). Confirm with `mt_frametrace` before
-  reaching for the metallib fix already scoped under "Shader strategy".
-- **Current handoff:** `docs/handoff-linux-2026-08-17.md` — what the Linux box
+  reaching for the metallib fix already scoped under "Shader strategy". Item
+  5's cause is now found (see the current handoff above) — this entry's
+  shader-compilation suspicion was excluded by measurement; kept for the
+  session-by-session record, not as live guidance.
+- **Previous handoff:** `docs/handoff-linux-2026-08-17.md` — what the Linux box
   should do first (verify the platform-keyed matrix baseline), the fatal X11
-  `BadMatch` as the highest-value item there, and what this session's
-  backend-agnostic instruments mean for that platform.
-- **Previous handoff:** `docs/handoff-matrix-2026-08-12.md` — the matrix suite
+  `BadMatch` as the highest-value item there, and what that session's
+  backend-agnostic instruments mean for that platform. Both since closed —
+  see Tasks — Linux items 5 and 13, and item 14 for the audit tranche that
+  followed.
+- **Older handoff:** `docs/handoff-matrix-2026-08-12.md` — the matrix suite
   made trustworthy (map choice by measurement, the status-bar-face
   nondeterminism, three silent failures made loud).
 - **Older handoff:** `docs/handoff-gl-blackframe.md` — the GL black-frame bug,
