@@ -1,27 +1,42 @@
 # Audit contract: GZDoom native POSIX platform layer (Linux/Wayland/X11)
 
+**Revised 2026-08-18.** This is the same contract, updated for what has
+changed since the first pass on 2026-08-12 — see the revision note at the end
+of §3 and §4 for exactly what moved. If you have a copy of the original
+contract cached or memorized, do not trust it; several of its claims about
+this codebase are now false, not just outdated in emphasis (raw input's X11
+gap in particular — read §4 before assuming it).
+
 You are being asked for an **independent, adversarial second opinion** on the
 Linux/BSD platform layer of a hobby Doom source port. This is a
-read-and-reason audit, not a build-and-test one.
+read-and-reason audit: read the code, form hypotheses, and where an existing
+tool can check one cheaply (§5.4's table), run it — but do not implement or
+commit a fix, and do not modify the build.
 
 **Do not read `AGENTS.md` until after you have written your findings.** It
 contains the maintainer's own conclusions, and the entire value of this
 exercise is that yours are formed independently. There is a step at the end
 that asks you to read it and diff your findings against it.
 
-This is the second contract of its kind. The first covered the Metal renderer,
-and it exists because a previous audit returned 18 findings of which **6 were
-false and the false ones were concentrated in the highest-severity slots** —
-both CRITICALs were wrong, and one suggested fix would have introduced a real
-bug. Sections 4, 5 and 6 are written to get more of the one genuinely valuable
-finding that audit produced and less of the rest. Read them carefully.
+This is the second contract of its kind (a third pass, counting this
+revision). The first covered the Metal renderer, and it exists because a
+previous audit returned 18 findings of which **6 were false and the false
+ones were concentrated in the highest-severity slots** — both CRITICALs were
+wrong, and one suggested fix would have introduced a real bug. Sections 4, 5
+and 6 are written to get more of the one genuinely valuable finding that audit
+produced and less of the rest. Read them carefully.
 
 A second reason to be careful here specifically: this subsystem is where the
 project's *own* history of confident-and-wrong is thickest. Four separate
 conclusions about a black GL frame were committed and then retracted over one
 session; three separate "the launcher is fixed now" claims changed nothing
-observable. The failure mode is always the same — a plausible mechanism,
-asserted without a control run.
+observable; and most recently, a full implement-rebuild-retest cycle went into
+a plausible, well-reasoned fix for a whole-server X11 deadlock that turned out
+to be caused by nothing in this codebase at all — a 30-line bare Xlib program
+with no gzdoom code reproduced the identical hang (`AGENTS.md` Tasks — Linux
+item 13). The failure mode is always the same — a plausible mechanism,
+asserted without a control run, and in item 13's case, without first checking
+whether the mechanism was even reachable from application code at all.
 
 ---
 
@@ -104,11 +119,16 @@ assuming.
 
 Consequences you must respect:
 
-- **`HAVE_VULKAN` defaults OFF** (`CMakeLists.txt:259`). An ordinary build has
-  OpenGL only. Vulkan exists on this hardware and is a real cross-check oracle,
-  but only in a build configured for it. Do not assume a Vulkan code path is
-  exercised by any default build, and note that **no CI job configures it
-  either**.
+- **`HAVE_VULKAN` auto-detects, and it is ON by default on this machine
+  now** (`CMakeLists.txt:259-285`, changed since the previous version of this
+  contract). Non-Apple platforms probe `find_package(Vulkan QUIET)`; if found,
+  `HAVE_VULKAN` defaults ON unless overridden. Confirmed here:
+  `build/CMakeCache.txt` has `HAVE_VULKAN:UNINITIALIZED=ON`, and
+  `libvulkan.so.1.4.357` is present. So an *ordinary* build on this box now
+  compiles the Vulkan backend in — do not assume otherwise, and do not assume
+  the reverse either without checking `build/CMakeCache.txt` first. One CI job
+  (`Linux GCC 12 Vulkan`) now builds it explicitly and is `compile_only`
+  (no GPU on the runner) — still no CI job *runs* it.
 - **Wayland, xkbcommon, X11, Xi, libGL and libEGL are `dlopen`'d, never linked.**
   ZWidget's CMake takes their *include* directories from `pkg-config` and links
   nothing (`libraries/ZWidget/CMakeLists.txt:15-31`); `gl_sysfb.cpp` resolves
@@ -146,12 +166,28 @@ Consequences you must respect:
   reused, so an existing `gzdoom.ini` asking for Metal (3) still means Metal
   (`src/common/rendering/v_video.cpp:139-168`). Do not report the gap as a
   bug or propose renumbering.
-- **Raw keyboard input exists on Wayland only.** X11 has no equivalent path;
-  `X11DisplayWindow::LockKeyboard()` is an empty stub with a comment saying so.
-  That is a known feature gap, not an oversight — see §4.
+- **Raw keyboard input now exists on both backends — this is a change from
+  the previous version of this contract, which called it Wayland-only.**
+  X11 gained `XI_RawKeyPress`/`XI_RawKeyRelease` via XInput2 on 2026-08-13
+  (`AGENTS.md` Tasks — Linux item 6), verified interactively but not through
+  this kind of adversarial read. It is a legitimate audit target in its own
+  right: check the `XIAllMasterDevices` subscription (an earlier draft of it
+  used `MasterPointerID` and silently dropped every raw keyboard event — the
+  bug class to look for is exactly that shape, a plausible-looking device/mask
+  argument that compiles and runs but selects the wrong event stream), the
+  keycode-minus-8 translation to evdev/`RawKeycode` numbering, and whether
+  `LockKeyboard()`/`UnlockKeyboard()` are symmetric with the Wayland
+  implementation.
 - **Tooling absent on this machine:** no PIL, no ImageMagick, no `xdotool`,
-  no `wmctrl`, no `ccache`. Any test you propose that needs to focus, move or
-  raise a window from a script cannot be run here.
+  no `wmctrl`, no `ccache`, no `strace`, no `xtrace`. Any test you propose
+  that needs to focus, move or raise a window from a script cannot be run
+  here, and neither can protocol-level tracing — a finding that would need
+  either is still worth filing, labelled as unverified.
+  **`Xephyr` and `xorg-xinit` are now installed** (added 2026-08-18, see item
+  13), so a nested or VT-attached real X server is reachable if a finding
+  needs one — but see item 13 before trusting either as a clean test
+  environment: both wedge under `twm` for reasons unrelated to this
+  codebase, confirmed with a bare Xlib client.
 
 ---
 
@@ -248,11 +284,26 @@ than obvious ones.
   the held-scancode set, because the key *release* that follows the press which
   closed a window still arrives — `wayland_display_backend.cpp:437-455`),
   missing punctuation mappings, and `GetKeyState` on mouse buttons.
-- **`in_keytrace` is a temporary diagnostic** and logs to **stderr**, not
-  `Printf`, deliberately: once video is up `Printf` goes to the in-game console
-  and cannot be captured from a piped run. It is scheduled for removal. Filing
-  "debug output left in" is accurate but already known; filing it as anything
-  above `info` is severity inflation.
+- **`in_keytrace` and `ZWIDGET_TRACE_REPEAT` are gone, not merely
+  deprecated** — removed 2026-08-13 once the X11 raw-input trace they existed
+  to support passed (`AGENTS.md` item 7). The previous version of this
+  contract listed `in_keytrace 1` as an available diagnostic; it is not
+  anymore. Do not file its absence as a finding, and do not expect it to work
+  if you try it.
+- **A whole-server X11 deadlock on this machine is confirmed unrelated to
+  this codebase — do not re-derive it as a finding.** Mapping a plain window
+  under `twm` and then making almost any request that needs a server reply
+  can hang the entire X connection, for every client on the display, not just
+  the one that mapped the window. Reproduced with a bare ~30-line Xlib
+  program containing no gzdoom or ZWidget code, run as the first client
+  against a freshly started server (`AGENTS.md` item 13, 2026-08-18). If your
+  own testing hits an X11 hang under a from-scratch `twm` session, check
+  item 13 before writing it up as a defect in this tree — it very likely
+  is not one. This does **not** mean every X11 hang report on this branch is
+  automatically the same thing; it means the null hypothesis for a *fresh*
+  one is "the host, not this code" and needs the same falsification (a bare
+  Xlib client, as the first thing to touch a clean server) before being
+  attributed here.
 
 ---
 
@@ -285,10 +336,10 @@ downgraded to an explicitly-labelled *observation* or dropped.
 
    | Tool | What it gives you |
    |---|---|
-   | `python3 tools/matrix/run.py [--only C] [--scene doom2\|doom1]` | golden-image regression over 11 postprocess configs, own config file, pinned window, warmup launch |
-   | `python3 tools/matrix/crossbackend.py --backends gl,vulkan` | **two independent implementations compared against each other** — needs no baseline file and no determinism across time. Run `--selfcheck` first and believe it. |
-   | `in_keytrace 1` | every key event to **stderr** as `down`/`up`/`rep`/`rawdn`/`rawup`/`mdn`/`mup`/`wheel`, plus the held-button set once per tic |
+   | `python3 tools/matrix/run.py [--only C] [--scene doom2\|doom1]` | golden-image regression over 11 postprocess configs, keyed per platform (`platforms.linux`/`platforms.darwin` in `baseline.json` — do not compare against a `darwin` run), own config file, pinned window, warmup launch |
+   | `python3 tools/matrix/crossbackend.py --backends gl,vulkan` | **two independent implementations compared against each other** — needs no baseline file and no determinism across time, and `HAVE_VULKAN` is ON in this machine's default build (see §3) so both backends are actually present. Run `--selfcheck` first and believe it. Has its own `DEGENERATE_MEAN` guard against a relation resting on a blank capture — don't propose re-adding one. |
    | `ZWIDGET_DISPLAY_BACKEND=...` | select the ZWidget backend on one binary; default probe order is Wayland → X11 → SDL2 |
+   | `vid_stalltrace <ms>` / `vid_frametrace` | backend-agnostic instruments added since the previous version of this contract (`v_video.h`'s `VLoopPhase`/`VLoopContext`, `V_LoopTraceBoundary()` in `D_DoomLoop`) — a slow game-loop iteration broken into named phases, and the true frame interval, both to stderr, both silent unless armed. Not a substitute for `matrix.py`'s pixel-level checks, but the right instrument for a hitching/stall claim instead of a rendering-correctness one. |
    | `MESA_DEBUG=1` | names the failing GL call on stderr, free. It is what cracked the GL black-frame bug (17,423 `GL_INVALID_OPERATION in glUniform(program not linked)` per run). **`gl_debug_level` produces nothing here** — the context is not a debug context; do not propose it. |
    | `MESA_GL_VERSION_OVERRIDE` / `MESA_GLSL_VERSION_OVERRIDE` | force an older GL/GLSL profile to exercise version-gated paths |
    | `spectacle -b -n -f -o out.png` | screenshot a Wayland-native window. X11 root grabs and ffmpeg `x11grab` only see XWayland and come back **black**. |
@@ -324,89 +375,65 @@ to fill space. Three well-evidenced findings beat eighteen.
 
 Answer these explicitly, in addition to whatever you find on your own. Both are
 genuinely open — neither has an answer waiting in `AGENTS.md` for you to match.
+(The previous version of this contract's two questions — the Wayland
+first-paint fix and the X11 `BadMatch` — are both resolved: the first does
+not reproduce under a real compositor, the second was fixed and published
+upstream as `dd88a86b7`. Do not re-open either without new evidence.)
 
-**Q1 — The Wayland first-paint fix has no control run.**
+**Q1 — The new X11 raw-input path (XInput2) has not had an adversarial read.**
 
-Symptom as reported: the launcher comes up blank and stays blank until an
-unrelated event (moving the pointer over it) happens. The fix sets
-`window->m_NeedsUpdate = true` unconditionally in
-`xdg_surface_handle_configure`, immediately after `xdg_surface_ack_configure`
-(`libraries/ZWidget/src/window/wayland/wayland_display_window.cpp:22-43`). The
-stated reasoning is that `xdg_toplevel.configure` only requests a paint when it
-is given a non-zero size (`OnXDGToplevelConfigureEvent`, same file, 384-394),
-that a compositor's **first** configure is normally 0x0 — that being how it
-tells the client to choose its own size — and that `m_NeedsUpdate` starts true
-but the run loop's `CheckNeedsUpdate()` can consume it before the handshake
-completes.
+Landed 2026-08-13 (`x11_display_window.cpp`, `XI_RawKeyPress`/
+`XI_RawKeyRelease`), verified only by interactive play, and it already had one
+mistake caught informally rather than by review: an early draft subscribed
+`MasterPointerID` instead of `XIAllMasterDevices` and silently dropped every
+raw keyboard event — no crash, no error, just nothing arriving. That is the
+bug shape worth hunting for here: a device/mask/scope argument that compiles,
+runs, and produces *plausible* output while actually being wrong.
 
-**This rests entirely on a reading of the xdg-shell protocol. It has no
-measurement behind it, and it could not be reproduced on the machine that wrote
-it** — the launcher painted on every attempt, before and after the change.
+1. Check the actual `XISelectEvents` call and mask construction against what
+   Wayland's raw-input path does for the same feature — do they select the
+   same event scope, or could X11 be over- or under-selecting relative to it?
+2. Check the keycode translation (X11 keycode minus 8, to land on evdev/
+   `RawKeycode` numbering) at every call site it's used, not just the one that
+   was tested interactively — is there a second path (a different event type,
+   a different device class) that needs the same offset and doesn't have it?
+3. Check `LockKeyboard()`/`UnlockKeyboard()` symmetry against the Wayland
+   implementation: same enable/disable moments, same interaction with the
+   raw/cooked switch-over path in `nativevideo.cpp` (§4's `ResetButtonStates`
+   note applies here too — a keyboard lock that doesn't reset button state on
+   a path switch reproduces the exact stuck-key shape that trap exists for).
+4. Is this the fork's code or does it touch ZWidget subtree files needing
+   the cherry-pick-and-publish procedure? Say which files.
 
-Derive from the protocol and the code:
+**Q2 — Is the `WM_TAKE_FOCUS`-while-unviewable guard actually sufficient?**
 
-1. **Is the fix correct** — does setting the flag at the ack point actually
-   guarantee a buffer is attached and committed after every configure? Trace it
-   through: `CheckNeedsUpdate()` (`wayland_display_backend.cpp:370-380`) →
-   `windowHost->OnWindowPaint()` → `Widget::Repaint()`
-   (`libraries/ZWidget/src/core/widget.cpp:435-445`) →
-   `WaylandDisplayWindow::PresentBitmap()` (549-line file, ~349-370). Note
-   `Repaint()` returns early if there is no `DispCanvas`, `PresentBitmap()`
-   does nothing if `CreateBuffers()` declined, and `CreateBuffers()` returns
-   early on a non-positive size and **returns before creating any SHM buffer at
-   all** when `m_renderAPI` is `OpenGL` or `Vulkan`.
-2. **Is it sufficient?** Name what a compositor would have to do for the
-   launcher to still come up blank with this fix in place. Candidates worth
-   ruling in or out explicitly: a first configure that arrives before
-   `DispCanvas` exists; a window whose `m_LogicalSize` is still 0x0 at first
-   paint; the `RenderAPI::OpenGL` path, where `Show()` commits without
-   attaching a buffer (`wayland_display_window.cpp:241-260`) and content is
-   supposed to arrive via `eglSwapBuffers` instead; and the interaction with
-   `m_FrameCallback`, which `DrawSurface()` will not re-arm while one is
-   pending.
-3. **Is it in the right place?** If a better fix exists — for example driving
-   the paint from `Show()` or from the toplevel configure with a size fallback
-   — say which, and what evidence would distinguish it from this one.
+This is a read-only question — the live harness for testing it (`twm` on this
+machine) is confirmed broken for reasons outside this codebase (item 13), so
+there is no test to run; reason from ICCCM and the code alone, and say
+explicitly that you could not verify it dynamically.
 
-The maintainer's planned test is to reproduce the blank launcher on the pre-fix
-commit (that is the control; without it the fix proves nothing) and then show
-it painting after. Tell them what a *failure to reproduce on the pre-fix
-commit* would imply about the fix, so that outcome is informative rather than
-merely inconclusive. This matters beyond the fork: it is an upstream ZWidget
-bug affecting every ZWidget Wayland application, and it is queued for a PR to
-dpjudas.
+The fix (`89d79bcbe`, published as `dd88a86b7`) makes both
+`X11DisplayWindow::Activate()`'s fallback branch and the `WM_TAKE_FOCUS`
+handler in `OnClientMessage` check `IsWindowViewable()`
+(`XGetWindowAttributes` round trip) before calling `XSetInputFocus`, and defers
+an `Activate()` call entirely via `pendingActivate` when `!isMapped`,
+discharged by `Show()`.
 
-**Q2 — X11 was left untouched, and it prints a protocol error on every start.**
-
-xdg-shell has no X11 equivalent, so the Q1 fix does not cover the X11 backend
-and the X11 side was not changed. Two loose ends, neither chased:
-
-- **`BadMatch` (opcode 42, `X_SetInputFocus`) prints on every X11 backend
-  start.** Non-fatal — Xlib's default handler prints and continues — but it is
-  a real protocol error. There are two call sites:
-  `X11DisplayWindow::Activate()` (`x11_display_window.cpp:327`, the fallback
-  branch taken when `_NET_ACTIVE_WINDOW` is unavailable) and the ICCCM
-  `WM_TAKE_FOCUS` handler (`:737`). The window advertises `WM_TAKE_FOCUS` in
-  its `WM_PROTOCOLS` at creation (`:100-105`) and is created unmapped, mapped
-  later by `Show()` (`:250-257`). The usual cause of this error is
-  `XSetInputFocus` on a window that is not yet viewable — i.e. a map/focus
-  race. Identify which site fires, what state makes it fire, and what the
-  correct guard is; ICCCM has an opinion about which of these two mechanisms a
-  client should use and when, and about the timestamp each should carry.
-- **Does X11 need a first-paint fix at all?** `ExposureMask` and
-  `StructureNotifyMask` are selected (`:40-43`) and `OnExpose()` calls
-  `OnWindowPaint()` directly (`:747-750`). Argue from the protocol whether that
-  is a complete substitute for the Wayland configure→ack→commit handshake, or
-  whether there is an analogous window — first map, resize, or the
-  `RenderAPI::OpenGL` path — where the X11 backend can also present nothing.
-
-A related, unexplained observation you may or may not be able to account for:
-**the launcher exits on its own under bare Xvfb, between 12s and 25s, with
-nothing in the log.** Under XWayland with a window manager it stayed up, so
-this may be a no-WM artifact rather than a bug; it is not confirmed either way.
-CI would not catch it — the smoke test passes `-iwad`, so it never opens the
-launcher. If your reading of the X11 event loop suggests a mechanism, say so
-and name the cheapest test; if it does not, say that instead.
+1. Between `IsWindowViewable()` returning true and the subsequent
+   `XSetInputFocus` call, is there a window where the server could have
+   unmapped the window in between — and if so, does the guard's single
+   round-trip check actually close the race, or only narrow it?
+2. `pendingActivate` is discharged unconditionally in `Show()`, regardless of
+   what caused `Show()` to run. Is there a sequence — hide/show cycling,
+   multiple `Activate()` calls before a single `Show()` — where a stale
+   pending activation fires for the wrong intent, or where two overlapping
+   `Activate()` calls before mapping collapse into behavior different from
+   what either caller expected?
+3. ICCCM's own opinion on `WM_TAKE_FOCUS` includes what timestamp the client
+   should use and when a client should prefer `WM_TAKE_FOCUS` over a bare
+   `XSetInputFocus`/`_NET_ACTIVE_WINDOW`. Does this implementation's choice of
+   which mechanism to use, and when, actually match the spec — independent of
+   the viewability question?
 
 ---
 
