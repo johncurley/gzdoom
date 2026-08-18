@@ -31,13 +31,21 @@ it is unusual).
   entangled with the waylandpp→C-bindings replacement, so the branch pushed is
   the full `wayland-c-bindings` (12 commits, `zwidget-wayland-c-bindings-clean`
   on the fork) — see Tasks — Linux item 5.
+- **Current handoff:** `docs/handoff-framegraph-2026-08-18.md` — the decision
+  for what gzdoom work happens while Apple Silicon hardware is still not in
+  hand: start `docs/frame-graph-resources.md`'s resource registry (backend-
+  neutral, no scheduler, no Metal-specific decisions, fully verifiable on
+  Linux) and **stop there** — the actual graph/scheduler and anything doing
+  Metal memory aliasing waits for item 3. Not started as of this writing.
 - **Current handoff:** `docs/handoff-macos-2026-08-18.md` — written from the
   Linux side once this session's audit tranche (item 14) closed out. Confirms
   nothing here touches Cocoa/Metal, restates macOS priority order (item 3,
   Apple Silicon validation, is gating — everything downstream needs a known-
   good Apple Silicon baseline, including the frame graph work), and is
   explicit that the frame graph starts **after** item 3 has a real answer,
-  not on an arbitrary schedule.
+  not on an arbitrary schedule. Also records that the item 5 wipe question is
+  closed (confirmed animating correctly, not a freeze) — item 5 itself stays
+  open, the underlying `nextDrawable()` block is mitigated, not eliminated.
 - **Previous handoff:** `docs/handoff-ao-2026-08-16.md` — the AO session. macOS
   items 1 and 2 closed, the compute-AO cost premise retired, three SSAO-residual
   suspects killed, and **one new unresolved bug found: compute AO is bistable**.
