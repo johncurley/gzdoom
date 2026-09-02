@@ -4,6 +4,50 @@ Working state for this fork. Read this first, then `CONTRIBUTING.md` for how
 work is verified here (that part is not optional — it is the house standard and
 it is unusual).
 
+---
+
+## Governance & Functional Roles
+
+| Functional Role | Primary Agent / Tool | Scope & Constraints |
+|---|---|---|
+| **Spec Author & Architect** | *e.g., Claude / Senior AI* | • Analyzes platform-specific APIs (Metal/Vulkan backends, SIMD intrinsics, memory limits).<br>• Formulates subsystem porting strategy and drafts contracts in `docs/audits/` or `strategy/`.<br>• Bound by: No speculative refactorings of core engine loops; commands-first. |
+| **Halt-and-Flag Implementer** | *e.g., GPT Codex / IDE Assistant* | • Executes targeted, surgical C++ edits within existing GZDoom idioms.<br>• Respects internal containers (`TArray`, `FString`) and class hierarchies without unprompted modernization.<br>• Exercises full static reasoning: halts and flags spec errors instead of blindly executing broken plans. |
+| **Integration Auditor & Gatekeeper** | *e.g., Antigravity / CI / Local Scripts* | • **Hygiene:** Cleans up orphan build objects, scratch dumps, and temporary CMake experiments.<br>• **Gatekeeper:** Runs headless tests, timedemo benchmarks (for determinism verification), matrix regression (`tools/matrix/run.py`), and build matrix checks (`cmake --build`). |
+
+---
+
+## Hard Constraints ("The Never List")
+
+1. **NO Unsolicited Modernization:** Do NOT replace GZDoom idioms (`TArray`, `FString`, `PClass`, `AActor*`, custom allocators) with `std::` alternatives (`std::vector`, `std::unique_ptr`, `std::string`) unless explicitly requested. Respect the engine's memory model and garbage collector (`DObject`).
+2. **NO Demo/Tick Desynchronization:** Game-logic hot paths must remain strictly deterministic. No unseeded randoms, non-deterministic floating-point operations, or unstable iteration orders in game-state updates.
+3. **NO ZScript/VM ABI Breakage:** Do not modify exported engine symbols or VM bytecode layouts without updating bindings and reflection tables.
+4. **NO Root Directory or Build Tree Pollution:** Temporary test scripts, scratch code dumps, and unapproved CMake targets must never be committed.
+5. **Mandatory Build & Verification Gate:**
+   ```bash
+   cmake --build build -j$(nproc)
+   ./build/gzdoom -timedemo demo1.lmp -nosound -nogui
+   ```
+
+---
+
+## Implementer Mandate: High Reasoning, Scoped Blast Radius
+
+1. **Zero Sycophancy (The Emergency Brake):**
+   - Implementers are expected to exercise full analytical reasoning on any specification or contract before implementing.
+   - If you spot an unhandled edge case, invariant violation, timing/alignment hazard, or logical contradiction in the architectural plan: **DO NOT silently implement broken logic, and DO NOT unilaterally rewrite the architecture.**
+2. **Halt & Flag Protocol:**
+   - Immediately pause execution.
+   - Concisely state:
+     1. The exact location and nature of the defect/contradiction.
+     2. Why the existing contract fails or produces undefined behavior.
+     3. A minimal, concrete proposal to correct the contract or interface.
+   - Wait for confirmation or contract adjustment before writing implementation code.
+3. **Deep Local Rigor:**
+   - Once the contract is verified sound, apply deep static rigor to the assigned scope (50–150 lines).
+   - Ensure all boundaries, sign/width conventions, error paths, and resource lifecycles are 100% airtight without introducing external scope creep.
+
+---
+
 - **Historical log:** `docs/history/agent-log.md` (~6,200 lines, 2026-06 to
   2026-08). An archive, not a guide. Its value is that it records what was
   **disproved**. Grep it before chasing anything in the Metal renderer.

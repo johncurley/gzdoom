@@ -9,6 +9,29 @@ GZDoom is a modder-friendly Doom engine source port supporting multiple renderin
 - **Platform Support:** Windows, Linux, macOS
 - **License:** GPLv3
 
+## Implementer Mandate: High Reasoning, Scoped Blast Radius
+
+1. **Zero Sycophancy (The Emergency Brake):**
+   - Exercise full analytical reasoning on any specification or contract before implementing.
+   - If you spot an unhandled edge case, invariant violation, timing/alignment hazard, or logical contradiction in the architectural plan: **DO NOT silently implement broken logic, and DO NOT unilaterally rewrite the architecture.**
+2. **Halt & Flag Protocol:**
+   - Immediately pause execution.
+   - Concisely state:
+     1. The exact location and nature of the defect/contradiction.
+     2. Why the existing contract fails or produces undefined behavior.
+     3. A minimal, concrete proposal to correct the contract or interface.
+   - Wait for confirmation or contract adjustment before writing implementation code.
+3. **Deep Local Rigor:**
+   - Once the contract is verified sound, apply deep static rigor to the assigned scope (50–150 lines).
+   - Ensure all boundaries, sign/width conventions, error paths, and resource lifecycles are 100% airtight without introducing external scope creep.
+
+## Hard Constraints ("The Never List")
+
+1. **NO Unsolicited Modernization:** Do NOT replace GZDoom idioms (`TArray`, `FString`, `PClass`, `AActor*`, custom allocators) with `std::` alternatives (`std::vector`, `std::unique_ptr`, `std::string`). Respect the engine's memory model and GC (`DObject`).
+2. **NO Demo/Tick Desynchronization:** Game-logic hot paths must remain strictly deterministic. No unseeded randoms, non-deterministic floating-point math, or unstable iteration order in game-state updates.
+3. **NO ZScript/VM ABI Breakage:** Do not modify exported engine symbols or VM bytecode layouts without updating bindings and reflection tables.
+4. **NO Root Directory or Build Tree Pollution:** Temporary test scripts, scratch code dumps, and unapproved CMake targets must never be committed.
+
 ## Build & Test Commands
 
 ### Quick Build (macOS)
