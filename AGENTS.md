@@ -127,6 +127,98 @@ it is unusual).
   false failure. Not done: the AO module and Metal wiring (both blocked on
   item 3 regardless), and `PPTexture` instances aren't declared as
   resources at all yet — left for whenever the next session picks this up.
+- **Frame graph phase 2, started 2026-09-02:** `hw_framegraph.{h,cpp}`
+  (`common/rendering/hwrenderer/frame/`) — CPU-only pass/dependency graph
+  (RAW edges, deterministic topo sort, cycle detection) over the resource
+  registry's names. Explicitly stays short of anything Metal-specific or
+  scheduling-shaped, same "stop point" as the registry itself — see the
+  file's own header comment. Self-test (`r_framegraph_selftest`) reproduces
+  the tonemap→colormap→lens→fxaa chain from `docs/frame-analysis.md` §2
+  against real ping-pong names: PASS.
+
+  Wired to real per-frame data for the four passes whose reads/writes
+  already resolve through the registry's existing special-type names
+  (`CurrentPipelineTexture`/`NextPipelineTexture`/`SceneColor`/etc.):
+  `tonemap`, `colormap`, `lens`, `fxaa`. Reuses what's already there rather
+  than adding new API surface — `SetPassName()` sits next to each pass's
+  existing `PushGroup()` call (shared `hw_postprocess.cpp`), and each
+  backend's `Draw()` resolves names through the exact same resolver Touch()
+  already uses (`VkTextureManager::GetTextureResourceName`; added the GL
+  equivalent, `FGLRenderBuffers::GetTextureResourceName`, mirroring it
+  1:1). `AddPass()` only fires when every input and the output resolve to a
+  name — silently skipped otherwise, never graphed under a made-up name.
+  `screen->Graph()`/`fb->Graph()` mirrors `Resources()`, reset once per
+  frame next to `Resources().BeginFrame()`. `CCMD(r_framegraph)` mirrors
+  `CCMD(r_resources)`'s shape.
+
+  **Verified live, not just compiled or self-tested.** Command-line
+  `+r_framegraph` cannot see real data: `C_ParseCmdLineParams` batches every
+  `+`-arg into one `FExecList` that runs entirely inside `D_DoomMain`,
+  before `D_DoomLoop` starts (confirmed by reading `d_main.cpp` around the
+  `exec->ExecCommands()` call) — same structural reason `+quit` can't
+  exercise a real frame per `CLAUDE.md`. Verified instead with a temporary
+  counter-gated dump inside `Postprocess::Pass2` (added, checked, then
+  removed — not left in the tree), run real-time under Xvfb with `+map
+  MAP01` and no `+quit` (`stdbuf -o0` needed too: without `+quit`'s clean
+  exit, stdout is block-buffered and a `timeout`-delivered SIGTERM loses
+  whatever hadn't flushed). Real MAP01 output, `ok=true`, empty report:
+  `tonemap → lens → fxaa → fxaa`, `PipelineImage[0]`/`[1]` ping-ponging
+  correctly across all four. **`colormap` correctly absent** — its
+  `Render()` early-returns with no flash/special-colormap active
+  (`hw_postprocess.cpp` line ~551), which is exactly this frame's idle
+  state. The graph reporting only what actually ran, not a static template,
+  is the diagnostic working as designed. Standard CI smoke config
+  (`+r_framegraph_selftest +r_resources +quit`, Xvfb/X11) re-run after:
+  selftest PASS, registry unaffected, no stale-size regression.
+
+- **Frame graph widened to bloom/AO/exposure, same session (2026-09-02).**
+  Closed `frame-graph-resources.md` open question 4 ("`PPTexture` instances
+  aren't declared as resources at all yet") for the code that actually
+  needed it: `PPTexture` gained a `Name` field (`hw_postprocess.h`) — unset
+  by default, since the resize path always assigns a fresh temporary object
+  over the old one, wiping any previously-set name along with everything
+  else. `NameAndDeclare()` (`hw_postprocess.cpp`) sets it and calls
+  `Resources().Declare()` in one call, right at each texture's
+  `UpdateTextures()` (re)creation site — same pattern `VkRenderBuffers`
+  already used for `SceneColor`/etc. `SizeRule::Fixed` throughout (not
+  `SceneScaled`): these buffers derive their size through multi-level
+  pyramids the rule doesn't model yet, and `Fixed` is non-checkable by
+  `ValidateFrame` rather than silently wrong, so this doesn't misrepresent
+  anything the registry checks today. `ResolvePPTextureName()` (new, both
+  `gl_renderbuffers.cpp` and `vk_pprenderstate.cpp`) resolves
+  `PPTextureType::PPTexture` inputs/outputs via `texture->Name`, falling
+  back to the existing type-based resolver for everything else — so any
+  future pass wiring gets this for free.
+
+  Covered: all of `PPBloom` (`bloom.extract/blur/downscale/upscale/combine`,
+  and `PPBloom::RenderBlur`'s separate menu-blur path as `blur.*`, sharing
+  `BlurStep` via a new `passName` parameter), `PPCameraExposure`
+  (`exposure.extract/average/combine` — `Exposure.Camera` persists
+  cross-frame for eye adaptation, declared non-transient), `PPAmbientOcclusion`
+  (`ssao.lineardepth/occlude/blur.h/blur.v/combine`), and `PPTonemap`'s
+  `PaletteTexture` (named to match the `DeclareExternal("PaletteTexture")`
+  boundary that already existed — CPU-uploaded, not a pass output, still
+  legitimately external even though it's now a real declared+named
+  resource). Not covered: `shadowmap`, custom shaders — smaller, lower-value
+  surface, left for whenever they matter.
+
+  **Verified live**, same method as above (temporary counter-gated dump,
+  removed after): real MAP01 frame with `gl_bloom 1 gl_ssao 3
+  gl_tonemap/lens/fxaa 1`, **42 passes, 40 edges, `ok=true`**. First run
+  caught a real gap in the verification hook itself (not the instrumented
+  code): `AO.RandomTexture2` — fixed noise content, created once, never
+  written by any pass — wasn't declared external, so `Build()` correctly
+  reported "reads before any pass writes it." Same fix applied to both the
+  temp hook and the real `CCMD(r_framegraph)` (which needed it too, for the
+  same reason, once real graphs could reach AO): `PaletteTexture` and all
+  three `AO.RandomTexture[0-2]` added to its external set alongside the
+  scene-render outputs. Second run: clean, `ok=true`. Full real chain
+  confirmed connected end to end, e.g. `ssao.combine` writing `SceneColor`
+  that nothing later reads (correct — AO composites into the scene before
+  bloom/tonemap ever touch it), and `bloom.combine → tonemap → lens → fxaa →
+  fxaa` as one continuous producer chain across `PipelineImage[0]`/`[1]`.
+  Re-ran the standard CI smoke config afterward: selftest PASS, registry
+  unaffected, no stale-size regression.
 - **Current handoff:** `docs/handoff-macos-2026-08-18.md` — written from the
   Linux side once this session's audit tranche (item 14) closed out. Confirms
   nothing here touches Cocoa/Metal, restates macOS priority order (item 3,

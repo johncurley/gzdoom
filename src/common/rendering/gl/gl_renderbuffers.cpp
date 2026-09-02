@@ -183,6 +183,7 @@ void FGLRenderBuffers::Setup(int width, int height, int sceneWidth, int sceneHei
 	// Pipeline/Scene buffers below are allocated at (width, height), the pipeline
 	// size -- see the matching note in VkRenderBuffers::BeginFrame.
 	screen->Resources().BeginFrame(width, height);
+	screen->Graph().Reset();
 
 	glBindTexture(GL_TEXTURE_2D, textureBinding);
 	glActiveTexture(activeTex);
@@ -839,6 +840,30 @@ void FGLRenderBuffers::BindNextFB()
 
 //==========================================================================
 //
+// Resolves a PPTextureType to the resource registry's stable name -- see
+// gl_renderbuffers.h. Mirrors VkTextureManager::GetTextureResourceName so
+// both backends' frame graph wiring reads the same names.
+//
+//==========================================================================
+
+const char *FGLRenderBuffers::GetTextureResourceName(PPTextureType type) const
+{
+	switch (type)
+	{
+	case PPTextureType::CurrentPipelineTexture:
+		return mCurrentPipelineTexture == 0 ? "PipelineImage[0]" : "PipelineImage[1]";
+	case PPTextureType::NextPipelineTexture:
+		return mCurrentPipelineTexture == 0 ? "PipelineImage[1]" : "PipelineImage[0]";
+	case PPTextureType::SceneColor:  return "SceneColor";
+	case PPTextureType::SceneFog:    return "SceneFog";
+	case PPTextureType::SceneNormal: return "SceneNormal";
+	case PPTextureType::SceneDepth:  return "SceneDepthStencil";
+	default:                         return nullptr;
+	}
+}
+
+//==========================================================================
+//
 // Next pipeline texture now contains the output
 //
 //==========================================================================
@@ -936,9 +961,46 @@ FShaderProgram *GLPPRenderState::GetGLShader(PPShader *shader)
 //
 //==========================================================================
 
+// A PPTexture carries its own registry name (hw_postprocess.h) once something has
+// named it via NameAndDeclare -- most bloom/AO/exposure textures now do. Anything
+// else (SwapChain, ShadowMap, or a PPTexture nobody named) stays unresolvable, and
+// the caller skips graphing that pass rather than inventing a name for it.
+static const char *ResolvePPTextureName(FGLRenderBuffers *buffers, PPTextureType type, PPTexture *texture)
+{
+	if (type == PPTextureType::PPTexture)
+		return texture ? texture->Name : nullptr;
+	return buffers->GetTextureResourceName(type);
+}
+
 void GLPPRenderState::Draw()
 {
 	FGLPostProcessState savedState;
+
+	// Record this pass in the frame graph (hw_framegraph.h) -- only when every
+	// input and the output resolve to a registry name.
+	if (PassName)
+	{
+		TArray<const char *> reads;
+		bool resolvable = true;
+		for (unsigned int index = 0; index < Textures.Size() && resolvable; index++)
+		{
+			const char *name = ResolvePPTextureName(buffers, Textures[index].Type, Textures[index].Texture);
+			if (!name)
+				resolvable = false;
+			else
+				reads.Push(name);
+		}
+		const char *writeName = resolvable ? ResolvePPTextureName(buffers, Output.Type, Output.Texture) : nullptr;
+		if (writeName)
+		{
+			PassDesc desc;
+			desc.name = PassName;
+			desc.owner = "Postprocess";
+			desc.reads = reads;
+			desc.writes = { writeName };
+			screen->Graph().AddPass(desc);
+		}
+	}
 
 	// Bind input textures
 	for (unsigned int index = 0; index < Textures.Size(); index++)

@@ -106,6 +106,17 @@ public:
 		BlendMode = PPBlendMode();
 		Output = PPOutput();
 		ShadowMapBuffers = false;
+		PassName = nullptr;
+	}
+
+	// Set next to the matching PushGroup(name) call, so Draw() has a stable
+	// pass identity to hand the frame graph -- see hw_framegraph.h. Not tied
+	// to PushGroup itself: PushGroup is a per-backend GPU debug marker with
+	// its own nesting rules, this is a single "what pass is this Draw() for"
+	// label read once, at Draw() time.
+	void SetPassName(const char *name)
+	{
+		PassName = name;
 	}
 
 	void SetInputTexture(int index, PPTexture *texture, PPFilterMode filter = PPFilterMode::Nearest, PPWrapMode wrap = PPWrapMode::Clamp)
@@ -227,6 +238,7 @@ public:
 	PPBlendMode BlendMode;
 	PPOutput Output;
 	bool ShadowMapBuffers = false;
+	const char *PassName = nullptr;
 };
 
 enum class PixelFormat
@@ -301,6 +313,13 @@ public:
 	std::shared_ptr<void> Data;
 
 	std::unique_ptr<PPTextureBackend> Backend;
+
+	// Resource registry / frame graph name (hw_resources.h, hw_framegraph.h).
+	// Not set by the constructor -- callers assign it right after declaring the
+	// texture with FrameResources::Declare, next to the same UpdateTextures()
+	// site that (re)creates it, since assigning a new PPTexture (as the resize
+	// path here always does) resets this to nullptr along with everything else.
+	const char *Name = nullptr;
 };
 
 class PPShaderBackend
@@ -399,7 +418,7 @@ public:
 	static void (*DebugAfterBlur)(PPTexture *output, bool vertical, int level);
 
 private:
-	void BlurStep(PPRenderState *renderstate, const BlurUniforms &blurUniforms, PPTexture &input, PPTexture &output, PPViewport viewport, bool vertical);
+	void BlurStep(PPRenderState *renderstate, const BlurUniforms &blurUniforms, PPTexture &input, PPTexture &output, PPViewport viewport, bool vertical, const char *passName);
 	void UpdateTextures(int width, int height);
 
 	static float ComputeBlurGaussian(float n, float theta);

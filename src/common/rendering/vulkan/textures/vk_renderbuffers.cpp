@@ -87,6 +87,7 @@ void VkRenderBuffers::BeginFrame(int width, int height, int sceneWidth, int scen
 	// (mScreenViewport) size, not (sceneWidth, sceneHeight) (mSceneViewport, the
 	// 3D-view sub-rect within it) -- so that's what SizeRule::SceneFull means here.
 	fb->Resources().BeginFrame(width, height);
+	fb->Graph().Reset();
 }
 
 void VkRenderBuffers::CreatePipelineDepthStencil(int width, int height)

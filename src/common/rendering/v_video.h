@@ -39,6 +39,7 @@
 #include <chrono>
 #include "basics.h"
 #include "hwrenderer/frame/hw_resources.h"
+#include "hwrenderer/frame/hw_framegraph.h"
 #include "vectors.h"
 #include "m_png.h"
 #include "renderstyle.h"
@@ -151,6 +152,7 @@ public:
 	BoneBuffer* mBones = nullptr;				// Model bones
 	IShadowMap mShadowMap;
 	FrameResources mResources;					// frame graph resource registry (phase 1: record + report)
+	FrameGraph mFrameGraph;						// frame graph pass/dependency graph (phase 2: CPU-only, see hw_framegraph.h)
 
 	int mGameScreenWidth = 0;
 	int mGameScreenHeight = 0;
@@ -176,6 +178,7 @@ public:
 		mShadowMap.SetAABBTree(tree);
 	}
 	FrameResources &Resources() { return mResources; }
+	FrameGraph &Graph() { return mFrameGraph; }
 	virtual void SetLevelMesh(hwrenderer::LevelMesh *mesh) { }
 	bool allowSSBO() const
 	{

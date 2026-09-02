@@ -50,9 +50,48 @@ void VkPPRenderState::PopGroup()
 	fb->GetCommands()->PopGroup();
 }
 
+// A PPTexture carries its own registry name (hw_postprocess.h) once something has
+// named it via NameAndDeclare -- most bloom/AO/exposure textures now do. Anything
+// else (SwapChain, ShadowMap, or a PPTexture nobody named) stays unresolvable, and
+// the caller skips graphing that pass rather than inventing a name for it.
+static const char *ResolvePPTextureName(VkTextureManager *textureManager, PPTextureType type, PPTexture *texture)
+{
+	if (type == PPTextureType::PPTexture)
+		return texture ? texture->Name : nullptr;
+	return textureManager->GetTextureResourceName(type);
+}
+
 void VkPPRenderState::Draw()
 {
 	fb->GetRenderState()->EndRenderPass();
+
+	// Record this pass in the frame graph (hw_framegraph.h) -- only when every
+	// input and the output resolve to a registry name. Must run before the
+	// pipeline-image advance below.
+	if (PassName)
+	{
+		auto textureManager = fb->GetTextureManager();
+		TArray<const char *> reads;
+		bool resolvable = true;
+		for (unsigned int index = 0; index < Textures.Size() && resolvable; index++)
+		{
+			const char *name = ResolvePPTextureName(textureManager, Textures[index].Type, Textures[index].Texture);
+			if (!name)
+				resolvable = false;
+			else
+				reads.Push(name);
+		}
+		const char *writeName = resolvable ? ResolvePPTextureName(textureManager, Output.Type, Output.Texture) : nullptr;
+		if (writeName)
+		{
+			PassDesc desc;
+			desc.name = PassName;
+			desc.owner = "Postprocess";
+			desc.reads = reads;
+			desc.writes = { writeName };
+			fb->Graph().AddPass(desc);
+		}
+	}
 
 	VkPPRenderPassKey key;
 	key.BlendMode = BlendMode;
