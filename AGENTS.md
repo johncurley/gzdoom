@@ -919,11 +919,14 @@ requests on the version actually obtained" — was checked and needs nothing:
 `zwidget/wayland-c-bindings` carries this as `bebe13394`, alongside the first-paint
 fix (`10b60e035`), the three X11 commits and the Cocoa modal work. What remained was
 **upstreaming to dpjudas**, gated on the first-paint control run (item 1) — closed
-the same day. The branch is now pushed to the fork
-(`zwidget-wayland-c-bindings-clean`, all 12 commits including the
-waylandpp-replacement prerequisite the six-commit framing didn't account for);
-the PR itself hasn't been opened yet. See `docs/handoff-linux-2026-08-16.md` item 5
-for the full state and why the scope grew.
+the same day. The branch was pushed to the fork
+(`zwidget-wayland-c-bindings-clean`), and item 14's focus-loss key-up fix
+(`0f5f0e129`) was cherry-picked in behind it the same way (X11-file-only diff,
+message rewritten to drop gzdoom-internal doc references) before the PR opened,
+since it's the same defect class. **PR opened 2026-09-02:**
+https://github.com/dpjudas/ZWidget/pull/65, 13 commits. See
+`docs/handoff-linux-2026-08-16.md` item 5 for the earlier state and why the scope
+grew.
 
 The paragraph below is left for its procedure note, but its premise is stale:
 `c3474d697` was only on `metal-audit`. It is not on `zwidget/wayland-c-bindings` or any other
@@ -1159,8 +1162,8 @@ read `AGENTS.md` until its findings were written. Full report:
   key — but a real, reproducible one-keypress loss with an ordinary trigger.
   Fixed by giving `OnFocusOut` the same treatment as Wayland: snapshot and
   clear `keyState`, synthesize `OnWindowKeyUp` for every key that was down,
-  before delivering `OnWindowDeactivated()`. `zwidget-subtree` — needs the
-  cherry-pick-and-publish procedure to reach dpjudas, same as items 10/11.
+  before delivering `OnWindowDeactivated()`. `zwidget-subtree` — cherry-picked
+  and published to dpjudas 2026-09-02, see item 5's PR link above.
 - **Finding 5 (LOW, maintainability)** — unconditional debug `fprintf`s in
   `OnFocusIn`/`OnFocusOut` (empirically reproduced by the audit, not just
   read) and a `LogToDisk` helper in `gl_sysfb.cpp` appending
