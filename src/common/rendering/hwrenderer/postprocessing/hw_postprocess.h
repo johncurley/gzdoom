@@ -247,7 +247,8 @@ enum class PixelFormat
 	Rgba16f,
 	R32f,
 	Rg16f,
-	Rgba16_snorm
+	Rgba16_snorm,
+	R16f
 };
 
 class PPResource

@@ -61,6 +61,7 @@ static ResourceFormat ToResourceFormat(PixelFormat format)
 	case PixelFormat::Rgba16f: return ResourceFormat::RGBA16F;
 	case PixelFormat::R32f:   return ResourceFormat::R32F;
 	case PixelFormat::Rg16f:  return ResourceFormat::RG16F;
+	case PixelFormat::R16f:   return ResourceFormat::R16F;
 	default:                  return ResourceFormat::Unknown;	// Rgba16_snorm: no registry equivalent yet
 	}
 }
@@ -859,7 +860,12 @@ void PPAmbientOcclusion::UpdateTextures(int width, int height)
 	AmbientWidth = (width + 1) / 2;
 	AmbientHeight = (height + 1) / 2;
 
-	LinearDepthTexture = { AmbientWidth, AmbientHeight, PixelFormat::R32f };
+	// R16f, not R32f: this texture is dependently fetched 20x/pixel at
+	// gl_ssao 3 (NUM_DIRECTIONS*NUM_STEPS in ssao.fp's ComputeAO), so halving
+	// its bandwidth is a real lever on bandwidth-bound hardware. Safe only
+	// because lineardepth.fp now clamps below R16F's max finite value --
+	// see the comment there.
+	LinearDepthTexture = { AmbientWidth, AmbientHeight, PixelFormat::R16f };
 	Ambient0 = { AmbientWidth, AmbientHeight, PixelFormat::Rg16f };
 	Ambient1 = { AmbientWidth, AmbientHeight, PixelFormat::Rg16f };
 	NameAndDeclare(LinearDepthTexture, "AO.LinearDepth", "PPAmbientOcclusion");

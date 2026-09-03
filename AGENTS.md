@@ -348,6 +348,90 @@ it is unusual).
   sample was taken either time; worth several interleaved reps before
   treating either number as precise. Re-ran the standard CI smoke config
   afterward: selftest PASS, no stale-size regression.
+
+- **`ssao.occlude` optimization, same session (2026-09-03): two real changes,
+  ~7% faster on the measured bottleneck, verified live both ways.** Worked
+  under an explicit contract (agreed before touching code): increment 1 was
+  analysis-only — establish a real noise floor for `ssao.occlude`, then
+  either report a concrete candidate or an honest "inherent cost" finding.
+  Baseline: 32 interleaved `stat gpu` samples via a temporary hook reading
+  `gpuStatOutput` directly (screenshot-based sampling kept losing the game
+  window to KWin stacking changes on this desktop, so this sidesteps that
+  entirely) — extremely tight, mean **2.006ms**, range 2.00–2.03ms, static
+  MAP01 view. Read `wadsrc/static/shaders/pp/ssao.fp`: horizon-based AO,
+  `NUM_DIRECTIONS=5 × NUM_STEPS=4` = 20 dependent depth-texture fetches per
+  pixel at `gl_ssao 3`, sky/background pixels already short-circuited. No
+  obvious defect — this reads as ordinary cost for the algorithm, not a bug
+  — but two real, scoped candidates came out of actually reading the code:
+
+  **Candidate A (applied):** the skybox/portal seam guard divided per
+  sample (`depthRatio = max(vp.z,sp.z) / max(min(vp.z,sp.z),1e-5); if
+  (depthRatio > 100.0) ...`) — 20 divisions/pixel. Rewritten as `depthMax >
+  100.0 * depthMin`, algebraically identical since the denominator is
+  always `> 0`, trading a division for a multiply (cheaper on most GPU
+  ALUs). Zero behavior change.
+
+  **Candidate B (applied, after a halt-and-flag):** `LinearDepthTexture`
+  (the thing being dependently fetched 20x/pixel across a 960×540 buffer,
+  ~10M fetches for this one pass) was `R32F`; halving it to `R16F` is a
+  real bandwidth lever on entry-level hardware, matching the size given to
+  it originally as "needs an actual visual A/B, banding risk." Turned out
+  the real risk was worse than banding: `screen->GetZFar()` defaults to
+  **65536.0**, and `lineardepth.fp` stores actual view-space world-unit
+  distance (not normalized 0-1) — R16F's max finite value is **65504**, so
+  an unclamped far-plane pixel would overflow to `Inf`, not just lose
+  precision. Flagged this explicitly before proceeding (the risk described
+  when the candidate was approved was materially different from what
+  reading the code actually showed) rather than silently patching around
+  it. Fix: clamp the linearized depth to `60000.0` before writing in
+  `lineardepth.fp` — safe because far-plane samples already contribute ~0
+  to AO through the existing radius-based falloff, so clamping the *stored*
+  value has no visible effect on the AO result, only prevents the overflow.
+  Confirmed by reading `mt_ao.cpp` that Metal's independent compute AO
+  module already made this exact format choice for its own linearized
+  depth (`"R16Float is filterable on all Metal GPUs (unlike R32Float...)"`,
+  line ~1530) — different implementation, but corroborating evidence this
+  precision is sound, not something novel being introduced here.
+  `PixelFormat::R16f` / `ResourceFormat::R16F` added (new enum values, GL
+  `GL_R16F`, Vulkan `VK_FORMAT_R16_SFLOAT`, registry byte-size/name
+  mappings) since no single-channel half-float format existed in either
+  enum yet.
+
+  **Verified live, both the GPU-time claim and the visual-safety
+  condition**, not just compiled — and re-checked with a third independent
+  run specifically because the first two didn't fully agree with each
+  other. 34 more interleaved samples right after applying both changes:
+  mean **1.862ms**, range 1.86–1.87ms. Asked to "check the results" before
+  committing, so re-added the measurement hook and ran a fresh, independent
+  third sample (33 more, same config, same static view) rather than trust
+  the first post-change number: mean **1.730ms**, range 1.72–1.73ms —
+  *lower* than the second run by 0.13ms, a gap larger than either run's own
+  internal spread (~0.01–0.02ms). Both post-change runs are unambiguously
+  below the 2.006ms baseline, so the improvement itself is real and not in
+  doubt, but the two post-change numbers disagree with each other by more
+  than measurement noise within either one — almost certainly thermal or
+  GPU clock-state drift after many back-to-back launches this session
+  (`renderer-methodology.md` warns about exactly this: "identical configs
+  drift measurably over a long session"). Honest framing: **~7-14%
+  reduction** on `ssao.occlude` (`2.006ms → 1.862-1.730ms` depending on
+  run), not a single precise percentage. `ssao.lineardepth` itself also
+  dropped, from ~0.23ms to ~0.18-0.19ms across the post-change runs, from
+  the same write-bandwidth win. Visual check: single `spectacle`
+  screenshot of the live game (prompt capture right after launch avoided
+  the window-stacking problem that broke repeated sampling earlier),
+  inspected at native resolution and again with brightness boosted
+  specifically to check the darkest gradient (a corridor receding into
+  shadow) for banding — clean, no stepping, no NaN/Inf splotches, AO
+  darkening at corners/creases reads exactly as expected. Not a pixel-diff
+  against a pre-change capture (would have needed a stash+rebuild+rerun
+  cycle not worth the cost here), but a direct look at exactly the failure
+  mode the format change could plausibly have introduced. Re-ran the
+  standard CI smoke config afterward, after the hook was removed for the
+  final time: selftest PASS, no stale-size regression. Both changes cover
+  only the shared GL/Vulkan postprocess AO path (`hw_postprocess.cpp`,
+  `ssao.fp`, `lineardepth.fp`) — Metal's
+  separate compute AO module (`mt_ao.cpp`) is untouched, doesn't build on
+  this box, and was explicitly out of scope per the contract.
 - **Current handoff:** `docs/handoff-macos-2026-08-18.md` — written from the
   Linux side once this session's audit tranche (item 14) closed out. Confirms
   nothing here touches Cocoa/Metal, restates macOS priority order (item 3,

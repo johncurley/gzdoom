@@ -80,6 +80,7 @@ size_t FrameResources::BytesPerPixel(ResourceFormat format)
 	case ResourceFormat::RG16F:   return 4;
 	case ResourceFormat::R32F:    return 4;
 	case ResourceFormat::D24S8:   return 4;
+	case ResourceFormat::R16F:    return 2;
 	default:                      return 0;
 	}
 }
@@ -94,6 +95,7 @@ const char *FrameResources::FormatName(ResourceFormat format)
 	case ResourceFormat::RG16F:   return "RG16F";
 	case ResourceFormat::R32F:    return "R32F";
 	case ResourceFormat::D24S8:   return "D24S8";
+	case ResourceFormat::R16F:    return "R16F";
 	default:                      return "Unknown";
 	}
 }

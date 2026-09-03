@@ -19,7 +19,7 @@ class FString;
 
 enum class ResourceFormat : uint8_t
 {
-	Unknown, RGBA8, RGBA16F, R8, RG16F, R32F, D24S8
+	Unknown, RGBA8, RGBA16F, R8, RG16F, R32F, D24S8, R16F
 };
 
 // How the size is DERIVED, not just what it is -- this is what makes a
