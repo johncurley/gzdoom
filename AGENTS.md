@@ -258,6 +258,25 @@ it is unusual).
   riding along on the same CPU path as the `Draw()` calls already
   happening, nowhere near this instrument's ~1ms resolution. No real cost,
   no real speedup — a wash. Worktree removed after.
+
+- **The outlier noise source identified, ~30ms confirmed as real cost
+  (2026-09-03).** The anomalous fast readings from the A/B above turned out
+  to have an actual cause, not just a plausible guess: this machine's two
+  outputs were running at mismatched refresh rates (DP-0 LCD 60Hz, DP-1 CRT
+  75Hz), and `~/.config/kwinrc` has `AllowTearing=false` — KWin forces
+  vsync-locked compositing on every windowed app regardless of the app's
+  own `vid_vsync` setting, and mismatched-refresh multi-output compositing
+  under that policy is a known class of frame-pacing stutter, independent
+  of which app is running. User set the CRT to 60Hz to match. Re-measured
+  (12 samples, two interleaved reps, same config as the A/B): `29, 28, 29,
+  29, 29, 28, 29, 29, 29, 29, 29, 28` — zero outliers this time, mean
+  **28.75ms (34.8fps)**. Essentially unchanged from the pre-fix mean
+  (~29.6-30.5ms) — meaning the refresh-rate mismatch explains the *noise*
+  in the earlier readings, not the *baseline* itself. **The ~29ms frame
+  time is real engine cost**, not a display-stutter artifact. Confirmed
+  not a gzdoom bug either way (same "not our bug" shape as item 13's twm
+  deadlock) — nothing changed in the renderer to fix this, it was entirely
+  a desktop/compositor config issue on the user's machine.
 - **Current handoff:** `docs/handoff-macos-2026-08-18.md` — written from the
   Linux side once this session's audit tranche (item 14) closed out. Confirms
   nothing here touches Cocoa/Metal, restates macOS priority order (item 3,
