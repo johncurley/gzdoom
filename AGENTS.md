@@ -277,6 +277,37 @@ it is unusual).
   not a gzdoom bug either way (same "not our bug" shape as item 13's twm
   deadlock) — nothing changed in the renderer to fix this, it was entirely
   a desktop/compositor config issue on the user's machine.
+
+- **`Touch()` gap found and fixed for the widened frame graph, same session
+  (2026-09-03).** Following up the memory-total check `frame-graph-
+  resources.md` originally motivated (never actually run since bloom/AO/
+  exposure were declared): `r_resources` now reports a real total — **29
+  resources, 12.5 MB** (up from 5 resources / 1.1 MB before this session's
+  widening work) — but every one of the newly-declared AO/exposure/bloom
+  entries showed **`UNTOUCHED this frame`**, despite the frame graph
+  proving in the same live run that they were genuinely read and written
+  (the 42-pass, 40-edge graph from the widening work above). Real
+  inconsistency between the two systems, not a display quirk: `AddPass()`
+  had been wired to resolve `PPTextureType::PPTexture` names via
+  `ResolvePPTextureName()`, but `Touch()` — the registry's own bind-time
+  tracking — was never extended to the same case. Both backends' bind
+  sites only called `Touch()` for the pre-existing special-type names
+  (`SceneColor` etc.), never for a bound `PPTexture`.
+
+  Fixed at the four sites: GL's `GLPPRenderState::Draw()` input-bind loop
+  and output-bind switch (`gl_renderbuffers.cpp`, guarded by `if
+  (...->Name)` since a still-unnamed `PPTexture` — `shadowmap`, custom
+  shaders — has nothing to touch); Vulkan's
+  `VkDescriptorSetManager::GetInput()` (`vk_descriptorset.cpp`) and
+  `VkRenderBuffers::GetOutput()` (`vk_renderbuffers.cpp`), each given an
+  explicit `PPTextureType::PPTexture` branch alongside the existing
+  type-resolver path. Verified live, same method as before (temporary
+  counter-gated dump, removed after): re-ran the identical MAP01 config —
+  every AO/exposure/bloom entry now reads `w r`, `UNTOUCHED this frame`
+  down to just `PipelineDepthStencil` (correctly untouched — nothing in
+  this pipeline samples it). Registry and frame graph now agree. Re-ran
+  the standard CI smoke config afterward: selftest PASS, no stale-size
+  regression.
 - **Current handoff:** `docs/handoff-macos-2026-08-18.md` — written from the
   Linux side once this session's audit tranche (item 14) closed out. Confirms
   nothing here touches Cocoa/Metal, restates macOS priority order (item 3,

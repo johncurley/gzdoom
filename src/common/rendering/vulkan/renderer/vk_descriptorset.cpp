@@ -205,7 +205,12 @@ VulkanDescriptorSet* VkDescriptorSetManager::GetInput(VkPPRenderPassSetup* passS
 		const PPTextureInput& input = textures[index];
 		VulkanSampler* sampler = fb->GetSamplerManager()->Get(input.Filter, input.Wrap);
 		VkTextureImage* tex = fb->GetTextureManager()->GetTexture(input.Type, input.Texture);
-		if (const char *name = fb->GetTextureManager()->GetTextureResourceName(input.Type))
+		if (input.Type == PPTextureType::PPTexture)
+		{
+			if (input.Texture->Name)
+				fb->Resources().Touch(input.Texture->Name, false);
+		}
+		else if (const char *name = fb->GetTextureManager()->GetTextureResourceName(input.Type))
 			fb->Resources().Touch(name, false);
 
 		write.AddCombinedImageSampler(descriptors.get(), index, tex->DepthOnlyView ? tex->DepthOnlyView.get() : tex->View.get(), sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
