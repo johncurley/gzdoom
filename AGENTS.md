@@ -308,6 +308,46 @@ it is unusual).
   this pipeline samples it). Registry and frame graph now agree. Re-ran
   the standard CI smoke config afterward: selftest PASS, no stale-size
   regression.
+
+- **SSAO split into per-subpass `stat gpu` groups, same session
+  (2026-09-03).** Answers the "what's next for SSAO" question from the
+  4.40ms aggregate reading earlier: `PPAmbientOcclusion::Render()`'s five
+  draws (`lineardepth`/`occlude`/`blur.h`/`blur.v`/`combine`) all shared
+  one outer `PushGroup("ssao")`, so `stat gpu` could only report one number
+  for all five. Couldn't just nest sub-groups inside it, though — GL's
+  `FGLDebug::PushGroup` opens a `GL_TIME_ELAPSED` query, and the spec
+  forbids two active queries of the same target at once, so an outer
+  "ssao" query plus a nested "ssao.occlude" query would be an invalid
+  `glBeginQuery`. Replaced the one wrapping group with five flat,
+  sequential `PushGroup`/`PopGroup` pairs instead — same shape
+  tonemap/colormap/lens/fxaa already use as independent top-level groups —
+  reusing the exact names already set via `SetPassName` for the frame
+  graph. Vulkan's `VkCommandBufferManager::PushGroup`/`PopGroup` uses
+  timestamp queries with a real `mGroupStack` and would have supported
+  nesting fine, but since this is shared code, flat/sequential is the
+  correct portable choice for both backends.
+
+  Verified live with real numbers, not just compiled: `ssao.occlude`
+  dominates at **2.01ms**, roughly 72% of SSAO's ~2.78ms total that run —
+  `lineardepth` 0.23ms, `blur.h`/`blur.v` 0.12ms each, `combine` 0.30ms.
+  The actual per-pixel AO sampling shader is where SSAO's cost lives, not
+  the setup/blur/combine plumbing around it — the concrete answer for
+  anyone who picks up SSAO optimization later. (Verification used a
+  temporary hook reading `gpuStatOutput` directly rather than a screenshot
+  — window position/stacking on the real desktop kept shifting between
+  spectacle calls, and this sidesteps that entirely. Hit one real bug in
+  the hook itself along the way: an unqualified `extern FString
+  gpuStatOutput;` written inside `namespace OpenGLRenderer` silently
+  declares a *new*, separate name in that namespace rather than binding to
+  the actual global one in `hw_postprocess.cpp` — linker caught it
+  immediately as an undefined reference to
+  `OpenGLRenderer::gpuStatOutput`. Fixed by keeping the extern declaration
+  outside the namespace.) This run's total (~2.78ms) reads lower than the
+  earlier single-group reading (4.40ms) — most likely ordinary
+  frame-to-frame scene variance, not a splitting artifact, but only one
+  sample was taken either time; worth several interleaved reps before
+  treating either number as precise. Re-ran the standard CI smoke config
+  afterward: selftest PASS, no stale-size regression.
 - **Current handoff:** `docs/handoff-macos-2026-08-18.md` — written from the
   Linux side once this session's audit tranche (item 14) closed out. Confirms
   nothing here touches Cocoa/Metal, restates macOS priority order (item 3,

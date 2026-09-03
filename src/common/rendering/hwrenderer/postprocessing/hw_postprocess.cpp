@@ -966,9 +966,17 @@ void PPAmbientOcclusion::Render(PPRenderState *renderstate, float m5, int sceneW
 	ambientViewport.width = AmbientWidth;
 	ambientViewport.height = AmbientHeight;
 
-	renderstate->PushGroup("ssao");
+	// Each sub-pass gets its own PushGroup/PopGroup, not one wrapping "ssao"
+	// group, because FGLDebug::PushGroup opens a GL_TIME_ELAPSED query and
+	// the GL spec does not allow nesting two queries of the same target --
+	// an outer "ssao" group plus a nested "ssao.occlude" group would be an
+	// invalid glBeginQuery while one is already active. Flat and sequential
+	// instead, same shape as tonemap/colormap/lens/fxaa's independent
+	// top-level groups, so `stat gpu` reports each of the five draws
+	// separately rather than one ssao=X.XXms aggregate.
 
 	// Calculate linear depth values
+	renderstate->PushGroup("ssao.lineardepth");
 	renderstate->Clear();
 	renderstate->SetPassName("ssao.lineardepth");
 	renderstate->Shader = gl_multisample > 1 ? &LinearDepthMS : &LinearDepth;
@@ -979,8 +987,10 @@ void PPAmbientOcclusion::Render(PPRenderState *renderstate, float m5, int sceneW
 	renderstate->SetOutputTexture(&LinearDepthTexture);
 	renderstate->SetNoBlend();
 	renderstate->Draw();
+	renderstate->PopGroup();
 
 	// Apply ambient occlusion
+	renderstate->PushGroup("ssao.occlude");
 	renderstate->Clear();
 	renderstate->SetPassName("ssao.occlude");
 	renderstate->Shader = gl_multisample > 1 ? &AmbientOccludeMS : &AmbientOcclude;
@@ -992,10 +1002,12 @@ void PPAmbientOcclusion::Render(PPRenderState *renderstate, float m5, int sceneW
 	renderstate->SetOutputTexture(&Ambient0);
 	renderstate->SetNoBlend();
 	renderstate->Draw();
+	renderstate->PopGroup();
 
 	// Blur SSAO texture
 	if (gl_ssao_debug < 2)
 	{
+		renderstate->PushGroup("ssao.blur.h");
 		renderstate->Clear();
 		renderstate->SetPassName("ssao.blur.h");
 		renderstate->Shader = &BlurHorizontal;
@@ -1005,7 +1017,9 @@ void PPAmbientOcclusion::Render(PPRenderState *renderstate, float m5, int sceneW
 		renderstate->SetOutputTexture(&Ambient1);
 		renderstate->SetNoBlend();
 		renderstate->Draw();
+		renderstate->PopGroup();
 
+		renderstate->PushGroup("ssao.blur.v");
 		renderstate->Clear();
 		renderstate->SetPassName("ssao.blur.v");
 		renderstate->Shader = &BlurVertical;
@@ -1015,9 +1029,11 @@ void PPAmbientOcclusion::Render(PPRenderState *renderstate, float m5, int sceneW
 		renderstate->SetOutputTexture(&Ambient0);
 		renderstate->SetNoBlend();
 		renderstate->Draw();
+		renderstate->PopGroup();
 	}
 
 	// Add SSAO back to scene texture:
+	renderstate->PushGroup("ssao.combine");
 	renderstate->Clear();
 	renderstate->SetPassName("ssao.combine");
 	renderstate->Shader = gl_multisample > 1 ? &CombineMS : &Combine;
@@ -1034,7 +1050,6 @@ void PPAmbientOcclusion::Render(PPRenderState *renderstate, float m5, int sceneW
 	else
 		renderstate->SetAlphaBlend();
 	renderstate->Draw();
-
 	renderstate->PopGroup();
 }
 
