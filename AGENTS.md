@@ -219,6 +219,45 @@ it is unusual).
   fxaa` as one continuous producer chain across `PipelineImage[0]`/`[1]`.
   Re-ran the standard CI smoke config afterward: selftest PASS, registry
   unaffected, no stale-size regression.
+
+- **Frame graph CPU cost measured, same session (2026-09-02): no measurable
+  difference.** The open question from the widening work above —
+  `AddPass()` runs unconditionally whenever `PassName` is set, and bloom
+  alone fires it ~22 times a frame, each pushing a small `TArray` into a
+  `PassDesc` — settled with a real A/B rather than left assumed-fine.
+  First real use of `stat gpu` and a wall-clock reading on this Linux box's
+  actual desktop session (KDE/X11, real RX 550 via `radeonsi`, not Xvfb):
+  `stat gpu` gave a genuine per-pass GPU-elapsed breakdown (`ssao=4.40ms`
+  dominating over `exposure=0.21`, `bloom=0.56`, `tonemap=0.26`,
+  `lens=0.37`, `fxaa=0.76`, `CopyToBackbuffer=0.28` — SSAO alone is ~6x
+  everything else combined, worth knowing if SSAO cost ever becomes a
+  target) — but that instrument can't answer the CPU-bookkeeping question,
+  since the frame graph adds zero GPU work.
+
+  For the actual cost question: built a second binary from a git worktree
+  at `e2fd4c8bc` (resource registry present, no frame graph at all — the
+  commit immediately before this session's phase-2 work) alongside the
+  current HEAD binary, sharing the same pk3s (confirmed no `wadsrc` diff
+  between the two commits). Two interleaved reps each arm, 6 `vid_fps`
+  samples per rep via `spectacle` screenshots read back visually (no
+  `xdotool` on this box for driving the console directly), same static
+  MAP01 view, same cvars (`gl_bloom 1 gl_ssao 3 gl_tonemap/lens/fxaa 1`).
+
+  Both arms threw occasional anomalously-fast readings (12-19ms against a
+  ~28-33ms cluster) — one in the no-frame-graph arm, three in the
+  frame-graph arm — almost certainly the KDE compositor or the screenshot
+  call itself momentarily interacting with frame delivery, not a real
+  effect (it hit the arm *without* the change too). Worth recording as a
+  methodology note: this noise source is specific to measuring on a real
+  desktop session and doesn't exist under Xvfb, and hadn't shown up
+  anywhere earlier in this session. Excluding those as artifacts: no frame
+  graph, mean 30.5ms (n=11); with frame graph, mean 29.6ms (n=8) — the
+  frame-graph arm reads marginally *faster*, by under 1ms, well inside the
+  ~5ms sample-to-sample spread both arms show even after cleaning. Expected
+  result: `AddPass()` is a handful of small heap-owning `TArray` pushes
+  riding along on the same CPU path as the `Draw()` calls already
+  happening, nowhere near this instrument's ~1ms resolution. No real cost,
+  no real speedup — a wash. Worktree removed after.
 - **Current handoff:** `docs/handoff-macos-2026-08-18.md` — written from the
   Linux side once this session's audit tranche (item 14) closed out. Confirms
   nothing here touches Cocoa/Metal, restates macOS priority order (item 3,
