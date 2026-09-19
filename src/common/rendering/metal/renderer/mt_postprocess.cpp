@@ -493,6 +493,31 @@ public:
                                   0);
       }
 
+      // The shadow-map fragment shader reads the AABB tree and light list
+      // through three storage buffers.  Unlike the material path, this pass
+      // does not go through MtRenderState::ApplyHWBufferSet(), so those
+      // buffers must be bound explicitly here.  Vulkan does the equivalent
+      // in VkDescriptorSetManager::GetInput().  Leaving these slots unset
+      // makes shadow distances depend on whatever Metal happens to see in
+      // the unbound resources, which shows up as angle-sensitive lighting.
+      if (ShadowMapBuffers) {
+        auto bindShadowBuffer = [&](int binding, IDataBuffer *data) {
+          auto *buffer = dynamic_cast<MtHardwareDataBuffer *>(data);
+          if (!buffer || !buffer->GetBuffer())
+            return;
+          encoder->setFragmentBuffer(buffer->GetBuffer(), 0, binding);
+          encoder->useResource(buffer->GetBuffer(), MTL::ResourceUsageRead,
+                               MTL::RenderStageFragment);
+        };
+
+        bindShadowBuffer(LIGHTNODES_BINDINGPOINT,
+                         screen->mShadowMap.mNodesBuffer);
+        bindShadowBuffer(LIGHTLINES_BINDINGPOINT,
+                         screen->mShadowMap.mLinesBuffer);
+        bindShadowBuffer(LIGHTLIST_BINDINGPOINT,
+                         screen->mShadowMap.mLightList);
+      }
+
       // Draw quad (1 triangle covering the screen)
       encoder->drawPrimitives(MTL::PrimitiveTypeTriangle,
                               (NS::UInteger)FFlatVertexBuffer::PRESENT_INDEX,
