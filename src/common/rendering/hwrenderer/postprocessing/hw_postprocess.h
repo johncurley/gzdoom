@@ -315,11 +315,11 @@ public:
 
 	std::unique_ptr<PPTextureBackend> Backend;
 
-	// Resource registry / frame graph name (hw_resources.h, hw_framegraph.h).
-	// Not set by the constructor -- callers assign it right after declaring the
-	// texture with FrameResources::Declare, next to the same UpdateTextures()
-	// site that (re)creates it, since assigning a new PPTexture (as the resize
-	// path here always does) resets this to nullptr along with everything else.
+	// Frame graph name (hw_resources.h, hw_framegraph.h). A named texture may
+	// either be a declared frame resource or a graph-only external such as a
+	// mod-provided custom-shader input. Not set by the constructor -- callers
+	// assign it when the texture is created, since assigning a new PPTexture
+	// resets this to nullptr along with everything else.
 	const char *Name = nullptr;
 };
 
@@ -846,6 +846,7 @@ private:
 	std::vector<UniformFieldDesc> Fields;
 	std::vector<std::unique_ptr<FString>> FieldNames;
 	std::map<FTexture*, std::unique_ptr<PPTexture>> Textures;
+	std::map<FTexture*, FString> TextureResourceNames;
 	std::map<FString, size_t> FieldOffset;
 };
 

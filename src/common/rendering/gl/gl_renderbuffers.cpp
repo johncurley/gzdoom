@@ -1128,7 +1128,10 @@ void GLPPRenderState::Draw()
 		case PPTextureType::PPTexture:
 			GetGLTexture(input.Texture)->Tex.Bind(index, filter, wrap);
 			if (input.Texture->Name)
+			{
 				screen->Resources().Touch(input.Texture->Name, false);
+				screen->Graph().ObserveBackendUse(input.Texture->Name, FrameGraphAccess::Read, FrameGraphUsage::Sampled);
+			}
 			break;
 
 		case PPTextureType::SceneColor:

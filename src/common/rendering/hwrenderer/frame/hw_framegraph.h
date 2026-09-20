@@ -94,6 +94,12 @@ public:
 	// Build()'s missing-writer check on its very first read.
 	void DeclareExternal(const char *name);
 
+	// Declares two names as the same physical resource for dependency
+	// validation. This is needed for backend layouts that expose one object
+	// under multiple stable names, such as GL's non-MSAA SceneColor /
+	// PipelineImage[0] alias.
+	void DeclareAlias(const char *name, const char *canonical);
+
 	// Builds RAW edges from the declared reads/writes and computes a
 	// deterministic topological order (Kahn's algorithm, ties broken by
 	// declaration index). Non-fatal: problems go in *report*, nothing
@@ -128,12 +134,19 @@ private:
 
 	TArray<PassDesc> mPasses;
 	TArray<const char *> mExternals;
+	struct Alias
+	{
+		const char *name;
+		const char *canonical;
+	};
+	TArray<Alias> mAliases;
 	TArray<Edge> mEdges;
 	TArray<int> mOrder;
 	TArray<uint8_t> mBackendObserved;
 	TArray<ObservedUse> mObservedUses;
 	int mActivePass = -1;
 
+	const char *CanonicalName(const char *name) const;
 	void BuildEdges(FString *report);
 	bool TopoSort(FString *report);
 	void ValidateUses(FString *report) const;

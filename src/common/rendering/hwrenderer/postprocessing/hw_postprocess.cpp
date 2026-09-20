@@ -1206,6 +1206,7 @@ void PPCustomShaderInstance::Run(PPRenderState *renderstate)
 	renderstate->PushGroup(Desc->Name);
 
 	renderstate->Clear();
+	renderstate->SetPassName(Desc->Name.GetChars());
 	renderstate->Shader = &Shader;
 	renderstate->Viewport = screen->mScreenViewport;
 	renderstate->SetNoBlend();
@@ -1258,7 +1259,15 @@ void PPCustomShaderInstance::SetTextures(PPRenderState *renderstate)
 				}
 
 				pptex = std::make_unique<PPTexture>(buffer.mWidth, buffer.mHeight, PixelFormat::Rgba8, data);
+
+				auto &resourceName = TextureResourceNames[tex];
+				resourceName.Format("CustomShader.%s.%s.%s", Desc->Name.GetChars(),
+					Desc->ShaderLumpName.GetChars(), pair->Key.GetChars());
+				pptex->Name = resourceName.GetChars();
 			}
+
+			if (pptex->Name && screen)
+				screen->Graph().DeclareExternal(pptex->Name);
 
 			renderstate->SetInputTexture(textureIndex, pptex.get(), PPFilterMode::Linear, PPWrapMode::Repeat);
 			textureIndex++;

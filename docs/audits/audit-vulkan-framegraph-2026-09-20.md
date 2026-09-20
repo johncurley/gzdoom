@@ -20,7 +20,9 @@ remain independently verifiable.
 
 - `FrameGraphAccess` and `FrameGraphUsage` describe sampled reads and color
   attachment writes without exposing Vulkan enums.
-- Vulkan postprocess passes declare those uses and bracket their existing
+- The scene target boundary declares the scene color, depth/stencil, and
+  optional SSAO G-buffer attachments as a conservative producer before the
+  immediate scene draw path. Vulkan postprocess passes declare those uses and bracket their existing
   descriptor/framebuffer binding sites with observation hooks. The MSAA and
   non-MSAA scene-to-pipeline transfer is also recorded as `scene.resolve`,
   using `TransferSource`/`TransferDestination` around the existing resolve or
@@ -38,11 +40,11 @@ remain independently verifiable.
   covers sampled, color-attachment, depth-attachment, transfer,
   read/write-storage, and presentation uses, plus a deliberately invalid
   declaration.
-- A real enabled Vulkan MAP01 run on the RX 550 exercised the full chain at 42
-  passes and 42 edges. Every active postprocess resource had matching
-  write/read observations; only the unused pipeline depth buffer and declared
-  but unused shadow map were untouched. No stale-size or graph-build errors
-  occurred.
+- A real enabled Vulkan MAP01 run on the RX 550 exercised the full chain at 43
+  passes and 46 edges. Every active scene and postprocess resource had
+  matching write/read observations; only the unused pipeline depth buffer and
+  declared but unused shadow map were untouched. No stale-size or graph-build
+  errors occurred.
 
 ## Current execution model
 
@@ -61,6 +63,11 @@ image. The relevant sequence is in `vulkan/renderer/vk_pprenderstate.cpp`:
    image.
 4. `RenderScreenQuad()` begins and ends the postprocess render pass.
 5. The current pipeline image is advanced if the output is `NextPipelineTexture`.
+
+Custom postprocess shaders follow the same contract. Their `NextPipelineTexture`
+write is recorded under the shader name, and mod-provided texture inputs are
+stable graph-only external resources rather than entries in the backend-owned
+frame-resource registry.
 
 The current graph therefore observes the legal order in which work has already
 been encoded. `PassDesc` contains only a name, owner, resource names, and RAW
@@ -121,8 +128,7 @@ bloom/exposure/AO resources, scene resolve, shadow-map production, and the
 main presentation variants. It does not yet model all Vulkan work:
 
 - shadow-map consumers outside the named postprocess output;
-- custom shader inputs whose textures have no stable registry name;
-- scene rendering as a multi-attachment producer;
+- full scene draw grouping and nested AO/portal execution;
 - pixel readback after screenshot/wipe capture.
 
 These are coverage gaps, not reasons to invent placeholder names. An unresolved
@@ -150,6 +156,10 @@ The first Vulkan tranche will be correctness-first and order-preserving:
    the plan has live evidence.
 5. Defer pass reordering, pass culling, transient allocation, aliasing, and
    memory optimization.
+
+Custom shader inputs are deliberately represented as graph-only external
+resources. They do not receive fake registry allocations, but they no longer
+cause the custom shader pass itself to disappear from the dependency graph.
 
 The eventual scheduler will require a separate executable-pass contract. That
 contract must capture or reference the complete state needed to replay a pass;

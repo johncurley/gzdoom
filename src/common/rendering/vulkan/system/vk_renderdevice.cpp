@@ -568,6 +568,34 @@ void VulkanRenderDevice::AmbientOccludeScene(float m5, const HWViewpointUniforms
 void VulkanRenderDevice::SetSceneRenderTarget(bool useSSAO)
 {
 	mRenderState->SetRenderTarget(&GetBuffers()->SceneColor, GetBuffers()->SceneDepthStencil.View.get(), GetBuffers()->GetWidth(), GetBuffers()->GetHeight(), VK_FORMAT_R16G16B16A16_SFLOAT, GetBuffers()->GetSceneSamples());
+
+	PassDesc desc;
+	desc.name = "scene.target";
+	desc.owner = "VulkanRenderDevice";
+	desc.writes = { "SceneColor", "SceneDepthStencil" };
+	desc.uses.Push({ "SceneColor", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
+	desc.uses.Push({ "SceneDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment });
+	if (useSSAO)
+	{
+		desc.writes.Push("SceneFog");
+		desc.writes.Push("SceneNormal");
+		desc.uses.Push({ "SceneFog", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
+		desc.uses.Push({ "SceneNormal", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
+	}
+	int graphPass = Graph().AddPass(desc);
+	Graph().BeginBackendPass(graphPass);
+	Resources().Touch("SceneColor", true);
+	Graph().ObserveBackendUse("SceneColor", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
+	Resources().Touch("SceneDepthStencil", true);
+	Graph().ObserveBackendUse("SceneDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment);
+	if (useSSAO)
+	{
+		Resources().Touch("SceneFog", true);
+		Graph().ObserveBackendUse("SceneFog", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
+		Resources().Touch("SceneNormal", true);
+		Graph().ObserveBackendUse("SceneNormal", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
+	}
+	Graph().EndBackendPass();
 }
 
 bool VulkanRenderDevice::RaytracingEnabled()

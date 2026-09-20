@@ -28,7 +28,9 @@ immediate:
    `NextPipelineTexture`.
 
 The graph is therefore an observation of already-issued GL work, just as it is
-for Vulkan. A later topological order cannot reschedule these draws.
+for Vulkan. A later topological order cannot reschedule these draws. Custom
+postprocess shaders use the same boundary: their pass writes the next pipeline
+image, while mod-provided texture inputs are graph-only external resources.
 
 ## Findings
 
@@ -115,10 +117,9 @@ destination names, while the texture objects remain engine-owned. The default
 framebuffer remains OS-owned and is not a registry entry.
 
 The current graph intentionally treats the scene inputs and pipeline start as
-external boundaries, and leaves custom presentation variants ungraphable. The
-pixel readback after a screenshot/wipe capture is still outside the graph. That
-is acceptable for validation, but it must not be mistaken for complete GL
-frame coverage.
+produced by the conservative `scene.target` boundary. The pixel readback after
+a screenshot/wipe capture is still outside the graph. That is acceptable for
+validation, but it must not be mistaken for complete GL frame coverage.
 
 ## Implemented first integration boundary
 
@@ -130,7 +131,10 @@ frame coverage.
    switch, including named `PPTexture` objects.
 4. Keep `FGLRenderBuffers`' existing resource touches, FBO setup, state save/
    restore, and ping-pong behavior unchanged.
-5. Run the existing CPU self-test, GL CI smoke path, and a real enabled GL
+5. Record custom postprocess passes even when their mod-provided texture inputs
+   are not frame-owned resources: give those inputs stable graph-only external
+   names instead of dropping the whole pass.
+6. Run the existing CPU self-test, GL CI smoke path, and a real enabled GL
    postprocess chain. The live graph must agree with `FrameResources` without
    requiring every resource to be touched in the first frame.
 
@@ -145,22 +149,34 @@ sampled read and the OS-owned default framebuffer is observed as a `Present`
 write under the graph-only name `Backbuffer`. Screenshot readback through the
 same helper is classified as a color-attachment write instead.
 
+The scene target boundary is recorded by
+`OpenGLFrameBuffer::SetSceneRenderTarget()`: it declares the scene color,
+depth/stencil, and optional SSAO G-buffer attachments as one conservative
+producer. In the non-MSAA layout it also declares the graph alias between
+`SceneColor` and `PipelineImage[0]`, so the postprocess dependency chain follows
+the physical GL object rather than treating the two names as unrelated.
+
+Named `PPTexture` inputs now observe their sampled use at the GL bind point,
+matching Vulkan's existing descriptor observation.
+
 This is the same order-preserving contract now used by Vulkan. It gives GL a
 shared correctness check without claiming that OpenGL has Vulkan-style layout
 transitions or a graph-owned scheduler.
 
 The full build and diff hygiene checks pass. A real enabled postprocess run on
-the RX 550 verified the GL graph at 41 passes and 39 edges; all active
-postprocess resources had matching write/read observations, with only the
+the RX 550 verified the GL graph at 42 passes and 45 edges; all active scene
+and postprocess resources had matching write/read observations, with only the
 unused pipeline depth buffer reported untouched. The same run completed
-without stale-size or graph-build errors.
+without stale-size or graph-build errors. The CPU self-test also covers the
+alias normalization path.
 
 ## Deferred work
 
-- Model the full scene render, including depth and multi-attachment producers,
-  as explicit graph operations. The MSAA resolve boundary is already covered.
-- Decide whether screenshots and custom shader textures need stable registry
-  names. ShadowMap and the two GL stereo eye textures now have stable names and
+- Extend the conservative scene target boundary to cover full scene draw
+  grouping once the graph can represent nested/deferred passes. The MSAA
+  resolve boundary is already covered.
+- Screenshot pixel readback remains outside the graph. ShadowMap, custom shader
+  inputs, and the two GL stereo eye textures now have stable graph names and
   observed producers/consumers; wipe destinations have graph-only names because
   their texture-object lifetime is outside the registry.
 - Add GL capability tracking only if a future graph executor needs texture

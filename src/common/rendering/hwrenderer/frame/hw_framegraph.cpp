@@ -15,19 +15,6 @@ static bool NameEq(const char *a, const char *b)
 	return a == b || strcmp(a, b) == 0;
 }
 
-static bool HasName(const TArray<const char *> &names, const char *name)
-{
-	for (const char *candidate : names)
-		if (NameEq(candidate, name))
-			return true;
-	return false;
-}
-
-static bool UseEq(const ResourceUse &a, const ResourceUse &b)
-{
-	return NameEq(a.name, b.name) && a.access == b.access && a.usage == b.usage;
-}
-
 static const char *AccessName(FrameGraphAccess access)
 {
 	switch (access)
@@ -58,6 +45,7 @@ void FrameGraph::Reset()
 {
 	mPasses.Clear();
 	mExternals.Clear();
+	mAliases.Clear();
 	mEdges.Clear();
 	mOrder.Clear();
 	mBackendObserved.Clear();
@@ -75,6 +63,36 @@ int FrameGraph::AddPass(const PassDesc &desc)
 void FrameGraph::DeclareExternal(const char *name)
 {
 	mExternals.Push(name);
+}
+
+void FrameGraph::DeclareAlias(const char *name, const char *canonical)
+{
+	if (!name || !canonical || NameEq(name, canonical))
+		return;
+	for (const Alias &alias : mAliases)
+		if (NameEq(alias.name, name) && NameEq(alias.canonical, canonical))
+			return;
+	mAliases.Push({ name, canonical });
+}
+
+const char *FrameGraph::CanonicalName(const char *name) const
+{
+	for (int depth = 0; depth < (int)mAliases.Size(); depth++)
+	{
+		bool found = false;
+		for (const Alias &alias : mAliases)
+		{
+			if (NameEq(alias.name, name))
+			{
+				name = alias.canonical;
+				found = true;
+				break;
+			}
+		}
+		if (!found)
+			break;
+	}
+	return name;
 }
 
 void FrameGraph::BeginBackendPass(int passIndex)
@@ -111,8 +129,13 @@ void FrameGraph::ValidateUses(FString *report) const
 				continue;
 			}
 
-			bool isRead = HasName(pass.reads, use.name);
-			bool isWrite = HasName(pass.writes, use.name);
+			const char *canonicalName = CanonicalName(use.name);
+			bool isRead = false;
+			bool isWrite = false;
+			for (const char *name : pass.reads)
+				isRead |= NameEq(CanonicalName(name), canonicalName);
+			for (const char *name : pass.writes)
+				isWrite |= NameEq(CanonicalName(name), canonicalName);
 			bool roleMatches =
 				(use.access == FrameGraphAccess::Read && isRead && !isWrite) ||
 				(use.access == FrameGraphAccess::Write && isWrite && !isRead) ||
@@ -140,7 +163,10 @@ void FrameGraph::ValidateUses(FString *report) const
 			int match = -1;
 			for (unsigned int i = 0; i < pass.uses.Size(); i++)
 			{
-				if (!matched[i] && UseEq(pass.uses[i], observed.use))
+				if (!matched[i] &&
+					NameEq(CanonicalName(pass.uses[i].name), CanonicalName(observed.use.name)) &&
+					pass.uses[i].access == observed.use.access &&
+					pass.uses[i].usage == observed.use.usage)
 				{
 					match = (int)i;
 					break;
@@ -187,10 +213,11 @@ void FrameGraph::BuildEdges(FString *report)
 		// previous writer, not itself.
 		for (const char *name : pass.reads)
 		{
+			const char *canonicalName = CanonicalName(name);
 			int writerIndex = -1;
 			for (auto &w : lastWriter)
 			{
-				if (NameEq(w.name, name))
+				if (NameEq(w.name, canonicalName))
 				{
 					writerIndex = w.pass;
 					break;
@@ -201,7 +228,7 @@ void FrameGraph::BuildEdges(FString *report)
 				bool external = false;
 				for (const char *ext : mExternals)
 				{
-					if (NameEq(ext, name))
+					if (NameEq(CanonicalName(ext), canonicalName))
 					{
 						external = true;
 						break;
@@ -219,10 +246,11 @@ void FrameGraph::BuildEdges(FString *report)
 
 		for (const char *name : pass.writes)
 		{
+			const char *canonicalName = CanonicalName(name);
 			bool updated = false;
 			for (auto &w : lastWriter)
 			{
-				if (NameEq(w.name, name))
+				if (NameEq(w.name, canonicalName))
 				{
 					w.pass = i;
 					updated = true;
@@ -230,7 +258,7 @@ void FrameGraph::BuildEdges(FString *report)
 				}
 			}
 			if (!updated)
-				lastWriter.Push({ name, i });
+				lastWriter.Push({ canonicalName, i });
 		}
 	}
 }
@@ -406,6 +434,20 @@ CCMD(r_framegraph_selftest)
 	FString useReport;
 	bool useOK = useGraph.Build(&useReport);
 
+	FrameGraph aliasGraph;
+	aliasGraph.DeclareAlias("PipelineImage[0]", "SceneColor");
+	aliasGraph.AddPass({ "scene.target", "selftest", {}, { "SceneColor" } });
+	aliasGraph.AddPass({ "postprocess", "selftest", { "PipelineImage[0]" }, { "PipelineImage[1]" } });
+	FString aliasReport;
+	bool aliasOK = aliasGraph.Build(&aliasReport) && aliasGraph.Order().Size() == 2;
+
+	FrameGraph customGraph;
+	customGraph.DeclareExternal("PipelineImage[0]");
+	customGraph.DeclareExternal("CustomShader.example.texture");
+	customGraph.AddPass({ "example", "Postprocess", { "PipelineImage[0]", "CustomShader.example.texture" }, { "PipelineImage[1]" } });
+	FString customReport;
+	bool customOK = customGraph.Build(&customReport) && customGraph.Order().Size() == 1;
+
 	FrameGraph badGraph;
 	badGraph.DeclareExternal("Input");
 	PassDesc badPass;
@@ -418,15 +460,15 @@ CCMD(r_framegraph_selftest)
 	FString badReport;
 	bool badDetected = !badGraph.Build(&badReport) && badReport.Len() > 0;
 
-	Printf(ok && orderMatchesDeclaration && useOK && badDetected ? "selftest: PASS\n" : "selftest: FAIL\n");
+	Printf(ok && orderMatchesDeclaration && useOK && aliasOK && customOK && badDetected ? "selftest: PASS\n" : "selftest: FAIL\n");
 }
 
 // Real per-frame data: whatever GLPPRenderState::Draw()/VkPPRenderState::Draw()
 // recorded via AddPass() since the last Graph().Reset() (once per frame, next to
 // Resources().BeginFrame()). Covers tonemap/colormap/lens/fxaa (always nameable,
 // via the special PPTextureType names) plus ssao/exposure/bloom/blur and the
-// named shadowmap producer -- not yet custom shaders, still raw PPTexture* with
-// no name. Mirrors
+// named shadowmap producer and custom shader passes with graph-only external
+// texture inputs. Mirrors
 // CCMD(r_resources)'s shape (hw_resources.cpp): dump unconditionally, build's
 // report is a real defect signal here (unlike ValidateFrame's expected-noise
 // "untouched" case), so it's always shown when non-empty, not gated behind a cvar.
@@ -440,18 +482,12 @@ CCMD(r_framegraph)
 
 	FrameGraph &graph = screen->Graph();
 
-	// Every one of these predates this partial graph -- produced by the scene
-	// render pass (PipelineImage[0], Scene*) or a one-time CPU upload
-	// (PaletteTexture, AO.RandomTexture*) rather than by any AddPass() here.
-	// Real external boundaries, not missing passes. PipelineImage[1] is not
-	// listed: tonemap always writes it before anything reads it, in every
-	// real ordering, so declaring it external would only mask a genuine
-	// ordering bug if one ever appeared.
-	graph.DeclareExternal("PipelineImage[0]");
-	graph.DeclareExternal("SceneColor");
-	graph.DeclareExternal("SceneNormal");
-	graph.DeclareExternal("SceneDepthStencil");
-	graph.DeclareExternal("SceneFog");
+	// The scene.target producer and, on Vulkan, scene.resolve now provide the
+	// scene inputs. GL declares its non-MSAA SceneColor/PipelineImage[0] alias
+	// when the target is selected. The remaining externals are genuine
+	// persistent or engine-owned boundaries. PipelineImage[1] is not listed:
+	// tonemap always writes it before anything reads it, in every real ordering,
+	// so declaring it external would mask a genuine ordering bug.
 	graph.DeclareExternal("EyeTexture[0]");
 	graph.DeclareExternal("EyeTexture[1]");
 	graph.DeclareExternal("PaletteTexture");

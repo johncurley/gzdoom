@@ -468,7 +468,39 @@ void OpenGLFrameBuffer::NextEye(int eyecount)
 
 void OpenGLFrameBuffer::SetSceneRenderTarget(bool useSSAO)
 {
-	GLRenderer->mBuffers->BindSceneFB(useSSAO);
+	auto buffers = GLRenderer->mBuffers;
+	if (buffers->SceneColorAliasesPipeline())
+		screen->Graph().DeclareAlias("PipelineImage[0]", "SceneColor");
+
+	buffers->BindSceneFB(useSSAO);
+
+	PassDesc desc;
+	desc.name = "scene.target";
+	desc.owner = "OpenGLFrameBuffer";
+	desc.writes = { "SceneColor", "SceneDepthStencil" };
+	desc.uses.Push({ "SceneColor", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
+	desc.uses.Push({ "SceneDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment });
+	if (useSSAO)
+	{
+		desc.writes.Push("SceneFog");
+		desc.writes.Push("SceneNormal");
+		desc.uses.Push({ "SceneFog", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
+		desc.uses.Push({ "SceneNormal", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
+	}
+	int graphPass = screen->Graph().AddPass(desc);
+	screen->Graph().BeginBackendPass(graphPass);
+	screen->Resources().Touch("SceneColor", true);
+	screen->Graph().ObserveBackendUse("SceneColor", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
+	screen->Resources().Touch("SceneDepthStencil", true);
+	screen->Graph().ObserveBackendUse("SceneDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment);
+	if (useSSAO)
+	{
+		screen->Resources().Touch("SceneFog", true);
+		screen->Graph().ObserveBackendUse("SceneFog", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
+		screen->Resources().Touch("SceneNormal", true);
+		screen->Graph().ObserveBackendUse("SceneNormal", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
+	}
+	screen->Graph().EndBackendPass();
 }
 
 void OpenGLFrameBuffer::UpdateShadowMap()
