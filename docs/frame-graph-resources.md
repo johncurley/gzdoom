@@ -22,6 +22,30 @@ the result pointers select between the already-declared AO textures. Registering
 those aliases as allocations would double-count memory and obscure the actual
 producer resource.
 
+## Current declaration table
+
+This is the phase-1 vocabulary currently emitted by the Metal registry. It is the
+starting resource table for the future graph; it does not yet imply ownership by a
+graph allocator or any pass scheduling.
+
+| name | owner | size rule | format | transient |
+|---|---|---|---|---|
+| `PipelineImage[0]`, `PipelineImage[1]` | `MtRenderBuffers` | window-sized | scene colour | no |
+| `SceneColor` | `MtRenderBuffers` | scene-full | runtime scene colour | no |
+| `SceneDepthStencil` | `MtRenderBuffers` | scene-full | depth/stencil | no |
+| `SceneNormal`, `SceneFog` | `MtRenderBuffers` | scene-full | G-buffer formats | no |
+| `AO.Ambient`, `AO.Blur` | `MtAOModule` | scene-scaled / AO divisor | `RG16F` | yes |
+| `AO.FullresAO`, `AO.FullresTemp` | `MtAOModule` | scene-full | `RG16F` | yes |
+| `AO.DepthPyramid` | `MtAOModule` | scene-full plus mips | `R16F` | yes |
+| `Bloom.A`, `Bloom.B` | `MtBloomModule` | scene-scaled / 4 | `RGBA16F` | yes |
+| `Bloom.Mip0..2` and `Bloom.Mip0Temp..2Temp` | `MtBloomModule` | scene-scaled / 8, 16, 32 | `RGBA16F` | yes |
+| `Bloom.ExtractSnapshot` | `MtBloomModule` | scene-scaled / 4 | `RGBA16F` | yes |
+| `Bloom.Composite` | `MtBloomModule` | scene-full | `RGBA16F` | yes |
+
+The eventual backend-neutral graph should preserve these stable names while
+replacing backend-specific format integers and handles with shared format and
+resource descriptors.
+
 ---
 
 ## Why this first, and what it buys before any graph exists
