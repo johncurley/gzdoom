@@ -117,9 +117,12 @@ destination names, while the texture objects remain engine-owned. The default
 framebuffer remains OS-owned and is not a registry entry.
 
 The current graph intentionally treats the scene inputs and pipeline start as
-produced by the conservative `scene.target` boundary. The pixel readback after
-a screenshot/wipe capture is still outside the graph. That is acceptable for
-validation, but it must not be mistaken for complete GL frame coverage.
+produced by the conservative `scene.target` boundary. The armed screenshot
+path now contributes a read-only `screenshot.readback` pass after `present`:
+it reads the graph-only `Backbuffer` boundary as a transfer source around the
+pre-swap `glReadPixels` call. The CPU pixel array is deliberately not a frame
+resource. The legacy unarmed post-swap read remains outside the graph because
+its contents are platform-dependent and are not a valid Linux capture source.
 
 ## Implemented first integration boundary
 
@@ -147,7 +150,8 @@ The normal single-eye presentation boundary is recorded by
 `FGLRenderer::CopyToBackbuffer()`: the current pipeline image is observed as a
 sampled read and the OS-owned default framebuffer is observed as a `Present`
 write under the graph-only name `Backbuffer`. Screenshot readback through the
-same helper is classified as a color-attachment write instead.
+same helper is classified as a color-attachment write instead. The armed
+pre-swap readback is then observed as a transfer-source read of `Backbuffer`.
 
 The scene target boundary is recorded by
 `OpenGLFrameBuffer::SetSceneRenderTarget()`: it declares the scene color,
@@ -175,9 +179,10 @@ alias normalization path.
 - Extend the conservative scene target boundary to cover full scene draw
   grouping once the graph can represent nested/deferred passes. The MSAA
   resolve boundary is already covered.
-- Screenshot pixel readback remains outside the graph. ShadowMap, custom shader
-  inputs, and the two GL stereo eye textures now have stable graph names and
-  observed producers/consumers; wipe destinations have graph-only names because
+- The legacy unarmed post-swap screenshot read remains outside the graph because
+  the default framebuffer contents are not guaranteed after `Swap()`. ShadowMap,
+  custom shader inputs, and the two GL stereo eye textures now have stable graph
+  names and observed producers/consumers; wipe destinations have graph-only names because
   their texture-object lifetime is outside the registry.
 - Add GL capability tracking only if a future graph executor needs texture
   barriers or image-memory barriers.

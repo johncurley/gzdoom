@@ -263,6 +263,8 @@ void VkPostprocess::DrawPresentTexture(const IntRect &box, bool applyGamma, bool
 	}
 
 	renderstate.Clear();
+	if (screenshot)
+		renderstate.SetPassName("screenshot.present");
 	renderstate.Shader = &hw_postprocess.present.Present;
 	renderstate.Uniforms.Set(uniforms);
 	renderstate.Viewport = box;

@@ -394,6 +394,26 @@ void VulkanRenderDevice::CopyScreenToBuffer(int w, int h, uint8_t *data)
 		.DebugName("CopyScreenToBuffer")
 		.Create(device.get());
 
+	// The temporary image and staging buffer are deliberately outside the
+	// frame-resource registry. The graph still records the pipeline image read
+	// and keeps the dependency alive through the complete readback operation.
+	const char *sourceName = GetTextureManager()->GetTextureResourceName(PPTextureType::CurrentPipelineTexture);
+	PassDesc desc;
+	desc.name = "screenshot.readback";
+	desc.owner = "VulkanRenderDevice";
+	if (sourceName)
+	{
+		desc.reads = { sourceName };
+		desc.uses.Push({ sourceName, FrameGraphAccess::Read, FrameGraphUsage::TransferSource });
+	}
+	int graphPass = sourceName ? Graph().AddPass(desc) : -1;
+	Graph().BeginBackendPass(graphPass);
+	if (sourceName)
+	{
+		Resources().Touch(sourceName, false);
+		Graph().ObserveBackendUse(sourceName, FrameGraphAccess::Read, FrameGraphUsage::TransferSource);
+	}
+
 	GetPostprocess()->BlitCurrentToImage(&image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 
 	// Staging buffer for download
@@ -432,6 +452,7 @@ void VulkanRenderDevice::CopyScreenToBuffer(int w, int h, uint8_t *data)
 		}
 	}
 	staging->Unmap();
+	Graph().EndBackendPass();
 }
 
 void VulkanRenderDevice::SetActiveRenderTarget()

@@ -422,13 +422,23 @@ CCMD(r_framegraph_selftest)
 	presentPass.name = "present-test";
 	presentPass.owner = "selftest";
 	presentPass.reads.Push("PipelineImage[0]");
-	presentPass.writes.Push("SwapChain");
+	presentPass.writes.Push("Backbuffer");
 	presentPass.uses.Push({ "PipelineImage[0]", FrameGraphAccess::Read, FrameGraphUsage::Sampled });
-	presentPass.uses.Push({ "SwapChain", FrameGraphAccess::Write, FrameGraphUsage::Present });
+	presentPass.uses.Push({ "Backbuffer", FrameGraphAccess::Write, FrameGraphUsage::Present });
 	int presentPassIndex = useGraph.AddPass(presentPass);
 	useGraph.BeginBackendPass(presentPassIndex);
 	useGraph.ObserveBackendUse("PipelineImage[0]", FrameGraphAccess::Read, FrameGraphUsage::Sampled);
-	useGraph.ObserveBackendUse("SwapChain", FrameGraphAccess::Write, FrameGraphUsage::Present);
+	useGraph.ObserveBackendUse("Backbuffer", FrameGraphAccess::Write, FrameGraphUsage::Present);
+	useGraph.EndBackendPass();
+
+	PassDesc readbackPass;
+	readbackPass.name = "readback-test";
+	readbackPass.owner = "selftest";
+	readbackPass.reads.Push("Backbuffer");
+	readbackPass.uses.Push({ "Backbuffer", FrameGraphAccess::Read, FrameGraphUsage::TransferSource });
+	int readbackPassIndex = useGraph.AddPass(readbackPass);
+	useGraph.BeginBackendPass(readbackPassIndex);
+	useGraph.ObserveBackendUse("Backbuffer", FrameGraphAccess::Read, FrameGraphUsage::TransferSource);
 	useGraph.EndBackendPass();
 
 	FString useReport;

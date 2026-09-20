@@ -230,11 +230,24 @@ void OpenGLFrameBuffer::CaptureFrameForScreenshot()
 	mScreenshotHeight = viewport.height;
 	mScreenshotPixels.Resize(viewport.width * viewport.height * 3);
 
+	// The default framebuffer is an OS-owned graph boundary, not a frame
+	// resource. Observe the pre-swap readback without adding the CPU buffer.
+	PassDesc desc;
+	desc.name = "screenshot.readback";
+	desc.owner = "OpenGLFrameBuffer";
+	desc.reads = { "Backbuffer" };
+	desc.uses.Push({ "Backbuffer", FrameGraphAccess::Read, FrameGraphUsage::TransferSource });
+	int graphPass = screen->Graph().AddPass(desc);
+	screen->Graph().BeginBackendPass(graphPass);
+
 	glFinish();
 	glPixelStorei(GL_PACK_ALIGNMENT, 1);
 	glReadPixels(viewport.left, viewport.top, viewport.width, viewport.height,
 				 GL_RGB, GL_UNSIGNED_BYTE, &mScreenshotPixels[0]);
 	glPixelStorei(GL_PACK_ALIGNMENT, 4);
+
+	screen->Graph().ObserveBackendUse("Backbuffer", FrameGraphAccess::Read, FrameGraphUsage::TransferSource);
+	screen->Graph().EndBackendPass();
 }
 
 void OpenGLFrameBuffer::CopyScreenToBuffer(int width, int height, uint8_t* scr)

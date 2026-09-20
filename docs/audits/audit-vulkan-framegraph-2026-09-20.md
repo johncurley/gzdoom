@@ -35,7 +35,10 @@ remain independently verifiable.
   engine texture layer.
 - Stereo eye stores/loads, stereo presentation, and the normal swapchain
   presentation boundary are recorded as transfer/presentation passes. The
-  screenshot copy path is also classified separately from normal presentation.
+  screenshot re-present is recorded as `screenshot.present`, followed by a
+  read-only `screenshot.readback` transfer-source pass spanning the temporary
+  image and staging-buffer copy. The temporary GPU image and CPU buffer are
+  intentionally not added to the frame-resource registry.
 - `Build()` reports declaration/observation mismatches, and the self-test
   covers sampled, color-attachment, depth-attachment, transfer,
   read/write-storage, and presentation uses, plus a deliberately invalid
@@ -129,7 +132,9 @@ main presentation variants. It does not yet model all Vulkan work:
 
 - shadow-map consumers outside the named postprocess output;
 - full scene draw grouping and nested AO/portal execution;
-- pixel readback after screenshot/wipe capture.
+- the detailed intermediate image-to-buffer destination of screenshot readback
+  (the source dependency and transfer boundary are covered, while the
+  temporary/staging objects remain outside the registry).
 
 These are coverage gaps, not reasons to invent placeholder names. An unresolved
 resource must remain explicitly external or ungraphable until its ownership and
