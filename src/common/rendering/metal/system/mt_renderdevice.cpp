@@ -533,6 +533,7 @@ void MetalRenderDevice::BeginFrame() {
       mScreenBuffers ? mScreenBuffers->GetSceneHeight() : 0);
   if (mInFrame)
     return;
+  Graph().Reset();
   mInFrame = true;
 
   MtCaptureBeginFrameIfArmed(this);
