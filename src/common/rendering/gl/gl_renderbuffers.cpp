@@ -694,6 +694,7 @@ void FGLRenderBuffers::BindShadowMapFB()
 void FGLRenderBuffers::BindShadowMapTexture(int texunit)
 {
 	CreateShadowMap();
+	screen->Resources().Touch("ShadowMap", false);
 	glActiveTexture(GL_TEXTURE0 + texunit);
 	glBindTexture(GL_TEXTURE_2D, mShadowMapTexture.handle);
 }
@@ -711,6 +712,7 @@ void FGLRenderBuffers::CreateShadowMap()
 		return;
 
 	ClearShadowMap();
+	screen->Resources().Forget("ShadowMap");
 
 	GLint activeTex, textureBinding, frameBufferBinding;
 	glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTex);
@@ -725,6 +727,8 @@ void FGLRenderBuffers::CreateShadowMap()
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
 	mShadowMapFB = CreateFrameBuffer("ShadowMapFB", mShadowMapTexture);
+	screen->Resources().Declare({ "ShadowMap", "FGLRenderBuffers", gl_shadowmap_quality, 1024, 1,
+		ResourceFormat::R32F, { SizeRule::Fixed } }, GLResourceHandle(mShadowMapTexture.handle));
 
 	glBindTexture(GL_TEXTURE_2D, textureBinding);
 	glActiveTexture(activeTex);
@@ -885,6 +889,7 @@ const char *FGLRenderBuffers::GetTextureResourceName(PPTextureType type) const
 	case PPTextureType::SceneFog:    return "SceneFog";
 	case PPTextureType::SceneNormal: return "SceneNormal";
 	case PPTextureType::SceneDepth:  return "SceneDepthStencil";
+	case PPTextureType::ShadowMap:   return "ShadowMap";
 	default:                         return nullptr;
 	}
 }

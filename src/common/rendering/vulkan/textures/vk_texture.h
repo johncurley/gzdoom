@@ -29,9 +29,9 @@ public:
 	VkFormat GetTextureFormat(PPTexture* texture);
 
 	// Frame graph resource registry name for a PPTextureType, or nullptr if this
-	// type isn't a tracked resource (PPTexture/SwapChain/ShadowMap aren't declared
-	// yet). Mirrors GetTexture's dispatch so Touch() calls agree with what
-	// VkRenderBuffers actually declared.
+	// type isn't a tracked resource (PPTexture/SwapChain aren't declared yet).
+	// Mirrors GetTexture's dispatch so Touch() calls agree with what the Vulkan
+	// backend actually declared.
 	const char *GetTextureResourceName(const PPTextureType& type);
 
 	void AddTexture(VkHardwareTexture* texture);

@@ -424,9 +424,9 @@ CCMD(r_framegraph_selftest)
 // Real per-frame data: whatever GLPPRenderState::Draw()/VkPPRenderState::Draw()
 // recorded via AddPass() since the last Graph().Reset() (once per frame, next to
 // Resources().BeginFrame()). Covers tonemap/colormap/lens/fxaa (always nameable,
-// via the special PPTextureType names) plus ssao/exposure/bloom/blur (nameable
-// since PPTexture::Name -- see NameAndDeclare in hw_postprocess.cpp) -- not yet
-// shadowmap or custom shaders, still raw PPTexture* with no name. Mirrors
+// via the special PPTextureType names) plus ssao/exposure/bloom/blur and the
+// named shadowmap producer -- not yet custom shaders, still raw PPTexture* with
+// no name. Mirrors
 // CCMD(r_resources)'s shape (hw_resources.cpp): dump unconditionally, build's
 // report is a real defect signal here (unlike ValidateFrame's expected-noise
 // "untouched" case), so it's always shown when non-empty, not gated behind a cvar.

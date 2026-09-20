@@ -141,6 +141,7 @@ const char *VkTextureManager::GetTextureResourceName(const PPTextureType& type)
 	case PPTextureType::SceneNormal: return "SceneNormal";
 	case PPTextureType::SceneFog:    return "SceneFog";
 	case PPTextureType::SceneDepth:  return "SceneDepthStencil";
+	case PPTextureType::ShadowMap:   return "ShadowMap";
 	default:                         return nullptr;
 	}
 }
@@ -189,6 +190,9 @@ void VkTextureManager::CreateShadowmap()
 		.Image(Shadowmap.Image.get(), VK_FORMAT_R32_SFLOAT)
 		.DebugName("VkRenderBuffers.ShadowmapView")
 		.Create(fb->device.get());
+
+	fb->Resources().Declare({ "ShadowMap", "VkTextureManager", gl_shadowmap_quality, 1024, 1,
+		ResourceFormat::R32F, { SizeRule::Fixed } }, Shadowmap.Image.get());
 
 	VkImageTransition()
 		.AddImage(&Shadowmap, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, true)

@@ -477,6 +477,14 @@ void OpenGLFrameBuffer::UpdateShadowMap()
 	{
 		FGLDebug::PushGroup("ShadowMap");
 
+		PassDesc desc;
+		desc.name = "shadowmap";
+		desc.owner = "OpenGLFrameBuffer";
+		desc.writes = { "ShadowMap" };
+		desc.uses.Push({ "ShadowMap", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
+		int graphPass = screen->Graph().AddPass(desc);
+		screen->Graph().BeginBackendPass(graphPass);
+
 		FGLPostProcessState savedState;
 
 		static_cast<GLDataBuffer*>(screen->mShadowMap.mLightList)->BindBase();
@@ -484,6 +492,8 @@ void OpenGLFrameBuffer::UpdateShadowMap()
 		static_cast<GLDataBuffer*>(screen->mShadowMap.mLinesBuffer)->BindBase();
 
 		GLRenderer->mBuffers->BindShadowMapFB();
+		screen->Resources().Touch("ShadowMap", true);
+		screen->Graph().ObserveBackendUse("ShadowMap", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
 
 		GLRenderer->mShadowMapShader->Bind();
 		GLRenderer->mShadowMapShader->Uniforms->ShadowmapQuality = gl_shadowmap_quality;
@@ -496,6 +506,7 @@ void OpenGLFrameBuffer::UpdateShadowMap()
 
 		const auto& viewport = screen->mScreenViewport;
 		glViewport(viewport.left, viewport.top, viewport.width, viewport.height);
+		screen->Graph().EndBackendPass();
 
 		GLRenderer->mBuffers->BindShadowMapTexture(16);
 		FGLDebug::PopGroup();

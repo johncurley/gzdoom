@@ -104,9 +104,10 @@ prove that two GL resources are distinct.
 
 `BlitSceneToTexture()` now contributes a `scene.resolve` transfer pass when
 MSAA is active, resolving scene color into `PipelineImage[0]` before
-postprocessing. Eye-texture blits, `BindOutputFB()`/backbuffer presentation,
-shadow-map rendering, stereo presentation, screenshots, and wipes still
-perform real resource work outside `GLPPRenderState::Draw()`.
+postprocessing. Shadow-map production now contributes a `shadowmap` color
+attachment pass. Eye-texture blits, `BindOutputFB()`/backbuffer presentation,
+stereo presentation, screenshots, and wipes still perform real resource work
+outside `GLPPRenderState::Draw()`.
 
 The current graph intentionally treats the scene inputs and pipeline start as
 external boundaries, and leaves shadow/custom/presentation work ungraphable.
@@ -145,8 +146,9 @@ already verified for the shared contract.
 
 - Model the scene render and `BlitSceneToTexture()` as explicit producer/
   transfer operations.
-- Decide whether shadow maps, eye textures, presentation, screenshots, wipes,
-  and custom shader textures need stable registry names.
+- Decide whether eye textures, presentation, screenshots, wipes, and custom
+  shader textures need stable registry names. ShadowMap now has a stable name
+  and an observed producer on both GL and Vulkan.
 - Add GL capability tracking only if a future graph executor needs texture
   barriers or image-memory barriers.
 - Defer pass reordering, culling, transient allocation, and aliasing until

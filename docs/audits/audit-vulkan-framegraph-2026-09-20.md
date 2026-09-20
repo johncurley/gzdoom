@@ -24,7 +24,8 @@ only Vulkan so the two renderer audits remain independently verifiable.
   descriptor/framebuffer binding sites with observation hooks. The MSAA and
   non-MSAA scene-to-pipeline transfer is also recorded as `scene.resolve`,
   using `TransferSource`/`TransferDestination` around the existing resolve or
-  blit operation.
+  blit operation. The shadow-map output is registered as `ShadowMap` and is
+  observed as a color-attachment producer.
 - `Build()` reports declaration/observation mismatches, and the self-test
   covers sampled, color-attachment, depth-attachment, transfer,
   read/write-storage, and presentation uses, plus a deliberately invalid
@@ -111,7 +112,7 @@ The current graph records the named postprocess chain and the named
 bloom/exposure/AO resources. It does not yet model all Vulkan work:
 
 - swapchain/presentation output;
-- shadow-map rendering;
+- shadow-map consumers outside the named postprocess output;
 - custom shader inputs whose textures have no stable registry name;
 - scene rendering as a multi-attachment producer;
 - screenshot, wipe, stereo, and other presentation variants.
