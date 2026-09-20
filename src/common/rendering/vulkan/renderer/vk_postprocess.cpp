@@ -86,6 +86,20 @@ void VkPostprocess::BlitSceneToPostprocess()
 
 	mCurrentPipelineImage = 0;
 
+	PassDesc desc;
+	desc.name = "scene.resolve";
+	desc.owner = "VkPostprocess";
+	desc.reads = { "SceneColor" };
+	desc.writes = { "PipelineImage[0]" };
+	desc.uses.Push({ "SceneColor", FrameGraphAccess::Read, FrameGraphUsage::TransferSource });
+	desc.uses.Push({ "PipelineImage[0]", FrameGraphAccess::Write, FrameGraphUsage::TransferDestination });
+	int graphPass = fb->Graph().AddPass(desc);
+	fb->Graph().BeginBackendPass(graphPass);
+	fb->Resources().Touch("SceneColor", false);
+	fb->Graph().ObserveBackendUse("SceneColor", FrameGraphAccess::Read, FrameGraphUsage::TransferSource);
+	fb->Resources().Touch("PipelineImage[0]", true);
+	fb->Graph().ObserveBackendUse("PipelineImage[0]", FrameGraphAccess::Write, FrameGraphUsage::TransferDestination);
+
 	VkImageTransition()
 		.AddImage(&buffers->SceneColor, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, false)
 		.AddImage(&buffers->PipelineImage[mCurrentPipelineImage], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, true)
@@ -132,6 +146,7 @@ void VkPostprocess::BlitSceneToPostprocess()
 			buffers->PipelineImage[mCurrentPipelineImage].Image->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 			1, &blit, VK_FILTER_NEAREST);
 	}
+	fb->Graph().EndBackendPass();
 }
 
 void VkPostprocess::ImageTransitionScene(bool undefinedSrcLayout)

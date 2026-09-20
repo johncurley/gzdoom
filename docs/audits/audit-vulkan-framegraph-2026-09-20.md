@@ -21,18 +21,28 @@ only Vulkan so the two renderer audits remain independently verifiable.
 - `FrameGraphAccess` and `FrameGraphUsage` describe sampled reads and color
   attachment writes without exposing Vulkan enums.
 - Vulkan postprocess passes declare those uses and bracket their existing
-  descriptor/framebuffer binding sites with observation hooks.
+  descriptor/framebuffer binding sites with observation hooks. The MSAA and
+  non-MSAA scene-to-pipeline transfer is also recorded as `scene.resolve`,
+  using `TransferSource`/`TransferDestination` around the existing resolve or
+  blit operation.
 - `Build()` reports declaration/observation mismatches, and the self-test
-  covers both a valid observed pass and a deliberately invalid declaration.
-- A real Vulkan MAP01 run exercised the full enabled postprocess chain:
-  40 passes, 38 edges, and matching declared/observed uses.
+  covers sampled, color-attachment, depth-attachment, transfer,
+  read/write-storage, and presentation uses, plus a deliberately invalid
+  declaration.
+- An earlier real Vulkan MAP01 run exercised the full enabled postprocess
+  chain: 40 passes, 38 edges, and matching declared/observed uses. A current
+  smoke run with the scene-resolve boundary initialized the RX 550 Vulkan
+  backend and reached `+MAP01 - Entryway`; the command was intentionally
+  timeout-bounded rather than used as a framegraph dump.
 
 ## Current execution model
 
-`VkPPRenderState::Draw()` is immediate. It ends the active Vulkan render pass,
-records the graph description, resolves the input descriptors, resolves the
-output framebuffer, emits the draw, and advances the ping-pong image. The
-relevant sequence is in `vulkan/renderer/vk_pprenderstate.cpp`:
+`VkPostprocess::BlitSceneToPostprocess()` and `VkPPRenderState::Draw()` are
+immediate. The former records the scene resolve/blit boundary before the latter
+records the postprocess chain. `VkPPRenderState::Draw()` ends the active Vulkan
+render pass, records the graph description, resolves the input descriptors,
+resolves the output framebuffer, emits the draw, and advances the ping-pong
+image. The relevant sequence is in `vulkan/renderer/vk_pprenderstate.cpp`:
 
 1. `EndRenderPass()` closes any scene pass.
 2. `GetInput()` transitions sampled images to
@@ -139,7 +149,7 @@ resource names and dependency edges alone are not enough.
 ## Verification required before executor work
 
 - A CPU self-test for sampled-read, color-write, depth-write, transfer, and
-  read/write hazard combinations.
+  read/write hazard combinations. The self-test now covers this contract.
 - A live Vulkan run proving the observed use sequence agrees with the existing
   `VkImageTransition` calls.
 - Resize and MSAA/sample-count changes, because they reset both resources and

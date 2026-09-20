@@ -579,8 +579,22 @@ void FGLRenderBuffers::BlitSceneToTexture()
 	if (mSamples <= 1)
 		return;
 
+	PassDesc desc;
+	desc.name = "scene.resolve";
+	desc.owner = "FGLRenderBuffers";
+	desc.reads = { "SceneColor" };
+	desc.writes = { "PipelineImage[0]" };
+	desc.uses.Push({ "SceneColor", FrameGraphAccess::Read, FrameGraphUsage::TransferSource });
+	desc.uses.Push({ "PipelineImage[0]", FrameGraphAccess::Write, FrameGraphUsage::TransferDestination });
+	int graphPass = screen->Graph().AddPass(desc);
+	screen->Graph().BeginBackendPass(graphPass);
+
 	glBindFramebuffer(GL_READ_FRAMEBUFFER, mSceneFB.handle);
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, mPipelineFB[mCurrentPipelineTexture].handle);
+	screen->Resources().Touch("SceneColor", false);
+	screen->Graph().ObserveBackendUse("SceneColor", FrameGraphAccess::Read, FrameGraphUsage::TransferSource);
+	screen->Resources().Touch("PipelineImage[0]", true);
+	screen->Graph().ObserveBackendUse("PipelineImage[0]", FrameGraphAccess::Write, FrameGraphUsage::TransferDestination);
 	glBlitFramebuffer(0, 0, mWidth, mHeight, 0, 0, mWidth, mHeight, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 
 	if ((gl.flags & RFL_INVALIDATE_BUFFER) != 0)
@@ -591,6 +605,7 @@ void FGLRenderBuffers::BlitSceneToTexture()
 
 	glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+	screen->Graph().EndBackendPass();
 }
 
 //==========================================================================

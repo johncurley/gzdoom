@@ -354,19 +354,55 @@ CCMD(r_framegraph_selftest)
 	// path: declared uses must agree with the read/write roles, and the backend
 	// observation hooks must match them exactly.
 	FrameGraph useGraph;
-	useGraph.DeclareExternal("Input");
-	PassDesc usePass;
-	usePass.name = "usage-test";
-	usePass.owner = "selftest";
-	usePass.reads.Push("Input");
-	usePass.writes.Push("Output");
-	usePass.uses.Push({ "Input", FrameGraphAccess::Read, FrameGraphUsage::Sampled });
-	usePass.uses.Push({ "Output", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
-	int usePassIndex = useGraph.AddPass(usePass);
-	useGraph.BeginBackendPass(usePassIndex);
-	useGraph.ObserveBackendUse("Input", FrameGraphAccess::Read, FrameGraphUsage::Sampled);
-	useGraph.ObserveBackendUse("Output", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
+	useGraph.DeclareExternal("SceneColor");
+	useGraph.DeclareExternal("StorageImage");
+	PassDesc resolvePass;
+	resolvePass.name = "resolve-test";
+	resolvePass.owner = "selftest";
+	resolvePass.reads.Push("SceneColor");
+	resolvePass.writes.Push("PipelineImage[0]");
+	resolvePass.uses.Push({ "SceneColor", FrameGraphAccess::Read, FrameGraphUsage::TransferSource });
+	resolvePass.uses.Push({ "PipelineImage[0]", FrameGraphAccess::Write, FrameGraphUsage::TransferDestination });
+	int resolvePassIndex = useGraph.AddPass(resolvePass);
+	useGraph.BeginBackendPass(resolvePassIndex);
+	useGraph.ObserveBackendUse("SceneColor", FrameGraphAccess::Read, FrameGraphUsage::TransferSource);
+	useGraph.ObserveBackendUse("PipelineImage[0]", FrameGraphAccess::Write, FrameGraphUsage::TransferDestination);
 	useGraph.EndBackendPass();
+
+	PassDesc depthPass;
+	depthPass.name = "depth-test";
+	depthPass.owner = "selftest";
+	depthPass.writes.Push("DepthTarget");
+	depthPass.uses.Push({ "DepthTarget", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment });
+	int depthPassIndex = useGraph.AddPass(depthPass);
+	useGraph.BeginBackendPass(depthPassIndex);
+	useGraph.ObserveBackendUse("DepthTarget", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment);
+	useGraph.EndBackendPass();
+
+	PassDesc storagePass;
+	storagePass.name = "storage-test";
+	storagePass.owner = "selftest";
+	storagePass.reads.Push("StorageImage");
+	storagePass.writes.Push("StorageImage");
+	storagePass.uses.Push({ "StorageImage", FrameGraphAccess::ReadWrite, FrameGraphUsage::Storage });
+	int storagePassIndex = useGraph.AddPass(storagePass);
+	useGraph.BeginBackendPass(storagePassIndex);
+	useGraph.ObserveBackendUse("StorageImage", FrameGraphAccess::ReadWrite, FrameGraphUsage::Storage);
+	useGraph.EndBackendPass();
+
+	PassDesc presentPass;
+	presentPass.name = "present-test";
+	presentPass.owner = "selftest";
+	presentPass.reads.Push("PipelineImage[0]");
+	presentPass.writes.Push("SwapChain");
+	presentPass.uses.Push({ "PipelineImage[0]", FrameGraphAccess::Read, FrameGraphUsage::Sampled });
+	presentPass.uses.Push({ "SwapChain", FrameGraphAccess::Write, FrameGraphUsage::Present });
+	int presentPassIndex = useGraph.AddPass(presentPass);
+	useGraph.BeginBackendPass(presentPassIndex);
+	useGraph.ObserveBackendUse("PipelineImage[0]", FrameGraphAccess::Read, FrameGraphUsage::Sampled);
+	useGraph.ObserveBackendUse("SwapChain", FrameGraphAccess::Write, FrameGraphUsage::Present);
+	useGraph.EndBackendPass();
+
 	FString useReport;
 	bool useOK = useGraph.Build(&useReport);
 

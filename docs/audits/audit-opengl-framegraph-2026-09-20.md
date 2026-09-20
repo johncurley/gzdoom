@@ -100,12 +100,13 @@ future allocation, aliasing, or hazard analysis must consult the resource
 registry's physical handle and format/sample metadata. Names alone cannot
 prove that two GL resources are distinct.
 
-### Finding 6 — Blits and presentation are outside the named postprocess graph
+### Finding 6 — Most blits and presentation remain outside the named graph
 
-`BlitSceneToTexture()` resolves MSAA scene color into `PipelineImage[0]` before
+`BlitSceneToTexture()` now contributes a `scene.resolve` transfer pass when
+MSAA is active, resolving scene color into `PipelineImage[0]` before
 postprocessing. Eye-texture blits, `BindOutputFB()`/backbuffer presentation,
-shadow-map rendering, stereo presentation, screenshots, and wipes also perform
-real resource work outside `GLPPRenderState::Draw()`.
+shadow-map rendering, stereo presentation, screenshots, and wipes still
+perform real resource work outside `GLPPRenderState::Draw()`.
 
 The current graph intentionally treats the scene inputs and pipeline start as
 external boundaries, and leaves shadow/custom/presentation work ungraphable.
@@ -125,6 +126,11 @@ GL frame coverage.
 5. Run the existing CPU self-test, GL CI smoke path, and a real enabled GL
    postprocess chain. The live graph must agree with `FrameResources` without
    requiring every resource to be touched in the first frame.
+
+The first transfer boundary is now implemented in
+`FGLRenderBuffers::BlitSceneToTexture()`: the MSAA resolve is recorded as
+`scene.resolve` and its source/destination uses are observed around the real
+`glBlitFramebuffer()` call.
 
 This is the same order-preserving contract now used by Vulkan. It gives GL a
 shared correctness check without claiming that OpenGL has Vulkan-style layout
