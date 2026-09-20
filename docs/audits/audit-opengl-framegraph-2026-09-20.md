@@ -160,6 +160,14 @@ producer. In the non-MSAA layout it also declares the graph alias between
 `SceneColor` and `PipelineImage[0]`, so the postprocess dependency chain follows
 the physical GL object rather than treating the two names as unrelated.
 
+At the scene-to-postprocess handoff, `OpenGLFrameBuffer::PostProcessScene()`
+now records a conservative `scene.draw` pass. It records the final scene
+attachment writes and the `ShadowMap` sampled read when shadow mapping is
+enabled, which closes the dependency into `scene.resolve` or the first
+postprocess pass. This is intentionally a handoff boundary, not a claim that
+the graph has split opaque, portal, translucent, and mid-scene SSAO work into
+independent schedulable passes.
+
 Named `PPTexture` inputs now observe their sampled use at the GL bind point,
 matching Vulkan's existing descriptor observation.
 
@@ -176,9 +184,9 @@ alias normalization path.
 
 ## Deferred work
 
-- Extend the conservative scene target boundary to cover full scene draw
-  grouping once the graph can represent nested/deferred passes. The MSAA
-  resolve boundary is already covered.
+- Split the conservative `scene.draw` handoff around mid-scene SSAO and nested
+  portal/translucent work once the graph can represent those boundaries. The
+  MSAA resolve boundary is already covered.
 - The legacy unarmed post-swap screenshot read remains outside the graph because
   the default framebuffer contents are not guaranteed after `Swap()`. ShadowMap,
   custom shader inputs, and the two GL stereo eye textures now have stable graph

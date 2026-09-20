@@ -672,6 +672,47 @@ void OpenGLFrameBuffer::Draw2D()
 
 void OpenGLFrameBuffer::PostProcessScene(bool swscene, int fixedcm, float flash, const std::function<void()> &afterBloomDrawEndScene2D)
 {
+	// The scene target pass records attachment selection. This conservative
+	// handoff pass represents the scene draws that have completed before the
+	// resolve/postprocess chain begins; nested portal draws remain inside it.
+	PassDesc sceneDesc;
+	sceneDesc.name = "scene.draw";
+	sceneDesc.owner = "OpenGLFrameBuffer";
+	sceneDesc.writes = { "SceneColor", "SceneDepthStencil" };
+	sceneDesc.uses.Push({ "SceneColor", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
+	sceneDesc.uses.Push({ "SceneDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment });
+	if (gl_ssao != 0)
+	{
+		sceneDesc.writes.Push("SceneFog");
+		sceneDesc.writes.Push("SceneNormal");
+		sceneDesc.uses.Push({ "SceneFog", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
+		sceneDesc.uses.Push({ "SceneNormal", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
+	}
+	if (mShadowMap.Enabled())
+	{
+		sceneDesc.reads.Push("ShadowMap");
+		sceneDesc.uses.Push({ "ShadowMap", FrameGraphAccess::Read, FrameGraphUsage::Sampled });
+	}
+	int scenePass = screen->Graph().AddPass(sceneDesc);
+	screen->Graph().BeginBackendPass(scenePass);
+	screen->Resources().Touch("SceneColor", true);
+	screen->Graph().ObserveBackendUse("SceneColor", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
+	screen->Resources().Touch("SceneDepthStencil", true);
+	screen->Graph().ObserveBackendUse("SceneDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment);
+	if (gl_ssao != 0)
+	{
+		screen->Resources().Touch("SceneFog", true);
+		screen->Graph().ObserveBackendUse("SceneFog", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
+		screen->Resources().Touch("SceneNormal", true);
+		screen->Graph().ObserveBackendUse("SceneNormal", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
+	}
+	if (mShadowMap.Enabled())
+	{
+		screen->Resources().Touch("ShadowMap", false);
+		screen->Graph().ObserveBackendUse("ShadowMap", FrameGraphAccess::Read, FrameGraphUsage::Sampled);
+	}
+	screen->Graph().EndBackendPass();
+
 	if (!swscene) GLRenderer->mBuffers->BlitSceneToTexture(); // Copy the resulting scene to the current post process texture
 	GLRenderer->PostProcessScene(fixedcm, flash, afterBloomDrawEndScene2D);
 }

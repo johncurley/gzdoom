@@ -77,6 +77,13 @@ been encoded. `PassDesc` contains only a name, owner, resource names, and RAW
 dependencies. It does not contain the shader, uniforms, descriptor choices,
 viewport, blend state, framebuffer, or an executable callback.
 
+`VulkanRenderDevice::PostProcessScene()` now records a conservative
+`scene.draw` handoff after scene traversal. It records the final scene
+attachment writes and the `ShadowMap` sampled read when shadow mapping is
+enabled, giving the resolve/postprocess chain a producer and consumer boundary
+without claiming that opaque, portal, translucent, and mid-scene SSAO work are
+already independently schedulable.
+
 ## Findings
 
 ### Finding 1 — sorting the current graph cannot schedule Vulkan work
@@ -131,7 +138,8 @@ bloom/exposure/AO resources, scene resolve, shadow-map production, and the
 main presentation variants. It does not yet model all Vulkan work:
 
 - shadow-map consumers outside the named postprocess output;
-- full scene draw grouping and nested AO/portal execution;
+- exact full scene draw grouping and nested AO/portal execution (the
+  conservative `scene.draw` handoff is covered);
 - the detailed intermediate image-to-buffer destination of screenshot readback
   (the source dependency and transfer boundary are covered, while the
   temporary/staging objects remain outside the registry).
