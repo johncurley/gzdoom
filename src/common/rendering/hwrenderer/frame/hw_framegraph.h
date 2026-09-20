@@ -37,9 +37,36 @@
 
 #pragma once
 
+#include <cstdint>
 #include "tarray.h"
 
 class FString;
+
+enum class FrameGraphAccess : uint8_t
+{
+	Read,
+	Write,
+	ReadWrite
+};
+
+// Backend-neutral operation categories. These are deliberately not Vulkan
+// enums: the same graph contract will be usable by GL and Metal later.
+enum class FrameGraphUsage : uint8_t
+{
+	Sampled,
+	ColorAttachment,
+	DepthStencilAttachment,
+	TransferSource,
+	TransferDestination,
+	Present
+};
+
+struct ResourceUse
+{
+	const char *name = nullptr;
+	FrameGraphAccess access = FrameGraphAccess::Read;
+	FrameGraphUsage usage = FrameGraphUsage::Sampled;
+};
 
 struct PassDesc
 {
@@ -47,6 +74,7 @@ struct PassDesc
 	const char *owner = nullptr;	// e.g. "Postprocess", "MtAOModule"
 	TArray<const char *> reads;
 	TArray<const char *> writes;
+	TArray<ResourceUse> uses;	// optional backend-observed usage contract
 };
 
 class FrameGraph
@@ -76,6 +104,12 @@ public:
 	const PassDesc &Pass(int index) const { return mPasses[index]; }
 	int PassCount() const { return (int)mPasses.Size(); }
 
+	// Backend observation hooks. These record what the existing renderer did;
+	// they do not emit barriers or alter execution.
+	void BeginBackendPass(int passIndex);
+	void ObserveBackendUse(const char *name, FrameGraphAccess access, FrameGraphUsage usage);
+	void EndBackendPass();
+
 	void Dump(FString *out) const;
 
 private:
@@ -85,11 +119,21 @@ private:
 		const char *resource = nullptr;
 	};
 
+	struct ObservedUse
+	{
+		int pass = -1;
+		ResourceUse use;
+	};
+
 	TArray<PassDesc> mPasses;
 	TArray<const char *> mExternals;
 	TArray<Edge> mEdges;
 	TArray<int> mOrder;
+	TArray<uint8_t> mBackendObserved;
+	TArray<ObservedUse> mObservedUses;
+	int mActivePass = -1;
 
 	void BuildEdges(FString *report);
 	bool TopoSort(FString *report);
+	void ValidateUses(FString *report) const;
 };

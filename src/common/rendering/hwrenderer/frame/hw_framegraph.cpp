@@ -15,22 +15,156 @@ static bool NameEq(const char *a, const char *b)
 	return a == b || strcmp(a, b) == 0;
 }
 
+static bool HasName(const TArray<const char *> &names, const char *name)
+{
+	for (const char *candidate : names)
+		if (NameEq(candidate, name))
+			return true;
+	return false;
+}
+
+static bool UseEq(const ResourceUse &a, const ResourceUse &b)
+{
+	return NameEq(a.name, b.name) && a.access == b.access && a.usage == b.usage;
+}
+
+static const char *AccessName(FrameGraphAccess access)
+{
+	switch (access)
+	{
+	case FrameGraphAccess::Read:      return "read";
+	case FrameGraphAccess::Write:     return "write";
+	case FrameGraphAccess::ReadWrite: return "read/write";
+	}
+	return "unknown";
+}
+
+static const char *UsageName(FrameGraphUsage usage)
+{
+	switch (usage)
+	{
+	case FrameGraphUsage::Sampled:                return "sampled";
+	case FrameGraphUsage::ColorAttachment:       return "color-attachment";
+	case FrameGraphUsage::DepthStencilAttachment: return "depth-stencil";
+	case FrameGraphUsage::TransferSource:        return "transfer-source";
+	case FrameGraphUsage::TransferDestination:   return "transfer-destination";
+	case FrameGraphUsage::Present:               return "present";
+	}
+	return "unknown";
+}
+
 void FrameGraph::Reset()
 {
 	mPasses.Clear();
 	mExternals.Clear();
 	mEdges.Clear();
 	mOrder.Clear();
+	mBackendObserved.Clear();
+	mObservedUses.Clear();
+	mActivePass = -1;
 }
 
 int FrameGraph::AddPass(const PassDesc &desc)
 {
-	return (int)mPasses.Push(desc);
+	int index = (int)mPasses.Push(desc);
+	mBackendObserved.Push(0);
+	return index;
 }
 
 void FrameGraph::DeclareExternal(const char *name)
 {
 	mExternals.Push(name);
+}
+
+void FrameGraph::BeginBackendPass(int passIndex)
+{
+	mActivePass = -1;
+	if (passIndex >= 0 && passIndex < (int)mPasses.Size())
+	{
+		mActivePass = passIndex;
+		mBackendObserved[passIndex] = 1;
+	}
+}
+
+void FrameGraph::ObserveBackendUse(const char *name, FrameGraphAccess access, FrameGraphUsage usage)
+{
+	if (mActivePass >= 0)
+		mObservedUses.Push({ mActivePass, { name, access, usage } });
+}
+
+void FrameGraph::EndBackendPass()
+{
+	mActivePass = -1;
+}
+
+void FrameGraph::ValidateUses(FString *report) const
+{
+	for (int passIndex = 0; passIndex < (int)mPasses.Size(); passIndex++)
+	{
+		const PassDesc &pass = mPasses[passIndex];
+		for (const ResourceUse &use : pass.uses)
+		{
+			if (!use.name)
+			{
+				report->AppendFormat("pass '%s' (%s) has a null resource use name\n", pass.name, pass.owner);
+				continue;
+			}
+
+			bool isRead = HasName(pass.reads, use.name);
+			bool isWrite = HasName(pass.writes, use.name);
+			bool roleMatches =
+				(use.access == FrameGraphAccess::Read && isRead && !isWrite) ||
+				(use.access == FrameGraphAccess::Write && isWrite && !isRead) ||
+				(use.access == FrameGraphAccess::ReadWrite && isRead && isWrite);
+			if (!roleMatches)
+			{
+				report->AppendFormat("pass '%s' (%s) declares %s use '%s' but its read/write lists disagree\n",
+					pass.name, pass.owner, AccessName(use.access), use.name);
+			}
+		}
+
+		if (!mBackendObserved[passIndex])
+			continue;
+
+		TArray<bool> matched;
+		matched.Resize(pass.uses.Size());
+		for (unsigned int i = 0; i < matched.Size(); i++)
+			matched[i] = false;
+
+		for (const ObservedUse &observed : mObservedUses)
+		{
+			if (observed.pass != passIndex)
+				continue;
+
+			int match = -1;
+			for (unsigned int i = 0; i < pass.uses.Size(); i++)
+			{
+				if (!matched[i] && UseEq(pass.uses[i], observed.use))
+				{
+					match = (int)i;
+					break;
+				}
+			}
+			if (match < 0)
+			{
+				report->AppendFormat("pass '%s' (%s) observed undeclared %s %s use '%s'\n",
+					pass.name, pass.owner, AccessName(observed.use.access), UsageName(observed.use.usage), observed.use.name);
+			}
+			else
+			{
+				matched[match] = true;
+			}
+		}
+
+		for (unsigned int i = 0; i < pass.uses.Size(); i++)
+		{
+			if (!matched[i])
+			{
+				report->AppendFormat("pass '%s' (%s) declared but did not observe %s %s use '%s'\n",
+					pass.name, pass.owner, AccessName(pass.uses[i].access), UsageName(pass.uses[i].usage), pass.uses[i].name);
+			}
+		}
+	}
 }
 
 void FrameGraph::BuildEdges(FString *report)
@@ -146,6 +280,7 @@ bool FrameGraph::TopoSort(FString *report)
 bool FrameGraph::Build(FString *report)
 {
 	*report = "";
+	ValidateUses(report);
 	BuildEdges(report);
 	bool ok = TopoSort(report);
 	return ok && report->Len() == 0;
@@ -168,6 +303,8 @@ void FrameGraph::Dump(FString *out) const
 
 		out->AppendFormat("  %-7d%-21s%-17s%s -> %s\n",
 			idx, pass.name, pass.owner, reads.GetChars(), writes.GetChars());
+		for (const ResourceUse &use : pass.uses)
+			out->AppendFormat("           use: %-12s %-18s %s\n", AccessName(use.access), UsageName(use.usage), use.name);
 	}
 
 	if (mEdges.Size() > 0)
@@ -211,7 +348,40 @@ CCMD(r_framegraph_selftest)
 	bool orderMatchesDeclaration = true;
 	for (int i = 0; i < graph.PassCount(); i++)
 		orderMatchesDeclaration &= (graph.Order()[i] == i);
-	Printf(ok && orderMatchesDeclaration ? "selftest: PASS\n" : "selftest: FAIL\n");
+
+	// Exercise the first backend-use contract independently of the live Vulkan
+	// path: declared uses must agree with the read/write roles, and the backend
+	// observation hooks must match them exactly.
+	FrameGraph useGraph;
+	useGraph.DeclareExternal("Input");
+	PassDesc usePass;
+	usePass.name = "usage-test";
+	usePass.owner = "selftest";
+	usePass.reads.Push("Input");
+	usePass.writes.Push("Output");
+	usePass.uses.Push({ "Input", FrameGraphAccess::Read, FrameGraphUsage::Sampled });
+	usePass.uses.Push({ "Output", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
+	int usePassIndex = useGraph.AddPass(usePass);
+	useGraph.BeginBackendPass(usePassIndex);
+	useGraph.ObserveBackendUse("Input", FrameGraphAccess::Read, FrameGraphUsage::Sampled);
+	useGraph.ObserveBackendUse("Output", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
+	useGraph.EndBackendPass();
+	FString useReport;
+	bool useOK = useGraph.Build(&useReport);
+
+	FrameGraph badGraph;
+	badGraph.DeclareExternal("Input");
+	PassDesc badPass;
+	badPass.name = "bad-usage-test";
+	badPass.owner = "selftest";
+	badPass.reads.Push("Input");
+	badPass.writes.Push("Output");
+	badPass.uses.Push({ "NotInReadWriteLists", FrameGraphAccess::Read, FrameGraphUsage::Sampled });
+	badGraph.AddPass(badPass);
+	FString badReport;
+	bool badDetected = !badGraph.Build(&badReport) && badReport.Len() > 0;
+
+	Printf(ok && orderMatchesDeclaration && useOK && badDetected ? "selftest: PASS\n" : "selftest: FAIL\n");
 }
 
 // Real per-frame data: whatever GLPPRenderState::Draw()/VkPPRenderState::Draw()

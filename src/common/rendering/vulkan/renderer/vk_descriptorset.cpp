@@ -208,10 +208,16 @@ VulkanDescriptorSet* VkDescriptorSetManager::GetInput(VkPPRenderPassSetup* passS
 		if (input.Type == PPTextureType::PPTexture)
 		{
 			if (input.Texture->Name)
+			{
 				fb->Resources().Touch(input.Texture->Name, false);
+				fb->Graph().ObserveBackendUse(input.Texture->Name, FrameGraphAccess::Read, FrameGraphUsage::Sampled);
+			}
 		}
 		else if (const char *name = fb->GetTextureManager()->GetTextureResourceName(input.Type))
+		{
 			fb->Resources().Touch(name, false);
+			fb->Graph().ObserveBackendUse(name, FrameGraphAccess::Read, FrameGraphUsage::Sampled);
+		}
 
 		write.AddCombinedImageSampler(descriptors.get(), index, tex->DepthOnlyView ? tex->DepthOnlyView.get() : tex->View.get(), sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 		imageTransition.AddImage(tex, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, false);

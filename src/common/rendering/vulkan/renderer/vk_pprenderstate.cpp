@@ -65,6 +65,7 @@ void VkPPRenderState::Draw()
 {
 	fb->GetRenderState()->EndRenderPass();
 
+	int graphPass = -1;
 	// Record this pass in the frame graph (hw_framegraph.h) -- only when every
 	// input and the output resolve to a registry name. Must run before the
 	// pipeline-image advance below.
@@ -89,9 +90,14 @@ void VkPPRenderState::Draw()
 			desc.owner = "Postprocess";
 			desc.reads = reads;
 			desc.writes = { writeName };
-			fb->Graph().AddPass(desc);
+			for (const char *name : reads)
+				desc.uses.Push({ name, FrameGraphAccess::Read, FrameGraphUsage::Sampled });
+			desc.uses.Push({ writeName, FrameGraphAccess::Write,
+				Output.Type == PPTextureType::SwapChain ? FrameGraphUsage::Present : FrameGraphUsage::ColorAttachment });
+			graphPass = fb->Graph().AddPass(desc);
 		}
 	}
+	fb->Graph().BeginBackendPass(graphPass);
 
 	VkPPRenderPassKey key;
 	key.BlendMode = BlendMode;
@@ -134,6 +140,7 @@ void VkPPRenderState::Draw()
 		auto pp = fb->GetPostprocess();
 		pp->mCurrentPipelineImage = (pp->mCurrentPipelineImage + 1) % VkRenderBuffers::NumPipelineImages;
 	}
+	fb->Graph().EndBackendPass();
 }
 
 void VkPPRenderState::RenderScreenQuad(VkPPRenderPassSetup *passSetup, VulkanDescriptorSet *descriptorSet, VulkanFramebuffer *framebuffer, int framebufferWidth, int framebufferHeight, int x, int y, int width, int height, const void *pushConstants, uint32_t pushConstantsSize, bool stencilTest)

@@ -285,10 +285,16 @@ VulkanFramebuffer* VkRenderBuffers::GetOutput(VkPPRenderPassSetup* passSetup, co
 	if (output.Type == PPTextureType::PPTexture)
 	{
 		if (output.Texture->Name)
+		{
 			fb->Resources().Touch(output.Texture->Name, true);
+			fb->Graph().ObserveBackendUse(output.Texture->Name, FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
+		}
 	}
 	else if (const char *name = fb->GetTextureManager()->GetTextureResourceName(output.Type))
+	{
 		fb->Resources().Touch(name, true);
+		fb->Graph().ObserveBackendUse(name, FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
+	}
 
 	VkImageView view;
 	std::unique_ptr<VulkanFramebuffer>* framebufferptr = nullptr;

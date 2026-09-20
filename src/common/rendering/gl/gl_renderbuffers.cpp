@@ -729,6 +729,8 @@ void FGLRenderBuffers::BindSceneFB(bool sceneData)
 	glBindFramebuffer(GL_FRAMEBUFFER, sceneData ? mSceneDataFB.handle : mSceneFB.handle);
 	auto &resources = screen->Resources();
 	resources.Touch("SceneColor", true);
+	if (!sceneData)
+		screen->Graph().ObserveBackendUse("SceneColor", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
 	resources.Touch("SceneDepthStencil", true);
 	if (sceneData)
 	{
@@ -751,6 +753,7 @@ void FGLRenderBuffers::BindSceneColorTexture(int index)
 	else
 		glBindTexture(GL_TEXTURE_2D, mPipelineTexture[0].handle);
 	screen->Resources().Touch("SceneColor", false);
+	screen->Graph().ObserveBackendUse("SceneColor", FrameGraphAccess::Read, FrameGraphUsage::Sampled);
 }
 
 //==========================================================================
@@ -767,6 +770,7 @@ void FGLRenderBuffers::BindSceneFogTexture(int index)
 	else
 		glBindTexture(GL_TEXTURE_2D, mSceneFogTex.handle);
 	screen->Resources().Touch("SceneFog", false);
+	screen->Graph().ObserveBackendUse("SceneFog", FrameGraphAccess::Read, FrameGraphUsage::Sampled);
 }
 
 //==========================================================================
@@ -783,6 +787,7 @@ void FGLRenderBuffers::BindSceneNormalTexture(int index)
 	else
 		glBindTexture(GL_TEXTURE_2D, mSceneNormalTex.handle);
 	screen->Resources().Touch("SceneNormal", false);
+	screen->Graph().ObserveBackendUse("SceneNormal", FrameGraphAccess::Read, FrameGraphUsage::Sampled);
 }
 
 //==========================================================================
@@ -799,6 +804,7 @@ void FGLRenderBuffers::BindSceneDepthTexture(int index)
 	else
 		glBindTexture(GL_TEXTURE_2D, mSceneDepthStencilTex.handle);
 	screen->Resources().Touch("SceneDepthStencil", false);
+	screen->Graph().ObserveBackendUse("SceneDepthStencil", FrameGraphAccess::Read, FrameGraphUsage::Sampled);
 }
 
 //==========================================================================
@@ -811,6 +817,8 @@ void FGLRenderBuffers::BindCurrentTexture(int index, int filter, int wrap)
 {
 	mPipelineTexture[mCurrentPipelineTexture].Bind(index, filter, wrap);
 	screen->Resources().Touch(mCurrentPipelineTexture == 0 ? "PipelineImage[0]" : "PipelineImage[1]", false);
+	screen->Graph().ObserveBackendUse(mCurrentPipelineTexture == 0 ? "PipelineImage[0]" : "PipelineImage[1]",
+		FrameGraphAccess::Read, FrameGraphUsage::Sampled);
 }
 
 //==========================================================================
@@ -823,6 +831,8 @@ void FGLRenderBuffers::BindCurrentFB()
 {
 	mPipelineFB[mCurrentPipelineTexture].Bind();
 	screen->Resources().Touch(mCurrentPipelineTexture == 0 ? "PipelineImage[0]" : "PipelineImage[1]", true);
+	screen->Graph().ObserveBackendUse(mCurrentPipelineTexture == 0 ? "PipelineImage[0]" : "PipelineImage[1]",
+		FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
 }
 
 //==========================================================================
@@ -836,6 +846,8 @@ void FGLRenderBuffers::BindNextFB()
 	int out = (mCurrentPipelineTexture + 1) % NumPipelineTextures;
 	mPipelineFB[out].Bind();
 	screen->Resources().Touch(out == 0 ? "PipelineImage[0]" : "PipelineImage[1]", true);
+	screen->Graph().ObserveBackendUse(out == 0 ? "PipelineImage[0]" : "PipelineImage[1]",
+		FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
 }
 
 //==========================================================================
@@ -979,6 +991,7 @@ void GLPPRenderState::Draw()
 
 	// Record this pass in the frame graph (hw_framegraph.h) -- only when every
 	// input and the output resolve to a registry name.
+	int graphPass = -1;
 	if (PassName)
 	{
 		TArray<const char *> reads;
@@ -999,9 +1012,14 @@ void GLPPRenderState::Draw()
 			desc.owner = "Postprocess";
 			desc.reads = reads;
 			desc.writes = { writeName };
-			screen->Graph().AddPass(desc);
+			for (const char *name : reads)
+				desc.uses.Push({ name, FrameGraphAccess::Read, FrameGraphUsage::Sampled });
+			desc.uses.Push({ writeName, FrameGraphAccess::Write,
+				Output.Type == PPTextureType::SwapChain ? FrameGraphUsage::Present : FrameGraphUsage::ColorAttachment });
+			graphPass = screen->Graph().AddPass(desc);
 		}
 	}
+	screen->Graph().BeginBackendPass(graphPass);
 
 	// Bind input textures
 	for (unsigned int index = 0; index < Textures.Size(); index++)
@@ -1068,7 +1086,10 @@ void GLPPRenderState::Draw()
 		else
 			GetGLTexture(Output.Texture)->FB = buffers->CreateFrameBuffer("PPTextureFB"/*Output.Texture.GetChars()*/, GetGLTexture(Output.Texture)->Tex);
 		if (Output.Texture->Name)
+		{
 			screen->Resources().Touch(Output.Texture->Name, true);
+			screen->Graph().ObserveBackendUse(Output.Texture->Name, FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
+		}
 		break;
 
 	case PPTextureType::SceneColor:
@@ -1115,6 +1136,7 @@ void GLPPRenderState::Draw()
 	// Advance to next PP texture if our output was sent there
 	if (Output.Type == PPTextureType::NextPipelineTexture)
 		buffers->NextTexture();
+	screen->Graph().EndBackendPass();
 
 	glViewport(screen->mScreenViewport.left, screen->mScreenViewport.top, screen->mScreenViewport.width, screen->mScreenViewport.height);
 }
