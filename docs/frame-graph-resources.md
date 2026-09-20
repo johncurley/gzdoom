@@ -6,15 +6,16 @@ graph yet — a description of what exists, maintained at the sites that already
 create these textures.
 
 Written 2026-08-16; coverage updated 2026-09-20. The phase-1 registry is now
-implemented on Metal. This document remains the design reference for the eventual
-backend-neutral interface and for the validation policy; it is not yet a complete
-inventory of every Metal allocation.
+implemented through the shared `FrameResources` interface on Metal, OpenGL, and
+Vulkan. This document remains the design reference for the validation policy; it
+is not yet a complete inventory of every backend allocation.
 
-Current Metal coverage includes the scene/pipeline targets, AO's primary and
+Current coverage includes the scene/pipeline targets, AO's primary and
 full-resolution compute targets, the depth pyramid, and all compute-bloom targets:
 the primary pair, three mip levels with their ping-pong temporaries, the optional
-extract snapshot, and the raster-composite target. The registry does not allocate
-or alias resources, and Vulkan/GL do not register resources yet.
+extract snapshot, and the raster-composite target. OpenGL and Vulkan additionally
+register and touch their shared postprocess resources. The registry does not
+allocate or alias resources.
 
 AO's stencil texture view and its low-/full-resolution result pointers are
 intentionally not separate entries: the view aliases `SceneDepthStencil`, while
@@ -24,7 +25,7 @@ producer resource.
 
 ## Current declaration table
 
-This is the phase-1 vocabulary currently emitted by the Metal registry. It is the
+This is the phase-1 vocabulary currently emitted by the shared registry. It is the
 starting resource table for the future graph; it does not yet imply ownership by a
 graph allocator or any pass scheduling.
 

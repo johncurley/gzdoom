@@ -75,11 +75,14 @@ size_t FrameResources::BytesPerPixel(ResourceFormat format)
 	switch (format)
 	{
 	case ResourceFormat::RGBA8:   return 4;
+	case ResourceFormat::BGRA8:   return 4;
 	case ResourceFormat::RGBA16F: return 8;
 	case ResourceFormat::R8:      return 1;
 	case ResourceFormat::RG16F:   return 4;
 	case ResourceFormat::R32F:    return 4;
 	case ResourceFormat::D24S8:   return 4;
+	case ResourceFormat::D32FS8:  return 5;
+	case ResourceFormat::RGB10A2: return 4;
 	case ResourceFormat::R16F:    return 2;
 	default:                      return 0;
 	}
@@ -90,11 +93,14 @@ const char *FrameResources::FormatName(ResourceFormat format)
 	switch (format)
 	{
 	case ResourceFormat::RGBA8:   return "RGBA8";
+	case ResourceFormat::BGRA8:   return "BGRA8";
 	case ResourceFormat::RGBA16F: return "RGBA16F";
 	case ResourceFormat::R8:      return "R8";
 	case ResourceFormat::RG16F:   return "RG16F";
 	case ResourceFormat::R32F:    return "R32F";
 	case ResourceFormat::D24S8:   return "D24S8";
+	case ResourceFormat::D32FS8:  return "D32FS8";
+	case ResourceFormat::RGB10A2: return "RGB10A2";
 	case ResourceFormat::R16F:    return "R16F";
 	default:                      return "Unknown";
 	}
@@ -182,7 +188,7 @@ void FrameResources::Dump(FString *out) const
 	}
 }
 
-CCMD(r_resources)
+static void PrintResourceDump()
 {
 	if (!screen)
 	{
@@ -200,4 +206,16 @@ CCMD(r_resources)
 		if (report.Len() > 0)
 			Printf("\n%s", report.GetChars());
 	}
+}
+
+CCMD(r_resources)
+{
+	PrintResourceDump();
+}
+
+// Compatibility alias for the Metal-only command used before the registry was
+// shared by all hardware backends.
+CCMD(mt_resources)
+{
+	PrintResourceDump();
 }

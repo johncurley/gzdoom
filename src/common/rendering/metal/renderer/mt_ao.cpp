@@ -1,5 +1,5 @@
 #include "mt_ao.h"
-#include "mt_resources.h"
+#include "hwrenderer/frame/hw_resources.h"
 #include "c_cvars.h"
 #include "mt_renderbuffers.h"
 #include "../system/mt_renderdevice.h"
@@ -1368,11 +1368,11 @@ MtAOModule::~MtAOModule() {
     if (atrousPSO) atrousPSO->release();
     if (combineRenderPSO) combineRenderPSO->release();
     if (combineLibrary) combineLibrary->release();
-    MtResources().Forget("AO.Ambient");
-    MtResources().Forget("AO.Blur");
-    MtResources().Forget("AO.FullresAO");
-    MtResources().Forget("AO.FullresTemp");
-    MtResources().Forget("AO.DepthPyramid");
+    fb->Resources().Forget("AO.Ambient");
+    fb->Resources().Forget("AO.Blur");
+    fb->Resources().Forget("AO.FullresAO");
+    fb->Resources().Forget("AO.FullresTemp");
+    fb->Resources().Forget("AO.DepthPyramid");
     if (mAOTexture) mAOTexture->release();
     if (mBlurTexture) mBlurTexture->release();
     if (mFullresAOTexture) mFullresAOTexture->release();
@@ -1389,12 +1389,12 @@ void MtAOModule::EnsureTextures(int width, int height) {
         return;
 
     if (mAOTexture) {
-        MtResources().Forget("AO.Ambient");
+        fb->Resources().Forget("AO.Ambient");
         mAOTexture->release();
         mAOTexture = nullptr;
     }
     if (mBlurTexture) {
-        MtResources().Forget("AO.Blur");
+        fb->Resources().Forget("AO.Blur");
         mBlurTexture->release();
         mBlurTexture = nullptr;
     }
@@ -1417,14 +1417,12 @@ void MtAOModule::EnsureTextures(int width, int height) {
     // aoScale resolved to -- on Intel the intel_clamp forces 4, so the rule
     // recorded here is what the module ACTUALLY used, not what the cvar says.
     const int div = mAOScale > 0 ? mAOScale : 1;
-    MtResources().Declare({"AO.Ambient", "MtAOModule", width, height, 1,
-                           (int)MTL::PixelFormatRG16Float,
-                           MtSizeRule::Scaled(div), true},
-                          mAOTexture);
-    MtResources().Declare({"AO.Blur", "MtAOModule", width, height, 1,
-                           (int)MTL::PixelFormatRG16Float,
-                           MtSizeRule::Scaled(div), true},
-                          mBlurTexture);
+    fb->Resources().Declare({"AO.Ambient", "MtAOModule", width, height, 1,
+                             ResourceFormat::RG16F, SizeRule{SizeRule::SceneScaled, div}, true},
+                            mAOTexture);
+    fb->Resources().Declare({"AO.Blur", "MtAOModule", width, height, 1,
+                             ResourceFormat::RG16F, SizeRule{SizeRule::SceneScaled, div}, true},
+                            mBlurTexture);
 }
 
 // A stencil texture view over the scene depth/stencil buffer.
@@ -1491,12 +1489,12 @@ void MtAOModule::EnsureFullresTextures(int width, int height) {
         return;
 
     if (mFullresAOTexture) {
-        MtResources().Forget("AO.FullresAO");
+        fb->Resources().Forget("AO.FullresAO");
         mFullresAOTexture->release();
         mFullresAOTexture = nullptr;
     }
     if (mFullresTempTexture) {
-        MtResources().Forget("AO.FullresTemp");
+        fb->Resources().Forget("AO.FullresTemp");
         mFullresTempTexture->release();
         mFullresTempTexture = nullptr;
     }
@@ -1510,14 +1508,12 @@ void MtAOModule::EnsureFullresTextures(int width, int height) {
                                                usage, MTL::StorageModePrivate);
     mFullresTempTexture = compute->CreateTexture(width, height, MTL::PixelFormatRG16Float,
                                                  usage, MTL::StorageModePrivate);
-    MtResources().Declare({"AO.FullresAO", "MtAOModule", width, height, 1,
-                           (int)MTL::PixelFormatRG16Float, MtSizeRule::Full(),
-                           true},
-                          mFullresAOTexture);
-    MtResources().Declare({"AO.FullresTemp", "MtAOModule", width, height, 1,
-                           (int)MTL::PixelFormatRG16Float, MtSizeRule::Full(),
-                           true},
-                          mFullresTempTexture);
+    fb->Resources().Declare({"AO.FullresAO", "MtAOModule", width, height, 1,
+                             ResourceFormat::RG16F, SizeRule{SizeRule::SceneFull}, true},
+                            mFullresAOTexture);
+    fb->Resources().Declare({"AO.FullresTemp", "MtAOModule", width, height, 1,
+                             ResourceFormat::RG16F, SizeRule{SizeRule::SceneFull}, true},
+                            mFullresTempTexture);
     mFullresWidth = width;
     mFullresHeight = height;
 }
@@ -1530,7 +1526,7 @@ void MtAOModule::EnsureDepthPyramid(int width, int height) {
         return;
 
     if (mDepthPyramidTexture) {
-        MtResources().Forget("AO.DepthPyramid");
+        fb->Resources().Forget("AO.DepthPyramid");
         mDepthPyramidTexture->release();
         mDepthPyramidTexture = nullptr;
     }
@@ -1553,10 +1549,9 @@ void MtAOModule::EnsureDepthPyramid(int width, int height) {
     mDepthPyramidTexture = fb->device->device->newTexture(desc);
     desc->release();
 
-    MtResources().Declare({"AO.DepthPyramid", "MtAOModule", width, height, 1,
-                           (int)MTL::PixelFormatR16Float, MtSizeRule::Full(),
-                           true},
-                          mDepthPyramidTexture);
+    fb->Resources().Declare({"AO.DepthPyramid", "MtAOModule", width, height, 1,
+                             ResourceFormat::R16F, SizeRule{SizeRule::SceneFull}, true},
+                            mDepthPyramidTexture);
     mDepthPyramidWidth = mDepthPyramidTexture ? width : 0;
     mDepthPyramidHeight = mDepthPyramidTexture ? height : 0;
 }
@@ -1918,7 +1913,7 @@ void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL
             linearizeEncoder->setTexture(mDepthPyramidTexture, 1);
             MTL::Size pyramidGrid = { (NS::UInteger)mDepthPyramidTexture->width(), (NS::UInteger)mDepthPyramidTexture->height(), 1 };
             MtDispatchThreads(linearizeEncoder, fb, pyramidGrid, MTL::Size(8, 8, 1));
-            MtResources().Touch("AO.DepthPyramid");
+            fb->Resources().Touch("AO.DepthPyramid", true);
             linearizeEncoder->endEncoding();
 
             auto blit = cmdBuf->blitCommandEncoder();
@@ -1963,7 +1958,7 @@ void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL
     MtDispatchThreads(encoder, fb, gridSize, MTL::Size(8, 8, 1));
     // Touch only after the first AO dispatch has been encoded. Setup failures
     // must not appear as a successfully executed compute path in mt_resources.
-    MtResources().Touch("AO.Ambient");
+    fb->Resources().Touch("AO.Ambient", true);
     
     if (blurAO) {
         encoder->memoryBarrier(MTL::BarrierScopeTextures);
@@ -2015,7 +2010,7 @@ void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL
             encoder->setTexture(dst, 1);
             encoder->setTexture(normalTex, 2);
             MtDispatchThreads(encoder, fb, gridSize, MTL::Size(8, 8, 1));
-            MtResources().Touch("AO.Blur");
+            fb->Resources().Touch("AO.Blur", true);
             src = dst;
         }
         mLowresResultTexture = src;
@@ -2050,7 +2045,7 @@ void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL
         encoder->setTexture(normalTex, 2);
         encoder->setTexture(mFullresAOTexture, 3);
         MtDispatchThreads(encoder, fb, fullGrid, MTL::Size(8, 8, 1));
-        MtResources().Touch("AO.FullresAO");
+        fb->Resources().Touch("AO.FullresAO", true);
         mFullresResultTexture = mFullresAOTexture;
 
         int atrousPasses = clamp((int)mt_compute_ao_atrous_passes, 0, 3);
@@ -2067,7 +2062,7 @@ void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL
             encoder->setTexture(normalTex, 1);
             encoder->setTexture(dstPass, 2);
             MtDispatchThreads(encoder, fb, fullGrid, MTL::Size(8, 8, 1));
-            MtResources().Touch("AO.FullresTemp");
+            fb->Resources().Touch("AO.FullresTemp", true);
             mFullresResultTexture = dstPass;
             MTL::Texture *tmp = srcPass;
             srcPass = dstPass;

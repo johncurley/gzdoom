@@ -38,7 +38,6 @@
 #include "mt_commandbuffer.h"
 #include "mt_hwbuffer.h"
 #include "mt_renderdevice.h"
-#include "metal/renderer/mt_resources.h"
 
 #include "mt_binaryarchive.h"
 #include "textures.h"
@@ -529,7 +528,7 @@ void MetalRenderDevice::BeginFrame() {
   // mScreenBuffers specifically, not the active set: mSaveBuffers renders the
   // savegame thumbnail through the same path at its own small size, which is
   // what produced the bogus "scene 216x162" reference on the first run.
-  MtResources().BeginFrame(
+  Resources().BeginFrame(
       mScreenBuffers ? mScreenBuffers->GetSceneWidth() : 0,
       mScreenBuffers ? mScreenBuffers->GetSceneHeight() : 0);
   if (mInFrame)

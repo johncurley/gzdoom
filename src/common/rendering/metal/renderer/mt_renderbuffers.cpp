@@ -7,7 +7,6 @@
 #include "../mt_system_wrapper.h"
 
 #include "mt_renderbuffers.h"
-#include "mt_resources.h"
 #include <string.h>
 #include "c_cvars.h"
 #include "../system/mt_renderdevice.h"
@@ -27,16 +26,33 @@ MtRenderBuffers::MtRenderBuffers(MetalRenderDevice *fb, const char *tag)
     : fb(fb), mTag(tag ? tag : "screen") {
   static const char *kBase[RES_Count] = {"SceneColor",       "SceneDepthStencil",
                                          "SceneNormal",      "SceneFog",
-                                         "PipelineImage[0]", "PipelineImage[1]"};
-  for (int i = 0; i < RES_Count; ++i)
-    mResNames[i].Format("%s.%s", mTag, kBase[i]);
+                                         "PipelineImage[0]", "PipelineImage[1]",
+                                         "PipelineDepthStencil"};
+  for (int i = 0; i < RES_Count; ++i) {
+    if (strcmp(mTag, "screen") == 0)
+      mResNames[i] = kBase[i];
+    else
+      mResNames[i].Format("%s.%s", mTag, kBase[i]);
+  }
 }
 
 MtRenderBuffers::~MtRenderBuffers() {}
 
-MtSizeRule MtRenderBuffers::SceneRule() const {
-  return strcmp(mTag, "screen") == 0 ? MtSizeRule::Full()
-                                     : MtSizeRule::Absolute();
+SizeRule MtRenderBuffers::SceneRule() const {
+  return strcmp(mTag, "screen") == 0 ? SizeRule{SizeRule::SceneFull}
+                                     : SizeRule{SizeRule::Fixed};
+}
+
+static ResourceFormat ToResourceFormat(MTL::PixelFormat format) {
+  switch (format) {
+  case MTL::PixelFormatRGBA8Unorm: return ResourceFormat::RGBA8;
+  case MTL::PixelFormatBGRA8Unorm: return ResourceFormat::BGRA8;
+  case MTL::PixelFormatRGBA16Float: return ResourceFormat::RGBA16F;
+  case MTL::PixelFormatDepth24Unorm_Stencil8: return ResourceFormat::D24S8;
+  case MTL::PixelFormatDepth32Float_Stencil8: return ResourceFormat::D32FS8;
+  case MTL::PixelFormatRGB10A2Unorm: return ResourceFormat::RGB10A2;
+  default: return ResourceFormat::Unknown;
+  }
 }
 
 int MtRenderBuffers::DesiredColorFormat() const {
@@ -72,7 +88,7 @@ void MtRenderBuffers::BeginFrame(int width, int height, int sceneWidth,
   // made a mid-frame dump measure itself against whatever small target rendered
   // last.
   for (int i = 0; i < RES_Count; ++i)
-    MtResources().Touch(ResName(i));
+    fb->Resources().Touch(ResName(i), true);
 }
 
 // Name a render target so it is identifiable in a GPU frame capture. Without
@@ -113,6 +129,9 @@ void MtRenderBuffers::CreatePipelineDepthStencil(int width, int height) {
   PipelineDepthStencil->SetTexture(texture);
   PipelineDepthStencil->SetWidth(width);
   PipelineDepthStencil->SetHeight(height);
+  fb->Resources().Declare({ResName(RES_PipelineDepth), "MtRenderBuffers", width,
+                           height, 1, ResourceFormat::D32FS8,
+                           SizeRule{SizeRule::Fixed}, false}, texture);
   desc->release();
 }
 
@@ -143,10 +162,10 @@ void MtRenderBuffers::CreatePipeline(int width, int height) {
     // Fixed rather than SceneFull -- at screenblocks < 11 the two differ and a
     // SceneFull rule would report a false STALE on every frame.
     {
-      MtResources().Declare({ResName(i == 0 ? RES_Pipeline0 : RES_Pipeline1),
-                             "MtRenderBuffers", width, height, 1,
-                             mColorFormat, MtSizeRule::Absolute(), false},
-                            texture);
+      fb->Resources().Declare({ResName(i == 0 ? RES_Pipeline0 : RES_Pipeline1),
+                               "MtRenderBuffers", width, height, 1,
+                               ToResourceFormat((MTL::PixelFormat)mColorFormat),
+                               SizeRule{SizeRule::Fixed}, false}, texture);
     }
     desc->release();
   }
@@ -208,9 +227,9 @@ void MtRenderBuffers::CreateSceneColor(int width, int height, int samples) {
   SceneColor->SetTexture(texture);
   SceneColor->SetWidth(width);
   SceneColor->SetHeight(height);
-  MtResources().Declare({ResName(RES_SceneColor), "MtRenderBuffers", width, height, samples,
-                         mColorFormat, SceneRule(), false},
-                        texture);
+  fb->Resources().Declare({ResName(RES_SceneColor), "MtRenderBuffers", width, height,
+                           samples, ToResourceFormat((MTL::PixelFormat)mColorFormat),
+                           SceneRule(), false}, texture);
   desc->release();
 }
 
@@ -235,10 +254,8 @@ void MtRenderBuffers::CreateSceneDepthStencil(int width, int height,
   SceneDepthStencil->SetTexture(texture);
   SceneDepthStencil->SetWidth(width);
   SceneDepthStencil->SetHeight(height);
-  MtResources().Declare({ResName(RES_SceneDepth), "MtRenderBuffers", width, height,
-                         samples, (int)MTL::PixelFormatDepth32Float_Stencil8,
-                         SceneRule(), false},
-                        texture);
+  fb->Resources().Declare({ResName(RES_SceneDepth), "MtRenderBuffers", width, height,
+                           samples, ResourceFormat::D32FS8, SceneRule(), false}, texture);
   desc->release();
 }
 
@@ -267,9 +284,8 @@ void MtRenderBuffers::CreateSceneNormal(int width, int height, int samples) {
   SceneNormal->SetTexture(texture);
   SceneNormal->SetWidth(width);
   SceneNormal->SetHeight(height);
-  MtResources().Declare({ResName(RES_SceneNormal), "MtRenderBuffers", width, height,
-                         samples, mNormalFormat, SceneRule(), false},
-                        texture);
+  fb->Resources().Declare({ResName(RES_SceneNormal), "MtRenderBuffers", width, height,
+                           samples, ToResourceFormat(format), SceneRule(), false}, texture);
   desc->release();
 }
 
@@ -293,8 +309,7 @@ void MtRenderBuffers::CreateSceneFog(int width, int height, int samples) {
   SceneFog->SetTexture(texture);
   SceneFog->SetWidth(width);
   SceneFog->SetHeight(height);
-  MtResources().Declare({ResName(RES_SceneFog), "MtRenderBuffers", width, height, samples,
-                         mFogFormat, SceneRule(), false},
-                        texture);
+  fb->Resources().Declare({ResName(RES_SceneFog), "MtRenderBuffers", width, height, samples,
+                           ResourceFormat::BGRA8, SceneRule(), false}, texture);
   desc->release();
 }

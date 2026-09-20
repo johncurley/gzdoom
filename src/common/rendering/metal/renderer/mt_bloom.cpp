@@ -1,5 +1,5 @@
 #include "mt_bloom.h"
-#include "mt_resources.h"
+#include "hwrenderer/frame/hw_resources.h"
 #include "../system/mt_renderdevice.h"
 #include "../shaders/mt_shader.h"
 #include "metal/renderer/mt_compute.h"
@@ -304,7 +304,7 @@ MtBloomModule::~MtBloomModule() {
     if (compositePSO) compositePSO->release();
     if (compositeVertexFn) compositeVertexFn->release();
     if (compositeFragmentFn) compositeFragmentFn->release();
-    MtResources().Forget("Bloom.ExtractSnapshot");
+    fb->Resources().Forget("Bloom.ExtractSnapshot");
     if (mCompositeTex) { mCompositeTex->release(); mCompositeTex = nullptr; }
     if (mExtractSnapshot) { mExtractSnapshot->release(); mExtractSnapshot = nullptr; mExtractSnapW = mExtractSnapH = 0; }
 }
@@ -370,14 +370,14 @@ void MtBloomModule::CreateTextures(int width, int height, MTL::PixelFormat forma
     // fixed fraction of the scene, so the divisor is derived from the size it was
     // asked for rather than assumed.
     {
-        const int sw = MtResources().SceneWidth();
+        const int sw = fb->Resources().SceneWidth();
         const int div = (sw > 0 && width > 0) ? std::max(1, (sw + width - 1) / width) : 1;
-        MtResources().Declare({"Bloom.A", "MtBloomModule", width, height, 1,
-                               (int)MTL::PixelFormatRGBA16Float,
-                               MtSizeRule::Scaled(div), true}, mBloomA);
-        MtResources().Declare({"Bloom.B", "MtBloomModule", width, height, 1,
-                               (int)MTL::PixelFormatRGBA16Float,
-                               MtSizeRule::Scaled(div), true}, mBloomB);
+        fb->Resources().Declare({"Bloom.A", "MtBloomModule", width, height, 1,
+                                 ResourceFormat::RGBA16F,
+                                 SizeRule{SizeRule::SceneScaled, div}, true}, mBloomA);
+        fb->Resources().Declare({"Bloom.B", "MtBloomModule", width, height, 1,
+                                 ResourceFormat::RGBA16F,
+                                 SizeRule{SizeRule::SceneScaled, div}, true}, mBloomB);
     }
 
     // Create a small mip chain for multi-scale bloom (half, quarter, eighth)
@@ -406,12 +406,12 @@ void MtBloomModule::CreateTextures(int width, int height, MTL::PixelFormat forma
                               i == 2 ? "Bloom.Mip1" : "Bloom.Mip2";
         const char *tempName = i == 1 ? "Bloom.Mip0Temp" :
                                i == 2 ? "Bloom.Mip1Temp" : "Bloom.Mip2Temp";
-        MtResources().Declare({mipName, "MtBloomModule", w2, h2, 1,
-                               (int)MTL::PixelFormatRGBA16Float,
-                               MtSizeRule::Scaled(4 << i), true}, t);
-        MtResources().Declare({tempName, "MtBloomModule", w2, h2, 1,
-                               (int)MTL::PixelFormatRGBA16Float,
-                               MtSizeRule::Scaled(4 << i), true}, tmp);
+        fb->Resources().Declare({mipName, "MtBloomModule", w2, h2, 1,
+                                 ResourceFormat::RGBA16F,
+                                 SizeRule{SizeRule::SceneScaled, 4 << i}, true}, t);
+        fb->Resources().Declare({tempName, "MtBloomModule", w2, h2, 1,
+                                 ResourceFormat::RGBA16F,
+                                 SizeRule{SizeRule::SceneScaled, 4 << i}, true}, tmp);
     }
 
     mCachedBloomW = width;
@@ -419,15 +419,15 @@ void MtBloomModule::CreateTextures(int width, int height, MTL::PixelFormat forma
 }
 
 void MtBloomModule::ReleaseTextures() {
-    MtResources().Forget("Bloom.A");
-    MtResources().Forget("Bloom.B");
-    MtResources().Forget("Bloom.Mip0");
-    MtResources().Forget("Bloom.Mip0Temp");
-    MtResources().Forget("Bloom.Mip1");
-    MtResources().Forget("Bloom.Mip1Temp");
-    MtResources().Forget("Bloom.Mip2");
-    MtResources().Forget("Bloom.Mip2Temp");
-    MtResources().Forget("Bloom.Composite");
+    fb->Resources().Forget("Bloom.A");
+    fb->Resources().Forget("Bloom.B");
+    fb->Resources().Forget("Bloom.Mip0");
+    fb->Resources().Forget("Bloom.Mip0Temp");
+    fb->Resources().Forget("Bloom.Mip1");
+    fb->Resources().Forget("Bloom.Mip1Temp");
+    fb->Resources().Forget("Bloom.Mip2");
+    fb->Resources().Forget("Bloom.Mip2Temp");
+    fb->Resources().Forget("Bloom.Composite");
     if (mBloomA) { mBloomA->release(); mBloomA = nullptr; }
     if (mBloomB) { mBloomB->release(); mBloomB = nullptr; }
     for (auto *t : mDownsampledTextures) { if (t) t->release(); }
@@ -488,8 +488,8 @@ bool MtBloomModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* srcTex, fl
     MtDispatchThreads(encoder, fb, grid, MTL::Size(16,16,1));
     // The first dispatch is now encoded, so these touches prove that the
     // compute bloom path reached execution rather than merely being called.
-    MtResources().Touch("Bloom.A");
-    MtResources().Touch("Bloom.B");
+    fb->Resources().Touch("Bloom.A", true);
+    fb->Resources().Touch("Bloom.B", true);
     encoder->memoryBarrier(MTL::BarrierScopeTextures);
 
     // Snapshot the extract before the pyramid overwrites bloomA. Uses
@@ -504,12 +504,12 @@ bool MtBloomModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* srcTex, fl
                                    snapUsage, MTL::StorageModePrivate);
         }
         if (mExtractSnapshot) {
-            MtResources().Declare({"Bloom.ExtractSnapshot", "MtBloomModule",
-                                   (int)mExtractSnapshot->width(),
-                                   (int)mExtractSnapshot->height(), 1,
-                                   (int)MTL::PixelFormatRGBA16Float,
-                                   MtSizeRule::Scaled(4), true},
-                                  mExtractSnapshot);
+            fb->Resources().Declare({"Bloom.ExtractSnapshot", "MtBloomModule",
+                                     (int)mExtractSnapshot->width(),
+                                     (int)mExtractSnapshot->height(), 1,
+                                     ResourceFormat::RGBA16F,
+                                     SizeRule{SizeRule::SceneScaled, 4}, true},
+                                    mExtractSnapshot);
         }
         if (mExtractSnapshot && downsamplePSO) {
             BloomParams sp = params;
@@ -520,7 +520,7 @@ bool MtBloomModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* srcTex, fl
             encoder->setTexture(bloomA, 0);
             encoder->setTexture(mExtractSnapshot, 1);
             MtDispatchThreads(encoder, fb, grid, MTL::Size(16,16,1));
-            MtResources().Touch("Bloom.ExtractSnapshot");
+            fb->Resources().Touch("Bloom.ExtractSnapshot", true);
             encoder->memoryBarrier(MTL::BarrierScopeTextures);
         }
     }
@@ -558,8 +558,8 @@ bool MtBloomModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* srcTex, fl
                                   level == 2 ? "Bloom.Mip1" : "Bloom.Mip2";
             const char *tempName = level == 1 ? "Bloom.Mip0Temp" :
                                    level == 2 ? "Bloom.Mip1Temp" : "Bloom.Mip2Temp";
-            MtResources().Touch(mipName);
-            MtResources().Touch(tempName);
+            fb->Resources().Touch(mipName, true);
+            fb->Resources().Touch(tempName, true);
         }
         BloomParams p = params;
         p.bloomRes[0] = (float)tex->width();
@@ -689,10 +689,10 @@ bool MtBloomModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* srcTex, fl
             combEnc->setTexture(compositeInputs[i], i);
         combEnc->setTexture(mCompositeTex, 4);
         MtDispatchThreads(combEnc, fb, fullGrid, MTL::Size(16,16,1));
-        MtResources().Declare({"Bloom.Composite", "MtBloomModule", srcW, srcH, 1,
-                               (int)MTL::PixelFormatRGBA16Float, MtSizeRule::Full(), true},
-                              mCompositeTex);
-        MtResources().Touch("Bloom.Composite");
+        fb->Resources().Declare({"Bloom.Composite", "MtBloomModule", srcW, srcH, 1,
+                                 ResourceFormat::RGBA16F, SizeRule{SizeRule::SceneFull}, true},
+                                mCompositeTex);
+        fb->Resources().Touch("Bloom.Composite", true);
         combEnc->endEncoding();
 
         MtSamplerKey samplerKey;

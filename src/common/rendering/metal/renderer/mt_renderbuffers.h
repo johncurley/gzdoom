@@ -1,7 +1,7 @@
 #pragma once
 
 #include "zstring.h"
-#include "mt_resources.h"
+#include "hwrenderer/frame/hw_resources.h"
 
 #include <memory>
 
@@ -32,9 +32,10 @@ public:
   // Only the screen buffers track the scene viewport. The savegame-thumbnail
   // instance has its own size and must not be checked against it, or it reports
   // STALE on every frame -- which is how a validator earns being ignored.
-  MtSizeRule SceneRule() const;
+  SizeRule SceneRule() const;
   enum ResSlot { RES_SceneColor, RES_SceneDepth, RES_SceneNormal,
-                 RES_SceneFog, RES_Pipeline0, RES_Pipeline1, RES_Count };
+                 RES_SceneFog, RES_Pipeline0, RES_Pipeline1,
+                 RES_PipelineDepth, RES_Count };
 
   int GetSceneWidth() const { return mSceneWidth; }
   int GetSceneHeight() const { return mSceneHeight; }
@@ -64,7 +65,7 @@ public:
   std::unique_ptr<MtTextureImage> PipelineImage[NumPipelineImages];
 
 private:
-  FString mResNames[6];
+  FString mResNames[RES_Count];
   const char *mTag = "screen";
   void CreatePipelineDepthStencil(int width, int height);
   void CreatePipeline(int width, int height);
