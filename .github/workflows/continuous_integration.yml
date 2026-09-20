@@ -179,11 +179,24 @@ jobs:
         unzip -q -j freedoom.zip '*/freedoom2.wad' -d build
         cd build
         export ZWIDGET_DISPLAY_BACKEND=X11
-        timeout 120 xvfb-run -a ./gzdoom -iwad freedoom2.wad -nosound +quit 2>&1 | tee startup.log
+        timeout 120 xvfb-run -a ./gzdoom -iwad freedoom2.wad -nosound +r_resource_validate 1 +r_resources +quit 2>&1 | tee startup.log
         # Exit status alone would also be satisfied by bailing out before doing
         # anything, so require evidence that startup actually got somewhere.
         grep -q "W_Init: Init WADfiles" startup.log
         grep -q "GL_VERSION" startup.log
+        # Frame graph resource registry (docs/frame-graph-resources.md) phase 2:
+        # gate on "stale size:" only, not "untouched this frame" -- +quit's
+        # short-circuit before a map loads means most resources are legitimately
+        # never bound here (confirmed locally: only PipelineImage[0] gets a w/r
+        # this early), so asserting the report is fully empty would be a
+        # permanent false failure. "stale size:" is the concrete bug class this
+        # phase exists to catch (the AO 773/776 quarter-res rounding mismatch)
+        # and it is meaningful even this early, since Declare already ran once.
+        if grep -q "stale size:" startup.log; then
+          echo "Resource registry reported a size-rule mismatch:"
+          grep "stale size:" startup.log
+          exit 1
+        fi
         echo "startup smoke test passed"
 
     # The ${{ }} here is not decoration: a bare `if:` value that STARTS with !

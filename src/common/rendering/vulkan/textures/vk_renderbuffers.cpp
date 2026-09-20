@@ -82,6 +82,12 @@ void VkRenderBuffers::BeginFrame(int width, int height, int sceneWidth, int scen
 	mSamples = samples;
 	mSceneWidth = sceneWidth;
 	mSceneHeight = sceneHeight;
+
+	// Scene*/Pipeline* below are all allocated at (width, height) -- the pipeline
+	// (mScreenViewport) size, not (sceneWidth, sceneHeight) (mSceneViewport, the
+	// 3D-view sub-rect within it) -- so that's what SizeRule::SceneFull means here.
+	fb->Resources().BeginFrame(width, height);
+	fb->Graph().Reset();
 }
 
 void VkRenderBuffers::CreatePipelineDepthStencil(int width, int height)
@@ -113,6 +119,9 @@ void VkRenderBuffers::CreatePipelineDepthStencil(int width, int height)
 		.Image(PipelineDepthStencil.Image.get(), PipelineDepthStencilFormat, VK_IMAGE_ASPECT_DEPTH_BIT)
 		.DebugName("VkRenderBuffers.PipelineDepthView")
 		.Create(fb->device.get());
+
+	fb->Resources().Declare({ "PipelineDepthStencil", "VkRenderBuffers", width, height, 1,
+		ResourceFormat::D24S8, { SizeRule::SceneFull } }, PipelineDepthStencil.Image.get());
 }
 
 void VkRenderBuffers::CreatePipeline(int width, int height)
@@ -142,6 +151,9 @@ void VkRenderBuffers::CreatePipeline(int width, int height)
 			.Create(fb->device.get());
 
 		barrier.AddImage(&PipelineImage[i], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, true);
+
+		fb->Resources().Declare({ i == 0 ? "PipelineImage[0]" : "PipelineImage[1]", "VkRenderBuffers",
+			width, height, 1, ResourceFormat::RGBA16F, { SizeRule::SceneFull } }, PipelineImage[i].Image.get());
 	}
 	barrier.Execute(fb->GetCommands()->GetDrawCommands());
 }
@@ -180,6 +192,9 @@ void VkRenderBuffers::CreateSceneColor(int width, int height, VkSampleCountFlagB
 		.Image(SceneColor.Image.get(), VK_FORMAT_R16G16B16A16_SFLOAT)
 		.DebugName("VkRenderBuffers.SceneColorView")
 		.Create(fb->device.get());
+
+	fb->Resources().Declare({ "SceneColor", "VkRenderBuffers", width, height, (int)samples,
+		ResourceFormat::RGBA16F, { SizeRule::SceneFull } }, SceneColor.Image.get());
 }
 
 void VkRenderBuffers::CreateSceneDepthStencil(int width, int height, VkSampleCountFlagBits samples)
@@ -212,6 +227,9 @@ void VkRenderBuffers::CreateSceneDepthStencil(int width, int height, VkSampleCou
 		.Image(SceneDepthStencil.Image.get(), SceneDepthStencilFormat, VK_IMAGE_ASPECT_DEPTH_BIT)
 		.DebugName("VkRenderBuffers.SceneDepthView")
 		.Create(fb->device.get());
+
+	fb->Resources().Declare({ "SceneDepthStencil", "VkRenderBuffers", width, height, (int)samples,
+		ResourceFormat::D24S8, { SizeRule::SceneFull } }, SceneDepthStencil.Image.get());
 }
 
 void VkRenderBuffers::CreateSceneFog(int width, int height, VkSampleCountFlagBits samples)
@@ -228,6 +246,9 @@ void VkRenderBuffers::CreateSceneFog(int width, int height, VkSampleCountFlagBit
 		.Image(SceneFog.Image.get(), VK_FORMAT_R8G8B8A8_UNORM)
 		.DebugName("VkRenderBuffers.SceneFogView")
 		.Create(fb->device.get());
+
+	fb->Resources().Declare({ "SceneFog", "VkRenderBuffers", width, height, (int)samples,
+		ResourceFormat::RGBA8, { SizeRule::SceneFull } }, SceneFog.Image.get());
 }
 
 void VkRenderBuffers::CreateSceneNormal(int width, int height, VkSampleCountFlagBits samples)
@@ -250,11 +271,30 @@ void VkRenderBuffers::CreateSceneNormal(int width, int height, VkSampleCountFlag
 		.Image(SceneNormal.Image.get(), SceneNormalFormat)
 		.DebugName("VkRenderBuffers.SceneNormalView")
 		.Create(fb->device.get());
+
+	// SceneNormalFormat is A2R10G10B10 (or RGBA8 on fallback) -- both 4 bytes/px,
+	// which is all this phase's format field is used for; RGBA8 is the closest
+	// label the registry's enum has.
+	fb->Resources().Declare({ "SceneNormal", "VkRenderBuffers", width, height, (int)samples,
+		ResourceFormat::RGBA8, { SizeRule::SceneFull } }, SceneNormal.Image.get());
 }
 
 VulkanFramebuffer* VkRenderBuffers::GetOutput(VkPPRenderPassSetup* passSetup, const PPOutput& output, WhichDepthStencil stencilTest, int& framebufferWidth, int& framebufferHeight)
 {
 	VkTextureImage* tex = fb->GetTextureManager()->GetTexture(output.Type, output.Texture);
+	if (output.Type == PPTextureType::PPTexture)
+	{
+		if (output.Texture->Name)
+		{
+			fb->Resources().Touch(output.Texture->Name, true);
+			fb->Graph().ObserveBackendUse(output.Texture->Name, FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
+		}
+	}
+	else if (const char *name = fb->GetTextureManager()->GetTextureResourceName(output.Type))
+	{
+		fb->Resources().Touch(name, true);
+		fb->Graph().ObserveBackendUse(name, FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
+	}
 
 	VkImageView view;
 	std::unique_ptr<VulkanFramebuffer>* framebufferptr = nullptr;

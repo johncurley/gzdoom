@@ -51,7 +51,13 @@ void main()
 	float normalizedDepth = alpha != 0.0 ? normalizeDepth(texelFetch(DepthTexture, ipos, 0).x) : 1.0;
 #endif
 
-	float depth = linearizeDepth(normalizedDepth);
+	// Clamped below R16F's max finite value (65504) -- GetZFar() defaults to
+	// 65536, so an unclamped far-plane pixel would overflow to Inf once this
+	// target is R16F rather than R32F. Safe: far-plane samples already
+	// contribute ~0 to AO through ssao.fp's radius-based falloff, so clamping
+	// the stored value here has no visible effect on the AO result, only
+	// prevents the overflow.
+	float depth = min(linearizeDepth(normalizedDepth), 60000.0);
 
 	FragColor = vec4(depth, 0.0, 0.0, 1.0);
 }

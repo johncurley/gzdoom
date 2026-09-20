@@ -107,6 +107,12 @@ public:
 
 	void Setup(int width, int height, int sceneWidth, int sceneHeight);
 
+	// Resolves a PPTextureType to the resource registry's stable name, for the
+	// frame graph (hw_framegraph.h). Mirrors VkTextureManager::GetTextureResourceName.
+	// Returns nullptr for types with no registry name yet (PPTexture, SwapChain,
+	// ShadowMap) -- callers must treat that as "not graphable", not "untitled".
+	const char *GetTextureResourceName(PPTextureType type) const;
+
 	void BindSceneFB(bool sceneData);
 	void BindSceneColorTexture(int index);
 	void BindSceneFogTexture(int index);

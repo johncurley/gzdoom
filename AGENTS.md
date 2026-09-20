@@ -4,6 +4,50 @@ Working state for this fork. Read this first, then `CONTRIBUTING.md` for how
 work is verified here (that part is not optional — it is the house standard and
 it is unusual).
 
+---
+
+## Governance & Functional Roles
+
+| Functional Role | Primary Agent / Tool | Scope & Constraints |
+|---|---|---|
+| **Spec Author & Architect** | *e.g., Claude / Senior AI* | • Analyzes platform-specific APIs (Metal/Vulkan backends, SIMD intrinsics, memory limits).<br>• Formulates subsystem porting strategy and drafts contracts in `docs/audits/` or `strategy/`.<br>• Bound by: No speculative refactorings of core engine loops; commands-first. |
+| **Halt-and-Flag Implementer** | *e.g., GPT Codex / IDE Assistant* | • Executes targeted, surgical C++ edits within existing GZDoom idioms.<br>• Respects internal containers (`TArray`, `FString`) and class hierarchies without unprompted modernization.<br>• Exercises full static reasoning: halts and flags spec errors instead of blindly executing broken plans. |
+| **Integration Auditor & Gatekeeper** | *e.g., Antigravity / CI / Local Scripts* | • **Hygiene:** Cleans up orphan build objects, scratch dumps, and temporary CMake experiments.<br>• **Gatekeeper:** Runs headless tests, timedemo benchmarks (for determinism verification), matrix regression (`tools/matrix/run.py`), and build matrix checks (`cmake --build`). |
+
+---
+
+## Hard Constraints ("The Never List")
+
+1. **NO Unsolicited Modernization:** Do NOT replace GZDoom idioms (`TArray`, `FString`, `PClass`, `AActor*`, custom allocators) with `std::` alternatives (`std::vector`, `std::unique_ptr`, `std::string`) unless explicitly requested. Respect the engine's memory model and garbage collector (`DObject`).
+2. **NO Demo/Tick Desynchronization:** Game-logic hot paths must remain strictly deterministic. No unseeded randoms, non-deterministic floating-point operations, or unstable iteration orders in game-state updates.
+3. **NO ZScript/VM ABI Breakage:** Do not modify exported engine symbols or VM bytecode layouts without updating bindings and reflection tables.
+4. **NO Root Directory or Build Tree Pollution:** Temporary test scripts, scratch code dumps, and unapproved CMake targets must never be committed.
+5. **Mandatory Build & Verification Gate:**
+   ```bash
+   cmake --build build -j$(nproc)
+   ./build/gzdoom -timedemo demo1.lmp -nosound -nogui
+   ```
+
+---
+
+## Implementer Mandate: High Reasoning, Scoped Blast Radius
+
+1. **Zero Sycophancy (The Emergency Brake):**
+   - Implementers are expected to exercise full analytical reasoning on any specification or contract before implementing.
+   - If you spot an unhandled edge case, invariant violation, timing/alignment hazard, or logical contradiction in the architectural plan: **DO NOT silently implement broken logic, and DO NOT unilaterally rewrite the architecture.**
+2. **Halt & Flag Protocol:**
+   - Immediately pause execution.
+   - Concisely state:
+     1. The exact location and nature of the defect/contradiction.
+     2. Why the existing contract fails or produces undefined behavior.
+     3. A minimal, concrete proposal to correct the contract or interface.
+   - Wait for confirmation or contract adjustment before writing implementation code.
+3. **Deep Local Rigor:**
+   - Once the contract is verified sound, apply deep static rigor to the assigned scope (50–150 lines).
+   - Ensure all boundaries, sign/width conventions, error paths, and resource lifecycles are 100% airtight without introducing external scope creep.
+
+---
+
 - **Historical log:** `docs/history/agent-log.md` (~6,200 lines, 2026-06 to
   2026-08). An archive, not a guide. Its value is that it records what was
   **disproved**. Grep it before chasing anything in the Metal renderer.
@@ -31,21 +75,371 @@ it is unusual).
   entangled with the waylandpp→C-bindings replacement, so the branch pushed is
   the full `wayland-c-bindings` (12 commits, `zwidget-wayland-c-bindings-clean`
   on the fork) — see Tasks — Linux item 5.
-- **Current handoff:** `docs/handoff-framegraph-2026-08-18.md` — corrected
-  2026-09-20: Apple Silicon gates TBDR-specific policy and performance tuning,
-  not the frame-graph architecture. The backend-neutral graph, dependency
-  tracking, resource lifetimes, and a correctness-first Metal execution policy
-  can proceed on the Intel Mac; pass merging, transient aliasing, load/store
-  tuning, and Apple-GPU synchronization policy wait for item 3.
+- **Current handoff:** `docs/handoff-framegraph-2026-08-18.md` — the decision
+  for what gzdoom work happens while Apple Silicon hardware is still not in
+  hand: start `docs/frame-graph-resources.md`'s resource registry (backend-
+  neutral, no scheduler, no Metal-specific decisions, fully verifiable on
+  Linux) and **stop there** — the actual graph/scheduler and anything doing
+  Metal memory aliasing waits for item 3. **Started 2026-08-19, phase 1+2
+  now cover both Linux backends.** `FrameResources` (`Declare`/`Touch`/
+  `BeginFrame`/`ValidateFrame`/`Dump`) lives in
+  `common/rendering/hwrenderer/frame/hw_resources.h`, shared off
+  `DFrameBuffer::Resources()` per open question 2 (Vulkan/GL analysis was
+  already closed, so the shared location has more than one user). `r_resources`
+  and `r_resource_validate` added.
+
+  **Declare** wired into both `VkRenderBuffers` and `FGLRenderBuffers` at
+  every creation site (`SceneColor`/`SceneDepthStencil`/`SceneNormal`/
+  `SceneFog`/`PipelineImage[0..1]`/`PipelineDepthStencil`) — Vulkan and GL
+  stood in for `MtRenderBuffers` (open question 4's "simplest resources
+  first") because Metal doesn't compile on this Linux box. GL needed one
+  extra wrinkle Vulkan didn't: `CreateScene`'s four branches (MSAA ×
+  `gl_ssao`) each back a different subset with a texture or a renderbuffer,
+  and when there's no MSAA, `SceneColor` doesn't exist as its own object —
+  it aliases `PipelineImage[0]`, declared as both names pointing at the same
+  handle. `CreateScene` now `Forget()`s all four Scene* names before
+  re-declaring only what that branch actually creates, so toggling
+  `gl_ssao` off doesn't leave a stale `SceneFog`/`SceneNormal` entry behind.
+
+  **Touch** wired at both backends' real bind choke points, not scattered
+  per postprocess pass: Vulkan gets one function,
+  `VkTextureManager::GetTextureResourceName()`, mirroring `GetTexture`'s
+  `PPTextureType` dispatch, called from `VkDescriptorSetManager::GetInput`
+  (read) and `VkRenderBuffers::GetOutput` (write); GL has no equivalent
+  resolver so `Touch` calls live directly in `FGLRenderBuffers`'
+  `BindSceneFB`/`BindSceneColorTexture`/`BindSceneFogTexture`/
+  `BindSceneNormalTexture`/`BindSceneDepthTexture`/`BindCurrentTexture`/
+  `BindCurrentFB`/`BindNextFB`. `PPTexture`/`SwapChain`/`ShadowMap` aren't
+  declared yet on either backend, so they're skipped, not touched.
+
+  Verified for real, not just compiled: both backends built clean and ran
+  five real seconds of actual DOOM2 MAP01 gameplay on the RX 550 (Wayland,
+  not Xvfb — Xvfb has no DRI3, Vulkan surface creation fails there) with no
+  crash. Separately, the exact CI smoke-test command (Xvfb, X11, `+quit`,
+  GL) was run locally with `+r_resource_validate 1 +r_resources` before
+  `+quit`: `PipelineImage[0]` already shows `w`/`r` even under `+quit`'s
+  short-circuit — some minimal pipeline draw happens before quit, so this
+  is confirmed live, not just plausible from code reading — and zero
+  `stale size:` lines. CI (`continuous_integration.yml`) now runs that same
+  addition and fails the job on any `stale size:` line; deliberately not
+  gated on "untouched," since most resources are legitimately never bound
+  this early and asserting the report is fully empty would be a permanent
+  false failure. Not done: the AO module and Metal wiring (both blocked on
+  item 3 regardless), and `PPTexture` instances aren't declared as
+  resources at all yet — left for whenever the next session picks this up.
+- **Frame graph phase 2, started 2026-09-02:** `hw_framegraph.{h,cpp}`
+  (`common/rendering/hwrenderer/frame/`) — CPU-only pass/dependency graph
+  (RAW edges, deterministic topo sort, cycle detection) over the resource
+  registry's names. Explicitly stays short of anything Metal-specific or
+  scheduling-shaped, same "stop point" as the registry itself — see the
+  file's own header comment. Self-test (`r_framegraph_selftest`) reproduces
+  the tonemap→colormap→lens→fxaa chain from `docs/frame-analysis.md` §2
+  against real ping-pong names: PASS.
+
+  Wired to real per-frame data for the four passes whose reads/writes
+  already resolve through the registry's existing special-type names
+  (`CurrentPipelineTexture`/`NextPipelineTexture`/`SceneColor`/etc.):
+  `tonemap`, `colormap`, `lens`, `fxaa`. Reuses what's already there rather
+  than adding new API surface — `SetPassName()` sits next to each pass's
+  existing `PushGroup()` call (shared `hw_postprocess.cpp`), and each
+  backend's `Draw()` resolves names through the exact same resolver Touch()
+  already uses (`VkTextureManager::GetTextureResourceName`; added the GL
+  equivalent, `FGLRenderBuffers::GetTextureResourceName`, mirroring it
+  1:1). `AddPass()` only fires when every input and the output resolve to a
+  name — silently skipped otherwise, never graphed under a made-up name.
+  `screen->Graph()`/`fb->Graph()` mirrors `Resources()`, reset once per
+  frame next to `Resources().BeginFrame()`. `CCMD(r_framegraph)` mirrors
+  `CCMD(r_resources)`'s shape.
+
+  **Verified live, not just compiled or self-tested.** Command-line
+  `+r_framegraph` cannot see real data: `C_ParseCmdLineParams` batches every
+  `+`-arg into one `FExecList` that runs entirely inside `D_DoomMain`,
+  before `D_DoomLoop` starts (confirmed by reading `d_main.cpp` around the
+  `exec->ExecCommands()` call) — same structural reason `+quit` can't
+  exercise a real frame per `CLAUDE.md`. Verified instead with a temporary
+  counter-gated dump inside `Postprocess::Pass2` (added, checked, then
+  removed — not left in the tree), run real-time under Xvfb with `+map
+  MAP01` and no `+quit` (`stdbuf -o0` needed too: without `+quit`'s clean
+  exit, stdout is block-buffered and a `timeout`-delivered SIGTERM loses
+  whatever hadn't flushed). Real MAP01 output, `ok=true`, empty report:
+  `tonemap → lens → fxaa → fxaa`, `PipelineImage[0]`/`[1]` ping-ponging
+  correctly across all four. **`colormap` correctly absent** — its
+  `Render()` early-returns with no flash/special-colormap active
+  (`hw_postprocess.cpp` line ~551), which is exactly this frame's idle
+  state. The graph reporting only what actually ran, not a static template,
+  is the diagnostic working as designed. Standard CI smoke config
+  (`+r_framegraph_selftest +r_resources +quit`, Xvfb/X11) re-run after:
+  selftest PASS, registry unaffected, no stale-size regression.
+
+- **Frame graph widened to bloom/AO/exposure, same session (2026-09-02).**
+  Closed `frame-graph-resources.md` open question 4 ("`PPTexture` instances
+  aren't declared as resources at all yet") for the code that actually
+  needed it: `PPTexture` gained a `Name` field (`hw_postprocess.h`) — unset
+  by default, since the resize path always assigns a fresh temporary object
+  over the old one, wiping any previously-set name along with everything
+  else. `NameAndDeclare()` (`hw_postprocess.cpp`) sets it and calls
+  `Resources().Declare()` in one call, right at each texture's
+  `UpdateTextures()` (re)creation site — same pattern `VkRenderBuffers`
+  already used for `SceneColor`/etc. `SizeRule::Fixed` throughout (not
+  `SceneScaled`): these buffers derive their size through multi-level
+  pyramids the rule doesn't model yet, and `Fixed` is non-checkable by
+  `ValidateFrame` rather than silently wrong, so this doesn't misrepresent
+  anything the registry checks today. `ResolvePPTextureName()` (new, both
+  `gl_renderbuffers.cpp` and `vk_pprenderstate.cpp`) resolves
+  `PPTextureType::PPTexture` inputs/outputs via `texture->Name`, falling
+  back to the existing type-based resolver for everything else — so any
+  future pass wiring gets this for free.
+
+  Covered: all of `PPBloom` (`bloom.extract/blur/downscale/upscale/combine`,
+  and `PPBloom::RenderBlur`'s separate menu-blur path as `blur.*`, sharing
+  `BlurStep` via a new `passName` parameter), `PPCameraExposure`
+  (`exposure.extract/average/combine` — `Exposure.Camera` persists
+  cross-frame for eye adaptation, declared non-transient), `PPAmbientOcclusion`
+  (`ssao.lineardepth/occlude/blur.h/blur.v/combine`), and `PPTonemap`'s
+  `PaletteTexture` (named to match the `DeclareExternal("PaletteTexture")`
+  boundary that already existed — CPU-uploaded, not a pass output, still
+  legitimately external even though it's now a real declared+named
+  resource). Not covered: `shadowmap`, custom shaders — smaller, lower-value
+  surface, left for whenever they matter.
+
+  **Verified live**, same method as above (temporary counter-gated dump,
+  removed after): real MAP01 frame with `gl_bloom 1 gl_ssao 3
+  gl_tonemap/lens/fxaa 1`, **42 passes, 40 edges, `ok=true`**. First run
+  caught a real gap in the verification hook itself (not the instrumented
+  code): `AO.RandomTexture2` — fixed noise content, created once, never
+  written by any pass — wasn't declared external, so `Build()` correctly
+  reported "reads before any pass writes it." Same fix applied to both the
+  temp hook and the real `CCMD(r_framegraph)` (which needed it too, for the
+  same reason, once real graphs could reach AO): `PaletteTexture` and all
+  three `AO.RandomTexture[0-2]` added to its external set alongside the
+  scene-render outputs. Second run: clean, `ok=true`. Full real chain
+  confirmed connected end to end, e.g. `ssao.combine` writing `SceneColor`
+  that nothing later reads (correct — AO composites into the scene before
+  bloom/tonemap ever touch it), and `bloom.combine → tonemap → lens → fxaa →
+  fxaa` as one continuous producer chain across `PipelineImage[0]`/`[1]`.
+  Re-ran the standard CI smoke config afterward: selftest PASS, registry
+  unaffected, no stale-size regression.
+
+- **Frame graph CPU cost measured, same session (2026-09-02): no measurable
+  difference.** The open question from the widening work above —
+  `AddPass()` runs unconditionally whenever `PassName` is set, and bloom
+  alone fires it ~22 times a frame, each pushing a small `TArray` into a
+  `PassDesc` — settled with a real A/B rather than left assumed-fine.
+  First real use of `stat gpu` and a wall-clock reading on this Linux box's
+  actual desktop session (KDE/X11, real RX 550 via `radeonsi`, not Xvfb):
+  `stat gpu` gave a genuine per-pass GPU-elapsed breakdown (`ssao=4.40ms`
+  dominating over `exposure=0.21`, `bloom=0.56`, `tonemap=0.26`,
+  `lens=0.37`, `fxaa=0.76`, `CopyToBackbuffer=0.28` — SSAO alone is ~6x
+  everything else combined, worth knowing if SSAO cost ever becomes a
+  target) — but that instrument can't answer the CPU-bookkeeping question,
+  since the frame graph adds zero GPU work.
+
+  For the actual cost question: built a second binary from a git worktree
+  at `e2fd4c8bc` (resource registry present, no frame graph at all — the
+  commit immediately before this session's phase-2 work) alongside the
+  current HEAD binary, sharing the same pk3s (confirmed no `wadsrc` diff
+  between the two commits). Two interleaved reps each arm, 6 `vid_fps`
+  samples per rep via `spectacle` screenshots read back visually (no
+  `xdotool` on this box for driving the console directly), same static
+  MAP01 view, same cvars (`gl_bloom 1 gl_ssao 3 gl_tonemap/lens/fxaa 1`).
+
+  Both arms threw occasional anomalously-fast readings (12-19ms against a
+  ~28-33ms cluster) — one in the no-frame-graph arm, three in the
+  frame-graph arm — almost certainly the KDE compositor or the screenshot
+  call itself momentarily interacting with frame delivery, not a real
+  effect (it hit the arm *without* the change too). Worth recording as a
+  methodology note: this noise source is specific to measuring on a real
+  desktop session and doesn't exist under Xvfb, and hadn't shown up
+  anywhere earlier in this session. Excluding those as artifacts: no frame
+  graph, mean 30.5ms (n=11); with frame graph, mean 29.6ms (n=8) — the
+  frame-graph arm reads marginally *faster*, by under 1ms, well inside the
+  ~5ms sample-to-sample spread both arms show even after cleaning. Expected
+  result: `AddPass()` is a handful of small heap-owning `TArray` pushes
+  riding along on the same CPU path as the `Draw()` calls already
+  happening, nowhere near this instrument's ~1ms resolution. No real cost,
+  no real speedup — a wash. Worktree removed after.
+
+- **The outlier noise source identified, ~30ms confirmed as real cost
+  (2026-09-03).** The anomalous fast readings from the A/B above turned out
+  to have an actual cause, not just a plausible guess: this machine's two
+  outputs were running at mismatched refresh rates (DP-0 LCD 60Hz, DP-1 CRT
+  75Hz), and `~/.config/kwinrc` has `AllowTearing=false` — KWin forces
+  vsync-locked compositing on every windowed app regardless of the app's
+  own `vid_vsync` setting, and mismatched-refresh multi-output compositing
+  under that policy is a known class of frame-pacing stutter, independent
+  of which app is running. User set the CRT to 60Hz to match. Re-measured
+  (12 samples, two interleaved reps, same config as the A/B): `29, 28, 29,
+  29, 29, 28, 29, 29, 29, 29, 29, 28` — zero outliers this time, mean
+  **28.75ms (34.8fps)**. Essentially unchanged from the pre-fix mean
+  (~29.6-30.5ms) — meaning the refresh-rate mismatch explains the *noise*
+  in the earlier readings, not the *baseline* itself. **The ~29ms frame
+  time is real engine cost**, not a display-stutter artifact. Confirmed
+  not a gzdoom bug either way (same "not our bug" shape as item 13's twm
+  deadlock) — nothing changed in the renderer to fix this, it was entirely
+  a desktop/compositor config issue on the user's machine.
+
+- **`Touch()` gap found and fixed for the widened frame graph, same session
+  (2026-09-03).** Following up the memory-total check `frame-graph-
+  resources.md` originally motivated (never actually run since bloom/AO/
+  exposure were declared): `r_resources` now reports a real total — **29
+  resources, 12.5 MB** (up from 5 resources / 1.1 MB before this session's
+  widening work) — but every one of the newly-declared AO/exposure/bloom
+  entries showed **`UNTOUCHED this frame`**, despite the frame graph
+  proving in the same live run that they were genuinely read and written
+  (the 42-pass, 40-edge graph from the widening work above). Real
+  inconsistency between the two systems, not a display quirk: `AddPass()`
+  had been wired to resolve `PPTextureType::PPTexture` names via
+  `ResolvePPTextureName()`, but `Touch()` — the registry's own bind-time
+  tracking — was never extended to the same case. Both backends' bind
+  sites only called `Touch()` for the pre-existing special-type names
+  (`SceneColor` etc.), never for a bound `PPTexture`.
+
+  Fixed at the four sites: GL's `GLPPRenderState::Draw()` input-bind loop
+  and output-bind switch (`gl_renderbuffers.cpp`, guarded by `if
+  (...->Name)` since a still-unnamed `PPTexture` — `shadowmap`, custom
+  shaders — has nothing to touch); Vulkan's
+  `VkDescriptorSetManager::GetInput()` (`vk_descriptorset.cpp`) and
+  `VkRenderBuffers::GetOutput()` (`vk_renderbuffers.cpp`), each given an
+  explicit `PPTextureType::PPTexture` branch alongside the existing
+  type-resolver path. Verified live, same method as before (temporary
+  counter-gated dump, removed after): re-ran the identical MAP01 config —
+  every AO/exposure/bloom entry now reads `w r`, `UNTOUCHED this frame`
+  down to just `PipelineDepthStencil` (correctly untouched — nothing in
+  this pipeline samples it). Registry and frame graph now agree. Re-ran
+  the standard CI smoke config afterward: selftest PASS, no stale-size
+  regression.
+
+- **SSAO split into per-subpass `stat gpu` groups, same session
+  (2026-09-03).** Answers the "what's next for SSAO" question from the
+  4.40ms aggregate reading earlier: `PPAmbientOcclusion::Render()`'s five
+  draws (`lineardepth`/`occlude`/`blur.h`/`blur.v`/`combine`) all shared
+  one outer `PushGroup("ssao")`, so `stat gpu` could only report one number
+  for all five. Couldn't just nest sub-groups inside it, though — GL's
+  `FGLDebug::PushGroup` opens a `GL_TIME_ELAPSED` query, and the spec
+  forbids two active queries of the same target at once, so an outer
+  "ssao" query plus a nested "ssao.occlude" query would be an invalid
+  `glBeginQuery`. Replaced the one wrapping group with five flat,
+  sequential `PushGroup`/`PopGroup` pairs instead — same shape
+  tonemap/colormap/lens/fxaa already use as independent top-level groups —
+  reusing the exact names already set via `SetPassName` for the frame
+  graph. Vulkan's `VkCommandBufferManager::PushGroup`/`PopGroup` uses
+  timestamp queries with a real `mGroupStack` and would have supported
+  nesting fine, but since this is shared code, flat/sequential is the
+  correct portable choice for both backends.
+
+  Verified live with real numbers, not just compiled: `ssao.occlude`
+  dominates at **2.01ms**, roughly 72% of SSAO's ~2.78ms total that run —
+  `lineardepth` 0.23ms, `blur.h`/`blur.v` 0.12ms each, `combine` 0.30ms.
+  The actual per-pixel AO sampling shader is where SSAO's cost lives, not
+  the setup/blur/combine plumbing around it — the concrete answer for
+  anyone who picks up SSAO optimization later. (Verification used a
+  temporary hook reading `gpuStatOutput` directly rather than a screenshot
+  — window position/stacking on the real desktop kept shifting between
+  spectacle calls, and this sidesteps that entirely. Hit one real bug in
+  the hook itself along the way: an unqualified `extern FString
+  gpuStatOutput;` written inside `namespace OpenGLRenderer` silently
+  declares a *new*, separate name in that namespace rather than binding to
+  the actual global one in `hw_postprocess.cpp` — linker caught it
+  immediately as an undefined reference to
+  `OpenGLRenderer::gpuStatOutput`. Fixed by keeping the extern declaration
+  outside the namespace.) This run's total (~2.78ms) reads lower than the
+  earlier single-group reading (4.40ms) — most likely ordinary
+  frame-to-frame scene variance, not a splitting artifact, but only one
+  sample was taken either time; worth several interleaved reps before
+  treating either number as precise. Re-ran the standard CI smoke config
+  afterward: selftest PASS, no stale-size regression.
+
+- **`ssao.occlude` optimization, same session (2026-09-03): two real changes,
+  ~7% faster on the measured bottleneck, verified live both ways.** Worked
+  under an explicit contract (agreed before touching code): increment 1 was
+  analysis-only — establish a real noise floor for `ssao.occlude`, then
+  either report a concrete candidate or an honest "inherent cost" finding.
+  Baseline: 32 interleaved `stat gpu` samples via a temporary hook reading
+  `gpuStatOutput` directly (screenshot-based sampling kept losing the game
+  window to KWin stacking changes on this desktop, so this sidesteps that
+  entirely) — extremely tight, mean **2.006ms**, range 2.00–2.03ms, static
+  MAP01 view. Read `wadsrc/static/shaders/pp/ssao.fp`: horizon-based AO,
+  `NUM_DIRECTIONS=5 × NUM_STEPS=4` = 20 dependent depth-texture fetches per
+  pixel at `gl_ssao 3`, sky/background pixels already short-circuited. No
+  obvious defect — this reads as ordinary cost for the algorithm, not a bug
+  — but two real, scoped candidates came out of actually reading the code:
+
+  **Candidate A (applied):** the skybox/portal seam guard divided per
+  sample (`depthRatio = max(vp.z,sp.z) / max(min(vp.z,sp.z),1e-5); if
+  (depthRatio > 100.0) ...`) — 20 divisions/pixel. Rewritten as `depthMax >
+  100.0 * depthMin`, algebraically identical since the denominator is
+  always `> 0`, trading a division for a multiply (cheaper on most GPU
+  ALUs). Zero behavior change.
+
+  **Candidate B (applied, after a halt-and-flag):** `LinearDepthTexture`
+  (the thing being dependently fetched 20x/pixel across a 960×540 buffer,
+  ~10M fetches for this one pass) was `R32F`; halving it to `R16F` is a
+  real bandwidth lever on entry-level hardware, matching the size given to
+  it originally as "needs an actual visual A/B, banding risk." Turned out
+  the real risk was worse than banding: `screen->GetZFar()` defaults to
+  **65536.0**, and `lineardepth.fp` stores actual view-space world-unit
+  distance (not normalized 0-1) — R16F's max finite value is **65504**, so
+  an unclamped far-plane pixel would overflow to `Inf`, not just lose
+  precision. Flagged this explicitly before proceeding (the risk described
+  when the candidate was approved was materially different from what
+  reading the code actually showed) rather than silently patching around
+  it. Fix: clamp the linearized depth to `60000.0` before writing in
+  `lineardepth.fp` — safe because far-plane samples already contribute ~0
+  to AO through the existing radius-based falloff, so clamping the *stored*
+  value has no visible effect on the AO result, only prevents the overflow.
+  Confirmed by reading `mt_ao.cpp` that Metal's independent compute AO
+  module already made this exact format choice for its own linearized
+  depth (`"R16Float is filterable on all Metal GPUs (unlike R32Float...)"`,
+  line ~1530) — different implementation, but corroborating evidence this
+  precision is sound, not something novel being introduced here.
+  `PixelFormat::R16f` / `ResourceFormat::R16F` added (new enum values, GL
+  `GL_R16F`, Vulkan `VK_FORMAT_R16_SFLOAT`, registry byte-size/name
+  mappings) since no single-channel half-float format existed in either
+  enum yet.
+
+  **Verified live, both the GPU-time claim and the visual-safety
+  condition**, not just compiled — and re-checked with a third independent
+  run specifically because the first two didn't fully agree with each
+  other. 34 more interleaved samples right after applying both changes:
+  mean **1.862ms**, range 1.86–1.87ms. Asked to "check the results" before
+  committing, so re-added the measurement hook and ran a fresh, independent
+  third sample (33 more, same config, same static view) rather than trust
+  the first post-change number: mean **1.730ms**, range 1.72–1.73ms —
+  *lower* than the second run by 0.13ms, a gap larger than either run's own
+  internal spread (~0.01–0.02ms). Both post-change runs are unambiguously
+  below the 2.006ms baseline, so the improvement itself is real and not in
+  doubt, but the two post-change numbers disagree with each other by more
+  than measurement noise within either one — almost certainly thermal or
+  GPU clock-state drift after many back-to-back launches this session
+  (`renderer-methodology.md` warns about exactly this: "identical configs
+  drift measurably over a long session"). Honest framing: **~7-14%
+  reduction** on `ssao.occlude` (`2.006ms → 1.862-1.730ms` depending on
+  run), not a single precise percentage. `ssao.lineardepth` itself also
+  dropped, from ~0.23ms to ~0.18-0.19ms across the post-change runs, from
+  the same write-bandwidth win. Visual check: single `spectacle`
+  screenshot of the live game (prompt capture right after launch avoided
+  the window-stacking problem that broke repeated sampling earlier),
+  inspected at native resolution and again with brightness boosted
+  specifically to check the darkest gradient (a corridor receding into
+  shadow) for banding — clean, no stepping, no NaN/Inf splotches, AO
+  darkening at corners/creases reads exactly as expected. Not a pixel-diff
+  against a pre-change capture (would have needed a stash+rebuild+rerun
+  cycle not worth the cost here), but a direct look at exactly the failure
+  mode the format change could plausibly have introduced. Re-ran the
+  standard CI smoke config afterward, after the hook was removed for the
+  final time: selftest PASS, no stale-size regression. Both changes cover
+  only the shared GL/Vulkan postprocess AO path (`hw_postprocess.cpp`,
+  `ssao.fp`, `lineardepth.fp`) — Metal's
+  separate compute AO module (`mt_ao.cpp`) is untouched, doesn't build on
+  this box, and was explicitly out of scope per the contract.
 - **Current handoff:** `docs/handoff-macos-2026-08-18.md` — written from the
-  Linux side once this session's audit tranche (item 14) closed out. Confirms
-  nothing here touches Cocoa/Metal, restates macOS priority order (item 3,
-  Apple Silicon validation, is gating for Apple-specific Metal policy and
-  performance, not for the portable frame-graph architecture), and is
-  explicit that TBDR tuning starts **after** item 3 has a real answer,
-  not on an arbitrary schedule. Also records that the item 5 wipe question is
-  closed (confirmed animating correctly, not a freeze) — item 5 itself stays
-  open, the underlying `nextDrawable()` block is mitigated, not eliminated.
+  Linux side once this session's audit tranche (item 14) closed out. Apple
+  Silicon validation remains gating for TBDR-specific policy and performance,
+  but not for the portable frame-graph architecture now merged here. The
+  Metal adapter must remain correctness-first until an Apple Silicon baseline
+  exists. Also records that the item 5 wipe question is closed (confirmed
+  animating correctly, not a freeze) — item 5 itself stays open, the underlying
+  `nextDrawable()` block is mitigated, not eliminated.
 - **Previous handoff:** `docs/handoff-ao-2026-08-16.md` — the AO session. macOS
   items 1 and 2 closed, the compute-AO cost premise retired, three SSAO-residual
   suspects killed, and **one new unresolved bug found: compute AO is bistable**.
@@ -829,11 +1223,14 @@ requests on the version actually obtained" — was checked and needs nothing:
 `zwidget/wayland-c-bindings` carries this as `bebe13394`, alongside the first-paint
 fix (`10b60e035`), the three X11 commits and the Cocoa modal work. What remained was
 **upstreaming to dpjudas**, gated on the first-paint control run (item 1) — closed
-the same day. The branch is now pushed to the fork
-(`zwidget-wayland-c-bindings-clean`, all 12 commits including the
-waylandpp-replacement prerequisite the six-commit framing didn't account for);
-the PR itself hasn't been opened yet. See `docs/handoff-linux-2026-08-16.md` item 5
-for the full state and why the scope grew.
+the same day. The branch was pushed to the fork
+(`zwidget-wayland-c-bindings-clean`), and item 14's focus-loss key-up fix
+(`0f5f0e129`) was cherry-picked in behind it the same way (X11-file-only diff,
+message rewritten to drop gzdoom-internal doc references) before the PR opened,
+since it's the same defect class. **PR opened 2026-09-02:**
+https://github.com/dpjudas/ZWidget/pull/65, 13 commits. See
+`docs/handoff-linux-2026-08-16.md` item 5 for the earlier state and why the scope
+grew.
 
 The paragraph below is left for its procedure note, but its premise is stale:
 `c3474d697` was only on `metal-audit`. It is not on `zwidget/wayland-c-bindings` or any other
@@ -1069,8 +1466,8 @@ read `AGENTS.md` until its findings were written. Full report:
   key — but a real, reproducible one-keypress loss with an ordinary trigger.
   Fixed by giving `OnFocusOut` the same treatment as Wayland: snapshot and
   clear `keyState`, synthesize `OnWindowKeyUp` for every key that was down,
-  before delivering `OnWindowDeactivated()`. `zwidget-subtree` — needs the
-  cherry-pick-and-publish procedure to reach dpjudas, same as items 10/11.
+  before delivering `OnWindowDeactivated()`. `zwidget-subtree` — cherry-picked
+  and published to dpjudas 2026-09-02, see item 5's PR link above.
 - **Finding 5 (LOW, maintainability)** — unconditional debug `fprintf`s in
   `OnFocusIn`/`OnFocusOut` (empirically reproduced by the audit, not just
   read) and a `LogToDisk` helper in `gl_sysfb.cpp` appending

@@ -13,6 +13,10 @@ Everything else is GZDoom: same ZScript VM, same playsim, same PK3 assets, same
 mods. If a mod runs on GZDoom it should run here, and upstream's
 [wiki](https://zdoom.org/wiki/) still applies for engine-level questions.
 
+This is an **experimental, maintenance-mode fork** rather than an official
+GZDoom release. Targeted fixes, compatibility reports and hardware testing are
+welcome; there is no promise of active development or broad platform support.
+
 ---
 
 ## Status
@@ -26,9 +30,9 @@ its contribution to the final frame, bounded and documented in `AGENTS.md`.
 **Linux** — native Wayland and X11 backends with desktop theme detection. The
 X11 raw-keyboard path has been interactively validated on the Linux test
 machine with balanced press/release events and no stuck actions. That machine
-has also passed the GL/Vulkan cross-backend suite; its selected MAP06 scene is
-not launch-to-launch deterministic, so no Linux golden baseline has been
-recorded.
+has also passed the GL/Vulkan cross-backend suite and has a platform-specific
+golden baseline. The native backend is tested on the maintainer's Linux
+hardware, not on every compositor or GPU.
 
 **BSD** — the native POSIX design is intended to cover BSD as well, but this
 fork does not currently claim BSD runtime verification.
@@ -48,11 +52,26 @@ cross-backend suite against OpenGL. The exact OpenGL feature/profile level is
 driver-dependent, so claims about older compatibility profiles or newer core
 features still need to be tied to a measured machine.
 
-The Metal renderer currently translates most known engine shaders at runtime
-and keeps native MSL for Metal-specific compute work. A future build-time
-`metallib` for the stock shader permutations should reduce startup and first
-frame compilation cost, while retaining runtime translation for custom and
-mod-provided shaders.
+The stock Metal shader stages are shipped as pre-translated MSL and compiled
+into the native metallib where supported by the build. Runtime translation is
+retained for custom and mod-provided shaders. The Metal backend still has
+hardware-specific limitations; see `AGENTS.md` before treating a result as
+portable.
+
+### Release support matrix
+
+| Platform | Status |
+|---|---|
+| macOS Intel / Metal | Tested by the maintainer |
+| Linux / native Wayland and X11 | Tested on documented hardware |
+| Linux / OpenGL and Vulkan | Tested on documented hardware |
+| Apple Silicon / Metal | Builds in CI; runtime testing wanted |
+| Windows | Builds in CI; not run by the maintainer |
+| BSD | Intended by the native POSIX design; not runtime-verified |
+
+Apple Silicon support must not be inferred from a successful build. The first
+useful report from an M-series Mac is a clean run of the matrix tools below,
+followed by ordinary gameplay with any visual or stability problems recorded.
 
 ---
 
@@ -110,7 +129,7 @@ comparing captures against the OpenGL backend, and that only proves things about
 hardware someone actually runs.
 
 The most valuable contribution right now is **anyone with an Apple Silicon Mac**
-running:
+running from a clean checkout:
 
 ```bash
 python3 tools/matrix/run.py --update-baseline
@@ -126,8 +145,14 @@ real finding.
 Bug reports are welcome with the same caveat that applies to everything here: a
 report that says what you measured beats one that says what you think happened.
 
-**AI-assisted contributions are welcome.** See `CONTRIBUTING.md` for how that
-works and what you are certifying when you submit.
+For a useful report, include the commit or release, Mac model, macOS version,
+GPU, selected backend, exact command, whether the matrix tools passed, and a
+short reproduction for any crash or visual difference. Do not include
+copyrighted IWAD files or other game data in an issue or pull request.
+
+Targeted code contributions are welcome when the contributor can explain and
+verify the change. The project is in maintenance mode, so a small, measured
+fix is more useful than a broad renderer rewrite.
 
 ---
 

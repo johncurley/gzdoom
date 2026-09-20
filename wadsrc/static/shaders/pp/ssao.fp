@@ -88,9 +88,15 @@ float ComputeSampleHorizon(vec3 viewPosition, vec3 viewNormal, vec2 sampleUV, in
 	vec3 viewDelta = samplePos - viewPosition;
 
 	// Skybox/portal guard: reject samples from incompatible camera views
-	// (different cameras write incompatible depth ranges, creating seams)
-	float depthRatio = max(viewPosition.z, samplePos.z) / max(min(viewPosition.z, samplePos.z), 1e-5);
-	if (depthRatio > 100.0) return 0.0;
+	// (different cameras write incompatible depth ranges, creating seams).
+	// Written as depthMax > 100.0 * depthMin rather than a division and a
+	// compare against the ratio -- algebraically identical since depthMin is
+	// always > 0 (clamped by the max(..., 1e-5) below), and a multiply is
+	// cheaper than a divide on most GPU ALUs. Runs once per sample (20x/pixel
+	// at gl_ssao 3).
+	float depthMin = max(min(viewPosition.z, samplePos.z), 1e-5);
+	float depthMax = max(viewPosition.z, samplePos.z);
+	if (depthMax > 100.0 * depthMin) return 0.0;
 
 	float distanceSquare = max(dot(viewDelta, viewDelta), 1e-6);
 	float invDistance = inversesqrt(distanceSquare);

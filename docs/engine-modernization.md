@@ -139,3 +139,15 @@ stabilization change.
 4. Migrate existing postprocess passes incrementally.
 5. Prototype compute light-list construction.
 6. Start the standalone deterministic visibility CPU reference.
+
+## Follow-on (not started): public developer wiki
+
+Once Apple Silicon is validated (Tasks — macOS item 3) and the frame graph
+scheduler has landed, consider a GitHub wiki distilling `AGENTS.md`, this
+document, and the Metal/Vulkan field guides into public-facing engine
+architecture reference. Scope is architecture documentation for this fork
+specifically, not modding tutorials (Ultimate Doom Builder, ZScript-for-
+beginners, etc.) — that ground is already well covered by the existing Doom
+community and isn't worth re-treading. Deliberately not scheduled earlier:
+writing it against an architecture that's still moving (frame graph,
+Apple Silicon TBDR differences) means rewriting it as soon as it's done.

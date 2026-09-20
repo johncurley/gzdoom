@@ -46,10 +46,58 @@ ADD_STAT(gpu)
 
 /////////////////////////////////////////////////////////////////////////////
 
+// PPTexture instances are shared, backend-neutral scratch/state buffers (bloom's
+// pyramid, AO's ambient/depth buffers, exposure's averaging chain) -- unlike
+// SceneColor/PipelineImage[n]/etc, nothing here ever gave them resource registry
+// names or declarations, which is docs/frame-graph-resources.md's open question 4.
+// These two helpers close that gap at each texture's (re)creation site, the same
+// pattern VkRenderBuffers/FGLRenderBuffers already use for their own resources.
+
+static ResourceFormat ToResourceFormat(PixelFormat format)
+{
+	switch (format)
+	{
+	case PixelFormat::Rgba8:  return ResourceFormat::RGBA8;
+	case PixelFormat::Rgba16f: return ResourceFormat::RGBA16F;
+	case PixelFormat::R32f:   return ResourceFormat::R32F;
+	case PixelFormat::Rg16f:  return ResourceFormat::RG16F;
+	case PixelFormat::R16f:   return ResourceFormat::R16F;
+	default:                  return ResourceFormat::Unknown;	// Rgba16_snorm: no registry equivalent yet
+	}
+}
+
+// Names and declares a PPTexture in one call, right where UpdateTextures()
+// (re)creates it. No backend handle is available at this call site -- this code
+// is backend-neutral, and the GL/Vulkan-native texture object isn't created until
+// the first Draw() that binds it (GetGLTexture/GetVkTexture, lazy) -- so nullptr
+// here is accurate, not a placeholder standing in for one that could be had.
+static void NameAndDeclare(PPTexture &tex, const char *name, const char *owner, bool transient = true)
+{
+	tex.Name = name;
+	if (screen)
+	{
+		ResourceDesc desc;
+		desc.name = name;
+		desc.owner = owner;
+		desc.width = tex.Width;
+		desc.height = tex.Height;
+		desc.samples = 1;
+		desc.format = ToResourceFormat(tex.Format);
+		desc.size = { SizeRule::Fixed };	// no per-level SceneScaled tracking here yet, see the header comment on SizeRule
+		desc.transient = transient;
+		screen->Resources().Declare(desc, nullptr);
+	}
+}
+
+/////////////////////////////////////////////////////////////////////////////
+
 void PPBloom::UpdateTextures(int width, int height)
 {
 	if (width == lastWidth && height == lastHeight)
 		return;
+
+	static const char *VNames[NumBloomLevels] = { "Bloom.Level0.V", "Bloom.Level1.V", "Bloom.Level2.V", "Bloom.Level3.V" };
+	static const char *HNames[NumBloomLevels] = { "Bloom.Level0.H", "Bloom.Level1.H", "Bloom.Level2.H", "Bloom.Level3.H" };
 
 	int bloomWidth = (width + 1) / 2;
 	int bloomHeight = (height + 1) / 2;
@@ -63,6 +111,8 @@ void PPBloom::UpdateTextures(int width, int height)
 		blevel.Viewport.height = (bloomHeight + 1) / 2;
 		blevel.VTexture = { blevel.Viewport.width, blevel.Viewport.height, PixelFormat::Rgba16f };
 		blevel.HTexture = { blevel.Viewport.width, blevel.Viewport.height, PixelFormat::Rgba16f };
+		NameAndDeclare(blevel.VTexture, VNames[i], "PPBloom");
+		NameAndDeclare(blevel.HTexture, HNames[i], "PPBloom");
 
 		bloomWidth = blevel.Viewport.width;
 		bloomHeight = blevel.Viewport.height;
@@ -95,6 +145,7 @@ void PPBloom::RenderBloom(PPRenderState *renderstate, int sceneWidth, int sceneH
 
 	// Extract blooming pixels from scene texture:
 	renderstate->Clear();
+	renderstate->SetPassName("bloom.extract");
 	renderstate->Shader = &BloomExtract;
 	renderstate->Uniforms.Set(extractUniforms);
 	renderstate->Viewport = level0.Viewport;
@@ -117,15 +168,16 @@ void PPBloom::RenderBloom(PPRenderState *renderstate, int sceneWidth, int sceneH
 		auto &blevel = levels[i];
 		auto &next = levels[i + 1];
 
-		BlurStep(renderstate, blurUniforms, blevel.VTexture, blevel.HTexture, blevel.Viewport, false);
+		BlurStep(renderstate, blurUniforms, blevel.VTexture, blevel.HTexture, blevel.Viewport, false, "bloom.blur");
 		if (DebugAfterBlur)
 			DebugAfterBlur(&blevel.HTexture, false, i);
-		BlurStep(renderstate, blurUniforms, blevel.HTexture, blevel.VTexture, blevel.Viewport, true);
+		BlurStep(renderstate, blurUniforms, blevel.HTexture, blevel.VTexture, blevel.Viewport, true, "bloom.blur");
 		if (DebugAfterBlur)
 			DebugAfterBlur(&blevel.VTexture, true, i);
 
 		// Linear downscale:
 		renderstate->Clear();
+		renderstate->SetPassName("bloom.downscale");
 		renderstate->Shader = &BloomCombine;
 		renderstate->Uniforms.Clear();
 		renderstate->Viewport = next.Viewport;
@@ -141,11 +193,12 @@ void PPBloom::RenderBloom(PPRenderState *renderstate, int sceneWidth, int sceneH
 		auto &blevel = levels[i];
 		auto &next = levels[i - 1];
 
-		BlurStep(renderstate, blurUniforms, blevel.VTexture, blevel.HTexture, blevel.Viewport, false);
-		BlurStep(renderstate, blurUniforms, blevel.HTexture, blevel.VTexture, blevel.Viewport, true);
+		BlurStep(renderstate, blurUniforms, blevel.VTexture, blevel.HTexture, blevel.Viewport, false, "bloom.blur");
+		BlurStep(renderstate, blurUniforms, blevel.HTexture, blevel.VTexture, blevel.Viewport, true, "bloom.blur");
 
 		// Linear upscale:
 		renderstate->Clear();
+		renderstate->SetPassName("bloom.upscale");
 		renderstate->Shader = &BloomCombine;
 		renderstate->Uniforms.Clear();
 		renderstate->Viewport = next.Viewport;
@@ -155,11 +208,12 @@ void PPBloom::RenderBloom(PPRenderState *renderstate, int sceneWidth, int sceneH
 		renderstate->Draw();
 	}
 
-	BlurStep(renderstate, blurUniforms, level0.VTexture, level0.HTexture, level0.Viewport, false);
-	BlurStep(renderstate, blurUniforms, level0.HTexture, level0.VTexture, level0.Viewport, true);
+	BlurStep(renderstate, blurUniforms, level0.VTexture, level0.HTexture, level0.Viewport, false, "bloom.blur");
+	BlurStep(renderstate, blurUniforms, level0.HTexture, level0.VTexture, level0.Viewport, true, "bloom.blur");
 
 	// Add bloom back to scene texture:
 	renderstate->Clear();
+	renderstate->SetPassName("bloom.combine");
 	renderstate->Shader = &BloomCombine;
 	renderstate->Uniforms.Clear();
 	renderstate->Viewport = screen->mSceneViewport;
@@ -201,6 +255,7 @@ void PPBloom::RenderBlur(PPRenderState *renderstate, int sceneWidth, int sceneHe
 
 	// Grab the area we want to bloom:
 	renderstate->Clear();
+	renderstate->SetPassName("blur.grab");
 	renderstate->Shader = &BloomCombine;
 	renderstate->Uniforms.Clear();
 	renderstate->Viewport = level0.Viewport;
@@ -218,11 +273,12 @@ void PPBloom::RenderBlur(PPRenderState *renderstate, int sceneWidth, int sceneHe
 		auto &blevel = levels[i];
 		auto &next = levels[i + 1];
 
-		BlurStep(renderstate, blurUniforms, blevel.VTexture, blevel.HTexture, blevel.Viewport, false);
-		BlurStep(renderstate, blurUniforms, blevel.HTexture, blevel.VTexture, blevel.Viewport, true);
+		BlurStep(renderstate, blurUniforms, blevel.VTexture, blevel.HTexture, blevel.Viewport, false, "blur.blur");
+		BlurStep(renderstate, blurUniforms, blevel.HTexture, blevel.VTexture, blevel.Viewport, true, "blur.blur");
 
 		// Linear downscale:
 		renderstate->Clear();
+		renderstate->SetPassName("blur.downscale");
 		renderstate->Shader = &BloomCombine;
 		renderstate->Uniforms.Clear();
 		renderstate->Viewport = next.Viewport;
@@ -238,11 +294,12 @@ void PPBloom::RenderBlur(PPRenderState *renderstate, int sceneWidth, int sceneHe
 		auto &blevel = levels[i];
 		auto &next = levels[i - 1];
 
-		BlurStep(renderstate, blurUniforms, blevel.VTexture, blevel.HTexture, blevel.Viewport, false);
-		BlurStep(renderstate, blurUniforms, blevel.HTexture, blevel.VTexture, blevel.Viewport, true);
+		BlurStep(renderstate, blurUniforms, blevel.VTexture, blevel.HTexture, blevel.Viewport, false, "blur.blur");
+		BlurStep(renderstate, blurUniforms, blevel.HTexture, blevel.VTexture, blevel.Viewport, true, "blur.blur");
 
 		// Linear upscale:
 		renderstate->Clear();
+		renderstate->SetPassName("blur.upscale");
 		renderstate->Shader = &BloomCombine;
 		renderstate->Uniforms.Clear();
 		renderstate->Viewport = next.Viewport;
@@ -252,11 +309,12 @@ void PPBloom::RenderBlur(PPRenderState *renderstate, int sceneWidth, int sceneHe
 		renderstate->Draw();
 	}
 
-	BlurStep(renderstate, blurUniforms, level0.VTexture, level0.HTexture, level0.Viewport, false);
-	BlurStep(renderstate, blurUniforms, level0.HTexture, level0.VTexture, level0.Viewport, true);
+	BlurStep(renderstate, blurUniforms, level0.VTexture, level0.HTexture, level0.Viewport, false, "blur.blur");
+	BlurStep(renderstate, blurUniforms, level0.HTexture, level0.VTexture, level0.Viewport, true, "blur.blur");
 
 	// Copy blur back to scene texture:
 	renderstate->Clear();
+	renderstate->SetPassName("blur.combine");
 	renderstate->Shader = &BloomCombine;
 	renderstate->Uniforms.Clear();
 	renderstate->Viewport = screen->mScreenViewport;
@@ -268,9 +326,10 @@ void PPBloom::RenderBlur(PPRenderState *renderstate, int sceneWidth, int sceneHe
 	renderstate->PopGroup();
 }
 
-void PPBloom::BlurStep(PPRenderState *renderstate, const BlurUniforms &blurUniforms, PPTexture &input, PPTexture &output, PPViewport viewport, bool vertical)
+void PPBloom::BlurStep(PPRenderState *renderstate, const BlurUniforms &blurUniforms, PPTexture &input, PPTexture &output, PPViewport viewport, bool vertical, const char *passName)
 {
 	renderstate->Clear();
+	renderstate->SetPassName(passName);
 	renderstate->Shader = vertical ? &BlurVertical : &BlurHorizontal;
 	renderstate->Uniforms.Set(blurUniforms);
 	renderstate->Viewport = viewport;
@@ -350,6 +409,7 @@ void PPLensDistort::Render(PPRenderState *renderstate)
 	renderstate->PushGroup("lens");
 
 	renderstate->Clear();
+	renderstate->SetPassName("lens");
 	renderstate->Shader = &Lens;
 	renderstate->Uniforms.Set(uniforms);
 	renderstate->Viewport = screen->mScreenViewport;
@@ -378,6 +438,7 @@ void PPFXAA::Render(PPRenderState *renderstate)
 	renderstate->PushGroup("fxaa");
 
 	renderstate->Clear();
+	renderstate->SetPassName("fxaa");
 	renderstate->Shader = &FXAALuma;
 	renderstate->Uniforms.Clear();
 	renderstate->Viewport = screen->mScreenViewport;
@@ -463,6 +524,7 @@ void PPCameraExposure::Render(PPRenderState *renderstate, int sceneWidth, int sc
 
 	// Extract light blevel from scene texture:
 	renderstate->Clear();
+	renderstate->SetPassName("exposure.extract");
 	renderstate->Shader = &ExposureExtract;
 	renderstate->Uniforms.Set(extractUniforms);
 	renderstate->Viewport = level0.Viewport;
@@ -477,6 +539,7 @@ void PPCameraExposure::Render(PPRenderState *renderstate, int sceneWidth, int sc
 		auto &blevel = ExposureLevels[i];
 		auto &next = ExposureLevels[i + 1];
 
+		renderstate->SetPassName("exposure.average");
 		renderstate->Shader = &ExposureAverage;
 		renderstate->Uniforms.Clear();
 		renderstate->Viewport = next.Viewport;
@@ -487,6 +550,7 @@ void PPCameraExposure::Render(PPRenderState *renderstate, int sceneWidth, int sc
 	}
 
 	// Combine average value with current camera exposure:
+	renderstate->SetPassName("exposure.combine");
 	renderstate->Shader = &ExposureCombine;
 	renderstate->Uniforms.Set(combineUniforms);
 	renderstate->Viewport.left = 0;
@@ -518,6 +582,17 @@ void PPCameraExposure::UpdateTextures(int width, int height)
 
 	ExposureLevels.clear();
 
+	// 16 covers any real resolution: halving down from even an 8K dimension
+	// reaches 1 in ~13 steps. Past that, the fallback name just isn't unique
+	// per level -- harmless, since it only means those extra levels share one
+	// registry entry rather than each getting their own.
+	static const char *LevelNames[16] = {
+		"Exposure.Level0", "Exposure.Level1", "Exposure.Level2", "Exposure.Level3",
+		"Exposure.Level4", "Exposure.Level5", "Exposure.Level6", "Exposure.Level7",
+		"Exposure.Level8", "Exposure.Level9", "Exposure.Level10", "Exposure.Level11",
+		"Exposure.Level12", "Exposure.Level13", "Exposure.Level14", "Exposure.Level15",
+	};
+
 	int i = 0;
 	do
 	{
@@ -530,11 +605,14 @@ void PPCameraExposure::UpdateTextures(int width, int height)
 		blevel.Viewport.width = width;
 		blevel.Viewport.height = height;
 		blevel.Texture = { blevel.Viewport.width, blevel.Viewport.height, PixelFormat::R32f };
+		NameAndDeclare(blevel.Texture, LevelNames[i < 16 ? i : 15], "PPCameraExposure");
 		ExposureLevels.push_back(std::move(blevel));
 
 		i++;
 
 	} while (width > 1 || height > 1);
+
+	NameAndDeclare(CameraTexture, "Exposure.Camera", "PPCameraExposure", false);	// persists across frames for eye adaptation, not transient
 
 	FirstExposureFrame = true;
 }
@@ -565,6 +643,7 @@ void PPColormap::Render(PPRenderState *renderstate, int fixedcm, float flash)
 	renderstate->PushGroup("colormap");
 
 	renderstate->Clear();
+	renderstate->SetPassName("colormap");
 	renderstate->Shader = &Colormap;
 	renderstate->Uniforms.Set(uniforms);
 	renderstate->Viewport = screen->mScreenViewport;
@@ -604,6 +683,7 @@ void PPTonemap::UpdateTextures()
 		}
 
 		PaletteTexture = { 512, 512, PixelFormat::Rgba8, data };
+		NameAndDeclare(PaletteTexture, "PaletteTexture", "PPTonemap", false);	// CPU-uploaded once, not a pass output -- stays an external boundary in the graph
 	}
 }
 
@@ -632,6 +712,7 @@ void PPTonemap::Render(PPRenderState *renderstate)
 	renderstate->PushGroup("tonemap");
 
 	renderstate->Clear();
+	renderstate->SetPassName("tonemap");
 	renderstate->Shader = shader;
 	renderstate->Viewport = screen->mScreenViewport;
 	renderstate->SetInputCurrent(0);
@@ -701,6 +782,8 @@ PPAmbientOcclusion::PPAmbientOcclusion()
 
 
 		AmbientRandomTexture[quality] = { 64, 64, PixelFormat::Rgba16_snorm, data };
+		static const char *RandomNames[NumAmbientRandomTextures] = { "AO.RandomTexture0", "AO.RandomTexture1", "AO.RandomTexture2" };
+		NameAndDeclare(AmbientRandomTexture[quality], RandomNames[quality], "PPAmbientOcclusion", false);	// fixed content, created once
 
 	}
 
@@ -777,9 +860,17 @@ void PPAmbientOcclusion::UpdateTextures(int width, int height)
 	AmbientWidth = (width + 1) / 2;
 	AmbientHeight = (height + 1) / 2;
 
-	LinearDepthTexture = { AmbientWidth, AmbientHeight, PixelFormat::R32f };
+	// R16f, not R32f: this texture is dependently fetched 20x/pixel at
+	// gl_ssao 3 (NUM_DIRECTIONS*NUM_STEPS in ssao.fp's ComputeAO), so halving
+	// its bandwidth is a real lever on bandwidth-bound hardware. Safe only
+	// because lineardepth.fp now clamps below R16F's max finite value --
+	// see the comment there.
+	LinearDepthTexture = { AmbientWidth, AmbientHeight, PixelFormat::R16f };
 	Ambient0 = { AmbientWidth, AmbientHeight, PixelFormat::Rg16f };
 	Ambient1 = { AmbientWidth, AmbientHeight, PixelFormat::Rg16f };
+	NameAndDeclare(LinearDepthTexture, "AO.LinearDepth", "PPAmbientOcclusion");
+	NameAndDeclare(Ambient0, "AO.Ambient0", "PPAmbientOcclusion");
+	NameAndDeclare(Ambient1, "AO.Ambient1", "PPAmbientOcclusion");
 
 	LastWidth = width;
 	LastHeight = height;
@@ -881,10 +972,19 @@ void PPAmbientOcclusion::Render(PPRenderState *renderstate, float m5, int sceneW
 	ambientViewport.width = AmbientWidth;
 	ambientViewport.height = AmbientHeight;
 
-	renderstate->PushGroup("ssao");
+	// Each sub-pass gets its own PushGroup/PopGroup, not one wrapping "ssao"
+	// group, because FGLDebug::PushGroup opens a GL_TIME_ELAPSED query and
+	// the GL spec does not allow nesting two queries of the same target --
+	// an outer "ssao" group plus a nested "ssao.occlude" group would be an
+	// invalid glBeginQuery while one is already active. Flat and sequential
+	// instead, same shape as tonemap/colormap/lens/fxaa's independent
+	// top-level groups, so `stat gpu` reports each of the five draws
+	// separately rather than one ssao=X.XXms aggregate.
 
 	// Calculate linear depth values
+	renderstate->PushGroup("ssao.lineardepth");
 	renderstate->Clear();
+	renderstate->SetPassName("ssao.lineardepth");
 	renderstate->Shader = gl_multisample > 1 ? &LinearDepthMS : &LinearDepth;
 	renderstate->Uniforms.Set(linearUniforms);
 	renderstate->Viewport = ambientViewport;
@@ -893,9 +993,12 @@ void PPAmbientOcclusion::Render(PPRenderState *renderstate, float m5, int sceneW
 	renderstate->SetOutputTexture(&LinearDepthTexture);
 	renderstate->SetNoBlend();
 	renderstate->Draw();
+	renderstate->PopGroup();
 
 	// Apply ambient occlusion
+	renderstate->PushGroup("ssao.occlude");
 	renderstate->Clear();
+	renderstate->SetPassName("ssao.occlude");
 	renderstate->Shader = gl_multisample > 1 ? &AmbientOccludeMS : &AmbientOcclude;
 	renderstate->Uniforms.Set(ssaoUniforms);
 	renderstate->Viewport = ambientViewport;
@@ -905,11 +1008,14 @@ void PPAmbientOcclusion::Render(PPRenderState *renderstate, float m5, int sceneW
 	renderstate->SetOutputTexture(&Ambient0);
 	renderstate->SetNoBlend();
 	renderstate->Draw();
+	renderstate->PopGroup();
 
 	// Blur SSAO texture
 	if (gl_ssao_debug < 2)
 	{
+		renderstate->PushGroup("ssao.blur.h");
 		renderstate->Clear();
+		renderstate->SetPassName("ssao.blur.h");
 		renderstate->Shader = &BlurHorizontal;
 		renderstate->Uniforms.Set(blurUniforms);
 		renderstate->Viewport = ambientViewport;
@@ -917,8 +1023,11 @@ void PPAmbientOcclusion::Render(PPRenderState *renderstate, float m5, int sceneW
 		renderstate->SetOutputTexture(&Ambient1);
 		renderstate->SetNoBlend();
 		renderstate->Draw();
+		renderstate->PopGroup();
 
+		renderstate->PushGroup("ssao.blur.v");
 		renderstate->Clear();
+		renderstate->SetPassName("ssao.blur.v");
 		renderstate->Shader = &BlurVertical;
 		renderstate->Uniforms.Set(blurUniforms);
 		renderstate->Viewport = ambientViewport;
@@ -926,10 +1035,13 @@ void PPAmbientOcclusion::Render(PPRenderState *renderstate, float m5, int sceneW
 		renderstate->SetOutputTexture(&Ambient0);
 		renderstate->SetNoBlend();
 		renderstate->Draw();
+		renderstate->PopGroup();
 	}
 
 	// Add SSAO back to scene texture:
+	renderstate->PushGroup("ssao.combine");
 	renderstate->Clear();
+	renderstate->SetPassName("ssao.combine");
 	renderstate->Shader = gl_multisample > 1 ? &CombineMS : &Combine;
 	renderstate->Uniforms.Set(combineUniforms);
 	renderstate->Viewport = screen->mSceneViewport;
@@ -944,7 +1056,6 @@ void PPAmbientOcclusion::Render(PPRenderState *renderstate, float m5, int sceneW
 	else
 		renderstate->SetAlphaBlend();
 	renderstate->Draw();
-
 	renderstate->PopGroup();
 }
 

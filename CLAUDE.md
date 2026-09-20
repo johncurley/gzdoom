@@ -323,11 +323,12 @@ Linux jobs install `libinput-dev libudev-dev libwayland-dev libxkbcommon-dev lib
 ## Outstanding
 
 - **Validate Metal on Apple Silicon** — developed on a macOS 12.7 Intel Mac. TBDR vs IMR differences (memoryless storage, store actions, `didModifyRange:`) mean Intel-correct code can be wrong on M-series.
-- **Report ZWidget bugs upstream to dpjudas** — the stuck-key and use-after-free fixes affect every ZWidget application on Wayland. In progress.
 
 Closed since this list was last accurate: input diagnostics were removed and
 X11 gained XInput2 raw input, both 2026-08-13 (`AGENTS.md` Linux items 6-7);
-`check_shader_parity.py` is wired into CI as its own job, 2026-08-18.
+`check_shader_parity.py` is wired into CI as its own job, 2026-08-18; ZWidget
+bugs reported upstream to dpjudas, 2026-09-02 (PR #65, `AGENTS.md` Linux
+item 5).
 
 ## Other AI-agent docs
 

@@ -129,6 +129,22 @@ VkTextureImage* VkTextureManager::GetTexture(const PPTextureType& type, PPTextur
 	}
 }
 
+const char *VkTextureManager::GetTextureResourceName(const PPTextureType& type)
+{
+	switch (type)
+	{
+	case PPTextureType::CurrentPipelineTexture:
+		return fb->GetPostprocess()->GetCurrentPipelineImage() == 0 ? "PipelineImage[0]" : "PipelineImage[1]";
+	case PPTextureType::NextPipelineTexture:
+		return fb->GetPostprocess()->GetCurrentPipelineImage() == 0 ? "PipelineImage[1]" : "PipelineImage[0]";
+	case PPTextureType::SceneColor:  return "SceneColor";
+	case PPTextureType::SceneNormal: return "SceneNormal";
+	case PPTextureType::SceneFog:    return "SceneFog";
+	case PPTextureType::SceneDepth:  return "SceneDepthStencil";
+	default:                         return nullptr;
+	}
+}
+
 VkFormat VkTextureManager::GetTextureFormat(PPTexture* texture)
 {
 	return GetVkTexture(texture)->Format;
