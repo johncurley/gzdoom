@@ -35,7 +35,8 @@ public:
 	void ImageTransitionScene(bool undefinedSrcLayout);
 
 	void BlitSceneToPostprocess();
-	void BlitCurrentToImage(VkTextureImage *image, VkImageLayout finallayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	void BlitCurrentToImage(VkTextureImage *image, VkImageLayout finallayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+		const char *destinationName = nullptr);
 	void DrawPresentTexture(const IntRect &box, bool applyGamma, bool screenshot);
 
 	int GetCurrentPipelineImage() const { return mCurrentPipelineImage; }

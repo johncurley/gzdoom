@@ -52,8 +52,9 @@ void VkPPRenderState::PopGroup()
 
 // A PPTexture carries its own registry name (hw_postprocess.h) once something has
 // named it via NameAndDeclare -- most bloom/AO/exposure textures now do. Anything
-// else (SwapChain, ShadowMap, or a PPTexture nobody named) stays unresolvable, and
-// the caller skips graphing that pass rather than inventing a name for it.
+// SwapChain maps to the OS-owned Backbuffer graph boundary. A PPTexture nobody
+// named stays unresolvable, and the caller skips graphing that pass rather than
+// inventing a name for it.
 static const char *ResolvePPTextureName(VkTextureManager *textureManager, PPTextureType type, PPTexture *texture)
 {
 	if (type == PPTextureType::PPTexture)

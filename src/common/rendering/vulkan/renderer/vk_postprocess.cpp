@@ -161,12 +161,29 @@ void VkPostprocess::ImageTransitionScene(bool undefinedSrcLayout)
 		.Execute(fb->GetCommands()->GetDrawCommands());
 }
 
-void VkPostprocess::BlitCurrentToImage(VkTextureImage *dstimage, VkImageLayout finallayout)
+void VkPostprocess::BlitCurrentToImage(VkTextureImage *dstimage, VkImageLayout finallayout, const char *destinationName)
 {
 	fb->GetRenderState()->EndRenderPass();
 
 	auto srcimage = &fb->GetBuffers()->PipelineImage[mCurrentPipelineImage];
 	auto cmdbuffer = fb->GetCommands()->GetDrawCommands();
+	const char *sourceName = fb->GetTextureManager()->GetTextureResourceName(PPTextureType::CurrentPipelineTexture);
+	int graphPass = -1;
+	if (destinationName && sourceName)
+	{
+		PassDesc desc;
+		desc.name = "wipe.copy";
+		desc.owner = "VkPostprocess";
+		desc.reads = { sourceName };
+		desc.writes = { destinationName };
+		desc.uses.Push({ sourceName, FrameGraphAccess::Read, FrameGraphUsage::TransferSource });
+		desc.uses.Push({ destinationName, FrameGraphAccess::Write, FrameGraphUsage::TransferDestination });
+		graphPass = fb->Graph().AddPass(desc);
+		fb->Graph().BeginBackendPass(graphPass);
+		fb->Resources().Touch(sourceName, false);
+		fb->Graph().ObserveBackendUse(sourceName, FrameGraphAccess::Read, FrameGraphUsage::TransferSource);
+		fb->Graph().ObserveBackendUse(destinationName, FrameGraphAccess::Write, FrameGraphUsage::TransferDestination);
+	}
 
 	VkImageTransition()
 		.AddImage(srcimage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, false)
@@ -195,6 +212,9 @@ void VkPostprocess::BlitCurrentToImage(VkTextureImage *dstimage, VkImageLayout f
 	VkImageTransition()
 		.AddImage(dstimage, finallayout, false)
 		.Execute(cmdbuffer);
+
+	if (graphPass >= 0)
+		fb->Graph().EndBackendPass();
 }
 
 void VkPostprocess::DrawPresentTexture(const IntRect &box, bool applyGamma, bool screenshot)

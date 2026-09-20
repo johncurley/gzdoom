@@ -142,6 +142,7 @@ const char *VkTextureManager::GetTextureResourceName(const PPTextureType& type)
 	case PPTextureType::SceneFog:    return "SceneFog";
 	case PPTextureType::SceneDepth:  return "SceneDepthStencil";
 	case PPTextureType::ShadowMap:   return "ShadowMap";
+	case PPTextureType::SwapChain:   return "Backbuffer";
 	default:                         return nullptr;
 	}
 }

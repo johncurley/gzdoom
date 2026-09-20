@@ -100,19 +100,25 @@ future allocation, aliasing, or hazard analysis must consult the resource
 registry's physical handle and format/sample metadata. Names alone cannot
 prove that two GL resources are distinct.
 
-### Finding 6 — Most blits and presentation remain outside the named graph
+### Finding 6 — Blits and presentation are explicit, but coverage is not complete
 
 `BlitSceneToTexture()` now contributes a `scene.resolve` transfer pass when
 MSAA is active, resolving scene color into `PipelineImage[0]` before
 postprocessing. Shadow-map production now contributes a `shadowmap` color
-attachment pass. Eye-texture blits, `BindOutputFB()`/backbuffer presentation,
-stereo presentation, screenshots, and wipes still perform real resource work
-outside `GLPPRenderState::Draw()`.
+attachment pass. The normal single-eye `CopyToBackbuffer()` path now
+contributes a `present` pass writing the graph-only `Backbuffer` boundary; its
+bounded screenshot variant contributes `backbuffer.copy` as a color-attachment
+write. Stereo eye stores/loads and `PresentStereo()` are now also represented
+as `stereo.store`, `stereo.load`, and `present.stereo` passes. Wipe start/end
+captures are represented as `wipe.copy` transfer passes with graph-only
+destination names, while the texture objects remain engine-owned. The default
+framebuffer remains OS-owned and is not a registry entry.
 
 The current graph intentionally treats the scene inputs and pipeline start as
-external boundaries, and leaves shadow/custom/presentation work ungraphable.
-That is acceptable for validation, but it must not be mistaken for complete
-GL frame coverage.
+external boundaries, and leaves custom presentation variants ungraphable. The
+pixel readback after a screenshot/wipe capture is still outside the graph. That
+is acceptable for validation, but it must not be mistaken for complete GL
+frame coverage.
 
 ## Implemented first integration boundary
 
@@ -133,22 +139,30 @@ The first transfer boundary is now implemented in
 `scene.resolve` and its source/destination uses are observed around the real
 `glBlitFramebuffer()` call.
 
+The normal single-eye presentation boundary is recorded by
+`FGLRenderer::CopyToBackbuffer()`: the current pipeline image is observed as a
+sampled read and the OS-owned default framebuffer is observed as a `Present`
+write under the graph-only name `Backbuffer`. Screenshot readback through the
+same helper is classified as a color-attachment write instead.
+
 This is the same order-preserving contract now used by Vulkan. It gives GL a
 shared correctness check without claiming that OpenGL has Vulkan-style layout
 transitions or a graph-owned scheduler.
 
-The full build and diff hygiene check pass. A live GL run remains pending on
-this machine because its current X11/Wayland display session is not accepting
-new renderer windows; the Vulkan live path and the CPU graph self-test were
-already verified for the shared contract.
+The full build and diff hygiene checks pass. A real enabled postprocess run on
+the RX 550 verified the GL graph at 41 passes and 39 edges; all active
+postprocess resources had matching write/read observations, with only the
+unused pipeline depth buffer reported untouched. The same run completed
+without stale-size or graph-build errors.
 
 ## Deferred work
 
-- Model the scene render and `BlitSceneToTexture()` as explicit producer/
-  transfer operations.
-- Decide whether eye textures, presentation, screenshots, wipes, and custom
-  shader textures need stable registry names. ShadowMap now has a stable name
-  and an observed producer on both GL and Vulkan.
+- Model the full scene render, including depth and multi-attachment producers,
+  as explicit graph operations. The MSAA resolve boundary is already covered.
+- Decide whether screenshots and custom shader textures need stable registry
+  names. ShadowMap and the two GL stereo eye textures now have stable names and
+  observed producers/consumers; wipe destinations have graph-only names because
+  their texture-object lifetime is outside the registry.
 - Add GL capability tracking only if a future graph executor needs texture
   barriers or image-memory barriers.
 - Defer pass reordering, culling, transient allocation, and aliasing until

@@ -12,9 +12,9 @@ the CPU-only recorder in `src/common/rendering/hwrenderer/frame/`; the Vulkan
 backend is the first execution target for this tranche. Metal, allocation
 aliasing, and scheduling optimization are out of scope here.
 
-The resource-use metadata is backend-neutral by design. OpenGL can adopt the
-same contract later at its texture/framebuffer bind points; this tranche wires
-only Vulkan so the two renderer audits remain independently verifiable.
+The resource-use metadata is backend-neutral by design. OpenGL now adopts the
+same contract at its texture/framebuffer bind points, so both renderer audits
+remain independently verifiable.
 
 ## Implemented in this tranche
 
@@ -25,16 +25,24 @@ only Vulkan so the two renderer audits remain independently verifiable.
   non-MSAA scene-to-pipeline transfer is also recorded as `scene.resolve`,
   using `TransferSource`/`TransferDestination` around the existing resolve or
   blit operation. The shadow-map output is registered as `ShadowMap` and is
-  observed as a color-attachment producer.
+  observed as a color-attachment producer. The normal swapchain presentation
+  output is recorded as a `Present` write to the graph-only `Backbuffer`
+  boundary; swapchain images remain owned by the Vulkan framebuffer manager.
+- Wipe start/end copies are recorded as `wipe.copy` transfer passes with
+  graph-only destination names; the wipe texture objects remain owned by the
+  engine texture layer.
+- Stereo eye stores/loads, stereo presentation, and the normal swapchain
+  presentation boundary are recorded as transfer/presentation passes. The
+  screenshot copy path is also classified separately from normal presentation.
 - `Build()` reports declaration/observation mismatches, and the self-test
   covers sampled, color-attachment, depth-attachment, transfer,
   read/write-storage, and presentation uses, plus a deliberately invalid
   declaration.
-- An earlier real Vulkan MAP01 run exercised the full enabled postprocess
-  chain: 40 passes, 38 edges, and matching declared/observed uses. A current
-  smoke run with the scene-resolve boundary initialized the RX 550 Vulkan
-  backend and reached `+MAP01 - Entryway`; the command was intentionally
-  timeout-bounded rather than used as a framegraph dump.
+- A real enabled Vulkan MAP01 run on the RX 550 exercised the full chain at 42
+  passes and 42 edges. Every active postprocess resource had matching
+  write/read observations; only the unused pipeline depth buffer and declared
+  but unused shadow map were untouched. No stale-size or graph-build errors
+  occurred.
 
 ## Current execution model
 
@@ -106,16 +114,16 @@ separate from Vulkan enums, before it can derive barriers. It must also preserve
 the existing resource registry's physical identity, format, sample count, and
 size information.
 
-### Finding 4 — pass coverage is intentionally incomplete
+### Finding 4 — pass coverage is explicit but intentionally incomplete
 
-The current graph records the named postprocess chain and the named
-bloom/exposure/AO resources. It does not yet model all Vulkan work:
+The current graph records the named postprocess chain, the named
+bloom/exposure/AO resources, scene resolve, shadow-map production, and the
+main presentation variants. It does not yet model all Vulkan work:
 
-- swapchain/presentation output;
 - shadow-map consumers outside the named postprocess output;
 - custom shader inputs whose textures have no stable registry name;
 - scene rendering as a multi-attachment producer;
-- screenshot, wipe, stereo, and other presentation variants.
+- pixel readback after screenshot/wipe capture.
 
 These are coverage gaps, not reasons to invent placeholder names. An unresolved
 resource must remain explicitly external or ungraphable until its ownership and
@@ -152,7 +160,8 @@ resource names and dependency edges alone are not enough.
 - A CPU self-test for sampled-read, color-write, depth-write, transfer, and
   read/write hazard combinations. The self-test now covers this contract.
 - A live Vulkan run proving the observed use sequence agrees with the existing
-  `VkImageTransition` calls.
+  `VkImageTransition` calls. This is now complete for the enabled postprocess
+  chain and its covered transfer/presentation boundaries.
 - Resize and MSAA/sample-count changes, because they reset both resources and
   Vulkan render-pass caches.
 - A control run with the graph hook disabled, so a passing validator proves it

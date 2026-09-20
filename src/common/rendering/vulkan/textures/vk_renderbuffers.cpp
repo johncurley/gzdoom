@@ -293,7 +293,8 @@ VulkanFramebuffer* VkRenderBuffers::GetOutput(VkPPRenderPassSetup* passSetup, co
 	else if (const char *name = fb->GetTextureManager()->GetTextureResourceName(output.Type))
 	{
 		fb->Resources().Touch(name, true);
-		fb->Graph().ObserveBackendUse(name, FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
+		fb->Graph().ObserveBackendUse(name, FrameGraphAccess::Write,
+			output.Type == PPTextureType::SwapChain ? FrameGraphUsage::Present : FrameGraphUsage::ColorAttachment);
 	}
 
 	VkImageView view;

@@ -656,7 +656,21 @@ FTexture *OpenGLFrameBuffer::WipeStartScreen()
 	static_cast<FHardwareTexture*>(tex->GetSystemTexture())->Bind(0, false);
 
 	GLRenderer->mBuffers->BindCurrentFB();
+	const char *sourceName = GLRenderer->mBuffers->GetTextureResourceName(PPTextureType::CurrentPipelineTexture);
+	PassDesc desc;
+	desc.name = "wipe.copy";
+	desc.owner = "OpenGLFrameBuffer";
+	desc.reads = { sourceName };
+	desc.writes = { "WipeStartScreen" };
+	desc.uses.Push({ sourceName, FrameGraphAccess::Read, FrameGraphUsage::TransferSource });
+	desc.uses.Push({ "WipeStartScreen", FrameGraphAccess::Write, FrameGraphUsage::TransferDestination });
+	int graphPass = screen->Graph().AddPass(desc);
+	screen->Graph().BeginBackendPass(graphPass);
+	screen->Resources().Touch(sourceName, false);
+	screen->Graph().ObserveBackendUse(sourceName, FrameGraphAccess::Read, FrameGraphUsage::TransferSource);
+	screen->Graph().ObserveBackendUse("WipeStartScreen", FrameGraphAccess::Write, FrameGraphUsage::TransferDestination);
 	glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, viewport.left, viewport.top, viewport.width, viewport.height);
+	screen->Graph().EndBackendPass();
 	return tex;
 }
 
@@ -677,7 +691,21 @@ FTexture *OpenGLFrameBuffer::WipeEndScreen()
 	glFinish();
 	static_cast<FHardwareTexture*>(tex->GetSystemTexture())->Bind(0, false);
 	GLRenderer->mBuffers->BindCurrentFB();
+	const char *sourceName = GLRenderer->mBuffers->GetTextureResourceName(PPTextureType::CurrentPipelineTexture);
+	PassDesc desc;
+	desc.name = "wipe.copy";
+	desc.owner = "OpenGLFrameBuffer";
+	desc.reads = { sourceName };
+	desc.writes = { "WipeEndScreen" };
+	desc.uses.Push({ sourceName, FrameGraphAccess::Read, FrameGraphUsage::TransferSource });
+	desc.uses.Push({ "WipeEndScreen", FrameGraphAccess::Write, FrameGraphUsage::TransferDestination });
+	int graphPass = screen->Graph().AddPass(desc);
+	screen->Graph().BeginBackendPass(graphPass);
+	screen->Resources().Touch(sourceName, false);
+	screen->Graph().ObserveBackendUse(sourceName, FrameGraphAccess::Read, FrameGraphUsage::TransferSource);
+	screen->Graph().ObserveBackendUse("WipeEndScreen", FrameGraphAccess::Write, FrameGraphUsage::TransferDestination);
 	glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, viewport.left, viewport.top, viewport.width, viewport.height);
+	screen->Graph().EndBackendPass();
 	return tex;
 }
 

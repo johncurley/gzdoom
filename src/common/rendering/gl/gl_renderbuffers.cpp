@@ -57,6 +57,12 @@ static void *GLResourceHandle(GLuint handle)
 	return (void *)(uintptr_t)handle;
 }
 
+static const char *GLEyeResourceName(int eye)
+{
+	static const char *names[] = { "EyeTexture[0]", "EyeTexture[1]" };
+	return eye >= 0 && eye < 2 ? names[eye] : nullptr;
+}
+
 //==========================================================================
 //
 // Initialize render buffers and textures used in rendering passes
@@ -115,6 +121,13 @@ void FGLRenderBuffers::ClearPipeline()
 
 void FGLRenderBuffers::ClearEyeBuffers()
 {
+	if (screen)
+	{
+		for (int eye = 0; eye < (int)mEyeTextures.Size(); eye++)
+			if (const char *name = GLEyeResourceName(eye))
+				screen->Resources().Forget(name);
+	}
+
 	for (auto handle : mEyeFBs)
 		DeleteFrameBuffer(handle);
 
@@ -337,8 +350,12 @@ void FGLRenderBuffers::CreateEyeBuffers(int eye)
 	while (mEyeFBs.Size() <= unsigned(eye))
 	{
 		PPGLTexture texture = Create2DTexture("EyeTexture", GL_RGBA16F, mWidth, mHeight);
+		int eyeIndex = (int)mEyeTextures.Size();
 		mEyeTextures.Push(texture);
 		mEyeFBs.Push(CreateFrameBuffer("EyeFB", texture));
+		if (const char *name = GLEyeResourceName(eyeIndex))
+			screen->Resources().Declare({ name, "FGLRenderBuffers", mWidth, mHeight, 1,
+				ResourceFormat::RGBA16F, { SizeRule::Fixed } }, GLResourceHandle(texture.handle));
 	}
 
 	glBindTexture(GL_TEXTURE_2D, textureBinding);
@@ -618,8 +635,27 @@ void FGLRenderBuffers::BlitToEyeTexture(int eye, bool allowInvalidate)
 {
 	CreateEyeBuffers(eye);
 
+	const char *eyeName = GLEyeResourceName(eye);
+	const char *pipelineName = mCurrentPipelineTexture == 0 ? "PipelineImage[0]" : "PipelineImage[1]";
+	PassDesc desc;
+	desc.name = "stereo.store";
+	desc.owner = "FGLRenderBuffers";
+	desc.reads = { pipelineName };
+	desc.writes = { eyeName };
+	desc.uses.Push({ pipelineName, FrameGraphAccess::Read, FrameGraphUsage::TransferSource });
+	desc.uses.Push({ eyeName, FrameGraphAccess::Write, FrameGraphUsage::TransferDestination });
+	int graphPass = eyeName ? screen->Graph().AddPass(desc) : -1;
+	screen->Graph().BeginBackendPass(graphPass);
+
 	glBindFramebuffer(GL_READ_FRAMEBUFFER, mPipelineFB[mCurrentPipelineTexture].handle);
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, mEyeFBs[eye].handle);
+	screen->Resources().Touch(pipelineName, false);
+	screen->Graph().ObserveBackendUse(pipelineName, FrameGraphAccess::Read, FrameGraphUsage::TransferSource);
+	if (eyeName)
+	{
+		screen->Resources().Touch(eyeName, true);
+		screen->Graph().ObserveBackendUse(eyeName, FrameGraphAccess::Write, FrameGraphUsage::TransferDestination);
+	}
 	glBlitFramebuffer(0, 0, mWidth, mHeight, 0, 0, mWidth, mHeight, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 
 	if ((gl.flags & RFL_INVALIDATE_BUFFER) != 0 && allowInvalidate)
@@ -630,14 +666,34 @@ void FGLRenderBuffers::BlitToEyeTexture(int eye, bool allowInvalidate)
 
 	glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+	screen->Graph().EndBackendPass();
 }
 
 void FGLRenderBuffers::BlitFromEyeTexture(int eye)
 {
 	if (mEyeFBs.Size() <= unsigned(eye)) return;
 
+	const char *eyeName = GLEyeResourceName(eye);
+	const char *pipelineName = mCurrentPipelineTexture == 0 ? "PipelineImage[0]" : "PipelineImage[1]";
+	PassDesc desc;
+	desc.name = "stereo.load";
+	desc.owner = "FGLRenderBuffers";
+	desc.reads = { eyeName };
+	desc.writes = { pipelineName };
+	desc.uses.Push({ eyeName, FrameGraphAccess::Read, FrameGraphUsage::TransferSource });
+	desc.uses.Push({ pipelineName, FrameGraphAccess::Write, FrameGraphUsage::TransferDestination });
+	int graphPass = eyeName ? screen->Graph().AddPass(desc) : -1;
+	screen->Graph().BeginBackendPass(graphPass);
+
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, mPipelineFB[mCurrentPipelineTexture].handle);
 	glBindFramebuffer(GL_READ_FRAMEBUFFER, mEyeFBs[eye].handle);
+	if (eyeName)
+	{
+		screen->Resources().Touch(eyeName, false);
+		screen->Graph().ObserveBackendUse(eyeName, FrameGraphAccess::Read, FrameGraphUsage::TransferSource);
+	}
+	screen->Resources().Touch(pipelineName, true);
+	screen->Graph().ObserveBackendUse(pipelineName, FrameGraphAccess::Write, FrameGraphUsage::TransferDestination);
 	glBlitFramebuffer(0, 0, mWidth, mHeight, 0, 0, mWidth, mHeight, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 
 	if ((gl.flags & RFL_INVALIDATE_BUFFER) != 0)
@@ -648,11 +704,17 @@ void FGLRenderBuffers::BlitFromEyeTexture(int eye)
 
 	glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+	screen->Graph().EndBackendPass();
 }
 
 void FGLRenderBuffers::BindEyeTexture(int eye, int texunit)
 {
 	CreateEyeBuffers(eye);
+	if (const char *name = GLEyeResourceName(eye))
+	{
+		screen->Resources().Touch(name, false);
+		screen->Graph().ObserveBackendUse(name, FrameGraphAccess::Read, FrameGraphUsage::Sampled);
+	}
 	glActiveTexture(GL_TEXTURE0 + texunit);
 	glBindTexture(GL_TEXTURE_2D, mEyeTextures[eye].handle);
 }
@@ -873,7 +935,9 @@ void FGLRenderBuffers::BindNextFB()
 //
 // Resolves a PPTextureType to the resource registry's stable name -- see
 // gl_renderbuffers.h. Mirrors VkTextureManager::GetTextureResourceName so
-// both backends' frame graph wiring reads the same names.
+// both backends' frame graph wiring reads the same names. The OS-owned default
+// framebuffer is handled by FGLRenderer's explicit presentation pass rather
+// than this resolver.
 //
 //==========================================================================
 
@@ -996,7 +1060,7 @@ FShaderProgram *GLPPRenderState::GetGLShader(PPShader *shader)
 
 // A PPTexture carries its own registry name (hw_postprocess.h) once something has
 // named it via NameAndDeclare -- most bloom/AO/exposure textures now do. Anything
-// else (SwapChain, ShadowMap, or a PPTexture nobody named) stays unresolvable, and
+// else (SwapChain or a PPTexture nobody named) stays unresolvable, and
 // the caller skips graphing that pass rather than inventing a name for it.
 static const char *ResolvePPTextureName(FGLRenderBuffers *buffers, PPTextureType type, PPTexture *texture)
 {

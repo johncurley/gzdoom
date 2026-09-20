@@ -452,6 +452,8 @@ CCMD(r_framegraph)
 	graph.DeclareExternal("SceneNormal");
 	graph.DeclareExternal("SceneDepthStencil");
 	graph.DeclareExternal("SceneFog");
+	graph.DeclareExternal("EyeTexture[0]");
+	graph.DeclareExternal("EyeTexture[1]");
 	graph.DeclareExternal("PaletteTexture");
 	graph.DeclareExternal("AO.RandomTexture0");
 	graph.DeclareExternal("AO.RandomTexture1");

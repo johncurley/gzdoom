@@ -128,9 +128,21 @@ void FGLRenderer::Flush()
 
 		FGLPostProcessState savedState;
 		FGLDebug::PushGroup("PresentEyes");
+		PassDesc desc;
+		desc.name = "present.stereo";
+		desc.owner = "FGLRenderer";
+		desc.reads = { "EyeTexture[0]", "EyeTexture[1]" };
+		desc.writes = { "Backbuffer" };
+		desc.uses.Push({ "EyeTexture[0]", FrameGraphAccess::Read, FrameGraphUsage::Sampled });
+		desc.uses.Push({ "EyeTexture[1]", FrameGraphAccess::Read, FrameGraphUsage::Sampled });
+		desc.uses.Push({ "Backbuffer", FrameGraphAccess::Write, FrameGraphUsage::Present });
+		int graphPass = screen->Graph().AddPass(desc);
+		screen->Graph().BeginBackendPass(graphPass);
 		// Note: This here is the ONLY place in the entire engine where the OpenGL dependent parts of the Stereo3D code need to be dealt with.
 		// There's absolutely no need to create a overly complex class hierarchy for just this.
 		PresentStereo();
+		screen->Graph().ObserveBackendUse("Backbuffer", FrameGraphAccess::Write, FrameGraphUsage::Present);
+		screen->Graph().EndBackendPass();
 		FGLDebug::PopGroup();
 	}
 }
@@ -152,6 +164,18 @@ void FGLRenderer::CopyToBackbuffer(const IntRect *bounds, bool applyGamma)
 	FGLDebug::PushGroup("CopyToBackbuffer");
 	FGLPostProcessState savedState;
 	savedState.SaveTextureBindings(2);
+
+	const char *readName = mBuffers->GetTextureResourceName(PPTextureType::CurrentPipelineTexture);
+	FrameGraphUsage outputUsage = bounds ? FrameGraphUsage::ColorAttachment : FrameGraphUsage::Present;
+	PassDesc desc;
+	desc.name = bounds ? "backbuffer.copy" : "present";
+	desc.owner = "FGLRenderer";
+	desc.reads = { readName };
+	desc.writes = { "Backbuffer" };
+	desc.uses.Push({ readName, FrameGraphAccess::Read, FrameGraphUsage::Sampled });
+	desc.uses.Push({ "Backbuffer", FrameGraphAccess::Write, outputUsage });
+	int graphPass = screen->Graph().AddPass(desc);
+	screen->Graph().BeginBackendPass(graphPass);
 	mBuffers->BindOutputFB();
 
 	IntRect box;
@@ -167,6 +191,8 @@ void FGLRenderer::CopyToBackbuffer(const IntRect *bounds, bool applyGamma)
 
 	mBuffers->BindCurrentTexture(0);
 	DrawPresentTexture(box, applyGamma);
+	screen->Graph().ObserveBackendUse("Backbuffer", FrameGraphAccess::Write, outputUsage);
+	screen->Graph().EndBackendPass();
 	FGLDebug::PopGroup();
 }
 
