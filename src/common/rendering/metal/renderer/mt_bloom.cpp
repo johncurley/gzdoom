@@ -421,10 +421,6 @@ void MtBloomModule::ReleaseTextures() {
 
 bool MtBloomModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* srcTex, float amount,
                             MTL::Texture* exposureTex) {
-    // Marks the compute bloom path as having run this frame -- the same
-    // structural proof-of-execution the AO textures give.
-    MtResources().Touch("Bloom.A");
-    MtResources().Touch("Bloom.B");
     auto tStart = std::chrono::high_resolution_clock::now();
     if (!extractPSO || !blurHPSO || !blurVPSO || !cmdBuf || !srcTex) return false;
 
@@ -469,6 +465,10 @@ bool MtBloomModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* srcTex, fl
     encoder->setTexture(exposureTex ? exposureTex : srcTex, 2);
     MTL::Size grid = { (NS::UInteger)bloomW, (NS::UInteger)bloomH, 1 };
     MtDispatchThreads(encoder, fb, grid, MTL::Size(16,16,1));
+    // The first dispatch is now encoded, so these touches prove that the
+    // compute bloom path reached execution rather than merely being called.
+    MtResources().Touch("Bloom.A");
+    MtResources().Touch("Bloom.B");
     encoder->memoryBarrier(MTL::BarrierScopeTextures);
 
     // Snapshot the extract before the pyramid overwrites bloomA. Uses
