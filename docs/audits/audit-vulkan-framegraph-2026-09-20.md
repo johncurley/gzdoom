@@ -77,12 +77,13 @@ been encoded. `PassDesc` contains only a name, owner, resource names, and RAW
 dependencies. It does not contain the shader, uniforms, descriptor choices,
 viewport, blend state, framebuffer, or an executable callback.
 
-`VulkanRenderDevice::PostProcessScene()` now records a conservative
-`scene.draw` handoff after scene traversal. It records the final scene
-attachment writes and the `ShadowMap` sampled read when shadow mapping is
-enabled, giving the resolve/postprocess chain a producer and consumer boundary
-without claiming that opaque, portal, translucent, and mid-scene SSAO work are
-already independently schedulable.
+The common scene traversal now brackets the real Vulkan work with two
+conservative passes: `scene.opaque` surrounds sky/opaque rendering and
+`scene.portal_translucent` surrounds portal and translucent rendering. SSAO
+therefore appears between those boundaries in declaration order, and the
+shadow-map sampled read is observed in both scene passes when enabled. This
+records actual execution order without claiming that nested portal draws are
+independently schedulable.
 
 ## Findings
 
@@ -138,8 +139,8 @@ bloom/exposure/AO resources, scene resolve, shadow-map production, and the
 main presentation variants. It does not yet model all Vulkan work:
 
 - shadow-map consumers outside the named postprocess output;
-- exact full scene draw grouping and nested AO/portal execution (the
-  conservative `scene.draw` handoff is covered);
+- exact recursive portal draw grouping (the conservative opaque/AO/
+  portal-translucent boundaries are covered);
 - the detailed intermediate image-to-buffer destination of screenshot readback
   (the source dependency and transfer boundary are covered, while the
   temporary/staging objects remain outside the registry).

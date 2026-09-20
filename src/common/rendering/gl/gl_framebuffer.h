@@ -34,6 +34,8 @@ public:
 	void FirstEye() override;
 	void NextEye(int eyecount) override;
 	void SetSceneRenderTarget(bool useSSAO) override;
+	void BeginFrameGraphScenePass(const char *name, bool gbuffer, bool depthWrite) override;
+	void EndFrameGraphScenePass() override;
 	void UpdateShadowMap() override;
 	void WaitForCommands(bool finish) override;
 	void SetSaveBuffers(bool yes) override;

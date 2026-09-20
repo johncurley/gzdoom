@@ -670,18 +670,19 @@ void OpenGLFrameBuffer::Draw2D()
 	}
 }
 
-void OpenGLFrameBuffer::PostProcessScene(bool swscene, int fixedcm, float flash, const std::function<void()> &afterBloomDrawEndScene2D)
+void OpenGLFrameBuffer::BeginFrameGraphScenePass(const char *name, bool gbuffer, bool depthWrite)
 {
-	// The scene target pass records attachment selection. This conservative
-	// handoff pass represents the scene draws that have completed before the
-	// resolve/postprocess chain begins; nested portal draws remain inside it.
 	PassDesc sceneDesc;
-	sceneDesc.name = "scene.draw";
+	sceneDesc.name = name;
 	sceneDesc.owner = "OpenGLFrameBuffer";
-	sceneDesc.writes = { "SceneColor", "SceneDepthStencil" };
+	sceneDesc.writes = { "SceneColor" };
 	sceneDesc.uses.Push({ "SceneColor", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
-	sceneDesc.uses.Push({ "SceneDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment });
-	if (gl_ssao != 0)
+	if (depthWrite)
+	{
+		sceneDesc.writes.Push("SceneDepthStencil");
+		sceneDesc.uses.Push({ "SceneDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment });
+	}
+	if (gbuffer)
 	{
 		sceneDesc.writes.Push("SceneFog");
 		sceneDesc.writes.Push("SceneNormal");
@@ -697,9 +698,12 @@ void OpenGLFrameBuffer::PostProcessScene(bool swscene, int fixedcm, float flash,
 	screen->Graph().BeginBackendPass(scenePass);
 	screen->Resources().Touch("SceneColor", true);
 	screen->Graph().ObserveBackendUse("SceneColor", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
-	screen->Resources().Touch("SceneDepthStencil", true);
-	screen->Graph().ObserveBackendUse("SceneDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment);
-	if (gl_ssao != 0)
+	if (depthWrite)
+	{
+		screen->Resources().Touch("SceneDepthStencil", true);
+		screen->Graph().ObserveBackendUse("SceneDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment);
+	}
+	if (gbuffer)
 	{
 		screen->Resources().Touch("SceneFog", true);
 		screen->Graph().ObserveBackendUse("SceneFog", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
@@ -711,8 +715,15 @@ void OpenGLFrameBuffer::PostProcessScene(bool swscene, int fixedcm, float flash,
 		screen->Resources().Touch("ShadowMap", false);
 		screen->Graph().ObserveBackendUse("ShadowMap", FrameGraphAccess::Read, FrameGraphUsage::Sampled);
 	}
-	screen->Graph().EndBackendPass();
+}
 
+void OpenGLFrameBuffer::EndFrameGraphScenePass()
+{
+	screen->Graph().EndBackendPass();
+}
+
+void OpenGLFrameBuffer::PostProcessScene(bool swscene, int fixedcm, float flash, const std::function<void()> &afterBloomDrawEndScene2D)
+{
 	if (!swscene) GLRenderer->mBuffers->BlitSceneToTexture(); // Copy the resulting scene to the current post process texture
 	GLRenderer->PostProcessScene(fixedcm, flash, afterBloomDrawEndScene2D);
 }

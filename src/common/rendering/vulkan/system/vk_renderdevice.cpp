@@ -271,18 +271,19 @@ void VulkanRenderDevice::RenderTextureView(FCanvasTexture* tex, std::function<vo
 	tex->SetUpdated(true);
 }
 
-void VulkanRenderDevice::PostProcessScene(bool swscene, int fixedcm, float flash, const std::function<void()> &afterBloomDrawEndScene2D)
+void VulkanRenderDevice::BeginFrameGraphScenePass(const char *name, bool gbuffer, bool depthWrite)
 {
-	// The scene target pass records attachment selection. This conservative
-	// handoff pass represents the scene draws that have completed before the
-	// resolve/postprocess chain begins; nested portal draws remain inside it.
 	PassDesc sceneDesc;
-	sceneDesc.name = "scene.draw";
+	sceneDesc.name = name;
 	sceneDesc.owner = "VulkanRenderDevice";
-	sceneDesc.writes = { "SceneColor", "SceneDepthStencil" };
+	sceneDesc.writes = { "SceneColor" };
 	sceneDesc.uses.Push({ "SceneColor", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
-	sceneDesc.uses.Push({ "SceneDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment });
-	if (gl_ssao != 0)
+	if (depthWrite)
+	{
+		sceneDesc.writes.Push("SceneDepthStencil");
+		sceneDesc.uses.Push({ "SceneDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment });
+	}
+	if (gbuffer)
 	{
 		sceneDesc.writes.Push("SceneFog");
 		sceneDesc.writes.Push("SceneNormal");
@@ -298,9 +299,12 @@ void VulkanRenderDevice::PostProcessScene(bool swscene, int fixedcm, float flash
 	Graph().BeginBackendPass(scenePass);
 	Resources().Touch("SceneColor", true);
 	Graph().ObserveBackendUse("SceneColor", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
-	Resources().Touch("SceneDepthStencil", true);
-	Graph().ObserveBackendUse("SceneDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment);
-	if (gl_ssao != 0)
+	if (depthWrite)
+	{
+		Resources().Touch("SceneDepthStencil", true);
+		Graph().ObserveBackendUse("SceneDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment);
+	}
+	if (gbuffer)
 	{
 		Resources().Touch("SceneFog", true);
 		Graph().ObserveBackendUse("SceneFog", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
@@ -312,8 +316,15 @@ void VulkanRenderDevice::PostProcessScene(bool swscene, int fixedcm, float flash
 		Resources().Touch("ShadowMap", false);
 		Graph().ObserveBackendUse("ShadowMap", FrameGraphAccess::Read, FrameGraphUsage::Sampled);
 	}
-	Graph().EndBackendPass();
+}
 
+void VulkanRenderDevice::EndFrameGraphScenePass()
+{
+	Graph().EndBackendPass();
+}
+
+void VulkanRenderDevice::PostProcessScene(bool swscene, int fixedcm, float flash, const std::function<void()> &afterBloomDrawEndScene2D)
+{
 	if (!swscene) mPostprocess->BlitSceneToPostprocess(); // Copy the resulting scene to the current post process texture
 	mPostprocess->PostProcessScene(fixedcm, flash, afterBloomDrawEndScene2D);
 }
