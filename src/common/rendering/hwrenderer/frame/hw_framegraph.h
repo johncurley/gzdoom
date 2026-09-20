@@ -58,6 +58,7 @@ enum class FrameGraphUsage : uint8_t
 	DepthStencilAttachment,
 	TransferSource,
 	TransferDestination,
+	Storage,
 	Present
 };
 

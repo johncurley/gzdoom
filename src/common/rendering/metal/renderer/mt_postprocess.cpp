@@ -18,6 +18,7 @@ void MtWipeProbeIfArmed(MetalRenderDevice *fb);
 #include "flatvertices.h"
 #include "hwrenderer/postprocessing/hw_postprocess.h"
 #include "hwrenderer/postprocessing/hw_postprocess_cvars.h"
+#include "hwrenderer/frame/hw_framegraph.h"
 #include "metal/renderer/mt_ao.h"
 #include "metal/renderer/mt_bloom.h"
 #include "metal/renderer/mt_debug.h"
@@ -43,6 +44,29 @@ void MtAOProbeAfter(MetalRenderDevice *fb, const FRenderStyle &blend,
                     bool stencilTest, bool clearRequested,
                     MTL::Texture *aoInputTex);
 void MtAOProbeCountdown();
+
+static void RecordMetalComputePass(MetalRenderDevice *fb, const char *name,
+                                    const TArray<const char *> &reads,
+                                    const TArray<const char *> &writes)
+{
+  PassDesc desc;
+  desc.name = name;
+  desc.owner = "MetalCompute";
+  desc.reads = reads;
+  desc.writes = writes;
+  for (const char *resource : reads)
+    desc.uses.Push({ resource, FrameGraphAccess::Read, FrameGraphUsage::Sampled });
+	for (const char *resource : writes)
+		desc.uses.Push({ resource, FrameGraphAccess::Write, FrameGraphUsage::Storage });
+
+  int pass = fb->Graph().AddPass(desc);
+  fb->Graph().BeginBackendPass(pass);
+  for (const char *resource : reads)
+    fb->Graph().ObserveBackendUse(resource, FrameGraphAccess::Read, FrameGraphUsage::Sampled);
+	for (const char *resource : writes)
+		fb->Graph().ObserveBackendUse(resource, FrameGraphAccess::Write, FrameGraphUsage::Storage);
+  fb->Graph().EndBackendPass();
+}
 
 EXTERN_CVAR(Int, gl_dither_bpc)
 // Compute AO is OPT-IN on every platform. It used to default true, which meant
@@ -269,6 +293,31 @@ public:
 
   void PopGroup() override { mGroupName = ""; }
 
+  const char *ResolveResourceName(PPTextureType type, PPTexture *texture) const {
+    auto buffers = fb->GetBuffers();
+    switch (type) {
+    case PPTextureType::CurrentPipelineTexture:
+      return buffers->ResName(MtRenderBuffers::RES_Pipeline0 +
+                              fb->GetPostprocess()->mCurrentPipelineImage);
+    case PPTextureType::NextPipelineTexture:
+      return buffers->ResName(MtRenderBuffers::RES_Pipeline0 +
+                              ((fb->GetPostprocess()->mCurrentPipelineImage + 1) %
+                               MtRenderBuffers::NumPipelineImages));
+    case PPTextureType::PPTexture:
+      return texture ? texture->Name : nullptr;
+    case PPTextureType::SceneColor:
+      return buffers->ResName(MtRenderBuffers::RES_SceneColor);
+    case PPTextureType::SceneFog:
+      return buffers->ResName(MtRenderBuffers::RES_SceneFog);
+    case PPTextureType::SceneNormal:
+      return buffers->ResName(MtRenderBuffers::RES_SceneNormal);
+    case PPTextureType::SceneDepth:
+      return buffers->ResName(MtRenderBuffers::RES_SceneDepth);
+    default:
+      return nullptr;
+    }
+  }
+
   void Draw() override {
     if (!fb->GetBuffers()) return;
 
@@ -359,6 +408,62 @@ public:
       format = outputTex->pixelFormat();
     }
 
+    // Record the pass and its actual backend resource uses. This mirrors the
+    // GL/Vulkan postprocess paths and is deliberately observation-only: Metal
+    // still executes in its existing order and emits no barriers or aliases.
+    int graphPass = -1;
+    if (PassName) {
+      TArray<const char *> reads;
+      bool resolvable = true;
+      for (unsigned int index = 0; index < Textures.Size() && resolvable; index++) {
+        const char *name = ResolveResourceName(Textures[index].Type, Textures[index].Texture);
+        if (!name)
+          resolvable = false;
+        else
+          reads.Push(name);
+      }
+      const char *writeName = nullptr;
+      if (customOutputTex) {
+        for (int i = 0; i < MtRenderBuffers::NumPipelineImages; i++) {
+          if (customOutputTex == fb->GetBuffers()->PipelineImage[i]->GetTexture())
+            writeName = fb->GetBuffers()->ResName(MtRenderBuffers::RES_Pipeline0 + i);
+        }
+      } else {
+        writeName = ResolveResourceName(Output.Type, Output.Texture);
+      }
+      if (writeName && resolvable) {
+        PassDesc desc;
+        desc.name = PassName;
+        desc.owner = "Postprocess";
+        desc.reads = reads;
+        desc.writes = { writeName };
+        for (const char *name : reads)
+          desc.uses.Push({ name, FrameGraphAccess::Read, FrameGraphUsage::Sampled });
+        desc.uses.Push({ writeName, FrameGraphAccess::Write,
+          Output.Type == PPTextureType::SwapChain ? FrameGraphUsage::Present :
+                                                     FrameGraphUsage::ColorAttachment });
+        graphPass = screen->Graph().AddPass(desc);
+      }
+    }
+    screen->Graph().BeginBackendPass(graphPass);
+    for (unsigned int index = 0; graphPass >= 0 && index < Textures.Size(); index++)
+      screen->Graph().ObserveBackendUse(ResolveResourceName(Textures[index].Type,
+                                                              Textures[index].Texture),
+                                        FrameGraphAccess::Read, FrameGraphUsage::Sampled);
+    if (graphPass >= 0) {
+      const char *writeName = nullptr;
+      if (customOutputTex) {
+        for (int i = 0; i < MtRenderBuffers::NumPipelineImages; i++)
+          if (customOutputTex == fb->GetBuffers()->PipelineImage[i]->GetTexture())
+            writeName = fb->GetBuffers()->ResName(MtRenderBuffers::RES_Pipeline0 + i);
+      } else {
+        writeName = ResolveResourceName(Output.Type, Output.Texture);
+      }
+      screen->Graph().ObserveBackendUse(writeName, FrameGraphAccess::Write,
+                                        Output.Type == PPTextureType::SwapChain ?
+                                          FrameGraphUsage::Present : FrameGraphUsage::ColorAttachment);
+    }
+
     mtRenderState->SetRenderTarget(outputTex, depthStencil, width, height,
                                    (int)format, 1);
     // Ensure PP pass uses a single color attachment
@@ -380,11 +485,13 @@ public:
     mtRenderState->BeginRenderPass();
     auto encoder = mtRenderState->GetEncoder();
     if (!encoder) {
+      screen->Graph().EndBackendPass();
       return;
     }
 
     MtShaderProgram *program = fb->GetShaderManager()->GetPPShader(Shader);
     if (!program || !program->vert || !program->frag) {
+      screen->Graph().EndBackendPass();
       return;
     }
 
@@ -525,6 +632,7 @@ public:
     }
 
     mtRenderState->EndRenderPass();
+    screen->Graph().EndBackendPass();
 
     // Read the target back now the pass is closed and report all four
     // readings. Disarms itself, so this costs one frame's hitch, once.
@@ -583,6 +691,17 @@ void MtPostprocess::AmbientOccludeScene(float m5, const HWViewpointUniforms* cur
   }
 
   if (useComputeAO && fb->mAOModule->Render(m5, sceneWidth, sceneHeight, currentViewpoint)) {
+    TArray<const char *> reads;
+    reads.Push("SceneDepthStencil");
+    reads.Push("SceneNormal");
+    reads.Push("SceneColor");
+    TArray<const char *> writes;
+    writes.Push("AO.DepthPyramid");
+    writes.Push("AO.Ambient");
+    writes.Push("AO.Blur");
+    writes.Push("AO.FullresAO");
+    writes.Push("AO.FullresTemp");
+    RecordMetalComputePass(fb, "ssao.compute", reads, writes);
     RestoreSceneRenderTargetAfterAO();
     return;
   }
@@ -694,6 +813,22 @@ void MtPostprocess::PostProcessScene(
               &hw_postprocess.exposure.CameraTexture);
           computeBloomRendered = fb->mBloomModule->Execute(cmdBuf, srcTex, gl_bloom_amount,
                                                           exposureTex);
+          if (computeBloomRendered) {
+            TArray<const char *> reads;
+            reads.Push(fb->GetBuffers()->ResName(MtRenderBuffers::RES_Pipeline0 +
+                                                  mCurrentPipelineImage));
+            TArray<const char *> writes;
+            writes.Push("Bloom.A");
+            writes.Push("Bloom.B");
+            writes.Push("Bloom.Mip0");
+            writes.Push("Bloom.Mip0Temp");
+            writes.Push("Bloom.Mip1");
+            writes.Push("Bloom.Mip1Temp");
+            writes.Push("Bloom.Mip2");
+            writes.Push("Bloom.Mip2Temp");
+            writes.Push("Bloom.Composite");
+            RecordMetalComputePass(fb, "bloom.compute", reads, writes);
+          }
         }
       }
 

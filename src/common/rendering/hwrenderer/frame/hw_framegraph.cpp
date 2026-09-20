@@ -48,6 +48,7 @@ static const char *UsageName(FrameGraphUsage usage)
 	case FrameGraphUsage::DepthStencilAttachment: return "depth-stencil";
 	case FrameGraphUsage::TransferSource:        return "transfer-source";
 	case FrameGraphUsage::TransferDestination:   return "transfer-destination";
+	case FrameGraphUsage::Storage:               return "storage";
 	case FrameGraphUsage::Present:               return "present";
 	}
 	return "unknown";

@@ -43,9 +43,15 @@ graph allocator or any pass scheduling.
 | `Bloom.ExtractSnapshot` | `MtBloomModule` | scene-scaled / 4 | `RGBA16F` | yes |
 | `Bloom.Composite` | `MtBloomModule` | scene-full | `RGBA16F` | yes |
 
-The eventual backend-neutral graph should preserve these stable names while
-replacing backend-specific format integers and handles with shared format and
-resource descriptors.
+The backend-neutral graph preserves these stable names while replacing
+backend-specific format integers and handles with shared format and resource
+descriptors.
+
+Metal now records the existing raster postprocess passes and the aggregate AO
+and bloom compute passes through the same observation hooks used by OpenGL and
+Vulkan. This remains diagnostic only: execution order, synchronization, and
+allocation are unchanged until the backend policies have been validated on the
+target hardware.
 
 ---
 
@@ -207,11 +213,9 @@ declared pass lifetimes is guesswork, and the lifetimes come from the graph.
 1. **Names: strings or interned ids?** Strings are debuggable and match the dump;
    interning is faster for `Touch` on a hot path. My inclination is `const char*`
    with pointer-equality fast path, since every name is a literal.
-2. **Where does it live?** `hwrenderer/` makes it shared with GL and Vulkan, which
-   is the point — but Metal is the only backend that will register anything at
-   first, and a shared header with one user is a smell. Acceptable if the Vulkan/GL
-   analysis (the Linux task) follows soon; otherwise put it under `metal/` and lift
-   it when the second backend arrives.
+2. **Where does it live?** `hwrenderer/` keeps the registry and graph shared by
+   GL, Vulkan, and Metal. Backend-specific handles remain opaque, so this layer
+   records and validates usage without taking ownership of GPU objects.
 3. **Is `Touch` worth its cost?** It is a store per bind. If it turns out measurable
    on the reference machine — which it should not, against ~50 draws — gate it with
    the validation cvar rather than removing it, since "untouched this frame" is the
