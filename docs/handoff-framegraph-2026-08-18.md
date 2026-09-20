@@ -21,17 +21,20 @@ their size rules. Fully verifiable on Linux via the existing matrix suite
 (`tools/matrix/run.py`, `tools/matrix/crossbackend.py --backends gl,vulkan`)
 — no GPU capture, no Apple hardware, nothing this machine can't already do.
 
-**Do not go past the registry.** The actual graph/scheduler, and
-specifically anything doing memory aliasing or barrier placement on Metal,
-needs Apple Silicon validation first — that's where TBDR-vs-IMR risk
-actually lives (memoryless storage, store actions; see
-`docs/engine-modernization.md`'s "Targets and principles" and item 3 in
-Tasks — macOS). Building scheduling logic against an unvalidated Metal
-target is exactly the kind of speculative work this branch's whole
-discipline has been built around avoiding — see item 13 in Tasks — Linux for
-a fresh example of what that costs when skipped: a full implement-rebuild-
-retest cycle on a plausible, well-reasoned fix for a bug that turned out to
-be entirely outside this codebase.
+**Correction, 2026-09-20:** the frame graph itself is not Apple-Silicon-only.
+It is an engine-side dependency and resource-lifetime abstraction, so its
+backend-neutral graph, correctness checks, and Intel Metal execution policy
+can be implemented and validated now. Apple Silicon remains the gate for the
+policy layer that exploits TBDR behavior: pass merging around tile memory,
+transient attachment aliasing, load/store elimination, memoryless resources,
+and Apple-GPU-specific synchronization and scheduling. Keep those decisions
+behind backend policy interfaces rather than baking them into the graph core.
+
+The registry remains the first implementation step because it makes existing
+resource ownership and lifetimes explicit without changing execution. Once it
+is validated, the graph core can be added over the existing passes while the
+Intel policy continues to use conservative render-pass boundaries and existing
+allocation behavior.
 
 ## Concrete starting point
 
@@ -62,10 +65,11 @@ design done in isolation from what the renderer currently does.
   anyone actually runs) and items 10/11 (publishing two ZWidget fixes
   upstream — the user's own task, separately).
 - **macOS**: see `docs/handoff-macos-2026-08-18.md` in full. Item 3 (Apple
-  Silicon validation) gates everything downstream; item 5's freeze cause is
-  found and mitigated but not eliminated (the wipe explanation is closed —
-  confirmed animating correctly, not a freeze); item 4 (SSAO residual) is
-  small and lowest priority.
+  Silicon validation) gates Apple-specific Metal policy and performance; the
+  portable graph core can proceed on Intel. Item 5's freeze cause is found
+  and mitigated but not eliminated (the wipe explanation is closed — confirmed
+  animating correctly, not a freeze); item 4 (SSAO residual) is small and
+  lowest priority.
 - **UDB companion project**: scoped, not started. Separate repo,
   `~/Projects/desktop/udb`, planning docs only as of this session — see that
   repo's own `CLAUDE.md` and `docs/planning-2026-08-18.md`. Not part of this

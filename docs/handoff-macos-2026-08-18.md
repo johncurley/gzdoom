@@ -25,10 +25,11 @@ blocking on hardware.** Everything Metal-side has been developed and measured
 on a macOS 12.7 Intel Mac. TBDR vs IMR differences — memoryless storage, store
 actions, `didModifyRange:` — mean Intel-correct code can be silently wrong on
 M-series, and nothing here has ever actually run on Apple Silicon to find out.
-This is genuinely gating, not just next on a list: everything downstream
-(item 5's freeze investigation, and eventually the frame graph — see below)
-needs a known-good Apple Silicon baseline to measure against, or a
-correctness bug discovered later can't be attributed to the right cause.
+This is genuinely gating, not just next on a list, for Apple-specific Metal
+policy and performance: TBDR pass merging, memoryless/transient resources,
+load/store elimination, and synchronization need a known-good Apple Silicon
+baseline. The backend-neutral frame-graph architecture and a conservative
+Intel Metal execution policy do not need to wait for that baseline.
 
 **Item 5, intermittent freezing, is resolved to a cause but not a fix.**
 `nextDrawable()` blocking below the renderer's control is confirmed with a

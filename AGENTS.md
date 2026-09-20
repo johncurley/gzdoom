@@ -31,18 +31,18 @@ it is unusual).
   entangled with the waylandpp→C-bindings replacement, so the branch pushed is
   the full `wayland-c-bindings` (12 commits, `zwidget-wayland-c-bindings-clean`
   on the fork) — see Tasks — Linux item 5.
-- **Current handoff:** `docs/handoff-framegraph-2026-08-18.md` — the decision
-  for what gzdoom work happens while Apple Silicon hardware is still not in
-  hand: start `docs/frame-graph-resources.md`'s resource registry (backend-
-  neutral, no scheduler, no Metal-specific decisions, fully verifiable on
-  Linux) and **stop there** — the actual graph/scheduler and anything doing
-  Metal memory aliasing waits for item 3. Not started as of this writing.
+- **Current handoff:** `docs/handoff-framegraph-2026-08-18.md` — corrected
+  2026-09-20: Apple Silicon gates TBDR-specific policy and performance tuning,
+  not the frame-graph architecture. The backend-neutral graph, dependency
+  tracking, resource lifetimes, and a correctness-first Metal execution policy
+  can proceed on the Intel Mac; pass merging, transient aliasing, load/store
+  tuning, and Apple-GPU synchronization policy wait for item 3.
 - **Current handoff:** `docs/handoff-macos-2026-08-18.md` — written from the
   Linux side once this session's audit tranche (item 14) closed out. Confirms
   nothing here touches Cocoa/Metal, restates macOS priority order (item 3,
-  Apple Silicon validation, is gating — everything downstream needs a known-
-  good Apple Silicon baseline, including the frame graph work), and is
-  explicit that the frame graph starts **after** item 3 has a real answer,
+  Apple Silicon validation, is gating for Apple-specific Metal policy and
+  performance, not for the portable frame-graph architecture), and is
+  explicit that TBDR tuning starts **after** item 3 has a real answer,
   not on an arbitrary schedule. Also records that the item 5 wipe question is
   closed (confirmed animating correctly, not a freeze) — item 5 itself stays
   open, the underlying `nextDrawable()` block is mitigated, not eliminated.
