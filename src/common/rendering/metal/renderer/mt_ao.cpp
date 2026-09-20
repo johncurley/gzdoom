@@ -1368,6 +1368,11 @@ MtAOModule::~MtAOModule() {
     if (atrousPSO) atrousPSO->release();
     if (combineRenderPSO) combineRenderPSO->release();
     if (combineLibrary) combineLibrary->release();
+    MtResources().Forget("AO.Ambient");
+    MtResources().Forget("AO.Blur");
+    MtResources().Forget("AO.FullresAO");
+    MtResources().Forget("AO.FullresTemp");
+    MtResources().Forget("AO.DepthPyramid");
     if (mAOTexture) mAOTexture->release();
     if (mBlurTexture) mBlurTexture->release();
     if (mFullresAOTexture) mFullresAOTexture->release();
@@ -1384,10 +1389,12 @@ void MtAOModule::EnsureTextures(int width, int height) {
         return;
 
     if (mAOTexture) {
+        MtResources().Forget("AO.Ambient");
         mAOTexture->release();
         mAOTexture = nullptr;
     }
     if (mBlurTexture) {
+        MtResources().Forget("AO.Blur");
         mBlurTexture->release();
         mBlurTexture = nullptr;
     }
@@ -1484,10 +1491,12 @@ void MtAOModule::EnsureFullresTextures(int width, int height) {
         return;
 
     if (mFullresAOTexture) {
+        MtResources().Forget("AO.FullresAO");
         mFullresAOTexture->release();
         mFullresAOTexture = nullptr;
     }
     if (mFullresTempTexture) {
+        MtResources().Forget("AO.FullresTemp");
         mFullresTempTexture->release();
         mFullresTempTexture = nullptr;
     }
@@ -1521,6 +1530,7 @@ void MtAOModule::EnsureDepthPyramid(int width, int height) {
         return;
 
     if (mDepthPyramidTexture) {
+        MtResources().Forget("AO.DepthPyramid");
         mDepthPyramidTexture->release();
         mDepthPyramidTexture = nullptr;
     }
@@ -1580,13 +1590,6 @@ bool MtAOModule::Render(float m5, int sceneWidth, int sceneHeight, const HWViewp
     if (!mAOTexture || !mBlurTexture)
         return false;
 
-    // Marks this path as having run THIS FRAME. The "UNTOUCHED this frame" line
-    // in mt_resources is then a structural answer to "did compute AO execute",
-    // which is exactly what no label on this path could give -- the compute path
-    // issues no ssaocombine draw, so mt_aoprobe cannot see it at all.
-    MtResources().Touch("AO.Ambient");
-    MtResources().Touch("AO.Blur");
-
     int algorithm = clamp((int)mt_compute_ao_algorithm, 0, 2);
     if (algorithm == 2)
         EnsureDepthPyramid(sceneWidth, sceneHeight);
@@ -1602,8 +1605,6 @@ bool MtAOModule::Render(float m5, int sceneWidth, int sceneHeight, const HWViewp
         EnsureFullresTextures(sceneWidth, sceneHeight);
         if (!mFullresAOTexture || !mFullresTempTexture)
             return false;
-        MtResources().Touch("AO.FullresAO");
-        MtResources().Touch("AO.FullresTemp");
     }
 
     SSAOParams params = {};
@@ -1908,8 +1909,6 @@ void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL
     // relative to cmdBuf, which would make mip generation race the
     // dispatches that depend on it.
     bool useMipAlgorithm = (algorithm == 2) && ssaoMipPSO && depthLinearizePSO && mDepthPyramidTexture;
-    if (useMipAlgorithm)
-        MtResources().Touch("AO.DepthPyramid");
     if (useMipAlgorithm) {
         auto linearizeEncoder = cmdBuf->computeCommandEncoder();
         if (linearizeEncoder) {
@@ -1919,6 +1918,7 @@ void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL
             linearizeEncoder->setTexture(mDepthPyramidTexture, 1);
             MTL::Size pyramidGrid = { (NS::UInteger)mDepthPyramidTexture->width(), (NS::UInteger)mDepthPyramidTexture->height(), 1 };
             MtDispatchThreads(linearizeEncoder, fb, pyramidGrid, MTL::Size(8, 8, 1));
+            MtResources().Touch("AO.DepthPyramid");
             linearizeEncoder->endEncoding();
 
             auto blit = cmdBuf->blitCommandEncoder();
@@ -1961,6 +1961,9 @@ void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL
 
     MTL::Size gridSize = { (NS::UInteger)aoTex->width(), (NS::UInteger)aoTex->height(), 1 };
     MtDispatchThreads(encoder, fb, gridSize, MTL::Size(8, 8, 1));
+    // Touch only after the first AO dispatch has been encoded. Setup failures
+    // must not appear as a successfully executed compute path in mt_resources.
+    MtResources().Touch("AO.Ambient");
     
     if (blurAO) {
         encoder->memoryBarrier(MTL::BarrierScopeTextures);
@@ -2012,6 +2015,7 @@ void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL
             encoder->setTexture(dst, 1);
             encoder->setTexture(normalTex, 2);
             MtDispatchThreads(encoder, fb, gridSize, MTL::Size(8, 8, 1));
+            MtResources().Touch("AO.Blur");
             src = dst;
         }
         mLowresResultTexture = src;
@@ -2046,6 +2050,7 @@ void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL
         encoder->setTexture(normalTex, 2);
         encoder->setTexture(mFullresAOTexture, 3);
         MtDispatchThreads(encoder, fb, fullGrid, MTL::Size(8, 8, 1));
+        MtResources().Touch("AO.FullresAO");
         mFullresResultTexture = mFullresAOTexture;
 
         int atrousPasses = clamp((int)mt_compute_ao_atrous_passes, 0, 3);
@@ -2062,6 +2067,7 @@ void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL
             encoder->setTexture(normalTex, 1);
             encoder->setTexture(dstPass, 2);
             MtDispatchThreads(encoder, fb, fullGrid, MTL::Size(8, 8, 1));
+            MtResources().Touch("AO.FullresTemp");
             mFullresResultTexture = dstPass;
             MTL::Texture *tmp = srcPass;
             srcPass = dstPass;
@@ -2071,4 +2077,3 @@ void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL
 
     encoder->endEncoding();
 }
-

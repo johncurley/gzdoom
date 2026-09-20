@@ -16,6 +16,12 @@ the primary pair, three mip levels with their ping-pong temporaries, the optiona
 extract snapshot, and the raster-composite target. The registry does not allocate
 or alias resources, and Vulkan/GL do not register resources yet.
 
+AO's stencil texture view and its low-/full-resolution result pointers are
+intentionally not separate entries: the view aliases `SceneDepthStencil`, while
+the result pointers select between the already-declared AO textures. Registering
+those aliases as allocations would double-count memory and obscure the actual
+producer resource.
+
 ---
 
 ## Why this first, and what it buys before any graph exists
