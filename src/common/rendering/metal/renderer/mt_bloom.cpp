@@ -304,6 +304,7 @@ MtBloomModule::~MtBloomModule() {
     if (compositePSO) compositePSO->release();
     if (compositeVertexFn) compositeVertexFn->release();
     if (compositeFragmentFn) compositeFragmentFn->release();
+    MtResources().Forget("Bloom.ExtractSnapshot");
     if (mCompositeTex) { mCompositeTex->release(); mCompositeTex = nullptr; }
     if (mExtractSnapshot) { mExtractSnapshot->release(); mExtractSnapshot = nullptr; mExtractSnapW = mExtractSnapH = 0; }
 }
@@ -400,6 +401,17 @@ void MtBloomModule::CreateTextures(int width, int height, MTL::PixelFormat forma
         MTL::Texture* tmp = compute->CreateTexture(w2, h2, MTL::PixelFormatRGBA16Float,
                                                    usage, MTL::StorageModePrivate);
         mDownsampledTempTextures.push_back(tmp);
+
+        const char *mipName = i == 1 ? "Bloom.Mip0" :
+                              i == 2 ? "Bloom.Mip1" : "Bloom.Mip2";
+        const char *tempName = i == 1 ? "Bloom.Mip0Temp" :
+                               i == 2 ? "Bloom.Mip1Temp" : "Bloom.Mip2Temp";
+        MtResources().Declare({mipName, "MtBloomModule", w2, h2, 1,
+                               (int)MTL::PixelFormatRGBA16Float,
+                               MtSizeRule::Scaled(4 << i), true}, t);
+        MtResources().Declare({tempName, "MtBloomModule", w2, h2, 1,
+                               (int)MTL::PixelFormatRGBA16Float,
+                               MtSizeRule::Scaled(4 << i), true}, tmp);
     }
 
     mCachedBloomW = width;
@@ -407,6 +419,15 @@ void MtBloomModule::CreateTextures(int width, int height, MTL::PixelFormat forma
 }
 
 void MtBloomModule::ReleaseTextures() {
+    MtResources().Forget("Bloom.A");
+    MtResources().Forget("Bloom.B");
+    MtResources().Forget("Bloom.Mip0");
+    MtResources().Forget("Bloom.Mip0Temp");
+    MtResources().Forget("Bloom.Mip1");
+    MtResources().Forget("Bloom.Mip1Temp");
+    MtResources().Forget("Bloom.Mip2");
+    MtResources().Forget("Bloom.Mip2Temp");
+    MtResources().Forget("Bloom.Composite");
     if (mBloomA) { mBloomA->release(); mBloomA = nullptr; }
     if (mBloomB) { mBloomB->release(); mBloomB = nullptr; }
     for (auto *t : mDownsampledTextures) { if (t) t->release(); }
@@ -482,6 +503,14 @@ bool MtBloomModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* srcTex, fl
                                    bloomW, bloomH, MTL::PixelFormatRGBA16Float,
                                    snapUsage, MTL::StorageModePrivate);
         }
+        if (mExtractSnapshot) {
+            MtResources().Declare({"Bloom.ExtractSnapshot", "MtBloomModule",
+                                   (int)mExtractSnapshot->width(),
+                                   (int)mExtractSnapshot->height(), 1,
+                                   (int)MTL::PixelFormatRGBA16Float,
+                                   MtSizeRule::Scaled(4), true},
+                                  mExtractSnapshot);
+        }
         if (mExtractSnapshot && downsamplePSO) {
             BloomParams sp = params;
             sp.bloomRes[0] = (float)bloomW;
@@ -491,6 +520,7 @@ bool MtBloomModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* srcTex, fl
             encoder->setTexture(bloomA, 0);
             encoder->setTexture(mExtractSnapshot, 1);
             MtDispatchThreads(encoder, fb, grid, MTL::Size(16,16,1));
+            MtResources().Touch("Bloom.ExtractSnapshot");
             encoder->memoryBarrier(MTL::BarrierScopeTextures);
         }
     }
@@ -523,6 +553,14 @@ bool MtBloomModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* srcTex, fl
         MTL::Texture* tex = levelTex(level);
         MTL::Texture* tmp = levelTmp(level);
         if (!tex || !tmp) return;
+        if (level > 0) {
+            const char *mipName = level == 1 ? "Bloom.Mip0" :
+                                  level == 2 ? "Bloom.Mip1" : "Bloom.Mip2";
+            const char *tempName = level == 1 ? "Bloom.Mip0Temp" :
+                                   level == 2 ? "Bloom.Mip1Temp" : "Bloom.Mip2Temp";
+            MtResources().Touch(mipName);
+            MtResources().Touch(tempName);
+        }
         BloomParams p = params;
         p.bloomRes[0] = (float)tex->width();
         p.bloomRes[1] = (float)tex->height();
@@ -651,6 +689,10 @@ bool MtBloomModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* srcTex, fl
             combEnc->setTexture(compositeInputs[i], i);
         combEnc->setTexture(mCompositeTex, 4);
         MtDispatchThreads(combEnc, fb, fullGrid, MTL::Size(16,16,1));
+        MtResources().Declare({"Bloom.Composite", "MtBloomModule", srcW, srcH, 1,
+                               (int)MTL::PixelFormatRGBA16Float, MtSizeRule::Full(), true},
+                              mCompositeTex);
+        MtResources().Touch("Bloom.Composite");
         combEnc->endEncoding();
 
         MtSamplerKey samplerKey;

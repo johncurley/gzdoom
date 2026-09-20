@@ -1,13 +1,20 @@
-# Resource registry — design sketch
+# Resource registry — phase 1 design and coverage
 
 Step 1 of the migration order in `docs/frame-analysis.md` §4: **declare the
 resources, keep the existing execution.** No behaviour change, no new allocator, no
 graph yet — a description of what exists, maintained at the sites that already
 create these textures.
 
-Written 2026-08-16. This is a sketch for review, not committed code. The point of
-sketching before implementing is that the interface is cheap to argue about now and
-expensive to change once forty call sites use it.
+Written 2026-08-16; coverage updated 2026-09-20. The phase-1 registry is now
+implemented on Metal. This document remains the design reference for the eventual
+backend-neutral interface and for the validation policy; it is not yet a complete
+inventory of every Metal allocation.
+
+Current Metal coverage includes the scene/pipeline targets, AO's primary and
+full-resolution compute targets, the depth pyramid, and all compute-bloom targets:
+the primary pair, three mip levels with their ping-pong temporaries, the optional
+extract snapshot, and the raster-composite target. The registry does not allocate
+or alias resources, and Vulkan/GL do not register resources yet.
 
 ---
 
