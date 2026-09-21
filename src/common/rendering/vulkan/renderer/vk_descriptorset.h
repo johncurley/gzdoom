@@ -32,6 +32,7 @@ public:
 	VulkanDescriptorSet* GetNullTextureDescriptorSet();
 
 	std::unique_ptr<VulkanDescriptorSet> AllocateTextureDescriptorSet(int numLayers);
+	std::unique_ptr<VulkanDescriptorSet> AllocateComputeDescriptorSet(VulkanDescriptorSetLayout *layout);
 
 	VulkanDescriptorSet* GetInput(VkPPRenderPassSetup* passSetup, const TArray<PPTextureInput>& textures, bool bindShadowMapBuffers);
 
@@ -56,6 +57,7 @@ private:
 	std::unique_ptr<VulkanDescriptorPool> FixedDescriptorPool;
 
 	std::unique_ptr<VulkanDescriptorPool> PPDescriptorPool;
+	std::unique_ptr<VulkanDescriptorPool> ComputeDescriptorPool;
 
 	int TextureDescriptorSetsLeft = 0;
 	int TextureDescriptorsLeft = 0;

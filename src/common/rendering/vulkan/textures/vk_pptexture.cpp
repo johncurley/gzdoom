@@ -46,7 +46,12 @@ VkPPTexture::VkPPTexture(VulkanRenderDevice* fb, PPTexture *texture) : fb(fb)
 	if (texture->Data)
 		imgbuilder.Usage(VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
 	else
-		imgbuilder.Usage(VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
+	{
+		VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+		if (texture->StorageImage)
+			usage |= VK_IMAGE_USAGE_STORAGE_BIT;
+		imgbuilder.Usage(usage);
+	}
 	imgbuilder.DebugName("VkPPTexture");
 	if (!imgbuilder.IsFormatSupported(fb->device.get()))
 		I_FatalError("Vulkan device does not support the image format required by a postprocess texture\n");

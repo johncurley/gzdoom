@@ -29,20 +29,26 @@
 #include "vulkan/system/vk_commandbuffer.h"
 #include "vulkan/renderer/vk_renderstate.h"
 #include "vulkan/renderer/vk_pprenderstate.h"
+#include "vulkan/renderer/vk_descriptorset.h"
 #include "vulkan/shaders/vk_ppshader.h"
 #include "vulkan/textures/vk_pptexture.h"
 #include "vulkan/textures/vk_renderbuffers.h"
+#include "vulkan/textures/vk_samplers.h"
 #include "vulkan/textures/vk_imagetransition.h"
 #include "vulkan/textures/vk_texture.h"
 #include "vulkan/textures/vk_framebuffer.h"
+#include "filesystem.h"
 #include "hw_cvars.h"
 #include "hwrenderer/postprocessing/hw_postprocess.h"
 #include "hwrenderer/postprocessing/hw_postprocess_cvars.h"
 #include "hw_vrmodes.h"
 #include "flatvertices.h"
 #include "r_videoscale.h"
+#include "cmdlib.h"
 
 EXTERN_CVAR(Int, gl_dither_bpc)
+
+CVAR(Bool, vk_compute_ssao, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 VkPostprocess::VkPostprocess(VulkanRenderDevice* fb) : fb(fb)
 {
@@ -284,9 +290,122 @@ void VkPostprocess::AmbientOccludeScene(float m5)
 	int sceneHeight = fb->GetBuffers()->GetSceneHeight();
 
 	VkPPRenderState renderstate(fb);
-	hw_postprocess.ssao.Render(&renderstate, m5, sceneWidth, sceneHeight);
+	bool computeLinearDepth = false;
+	if (vk_compute_ssao && fb->GetBuffers()->GetSceneSamples() == VK_SAMPLE_COUNT_1_BIT)
+		computeLinearDepth = ComputeLinearDepth(sceneWidth, sceneHeight);
+	hw_postprocess.ssao.Render(&renderstate, m5, sceneWidth, sceneHeight, computeLinearDepth);
 
 	ImageTransitionScene(false);
+}
+
+void VkPostprocess::CreateComputeLinearDepthPipeline()
+{
+	if (ComputeLinearDepthPipeline)
+		return;
+
+	int lump = fileSystem.CheckNumForFullName("shaders/pp/lineardepth.comp");
+	if (lump == -1)
+		I_FatalError("Unable to load 'shaders/pp/lineardepth.comp'");
+
+	FString code;
+	code.AppendFormat("#version 450\n#line 1\n%s", GetStringFromLump(lump).GetChars());
+
+	ComputeLinearDepthShader = ShaderBuilder()
+		.Type(ShaderType::Compute)
+		.AddSource("shaders/pp/lineardepth.comp", code.GetChars())
+		.DebugName("VkPostprocess.LinearDepthComputeShader")
+		.Create("shaders/pp/lineardepth.comp", fb->device.get());
+
+	ComputeLinearDepthDescriptorLayout = DescriptorSetLayoutBuilder()
+		.AddBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT)
+		.AddBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT)
+		.AddBinding(2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT)
+		.DebugName("VkPostprocess.LinearDepthComputeDescriptorLayout")
+		.Create(fb->device.get());
+
+	ComputeLinearDepthPipelineLayout = PipelineLayoutBuilder()
+		.AddSetLayout(ComputeLinearDepthDescriptorLayout.get())
+		.AddPushConstantRange(VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(LinearDepthUniforms))
+		.DebugName("VkPostprocess.LinearDepthComputePipelineLayout")
+		.Create(fb->device.get());
+
+	ComputeLinearDepthPipeline = ComputePipelineBuilder()
+		.Layout(ComputeLinearDepthPipelineLayout.get())
+		.ComputeShader(ComputeLinearDepthShader.get())
+		.DebugName("VkPostprocess.LinearDepthComputePipeline")
+		.Create(fb->device.get());
+}
+
+bool VkPostprocess::ComputeLinearDepth(int sceneWidth, int sceneHeight)
+{
+	if (!hw_postprocess.ssao.PrepareLinearDepth(sceneWidth, sceneHeight))
+		return false;
+
+	// AmbientOccludeScene is called from the middle of scene rendering. The
+	// scene render pass is still open there, but compute dispatch and the
+	// image barriers below must be recorded outside any render-pass instance.
+	fb->GetRenderState()->EndRenderPass();
+
+	CreateComputeLinearDepthPipeline();
+
+	auto buffers = fb->GetBuffers();
+	auto linearDepth = fb->GetTextureManager()->GetTexture(PPTextureType::PPTexture,
+		hw_postprocess.ssao.GetLinearDepthTexture());
+	if (!linearDepth || !linearDepth->View || !buffers->SceneColor.View || !buffers->SceneDepthStencil.DepthOnlyView)
+		return false;
+
+	PassDesc desc;
+	desc.name = "ssao.lineardepth.compute";
+	desc.owner = "VkPostprocess";
+	desc.reads = { "SceneDepthStencil", "SceneColor" };
+	desc.writes = { "AO.LinearDepth" };
+	desc.uses.Push({ "SceneDepthStencil", FrameGraphAccess::Read, FrameGraphUsage::Sampled });
+	desc.uses.Push({ "SceneColor", FrameGraphAccess::Read, FrameGraphUsage::Sampled });
+	desc.uses.Push({ "AO.LinearDepth", FrameGraphAccess::Write, FrameGraphUsage::Storage });
+	int graphPass = fb->Graph().AddPass(desc);
+	fb->Graph().BeginBackendPass(graphPass);
+	fb->Resources().Touch("SceneDepthStencil", false);
+	fb->Graph().ObserveBackendUse("SceneDepthStencil", FrameGraphAccess::Read, FrameGraphUsage::Sampled);
+	fb->Resources().Touch("SceneColor", false);
+	fb->Graph().ObserveBackendUse("SceneColor", FrameGraphAccess::Read, FrameGraphUsage::Sampled);
+	fb->Resources().Touch("AO.LinearDepth", true);
+	fb->Graph().ObserveBackendUse("AO.LinearDepth", FrameGraphAccess::Write, FrameGraphUsage::Storage);
+
+	VkImageTransition()
+		.AddComputeSampledImage(&buffers->SceneDepthStencil)
+		.AddComputeSampledImage(&buffers->SceneColor)
+		.AddComputeStorageImage(linearDepth)
+		.Execute(fb->GetCommands()->GetDrawCommands());
+
+	auto descriptors = fb->GetDescriptorSetManager()->AllocateComputeDescriptorSet(ComputeLinearDepthDescriptorLayout.get());
+	VulkanSampler *sampler = fb->GetSamplerManager()->Get(PPFilterMode::Nearest, PPWrapMode::Clamp);
+	WriteDescriptors write;
+	write.AddCombinedImageSampler(descriptors.get(), 0, buffers->SceneDepthStencil.DepthOnlyView.get(), sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	write.AddCombinedImageSampler(descriptors.get(), 1, buffers->SceneColor.View.get(), sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	write.AddStorageImage(descriptors.get(), 2, linearDepth->View.get(), VK_IMAGE_LAYOUT_GENERAL);
+	write.Execute(fb->device.get());
+
+	LinearDepthUniforms uniforms;
+	hw_postprocess.ssao.GetLinearDepthUniforms(uniforms);
+
+	fb->GetCommands()->PushGroup("ssao.lineardepth.compute");
+	auto cmdbuffer = fb->GetCommands()->GetDrawCommands();
+	cmdbuffer->bindPipeline(VK_PIPELINE_BIND_POINT_COMPUTE, ComputeLinearDepthPipeline.get());
+	cmdbuffer->bindDescriptorSet(VK_PIPELINE_BIND_POINT_COMPUTE, ComputeLinearDepthPipelineLayout.get(), 0, descriptors.get());
+	cmdbuffer->pushConstants(ComputeLinearDepthPipelineLayout.get(), VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(uniforms), &uniforms);
+	cmdbuffer->dispatch((linearDepth->Image->width + 7) / 8, (linearDepth->Image->height + 7) / 8, 1);
+	fb->GetCommands()->PopGroup();
+
+	// Make the compute write visible to the existing fragment AO pass. The
+	// layout transition also changes the tracked image state used by the
+	// ordinary postprocess descriptor path.
+	VkImageTransition()
+		.AddImage(linearDepth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, false)
+		.Execute(cmdbuffer);
+
+	fb->GetCommands()->DrawDeleteList->Add(std::move(descriptors));
+	fb->Graph().EndBackendPass();
+	return true;
 }
 
 void VkPostprocess::BlurScene(float gameinfobluramount)

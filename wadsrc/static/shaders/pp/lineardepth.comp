@@ -1,0 +1,50 @@
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D DepthTexture;
+layout(set = 0, binding = 1) uniform sampler2D ColorTexture;
+layout(set = 0, binding = 2, r16f) uniform image2D LinearDepthImage;
+
+layout(push_constant) uniform LinearDepthUniforms
+{
+	int SampleIndex;
+	float LinearizeDepthA;
+	float LinearizeDepthB;
+	float InverseDepthRangeA;
+	float InverseDepthRangeB;
+	float Padding0;
+	float Padding1;
+	float Padding2;
+	vec2 Scale;
+	vec2 Offset;
+} uniforms;
+
+float normalizeDepth(float depth)
+{
+	return clamp(uniforms.InverseDepthRangeA * depth + uniforms.InverseDepthRangeB, 0.0, 1.0);
+}
+
+float linearizeDepth(float normalizedDepth)
+{
+	return 1.0 / (normalizedDepth * uniforms.LinearizeDepthA + uniforms.LinearizeDepthB);
+}
+
+void main()
+{
+	ivec2 outputSize = imageSize(LinearDepthImage);
+	ivec2 outputPos = ivec2(gl_GlobalInvocationID.xy);
+	if (outputPos.x >= outputSize.x || outputPos.y >= outputSize.y)
+		return;
+
+	ivec2 texSize = textureSize(DepthTexture, 0);
+	vec2 texCoord = (vec2(outputPos) + vec2(0.5)) / vec2(outputSize);
+	vec2 uv = uniforms.Offset + texCoord * uniforms.Scale;
+	ivec2 inputPos = ivec2(max(uv * vec2(texSize), vec2(0.0)));
+
+	// Match lineardepth.fp: colour alpha zero means that the scene did not
+	// write a meaningful depth value, so use the far-plane sentinel directly.
+	float alpha = texelFetch(ColorTexture, inputPos, 0).a;
+	float normalizedDepth = alpha != 0.0 ? normalizeDepth(texelFetch(DepthTexture, inputPos, 0).x) : 1.0;
+	float depth = min(linearizeDepth(normalizedDepth), 60000.0);
+
+	imageStore(LinearDepthImage, outputPos, vec4(depth, 0.0, 0.0, 1.0));
+}

@@ -321,6 +321,12 @@ public:
 	// assign it when the texture is created, since assigning a new PPTexture
 	// resets this to nullptr along with everything else.
 	const char *Name = nullptr;
+
+	// Backends that expose compute postprocess paths may request storage-image
+	// usage for this texture. Raster backends ignore the flag; Vulkan uses it
+	// when creating the image so the same resource can be shared by raster and
+	// compute implementations.
+	bool StorageImage = false;
 };
 
 class PPShaderBackend
@@ -726,7 +732,10 @@ class PPAmbientOcclusion
 {
 public:
 	PPAmbientOcclusion();
-	void Render(PPRenderState *renderstate, float m5, int sceneWidth, int sceneHeight);
+	void Render(PPRenderState *renderstate, float m5, int sceneWidth, int sceneHeight, bool linearDepthAlreadyComputed = false);
+	bool PrepareLinearDepth(int sceneWidth, int sceneHeight);
+	void GetLinearDepthUniforms(LinearDepthUniforms &uniforms) const;
+	PPTexture *GetLinearDepthTexture() { return &LinearDepthTexture; }
 
 private:
 	void CreateShaders();

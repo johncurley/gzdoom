@@ -39,6 +39,12 @@ class VkImageTransition
 {
 public:
 	VkImageTransition& AddImage(VkTextureImage *image, VkImageLayout targetLayout, bool undefinedSrcLayout, int baseMipLevel = 0, int levelCount = 1);
+	// Compute passes use the same tracked image layouts as raster passes, but
+	// need compute-stage access masks. These helpers deliberately live beside
+	// the existing transition path so the renderer does not grow a second
+	// barrier system for compute.
+	VkImageTransition& AddComputeSampledImage(VkTextureImage *image, bool undefinedSrcLayout = false);
+	VkImageTransition& AddComputeStorageImage(VkTextureImage *image, bool undefinedSrcLayout = false);
 	void Execute(VulkanCommandBuffer *cmdbuffer);
 
 private:
@@ -46,4 +52,7 @@ private:
 	VkPipelineStageFlags srcStageMask = 0;
 	VkPipelineStageFlags dstStageMask = 0;
 	bool needbarrier = false;
+
+	VkImageTransition& AddComputeImage(VkTextureImage *image, VkImageLayout targetLayout,
+		VkAccessFlags targetAccess, bool undefinedSrcLayout);
 };

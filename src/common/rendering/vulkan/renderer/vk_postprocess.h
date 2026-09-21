@@ -43,10 +43,17 @@ public:
 
 private:
 	void NextEye(int eyeCount);
+	bool ComputeLinearDepth(int sceneWidth, int sceneHeight);
+	void CreateComputeLinearDepthPipeline();
 
 	VulkanRenderDevice* fb = nullptr;
 
 	int mCurrentPipelineImage = 0;
+
+	std::unique_ptr<VulkanShader> ComputeLinearDepthShader;
+	std::unique_ptr<VulkanDescriptorSetLayout> ComputeLinearDepthDescriptorLayout;
+	std::unique_ptr<VulkanPipelineLayout> ComputeLinearDepthPipelineLayout;
+	std::unique_ptr<VulkanPipeline> ComputeLinearDepthPipeline;
 
 	friend class VkPPRenderState;
 };

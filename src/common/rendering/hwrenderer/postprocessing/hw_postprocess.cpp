@@ -868,6 +868,7 @@ void PPAmbientOcclusion::UpdateTextures(int width, int height)
 	LinearDepthTexture = { AmbientWidth, AmbientHeight, PixelFormat::R16f };
 	Ambient0 = { AmbientWidth, AmbientHeight, PixelFormat::Rg16f };
 	Ambient1 = { AmbientWidth, AmbientHeight, PixelFormat::Rg16f };
+	LinearDepthTexture.StorageImage = true;
 	NameAndDeclare(LinearDepthTexture, "AO.LinearDepth", "PPAmbientOcclusion");
 	NameAndDeclare(Ambient0, "AO.Ambient0", "PPAmbientOcclusion");
 	NameAndDeclare(Ambient1, "AO.Ambient1", "PPAmbientOcclusion");
@@ -876,7 +877,40 @@ void PPAmbientOcclusion::UpdateTextures(int width, int height)
 	LastHeight = height;
 }
 
-void PPAmbientOcclusion::Render(PPRenderState *renderstate, float m5, int sceneWidth, int sceneHeight)
+bool PPAmbientOcclusion::PrepareLinearDepth(int sceneWidth, int sceneHeight)
+{
+	if (gl_ssao == 0 || sceneWidth <= 0 || sceneHeight <= 0)
+		return false;
+
+	UpdateTextures(sceneWidth, sceneHeight);
+	return true;
+}
+
+void PPAmbientOcclusion::GetLinearDepthUniforms(LinearDepthUniforms &uniforms) const
+{
+	uniforms = {};
+	uniforms.SampleIndex = 0;
+	uniforms.LinearizeDepthA = 1.0f / screen->GetZFar() - 1.0f / screen->GetZNear();
+	uniforms.LinearizeDepthB = max(1.0f / screen->GetZNear(), 1.e-8f);
+
+	if (screen->IsReverseZ())
+	{
+		// Metal uses Reverse-Z (Near=1, Far=0). Map it back to [0, 1]
+		// before applying the shared linearization formula.
+		uniforms.InverseDepthRangeA = -1.0f;
+		uniforms.InverseDepthRangeB = 1.0f;
+	}
+	else
+	{
+		uniforms.InverseDepthRangeA = 1.0f;
+		uniforms.InverseDepthRangeB = 0.0f;
+	}
+
+	uniforms.Scale = screen->SceneScale();
+	uniforms.Offset = screen->SceneOffset();
+}
+
+void PPAmbientOcclusion::Render(PPRenderState *renderstate, float m5, int sceneWidth, int sceneHeight, bool linearDepthAlreadyComputed)
 {
 	if (gl_ssao == 0 || sceneWidth == 0 || sceneHeight == 0)
 	{
@@ -918,28 +952,7 @@ void PPAmbientOcclusion::Render(PPRenderState *renderstate, float m5, int sceneW
 	int randomTexture = clamp(gl_ssao - 1, 0, NumAmbientRandomTextures - 1);
 
 	LinearDepthUniforms linearUniforms;
-	linearUniforms.SampleIndex = 0;
-	linearUniforms.LinearizeDepthA = 1.0f / screen->GetZFar() - 1.0f / screen->GetZNear();
-	linearUniforms.LinearizeDepthB = max(1.0f / screen->GetZNear(), 1.e-8f);
-	
-	if (screen->IsReverseZ())
-	{
-		// Metal uses Reverse-Z (Near=1, Far=0).
-		// We need to map [1, 0] back to [0, 1] for the linearizer to work.
-		// Formula: Z_new = 1.0 - Z_old.
-		// InverseDepthRangeA * Z + InverseDepthRangeB
-		// -1.0 * Z + 1.0
-		linearUniforms.InverseDepthRangeA = -1.0f;
-		linearUniforms.InverseDepthRangeB = 1.0f;
-	}
-	else
-	{
-		linearUniforms.InverseDepthRangeA = 1.0f;
-		linearUniforms.InverseDepthRangeB = 0.0f;
-	}
-	
-	linearUniforms.Scale = sceneScale;
-	linearUniforms.Offset = sceneOffset;
+	GetLinearDepthUniforms(linearUniforms);
 
 	SSAOUniforms ssaoUniforms;
 	ssaoUniforms.SampleIndex = 0;
@@ -981,19 +994,24 @@ void PPAmbientOcclusion::Render(PPRenderState *renderstate, float m5, int sceneW
 	// top-level groups, so `stat gpu` reports each of the five draws
 	// separately rather than one ssao=X.XXms aggregate.
 
-	// Calculate linear depth values
-	renderstate->PushGroup("ssao.lineardepth");
-	renderstate->Clear();
-	renderstate->SetPassName("ssao.lineardepth");
-	renderstate->Shader = gl_multisample > 1 ? &LinearDepthMS : &LinearDepth;
-	renderstate->Uniforms.Set(linearUniforms);
-	renderstate->Viewport = ambientViewport;
-	renderstate->SetInputSceneDepth(0);
-	renderstate->SetInputSceneColor(1);
-	renderstate->SetOutputTexture(&LinearDepthTexture);
-	renderstate->SetNoBlend();
-	renderstate->Draw();
-	renderstate->PopGroup();
+	// Calculate linear depth values unless a backend supplied an equivalent
+	// compute result. Multisample frames always use this raster path because
+	// the first compute slice deliberately supports single-sample images only.
+	if (!linearDepthAlreadyComputed)
+	{
+		renderstate->PushGroup("ssao.lineardepth");
+		renderstate->Clear();
+		renderstate->SetPassName("ssao.lineardepth");
+		renderstate->Shader = gl_multisample > 1 ? &LinearDepthMS : &LinearDepth;
+		renderstate->Uniforms.Set(linearUniforms);
+		renderstate->Viewport = ambientViewport;
+		renderstate->SetInputSceneDepth(0);
+		renderstate->SetInputSceneColor(1);
+		renderstate->SetOutputTexture(&LinearDepthTexture);
+		renderstate->SetNoBlend();
+		renderstate->Draw();
+		renderstate->PopGroup();
+	}
 
 	// Apply ambient occlusion
 	renderstate->PushGroup("ssao.occlude");

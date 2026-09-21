@@ -45,6 +45,10 @@ VkImageTransition& VkImageTransition::AddImage(VkTextureImage *image, VkImageLay
 		srcAccess = VK_ACCESS_SHADER_READ_BIT;
 		srcStageMask |= VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
 		break;
+	case VK_IMAGE_LAYOUT_GENERAL:
+		srcAccess = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+		srcStageMask |= VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+		break;
 	case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
 		srcAccess = VK_ACCESS_TRANSFER_WRITE_BIT;
 		srcStageMask |= VK_PIPELINE_STAGE_TRANSFER_BIT;
@@ -92,6 +96,63 @@ VkImageTransition& VkImageTransition::AddImage(VkTextureImage *image, VkImageLay
 	}
 
 	barrier.AddImage(image->Image.get(), undefinedSrcLayout ? VK_IMAGE_LAYOUT_UNDEFINED : image->Layout, targetLayout, srcAccess, dstAccess, aspectMask, baseMipLevel, levelCount);
+	needbarrier = true;
+	image->Layout = targetLayout;
+	return *this;
+}
+
+VkImageTransition& VkImageTransition::AddComputeSampledImage(VkTextureImage *image, bool undefinedSrcLayout)
+{
+	return AddComputeImage(image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_SHADER_READ_BIT, undefinedSrcLayout);
+}
+
+VkImageTransition& VkImageTransition::AddComputeStorageImage(VkTextureImage *image, bool undefinedSrcLayout)
+{
+	return AddComputeImage(image, VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_SHADER_WRITE_BIT, undefinedSrcLayout);
+}
+
+VkImageTransition& VkImageTransition::AddComputeImage(VkTextureImage *image, VkImageLayout targetLayout,
+	VkAccessFlags targetAccess, bool undefinedSrcLayout)
+{
+	VkAccessFlags srcAccess = 0;
+	VkPipelineStageFlags sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+
+	switch (image->Layout)
+	{
+	case VK_IMAGE_LAYOUT_UNDEFINED:
+		break;
+	case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
+		srcAccess = VK_ACCESS_TRANSFER_READ_BIT;
+		sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		break;
+	case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
+		srcAccess = VK_ACCESS_SHADER_READ_BIT;
+		sourceStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+		break;
+	case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
+		srcAccess = VK_ACCESS_TRANSFER_WRITE_BIT;
+		sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		break;
+	case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
+		srcAccess = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+		sourceStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		break;
+	case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL:
+		srcAccess = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+		sourceStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+		break;
+	case VK_IMAGE_LAYOUT_GENERAL:
+		srcAccess = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+		sourceStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+		break;
+	default:
+		I_FatalError("Unimplemented compute source image layout transition\n");
+	}
+
+	barrier.AddImage(image->Image.get(), undefinedSrcLayout ? VK_IMAGE_LAYOUT_UNDEFINED : image->Layout,
+		targetLayout, srcAccess, targetAccess, image->AspectMask);
+	srcStageMask |= sourceStage;
+	dstStageMask |= VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
 	needbarrier = true;
 	image->Layout = targetLayout;
 	return *this;

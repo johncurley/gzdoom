@@ -161,6 +161,27 @@ std::unique_ptr<VulkanDescriptorSet> VkDescriptorSetManager::AllocateTextureDesc
 	return TextureDescriptorPools.back()->allocate(GetTextureSetLayout(numLayers));
 }
 
+std::unique_ptr<VulkanDescriptorSet> VkDescriptorSetManager::AllocateComputeDescriptorSet(VulkanDescriptorSetLayout *layout)
+{
+	if (ComputeDescriptorPool)
+	{
+		auto descriptors = ComputeDescriptorPool->tryAllocate(layout);
+		if (descriptors)
+			return descriptors;
+
+		fb->GetCommands()->DrawDeleteList->Add(std::move(ComputeDescriptorPool));
+	}
+
+	ComputeDescriptorPool = DescriptorPoolBuilder()
+		.AddPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 512)
+		.AddPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 128)
+		.MaxSets(128)
+		.DebugName("VkDescriptorSetManager.ComputeDescriptorPool")
+		.Create(fb->device.get());
+
+	return ComputeDescriptorPool->allocate(layout);
+}
+
 VulkanDescriptorSetLayout* VkDescriptorSetManager::GetTextureSetLayout(int numLayers)
 {
 	if (TextureSetLayouts.size() < (size_t)numLayers)
