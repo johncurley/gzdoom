@@ -1092,6 +1092,7 @@ void PPShadowMap::Update(PPRenderState* renderstate)
 	renderstate->PushGroup("shadowmap");
 
 	renderstate->Clear();
+	renderstate->SetPassName("shadowmap");
 	renderstate->Shader = &ShadowMap;
 	renderstate->Uniforms.Set(uniforms);
 	renderstate->Viewport = { 0, 0, gl_shadowmap_quality, 1024 };
