@@ -1013,8 +1013,10 @@ static void PatchPostprocessFragmentShader(std::string &source,
     // Two matches expected: the MSAA and non-MSAA branches of the same
     // expression. One match means the shader grew or lost a branch and only
     // half the sky handling is corrected.
-    std::regex skyRegex(R"(: 1\.0\);)");
-    PatchRegex(source, skyRegex, ": 0.0);", "lineardepth sky far-plane",
+    // The shader's current ternaries end directly in ';' (there is no closing
+    // parenthesis after the selected depth value).
+    std::regex skyRegex(R"(:\s*1\.0\s*;)");
+    PatchRegex(source, skyRegex, ": 0.0;", "lineardepth sky far-plane",
                shadername, 2);
   }
 

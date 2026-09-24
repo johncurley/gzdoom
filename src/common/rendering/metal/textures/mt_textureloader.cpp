@@ -26,24 +26,28 @@ uint32_t MtTextureLoader::QueueTextureLoad(FTexture *tex, int translation,
                                           int flags) {
   if (!tex) return 0;
 
+  TextureLoadTask initialTask;
+  if (!tex->CreatePixelSnapshot(translation, flags | CTF_ProcessData,
+                                initialTask.sourcePixels))
+    return 0;
+
   uint32_t taskId = mNextTaskId++;
   mPendingCount++;
 
-  // Capture the task data for the block
+  auto task = std::make_shared<TextureLoadTask>(std::move(initialTask));
+  task->taskId = taskId;
+
+  // The source pixels are now owned by this task. The worker never needs the
+  // FTexture object or its image/cache state.
   dispatch_group_async(mLoadGroup, mTextureQueue, ^{
-    TextureLoadTask task;
-    task.texSource = tex;
-    task.translation = translation;
-    task.flags = flags;
-    task.taskId = taskId;
-    task.completed = false;
+    ProcessTextureTask(*task);
 
-    ProcessTextureTask(task);
-
-    // Add to completed tasks on main thread via a completion handler
-    dispatch_async(dispatch_get_main_queue(), ^{
-      mCompletedTasks.push_back(task);
-    });
+    // Do not dispatch completion to the main queue: the Cocoa entry point
+    // runs DoMain() inside a long-lived main-queue block, so such callbacks
+    // cannot execute until the game exits. The render thread drains this
+    // thread-safe queue at BeginFrame().
+    std::lock_guard<std::mutex> lock(mCompletedMutex);
+    mCompletedTasks.push_back(std::move(*task));
   });
 
   return taskId;
@@ -51,9 +55,10 @@ uint32_t MtTextureLoader::QueueTextureLoad(FTexture *tex, int translation,
 
 bool MtTextureLoader::TryGetCompletedTask(uint32_t taskId,
                                          TextureLoadTask &outTask) {
+  std::lock_guard<std::mutex> lock(mCompletedMutex);
   for (size_t i = 0; i < mCompletedTasks.size(); ++i) {
     if (mCompletedTasks[i].taskId == taskId) {
-      outTask = mCompletedTasks[i];
+      outTask = std::move(mCompletedTasks[i]);
       mCompletedTasks.erase(mCompletedTasks.begin() + i);
       mPendingCount--;
       return true;
@@ -63,15 +68,18 @@ bool MtTextureLoader::TryGetCompletedTask(uint32_t taskId,
 }
 
 std::vector<TextureLoadTask> MtTextureLoader::GetCompletedTasks() {
-  std::vector<TextureLoadTask> result = mCompletedTasks;
-  mCompletedTasks.clear();
+  std::vector<TextureLoadTask> result;
+  {
+    std::lock_guard<std::mutex> lock(mCompletedMutex);
+    result.swap(mCompletedTasks);
+  }
   mPendingCount -= result.size();
   return result;
 }
 
 void MtTextureLoader::ProcessCompletions() {
-  // Called from render thread to process any pending GCD callbacks
-  // GCD will handle this automatically via dispatch_async to main_queue
+  // Compatibility no-op: completed tasks are collected by GetCompletedTasks()
+  // on the render thread after workers append them under mCompletedMutex.
 }
 
 void MtTextureLoader::Shutdown() {
@@ -86,29 +94,13 @@ size_t MtTextureLoader::GetQueueSize() const {
 }
 
 size_t MtTextureLoader::GetCompletedCount() const {
+  std::lock_guard<std::mutex> lock(mCompletedMutex);
   return mCompletedTasks.size();
 }
 
 void MtTextureLoader::ProcessTextureTask(TextureLoadTask &task) {
-  if (!task.texSource) return;
-
-  // This runs on background GCD queue - CPU intensive work
-  FTextureBuffer texbuffer = task.texSource->CreateTexBuffer(
-      task.translation, task.flags | CTF_ProcessData);
-
-  if (!texbuffer.mBuffer) {
-    return;
-  }
-
-  task.width = texbuffer.mWidth;
-  task.height = texbuffer.mHeight;
-  task.indexed = (task.flags & CTF_Indexed) != 0;
-  task.bytesPerPixel = task.indexed ? 1 : 4;
-
-  // Copy pixel data
-  size_t bufferSize = task.width * task.height * task.bytesPerPixel;
-  task.pixelData.resize(bufferSize);
-  memcpy(task.pixelData.data(), texbuffer.mBuffer, bufferSize);
-
-  task.completed = true;
+  // CPU-intensive conversion runs on GCD, using only task-owned values. Any
+  // FTexture metadata and ImageArena work is returned to the render thread.
+  task.completed = FTexture::ProcessPixelSnapshot(task.sourcePixels, task.result);
+  task.sourcePixels = {};
 }

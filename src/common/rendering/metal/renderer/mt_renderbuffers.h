@@ -40,6 +40,7 @@ public:
   int GetSceneWidth() const { return mSceneWidth; }
   int GetSceneHeight() const { return mSceneHeight; }
   int GetSceneSamples() const { return mSamples; }
+  const char *ShadowMapResourceName() const { return mShadowMapName.GetChars(); }
 
   // Pixel format of SceneColor and the postprocess pipeline images, as an
   // MTL::PixelFormat widened to int (this header stays metal-cpp free; cast at
@@ -66,6 +67,7 @@ public:
 
 private:
   FString mResNames[RES_Count];
+  FString mShadowMapName;
   const char *mTag = "screen";
   void CreatePipelineDepthStencil(int width, int height);
   void CreatePipeline(int width, int height);

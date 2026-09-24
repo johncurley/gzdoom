@@ -75,7 +75,7 @@ it is unusual).
   entangled with the waylandpp→C-bindings replacement, so the branch pushed is
   the full `wayland-c-bindings` (12 commits, `zwidget-wayland-c-bindings-clean`
   on the fork) — see Tasks — Linux item 5.
-- **Current handoff:** `docs/handoff-framegraph-2026-08-18.md` — the decision
+- **Framegraph architecture handoff (historical):** `docs/handoff-framegraph-2026-08-18.md` — the decision
   for what gzdoom work happens while Apple Silicon hardware is still not in
   hand: start `docs/frame-graph-resources.md`'s resource registry (backend-
   neutral, no scheduler, no Metal-specific decisions, fully verifiable on
@@ -432,14 +432,17 @@ it is unusual).
   `ssao.fp`, `lineardepth.fp`) — Metal's
   separate compute AO module (`mt_ao.cpp`) is untouched, doesn't build on
   this box, and was explicitly out of scope per the contract.
-- **Current handoff:** `docs/handoff-macos-2026-08-18.md` — written from the
-  Linux side once this session's audit tranche (item 14) closed out. Apple
-  Silicon validation remains gating for TBDR-specific policy and performance,
-  but not for the portable frame-graph architecture now merged here. The
-  Metal adapter must remain correctness-first until an Apple Silicon baseline
-  exists. Also records that the item 5 wipe question is closed (confirmed
-  animating correctly, not a freeze) — item 5 itself stays open, the underlying
-  `nextDrawable()` block is mitigated, not eliminated.
+- **Current handoff:** `docs/handoff-linux-2026-09-24.md` — the Intel macOS
+  framegraph/upload validation is recorded, and the next renderer tranche is
+  real Vulkan runtime validation plus GL/Vulkan observer-cost measurement on
+  Linux. The cold MAP08 capture still misses strict byte-repeatability and is
+  explicitly not closed as a parity result. Apple Silicon remains the gate for
+  TBDR-specific policy and performance; the Metal adapter must stay
+  correctness-first until an M-series baseline exists.
+- **Previous handoff:** `docs/handoff-macos-2026-09-23.md` — the detailed Intel
+  Metal session record, including upload observations, source-pixel snapshot
+  parity, observer/sorting measurements, and the remaining capture-repeatability
+  boundary.
 - **Previous handoff:** `docs/handoff-ao-2026-08-16.md` — the AO session. macOS
   items 1 and 2 closed, the compute-AO cost premise retired, three SSAO-residual
   suspects killed, and **one new unresolved bug found: compute AO is bistable**.

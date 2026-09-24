@@ -13,6 +13,7 @@
 #include "vk_imagetransition.h"
 #include "hw_material.h"
 #include <list>
+#include "zstring.h"
 
 struct FMaterialState;
 class VulkanDescriptorSet;
@@ -41,6 +42,7 @@ public:
 
 	VkTextureImage *GetImage(FTexture *tex, int translation, int flags);
 	VkTextureImage *GetDepthStencil(FTexture *tex);
+	const char *GetFrameGraphResourceName() const { return mFrameGraphResourceName.GetChars(); }
 
 	VulkanRenderDevice* fb = nullptr;
 	std::list<VkHardwareTexture*>::iterator it;
@@ -55,6 +57,7 @@ private:
 	int mTexelsize = 4;
 
 	VkTextureImage mDepthStencil;
+	FString mFrameGraphResourceName;
 
 	uint8_t* mappedSWFB = nullptr;
 };
@@ -66,6 +69,7 @@ public:
 	~VkMaterial();
 
 	VulkanDescriptorSet* GetDescriptorSet(const FMaterialState& state);
+	void ObserveTextureReads(const FMaterialState& state);
 
 	void DeleteDescriptors() override;
 

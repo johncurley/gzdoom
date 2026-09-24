@@ -4,6 +4,7 @@
 */
 
 #include <cstring>
+#include <utility>
 #include "hwrenderer/frame/hw_framegraph.h"
 #include "zstring.h"
 #include "printf.h"
@@ -41,8 +42,25 @@ static const char *UsageName(FrameGraphUsage usage)
 	return "unknown";
 }
 
+static const char *PreparationName(FrameGraphPreparation preparation)
+{
+	return preparation == FrameGraphPreparation::Worker ? "worker" : "render-thread";
+}
+
 void FrameGraph::Reset()
 {
+	// Uploads can be recorded during startup/precache, before the first graph
+	// frame begins. Keep them until a sampled read is observed; retire consumed
+	// records now that the frame in which that read happened is ending.
+	for (unsigned int i = 0; i < mUploads.Size();)
+	{
+		const uint64_t *readSequence = mResourceReads.CheckKey(mUploads[i].resource);
+		if (readSequence && *readSequence > mUploads[i].sequence)
+			mUploads.Delete(i);
+		else
+			++i;
+	}
+
 	mPasses.Clear();
 	mExternals.Clear();
 	mAliases.Clear();
@@ -50,6 +68,7 @@ void FrameGraph::Reset()
 	mOrder.Clear();
 	mBackendObserved.Clear();
 	mObservedUses.Clear();
+	mResourceReads.Clear();
 	mActivePass = -1;
 }
 
@@ -73,6 +92,34 @@ void FrameGraph::DeclareAlias(const char *name, const char *canonical)
 		if (NameEq(alias.name, name) && NameEq(alias.canonical, canonical))
 			return;
 	mAliases.Push({ name, canonical });
+}
+
+void FrameGraph::RecordUpload(const FrameGraphUploadDesc &desc)
+{
+	UploadObservation upload;
+	if (desc.resource)
+		upload.resource = desc.resource;
+	if (desc.owner)
+		upload.owner = desc.owner;
+	upload.preparation = desc.preparation;
+	upload.stagingRetained = desc.stagingRetained;
+	upload.transferRecorded = desc.transferRecorded;
+	upload.orderedBeforeConsumers = desc.orderedBeforeConsumers;
+	upload.sequence = ++mObservationSequence;
+	mUploads.Push(std::move(upload));
+}
+
+void FrameGraph::ObserveResourceRead(const char *name)
+{
+	if (!name)
+		return;
+
+	uint64_t sequence = ++mObservationSequence;
+	uint64_t *lastSequence = mResourceReads.CheckKey(FString(name));
+	if (lastSequence)
+		*lastSequence = sequence;
+	else
+		mResourceReads.Insert(FString(name), sequence);
 }
 
 const char *FrameGraph::CanonicalName(const char *name) const
@@ -310,9 +357,33 @@ bool FrameGraph::Build(FString *report)
 {
 	*report = "";
 	ValidateUses(report);
+	ValidateUploads(report);
 	BuildEdges(report);
 	bool ok = TopoSort(report);
 	return ok && report->Len() == 0;
+}
+
+void FrameGraph::ValidateUploads(FString *report) const
+{
+	for (const UploadObservation &upload : mUploads)
+	{
+		const char *resource = upload.resource.GetChars();
+		if (!resource || !resource[0])
+		{
+			report->AppendFormat("upload (%s) has no resource name\n",
+				upload.owner.GetChars());
+			continue;
+		}
+		if (!upload.stagingRetained)
+			report->AppendFormat("upload '%s' (%s) did not keep its source valid through transfer consumption\n",
+				resource, upload.owner.GetChars());
+		if (!upload.transferRecorded)
+			report->AppendFormat("upload '%s' (%s) did not record its transfer\n",
+				resource, upload.owner.GetChars());
+		if (!upload.orderedBeforeConsumers)
+			report->AppendFormat("upload '%s' (%s) is not ordered before consumer reads\n",
+				resource, upload.owner.GetChars());
+	}
 }
 
 void FrameGraph::Dump(FString *out) const
@@ -343,6 +414,23 @@ void FrameGraph::Dump(FString *out) const
 		{
 			out->AppendFormat("    %s --[%s]--> %s\n",
 				mPasses[e.from].name, e.resource, mPasses[e.to].name);
+		}
+	}
+
+	if (mUploads.Size() > 0)
+	{
+		out->AppendFormat("\n  uploads:\n");
+		for (const UploadObservation &upload : mUploads)
+		{
+			const char *resource = upload.resource.GetChars();
+			const uint64_t *readSequence = mResourceReads.CheckKey(upload.resource);
+			bool readAfter = readSequence && *readSequence > upload.sequence;
+			out->AppendFormat("    %-28s owner=%s prepared=%s staging=%s transfer=%s ordered-before-read=%s read-after-upload=%s\n",
+				resource, upload.owner.GetChars(), PreparationName(upload.preparation),
+				upload.stagingRetained ? "yes" : "no",
+				upload.transferRecorded ? "yes" : "no",
+				upload.orderedBeforeConsumers ? "yes" : "no",
+				readAfter ? "observed" : "not-observed");
 		}
 	}
 }
@@ -470,7 +558,34 @@ CCMD(r_framegraph_selftest)
 	FString badReport;
 	bool badDetected = !badGraph.Build(&badReport) && badReport.Len() > 0;
 
-	Printf(ok && orderMatchesDeclaration && useOK && aliasOK && customOK && badDetected ? "selftest: PASS\n" : "selftest: FAIL\n");
+	FrameGraph uploadGraph;
+	uploadGraph.RecordUpload({ "MetalTexture.test", "selftest",
+		FrameGraphPreparation::Worker, true, true, true });
+	uploadGraph.Reset(); // startup/precache upload predates the first graph frame
+	uploadGraph.ObserveResourceRead("MetalTexture.test");
+	FString uploadReport;
+	bool uploadOK = uploadGraph.Build(&uploadReport) && uploadReport.Len() == 0;
+	FString uploadDump;
+	uploadGraph.Dump(&uploadDump);
+	uploadOK = uploadOK &&
+		strstr(uploadDump.GetChars(), "read-after-upload=observed") != nullptr;
+	uploadGraph.Reset();
+	FString retiredUploadDump;
+	uploadGraph.Dump(&retiredUploadDump);
+	uploadOK = uploadOK &&
+		strstr(retiredUploadDump.GetChars(), "  uploads:") == nullptr;
+
+	FrameGraph badUploadGraph;
+	badUploadGraph.RecordUpload({ "MetalTexture.test", "selftest",
+		FrameGraphPreparation::Worker, true, true, false });
+	badUploadGraph.Reset();
+	badUploadGraph.ObserveResourceRead("MetalTexture.test");
+	FString badUploadReport;
+	bool badUploadDetected = !badUploadGraph.Build(&badUploadReport) &&
+		strstr(badUploadReport.GetChars(), "not ordered before consumer reads") != nullptr;
+
+	Printf(ok && orderMatchesDeclaration && useOK && aliasOK && customOK && badDetected &&
+		uploadOK && badUploadDetected ? "selftest: PASS\n" : "selftest: FAIL\n");
 }
 
 // Real per-frame data: whatever GLPPRenderState::Draw()/VkPPRenderState::Draw()

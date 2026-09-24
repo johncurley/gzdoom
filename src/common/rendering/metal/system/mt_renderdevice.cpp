@@ -22,6 +22,7 @@
 #include <cmath>
 
 #include "hw_renderstate.h"
+#include "hwrenderer/frame/hw_framegraph.h"
 #include "i_interface.h"
 #include "metal/renderer/mt_pipelinestate.h"
 #include "metal/renderer/mt_postprocess.h"
@@ -153,7 +154,7 @@ MetalRenderDevice::~MetalRenderDevice() {
     }
   }
 
-  for (int i = 0; i < 3; i++) {
+  for (int i = 0; i < 4; i++) {
     for (auto *buffer : mBufferRecycleBin[i]) {
       buffer->release();
     }
@@ -163,6 +164,12 @@ MetalRenderDevice::~MetalRenderDevice() {
       texture->release();
     }
     mTextureRecycleBin[i].clear();
+  }
+
+  for (int i = 0; i < 4; i++) {
+    for (auto *buffer : mStagingRecycleBin[i])
+      buffer->release();
+    mStagingRecycleBin[i].clear();
   }
 
   for (auto *buffer : mStagingPool) {
@@ -580,6 +587,19 @@ void MetalRenderDevice::BeginFrame() {
       }
       mBufferRecycleBin[mCurrentFrameRecycleIndex].clear();
 
+      // A shared staging buffer submitted to a blit command buffer cannot be
+      // reused until the GPU has consumed it. The frame ring is four deep and
+      // BeginFrame has already waited for the three-frames-in-flight limit,
+      // so buffers retired in this slot are now safe to return to the pool.
+      auto &retiredStaging = mStagingRecycleBin[mCurrentFrameRecycleIndex];
+      for (auto *buffer : retiredStaging) {
+        if (mStagingPool.size() < 32)
+          mStagingPool.push_back(buffer);
+        else
+          buffer->release();
+      }
+      retiredStaging.clear();
+
       for (auto *texture : mTextureRecycleBin[mCurrentFrameRecycleIndex]) {
         texture->release();
       }
@@ -862,9 +882,10 @@ void MetalRenderDevice::RecycleBuffer(MTL::Buffer *buffer) {
     try {
         std::lock_guard<std::mutex> lock(mRecycleMutex);
         
-        // Return suitable buffers to the staging pool instead of releasing them
+        // Shared buffers may still be read by an in-flight blit. Retire them
+        // through the frame ring before making them available for reuse.
         if (buffer->storageMode() == MTL::StorageModeShared && mStagingPool.size() < 32) {
-            mStagingPool.push_back(buffer);
+            mStagingRecycleBin[mCurrentFrameRecycleIndex].push_back(buffer);
         } else {
             mBufferRecycleBin[mCurrentFrameRecycleIndex].push_back(buffer);
         }
@@ -897,6 +918,8 @@ MTL::Buffer* MetalRenderDevice::GetStagingBuffer(size_t size) {
 
 void MetalRenderDevice::RecycleTexture(MTL::Texture *texture) {
   if (texture) {
+    if (mTextureManager)
+      mTextureManager->ForgetGraphTexture(texture);
     if (mIsDestroyed) {
       texture->release();
       return;
@@ -989,6 +1012,61 @@ void MetalRenderDevice::AmbientOccludeScene(float m5, const HWViewpointUniforms*
 void MetalRenderDevice::SetSceneRenderTarget(bool useSSAO) {
   if (mPostprocess)
     mPostprocess->SetSceneRenderTarget(useSSAO);
+
+  auto *buffers = GetBuffers();
+  if (!buffers)
+    return;
+
+  const char *sceneColor = buffers->ResName(MtRenderBuffers::RES_SceneColor);
+  const char *sceneDepth = buffers->ResName(MtRenderBuffers::RES_SceneDepth);
+  const char *sceneFog = buffers->ResName(MtRenderBuffers::RES_SceneFog);
+  const char *sceneNormal = buffers->ResName(MtRenderBuffers::RES_SceneNormal);
+  const char *shadowMap = buffers->ShadowMapResourceName();
+
+  PassDesc desc;
+  desc.name = "scene.target";
+  desc.owner = "MetalRenderDevice";
+  desc.writes = { sceneColor, sceneDepth };
+  desc.uses.Push({ sceneColor, FrameGraphAccess::Write,
+                   FrameGraphUsage::ColorAttachment });
+  desc.uses.Push({ sceneDepth, FrameGraphAccess::Write,
+                   FrameGraphUsage::DepthStencilAttachment });
+  if (useSSAO) {
+    desc.writes.Push(sceneFog);
+    desc.writes.Push(sceneNormal);
+    desc.uses.Push({ sceneFog, FrameGraphAccess::Write,
+                     FrameGraphUsage::ColorAttachment });
+    desc.uses.Push({ sceneNormal, FrameGraphAccess::Write,
+                     FrameGraphUsage::ColorAttachment });
+  }
+  if (mShadowMap.Enabled()) {
+    desc.reads.Push(shadowMap);
+    desc.uses.Push({ shadowMap, FrameGraphAccess::Read,
+                     FrameGraphUsage::Sampled });
+  }
+
+  int graphPass = Graph().AddPass(desc);
+  Graph().BeginBackendPass(graphPass);
+  Resources().Touch(sceneColor, true);
+  Graph().ObserveBackendUse(sceneColor, FrameGraphAccess::Write,
+                            FrameGraphUsage::ColorAttachment);
+  Resources().Touch(sceneDepth, true);
+  Graph().ObserveBackendUse(sceneDepth, FrameGraphAccess::Write,
+                            FrameGraphUsage::DepthStencilAttachment);
+  if (useSSAO) {
+    Resources().Touch(sceneFog, true);
+    Graph().ObserveBackendUse(sceneFog, FrameGraphAccess::Write,
+                              FrameGraphUsage::ColorAttachment);
+    Resources().Touch(sceneNormal, true);
+    Graph().ObserveBackendUse(sceneNormal, FrameGraphAccess::Write,
+                              FrameGraphUsage::ColorAttachment);
+  }
+  if (mShadowMap.Enabled()) {
+    Resources().Touch(shadowMap, false);
+    Graph().ObserveBackendUse(shadowMap, FrameGraphAccess::Read,
+                              FrameGraphUsage::Sampled);
+  }
+  Graph().EndBackendPass();
 }
 void MetalRenderDevice::SetLevelMesh(hwrenderer::LevelMesh *mesh) {}
 void MetalRenderDevice::UpdateShadowMap() {

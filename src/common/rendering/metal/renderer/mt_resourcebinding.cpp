@@ -4,6 +4,8 @@
 #include "metal/system/mt_renderdevice.h"
 #include "mt_resourcebinding.h"
 #include "metal/textures/mt_sampler.h"
+#include "metal/textures/mt_texture.h"
+#include "hwrenderer/frame/hw_framegraph.h"
 #include "c_cvars.h"
 #include "printf.h"
 
@@ -104,6 +106,10 @@ void MtResourceBindingManager::ApplyBindings(MTL::RenderCommandEncoder *encoder,
   for (size_t i = 0; i < mMaterialTextures.size(); i++) {
     MTL::Texture *texture = mMaterialTextures[i].texture;
     if (!texture) continue;
+    const char *resourceName = fb->GetTextureManager()
+        ? fb->GetTextureManager()->GetGraphResourceName(texture) : nullptr;
+    if (resourceName)
+      fb->Graph().ObserveResourceRead(resourceName);
     MTL::SamplerState *sampler = mMaterialTextures[i].sampler;
 
     if (vertex) {

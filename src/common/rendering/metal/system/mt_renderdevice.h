@@ -125,6 +125,7 @@ public:
   // Resource recycling bin to keep buffers alive until GPU is done
   std::vector<MTL::Buffer *> mBufferRecycleBin[4];
   std::vector<MTL::Texture *> mTextureRecycleBin[4];
+  std::vector<MTL::Buffer *> mStagingRecycleBin[4];
   std::vector<MTL::Buffer *> mStagingPool;
   int mCurrentFrameRecycleIndex = 0;
 

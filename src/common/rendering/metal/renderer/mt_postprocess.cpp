@@ -56,15 +56,19 @@ static void RecordMetalComputePass(MetalRenderDevice *fb, const char *name,
   desc.writes = writes;
   for (const char *resource : reads)
     desc.uses.Push({ resource, FrameGraphAccess::Read, FrameGraphUsage::Sampled });
-	for (const char *resource : writes)
-		desc.uses.Push({ resource, FrameGraphAccess::Write, FrameGraphUsage::Storage });
+  for (const char *resource : writes)
+    desc.uses.Push({ resource, FrameGraphAccess::Write, FrameGraphUsage::Storage });
 
   int pass = fb->Graph().AddPass(desc);
   fb->Graph().BeginBackendPass(pass);
-  for (const char *resource : reads)
+  for (const char *resource : reads) {
+    fb->Resources().Touch(resource, false);
     fb->Graph().ObserveBackendUse(resource, FrameGraphAccess::Read, FrameGraphUsage::Sampled);
-	for (const char *resource : writes)
-		fb->Graph().ObserveBackendUse(resource, FrameGraphAccess::Write, FrameGraphUsage::Storage);
+  }
+  for (const char *resource : writes) {
+    fb->Resources().Touch(resource, true);
+    fb->Graph().ObserveBackendUse(resource, FrameGraphAccess::Write, FrameGraphUsage::Storage);
+  }
   fb->Graph().EndBackendPass();
 }
 
@@ -313,6 +317,10 @@ public:
       return buffers->ResName(MtRenderBuffers::RES_SceneNormal);
     case PPTextureType::SceneDepth:
       return buffers->ResName(MtRenderBuffers::RES_SceneDepth);
+    case PPTextureType::ShadowMap:
+      return buffers->ShadowMapResourceName();
+    case PPTextureType::SwapChain:
+      return "Backbuffer";
     default:
       return nullptr;
     }
@@ -412,6 +420,15 @@ public:
     // GL/Vulkan postprocess paths and is deliberately observation-only: Metal
     // still executes in its existing order and emits no barriers or aliases.
     int graphPass = -1;
+    const char *writeName = nullptr;
+    if (customOutputTex) {
+      for (int i = 0; i < MtRenderBuffers::NumPipelineImages; i++) {
+        if (customOutputTex == fb->GetBuffers()->PipelineImage[i]->GetTexture())
+          writeName = fb->GetBuffers()->ResName(MtRenderBuffers::RES_Pipeline0 + i);
+      }
+    } else {
+      writeName = ResolveResourceName(Output.Type, Output.Texture);
+    }
     if (PassName) {
       TArray<const char *> reads;
       bool resolvable = true;
@@ -421,15 +438,6 @@ public:
           resolvable = false;
         else
           reads.Push(name);
-      }
-      const char *writeName = nullptr;
-      if (customOutputTex) {
-        for (int i = 0; i < MtRenderBuffers::NumPipelineImages; i++) {
-          if (customOutputTex == fb->GetBuffers()->PipelineImage[i]->GetTexture())
-            writeName = fb->GetBuffers()->ResName(MtRenderBuffers::RES_Pipeline0 + i);
-        }
-      } else {
-        writeName = ResolveResourceName(Output.Type, Output.Texture);
       }
       if (writeName && resolvable) {
         PassDesc desc;
@@ -446,22 +454,22 @@ public:
       }
     }
     screen->Graph().BeginBackendPass(graphPass);
-    for (unsigned int index = 0; graphPass >= 0 && index < Textures.Size(); index++)
-      screen->Graph().ObserveBackendUse(ResolveResourceName(Textures[index].Type,
-                                                              Textures[index].Texture),
-                                        FrameGraphAccess::Read, FrameGraphUsage::Sampled);
-    if (graphPass >= 0) {
-      const char *writeName = nullptr;
-      if (customOutputTex) {
-        for (int i = 0; i < MtRenderBuffers::NumPipelineImages; i++)
-          if (customOutputTex == fb->GetBuffers()->PipelineImage[i]->GetTexture())
-            writeName = fb->GetBuffers()->ResName(MtRenderBuffers::RES_Pipeline0 + i);
-      } else {
-        writeName = ResolveResourceName(Output.Type, Output.Texture);
-      }
-      screen->Graph().ObserveBackendUse(writeName, FrameGraphAccess::Write,
-                                        Output.Type == PPTextureType::SwapChain ?
-                                          FrameGraphUsage::Present : FrameGraphUsage::ColorAttachment);
+    for (unsigned int index = 0; index < Textures.Size(); index++) {
+      const char *name = ResolveResourceName(Textures[index].Type,
+                                             Textures[index].Texture);
+      if (!name)
+        continue;
+      screen->Resources().Touch(name, false);
+      if (graphPass >= 0)
+        screen->Graph().ObserveBackendUse(name, FrameGraphAccess::Read,
+                                          FrameGraphUsage::Sampled);
+    }
+    if (writeName) {
+      screen->Resources().Touch(writeName, true);
+      if (graphPass >= 0)
+        screen->Graph().ObserveBackendUse(writeName, FrameGraphAccess::Write,
+                                          Output.Type == PPTextureType::SwapChain ?
+                                            FrameGraphUsage::Present : FrameGraphUsage::ColorAttachment);
     }
 
     mtRenderState->SetRenderTarget(outputTex, depthStencil, width, height,
@@ -867,6 +875,19 @@ void MtPostprocess::BlitSceneToPostprocess() {
   if (!dst)
     return;
 
+  const char *sceneColor = buffers->ResName(MtRenderBuffers::RES_SceneColor);
+  const char *pipelineImage = buffers->ResName(MtRenderBuffers::RES_Pipeline0);
+  PassDesc resolveDesc;
+  resolveDesc.name = "scene.resolve";
+  resolveDesc.owner = "MtPostprocess";
+  resolveDesc.reads = { sceneColor };
+  resolveDesc.writes = { pipelineImage };
+  resolveDesc.uses.Push({ sceneColor, FrameGraphAccess::Read,
+                          FrameGraphUsage::Sampled });
+  resolveDesc.uses.Push({ pipelineImage, FrameGraphAccess::Write,
+                          FrameGraphUsage::ColorAttachment });
+  int resolvePass = fb->Graph().AddPass(resolveDesc);
+
   MtPPRenderState renderstate(fb);
   // Render directly into the pipeline image (customOutputTex is honored by Draw())
   renderstate.customOutputTex = dst;
@@ -894,6 +915,18 @@ void MtPostprocess::BlitSceneToPostprocess() {
   renderstate.SetInputTexture(1, &hw_postprocess.present.Dither, PPFilterMode::Nearest, PPWrapMode::Repeat);
   renderstate.SetNoBlend();
   renderstate.Draw();
+
+  // MtPPRenderState uses the same render-state object as scene rendering and
+  // clears its active graph observer while drawing. Record this copy after the
+  // draw so its observer cannot be mistaken for the nested PP draw's pass.
+  fb->Graph().BeginBackendPass(resolvePass);
+  fb->Resources().Touch(sceneColor, false);
+  fb->Graph().ObserveBackendUse(sceneColor, FrameGraphAccess::Read,
+                                FrameGraphUsage::Sampled);
+  fb->Resources().Touch(pipelineImage, true);
+  fb->Graph().ObserveBackendUse(pipelineImage, FrameGraphAccess::Write,
+                                FrameGraphUsage::ColorAttachment);
+  fb->Graph().EndBackendPass();
 
   // Mark destination as filled so future passes don't clear it
   auto mtRenderState = static_cast<MtRenderState *>(fb->RenderState());

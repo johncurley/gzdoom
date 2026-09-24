@@ -205,10 +205,37 @@ struct FTextureBuffer
 
 };
 
+// Detached source pixels and metadata for CPU-side texture processing that
+// must not dereference an FTexture from a worker thread.
+struct FTexturePixelSnapshot
+{
+	std::vector<uint8_t> pixels;
+	int width = 0, height = 0, pitch = 0;
+	int pixelWidth = 0, pixelHeight = 0;
+	int clipX = 0, clipY = 0, clipWidth = 0, clipHeight = 0;
+	int flags = 0, translation = 0, sourceTransparency = -1;
+	int sourceAreaCount = 0, sourceTranslucency = -1;
+	int upscaleMode = 0, upscaleMultiplier = 0;
+	int imageId = -1;
+	bool indexed = false, remapped = false, hasImage = false, sourceMasked = false;
+};
+
+struct FTexturePixelResult
+{
+	std::vector<uint8_t> pixels;
+	std::vector<FloatRect> areas;
+	int width = 0, height = 0, bytesPerPixel = 0;
+	int sourceAreaCount = 0, areaCount = 0;
+	int sourceTranslucency = -1, translucency = -1;
+	bool indexed = false, hasTranslucency = false;
+	bool sourceMasked = false, masked = false, hasMasking = false, hasAreas = false;
+};
+
 // Base texture class
 class FTexture : public RefCountedBase
 {
 	friend class FGameTexture;	// only for the porting work
+	friend class FTexturePixelSnapshotSelfTestState;
 
 public:
 	FHardwareTextureContainer SystemTextures;
@@ -229,6 +256,11 @@ public:
 	IHardwareTexture* GetHardwareTexture(int translation, int scaleflags);
 	virtual FImageSource *GetImage() const { return nullptr; }
 	void CreateUpsampledTextureBuffer(FTextureBuffer &texbuffer, bool hasAlpha, bool checkonly);
+	static void CreateUpsampledTextureBufferForSnapshot(FTextureBuffer &texbuffer,
+		bool hasAlpha, bool checkonly, int type, int multiplier);
+	bool CreatePixelSnapshot(int translation, int flags, FTexturePixelSnapshot &snapshot);
+	static bool ProcessPixelSnapshot(const FTexturePixelSnapshot &snapshot, FTexturePixelResult &result);
+	void ApplyPixelSnapshotResult(const FTexturePixelResult &result);
 
 	void CleanHardwareTextures()
 	{
@@ -405,5 +437,3 @@ public:
 
 #include "gametexture.h"
 #endif
-
-

@@ -16,6 +16,7 @@ class FTexture;
 #include "tarray.h"
 #include "gl_interface.h"
 #include "hw_ihwtexture.h"
+#include "zstring.h"
 
 class FCanvasTexture;
 
@@ -45,15 +46,12 @@ private:
 	unsigned int glBufferID = 0;
 	int glTextureBytes;
 	bool mipmapped = false;
+	FString mFrameGraphResourceName;
 
 	int GetDepthBuffer(int w, int h);
 
 public:
-	FHardwareTexture(int numchannels = 4, bool disablefilter = false)
-	{
-		forcenofilter = disablefilter;
-		glTextureBytes = numchannels;
-	}
+	FHardwareTexture(int numchannels = 4, bool disablefilter = false);
 
 	~FHardwareTexture();
 
@@ -75,6 +73,7 @@ public:
 	}
 
 	int numChannels() { return glTextureBytes; }
+	const char *GetFrameGraphResourceName() const { return mFrameGraphResourceName.GetChars(); }
 };
 
 }

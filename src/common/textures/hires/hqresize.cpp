@@ -423,14 +423,19 @@ static void xbrzOldScale(size_t factor, const uint32_t* src, uint32_t* trg, int 
 
 void FTexture::CreateUpsampledTextureBuffer(FTextureBuffer &texbuffer, bool hasAlpha, bool checkonly)
 {
+	CreateUpsampledTextureBufferForSnapshot(texbuffer, hasAlpha, checkonly,
+		gl_texture_hqresizemode, gl_texture_hqresizemult);
+}
+
+void FTexture::CreateUpsampledTextureBufferForSnapshot(FTextureBuffer &texbuffer,
+	bool hasAlpha, bool checkonly, int type, int mult)
+{
 	// [BB] Make sure that inWidth and inHeight denote the size of
 	// the returned buffer even if we don't upsample the input buffer.
 
 	int inWidth = texbuffer.mWidth;
 	int inHeight = texbuffer.mHeight;
 
-	int type = gl_texture_hqresizemode;
-	int mult = gl_texture_hqresizemult;
 #ifdef HAVE_MMX
 	// hqNx MMX does not preserve the alpha channel so fall back to C-version for such textures
 	if (hasAlpha && type == 3)

@@ -3,28 +3,24 @@
 #include <vector>
 #include <queue>
 #include <memory>
+#include <mutex>
 #include <dispatch/dispatch.h>
+#include "textures.h"
 
-class FTexture;
 class MetalRenderDevice;
 
 /**
  * Async texture loader for Metal renderer using Grand Central Dispatch
  * 
- * Loads texture data on background GCD queues, uploads to GPU on main thread.
+ * Loads texture data on background GCD queues, uploads to GPU on the render thread.
  * Metal requires GPU operations on the main thread, so we:
- * 1. Process texture data (CreateTexBuffer) on background GCD queues
- * 2. Upload to GPU (replaceRegion) on render thread only
+ * 1. Capture source pixels on the render thread
+ * 2. Process the owned snapshot on a background GCD queue
+ * 3. Upload to GPU on the render thread only
  */
 struct TextureLoadTask {
-  FTexture *texSource = nullptr;
-  int translation = 0;
-  int flags = 0;
-  std::vector<uint8_t> pixelData;
-  int width = 0;
-  int height = 0;
-  bool indexed = false;
-  int bytesPerPixel = 0;
+  FTexturePixelSnapshot sourcePixels;
+  FTexturePixelResult result;
   uint32_t taskId = 0;
   bool completed = false;
 };
@@ -57,6 +53,7 @@ private:
   MetalRenderDevice *fb;
   dispatch_queue_t mTextureQueue;  // Background queue for texture processing
   dispatch_group_t mLoadGroup;     // Group to track pending loads
+  mutable std::mutex mCompletedMutex;
   std::vector<TextureLoadTask> mCompletedTasks;
   std::atomic<uint32_t> mNextTaskId = {1};
   mutable std::atomic<size_t> mPendingCount = {0};

@@ -46,11 +46,16 @@
 #include "imagehelpers.h"
 #include "image.h"
 #include "formats/multipatchtexture.h"
+#include "gametexture.h"
 #include "texturemanager.h"
 #include "c_cvars.h"
 #include "imagehelpers.h"
 #include "v_video.h"
 #include "v_font.h"
+#include "r_translate.h"
+
+EXTERN_CVAR(Int, gl_texture_hqresizemode)
+EXTERN_CVAR(Int, gl_texture_hqresizemult)
 
 // Wrappers to keep the definitions of these classes out of here.
 IHardwareTexture* CreateHardwareTexture(int numchannels);
@@ -421,8 +426,415 @@ FTextureBuffer FTexture::CreateTexBuffer(int translation, int flags)
 
 }
 
+bool FTexture::CreatePixelSnapshot(int translation, int flags,
+	FTexturePixelSnapshot &snapshot)
+{
+	if (flags & CTF_CheckOnly)
+		return false;
+
+	snapshot = {};
+	snapshot.width = GetWidth();
+	snapshot.height = GetHeight();
+	snapshot.pixelWidth = snapshot.width;
+	snapshot.pixelHeight = snapshot.height;
+	if (snapshot.width <= 0 || snapshot.height <= 0)
+		return false;
+	snapshot.flags = flags;
+	snapshot.translation = translation;
+	snapshot.indexed = (flags & CTF_Indexed) != 0;
+	snapshot.sourceMasked = Masked;
+	snapshot.sourceTranslucency = bTranslucent;
+	snapshot.sourceAreaCount = areacount;
+	snapshot.hasImage = GetImage() != nullptr;
+	if (snapshot.hasImage)
+		snapshot.imageId = GetImage()->GetId();
+	snapshot.upscaleMode = gl_texture_hqresizemode;
+	snapshot.upscaleMultiplier = gl_texture_hqresizemult;
+
+	if (snapshot.indexed)
+	{
+		auto store = Get8BitPixels(false);
+		if (store.Size() < (size_t)snapshot.width * snapshot.height)
+			return false;
+		snapshot.pitch = snapshot.width;
+		snapshot.clipWidth = snapshot.width;
+		snapshot.clipHeight = snapshot.height;
+		snapshot.pixels.assign(store.Data(), store.Data() +
+			(size_t)snapshot.width * snapshot.height);
+		return true;
+	}
+
+	auto remap = translation <= 0 || IsLuminosityTranslation(translation)
+		? nullptr : GPalette.TranslationToTable(translation);
+	if (remap && remap->Inactive)
+		remap = nullptr;
+	snapshot.remapped = remap != nullptr;
+	if (remap)
+		snapshot.translation = remap->Index;
+	int trans = -1;
+	FBitmap pixels = GetBgraBitmap(remap ? remap->Palette : nullptr, &trans);
+	if (!pixels.GetPixels() || pixels.GetWidth() <= 0 || pixels.GetHeight() <= 0 ||
+		pixels.GetPitch() < pixels.GetWidth() * 4)
+		return false;
+	snapshot.pixelWidth = pixels.GetWidth();
+	snapshot.pixelHeight = pixels.GetHeight();
+	snapshot.pitch = pixels.GetPitch();
+	snapshot.clipX = pixels.GetClipRect().x;
+	snapshot.clipY = pixels.GetClipRect().y;
+	snapshot.clipWidth = pixels.GetClipRect().width;
+	snapshot.clipHeight = pixels.GetClipRect().height;
+	snapshot.sourceTransparency = trans;
+	snapshot.pitch = snapshot.pixelWidth * 4;
+	snapshot.pixels.resize((size_t)snapshot.pitch * snapshot.pixelHeight);
+	for (int y = 0; y < snapshot.pixelHeight; y++)
+		memcpy(snapshot.pixels.data() + (size_t)y * snapshot.pitch,
+			pixels.GetPixels() + (size_t)y * pixels.GetPitch(), snapshot.pitch);
+	return true;
+}
+
+static int FindSnapshotHoles(const uint8_t *buffer, int width, int height,
+	int sourceAreaCount, bool hasImage, std::vector<FloatRect> &areas)
+{
+	if (sourceAreaCount != 0)
+		return sourceAreaCount;
+	int areaCount = -1;
+	if (height > 512 || !hasImage)
+		return areaCount;
+
+	int gaps[5][2];
+	int gapc = 0;
+	int startdraw = -1;
+	int lendraw = 0;
+	for (int y = 0; y < height; y++)
+	{
+		int x = 0;
+		const unsigned char *line = buffer + width * y * 4 + 3;
+		for (; x < width; x++, line += 4)
+			if (*line != 0) break;
+
+		if (x != width)
+		{
+			if (startdraw == -1)
+			{
+				startdraw = y;
+				if (gapc && y <= gaps[gapc - 1][0] + gaps[gapc - 1][1] + 16)
+				{
+					gapc--;
+					startdraw = gaps[gapc][0];
+					lendraw = y - startdraw;
+				}
+				if (gapc == 4)
+					return areaCount;
+			}
+			lendraw++;
+		}
+		else if (startdraw != -1)
+		{
+			if (lendraw == 1) lendraw = 2;
+			gaps[gapc][0] = startdraw;
+			gaps[gapc][1] = lendraw;
+			gapc++;
+			startdraw = -1;
+			lendraw = 0;
+		}
+	}
+	if (startdraw != -1)
+	{
+		gaps[gapc][0] = startdraw;
+		gaps[gapc][1] = lendraw;
+		gapc++;
+	}
+	if (startdraw == 0 && lendraw == height)
+		return areaCount;
+	for (int i = 0; i < gapc; i++)
+		areas.push_back({ -1.0f, (float)gaps[i][0] / height, -1.0f,
+			(float)gaps[i][1] / height });
+	return gapc;
+}
+
+bool FTexture::ProcessPixelSnapshot(const FTexturePixelSnapshot &snapshot,
+	FTexturePixelResult &result)
+{
+	result = {};
+	result.sourceAreaCount = snapshot.sourceAreaCount;
+	result.sourceTranslucency = snapshot.sourceTranslucency;
+	result.translucency = snapshot.sourceTranslucency;
+	result.sourceMasked = snapshot.sourceMasked;
+	result.masked = snapshot.sourceMasked;
+	result.indexed = snapshot.indexed;
+	result.width = snapshot.width;
+	result.height = snapshot.height;
+	result.bytesPerPixel = snapshot.indexed ? 1 : 4;
+
+	if (snapshot.indexed)
+	{
+		if (snapshot.pixels.size() < (size_t)snapshot.width * snapshot.height)
+			return false;
+		result.pixels.resize((size_t)snapshot.width * snapshot.height);
+		ImageHelpers::FlipNonSquareBlock(result.pixels.data(), snapshot.pixels.data(),
+			snapshot.height, snapshot.width, snapshot.height);
+		return true;
+	}
+
+	const bool expand = (snapshot.flags & CTF_Expand) != 0;
+	const int width = snapshot.width + (expand ? 2 : 0);
+	const int height = snapshot.height + (expand ? 2 : 0);
+	if (width <= 0 || height <= 0 || snapshot.pitch <= 0 ||
+		snapshot.pixels.size() < (size_t)snapshot.pitch * snapshot.pixelHeight)
+		return false;
+	const bool fullClip = snapshot.clipX == 0 && snapshot.clipY == 0 &&
+		snapshot.clipWidth == snapshot.pixelWidth && snapshot.clipHeight == snapshot.pixelHeight &&
+		snapshot.pixelWidth == width && snapshot.pixelHeight == height;
+	uint8_t *buffer = nullptr;
+	if (!expand && fullClip)
+	{
+		result.pixels = snapshot.pixels;
+		buffer = result.pixels.data();
+	}
+	else
+	{
+		result.pixels.assign((size_t)width * (height + 1) * 4, 0);
+		FBitmap src(const_cast<uint8_t *>(snapshot.pixels.data()), snapshot.pitch,
+			snapshot.pixelWidth, snapshot.pixelHeight);
+		FClipRect clip{ snapshot.clipX, snapshot.clipY, snapshot.clipWidth, snapshot.clipHeight };
+		src.SetClipRect(clip);
+		FBitmap dst(result.pixels.data(), width * 4, width, height);
+		dst.Blit(expand, expand, src);
+		buffer = result.pixels.data();
+	}
+
+	if (IsLuminosityTranslation(snapshot.translation))
+		V_ApplyLuminosityTranslation(LuminosityTranslationDesc::fromInt(snapshot.translation),
+			buffer, width * height);
+
+	int isTransparent = snapshot.remapped ? 0 : snapshot.sourceTransparency;
+	result.width = width;
+	result.height = height;
+	if (!snapshot.remapped && result.sourceTranslucency == -1)
+	{
+		if (isTransparent == -1)
+		{
+			result.translucency = 0;
+			const uint32_t *pixels = (const uint32_t *)buffer;
+			for (int i = 0; i < width * height; i++)
+			{
+				uint32_t alpha = pixels[i] >> 24;
+				if (alpha != 0xff && alpha != 0)
+				{
+					result.translucency = 1;
+					break;
+				}
+			}
+		}
+		else
+			result.translucency = isTransparent;
+		result.hasTranslucency = true;
+	}
+
+	if (snapshot.hasImage && (snapshot.flags & CTF_ProcessData))
+	{
+		if (snapshot.flags & CTF_Upscale)
+		{
+			FTextureBuffer texbuffer;
+			size_t size = (size_t)width * height * 4;
+			texbuffer.mBuffer = new uint8_t[size];
+			memcpy(texbuffer.mBuffer, buffer, size);
+			texbuffer.mWidth = width;
+			texbuffer.mHeight = height;
+			FContentIdBuilder builder;
+			builder.id = 0;
+			builder.imageID = snapshot.imageId;
+			builder.translation = std::max(0, snapshot.translation);
+			builder.expand = expand;
+			texbuffer.mContentId = builder.id;
+			CreateUpsampledTextureBufferForSnapshot(texbuffer,
+				!snapshot.remapped && result.translucency != 0, false, snapshot.upscaleMode,
+				snapshot.upscaleMultiplier);
+			if (!texbuffer.mBuffer)
+				return false;
+			result.width = texbuffer.mWidth;
+			result.height = texbuffer.mHeight;
+			result.pixels.assign(texbuffer.mBuffer,
+				texbuffer.mBuffer + (size_t)result.width * result.height * 4);
+		}
+		result.hasMasking = snapshot.sourceMasked;
+		if (snapshot.sourceMasked)
+		{
+			result.masked = SmoothEdges(result.pixels.data(), result.width, result.height);
+			if (result.masked && snapshot.sourceAreaCount == 0)
+			{
+				result.hasAreas = true;
+				result.areaCount = FindSnapshotHoles(result.pixels.data(), result.width,
+					result.height, snapshot.sourceAreaCount, snapshot.hasImage, result.areas);
+			}
+		}
+	}
+	return true;
+}
+
+void FTexture::ApplyPixelSnapshotResult(const FTexturePixelResult &result)
+{
+	if (result.hasTranslucency && bTranslucent == result.sourceTranslucency)
+		bTranslucent = result.translucency;
+	if (result.hasMasking && Masked == result.sourceMasked)
+		Masked = result.masked;
+	if (!result.hasAreas || areacount != result.sourceAreaCount)
+		return;
+	areacount = result.areaCount;
+	if (result.areaCount <= 0)
+	{
+		areas = nullptr;
+		return;
+	}
+	areas = (FloatRect *)ImageArena.Alloc(result.areas.size() * sizeof(FloatRect));
+	memcpy(areas, result.areas.data(), result.areas.size() * sizeof(FloatRect));
+}
+
+static bool PixelSnapshotBuffersMatch(const FTextureBuffer &reference,
+	const FTexturePixelResult &snapshot, size_t byteCount, size_t *firstMismatch = nullptr)
+{
+	if (!reference.mBuffer || reference.mWidth != snapshot.width ||
+		reference.mHeight != snapshot.height || snapshot.pixels.size() < byteCount)
+		return false;
+	for (size_t i = 0; i < byteCount; ++i)
+	{
+		if (reference.mBuffer[i] != snapshot.pixels[i])
+		{
+			if (firstMismatch) *firstMismatch = i;
+			return false;
+		}
+	}
+	return true;
+}
+
+class FTexturePixelSnapshotSelfTestState
+{
+	FTexture &texture;
+	bool masked;
+	int8_t translucent;
+	int8_t areaCount;
+	FloatRect *areas;
+
+public:
+	explicit FTexturePixelSnapshotSelfTestState(FTexture &texture)
+		: texture(texture), masked(texture.Masked), translucent(texture.bTranslucent),
+		  areaCount(texture.areacount), areas(texture.areas)
+	{
+	}
+
+	~FTexturePixelSnapshotSelfTestState()
+	{
+		texture.Masked = masked;
+		texture.bTranslucent = translucent;
+		texture.areacount = areaCount;
+		texture.areas = areas;
+	}
+};
+
+// Compare the detached worker result with the established conversion path
+// using the same live FTexture and flags. Keep this explicit-name diagnostic
+// bounded: callers choose the fixtures instead of forcing a full texture scan.
+CCMD(r_texture_snapshot_selftest)
+{
+	if (argv.argc() < 2)
+	{
+		Printf("Usage: r_texture_snapshot_selftest <texture> [texture ...]\n");
+		return;
+	}
+
+	static const int testFlags[] = {
+		CTF_ProcessData,
+		CTF_ProcessData | CTF_Expand,
+		CTF_ProcessData | CTF_Upscale,
+		CTF_ProcessData | CTF_Expand | CTF_Upscale,
+		CTF_ProcessData | CTF_Indexed,
+	};
+	const int iceTranslation = TRANSLATION(TRANSLATION_Standard, STD_Ice).index();
+	FRemapTable *iceRemap = GPalette.TranslationToTable(iceTranslation);
+	if (!iceRemap || iceRemap->Inactive || iceRemap->IsIdentity())
+	{
+		Printf("snapshot self-test: non-identity Ice translation unavailable\n");
+		return;
+	}
+	int comparisons = 0;
+	int failures = 0;
+	bool negativeControlPassed = false;
+
+	for (int arg = 1; arg < argv.argc(); ++arg)
+	{
+		FTextureID id = TexMan.CheckForTexture(argv[arg], ETextureType::Any,
+			TexMan.TEXMAN_TryAny);
+		FGameTexture *gameTexture = TexMan.GetGameTexture(id);
+		FTexture *texture = gameTexture ? gameTexture->GetTexture() : nullptr;
+		if (!id.Exists() || !texture || texture->isHardwareCanvas())
+		{
+			Printf("snapshot self-test: %s: texture not found or unsupported\n", argv[arg]);
+			++failures;
+			continue;
+		}
+
+		// CreateTexBuffer() runs ProcessData(), which mutates mask/translucency
+		// and hole-area metadata. Keep this diagnostic from changing the live
+		// texture's state while comparing conversion outputs.
+		FTexturePixelSnapshotSelfTestState restoreState(*texture);
+		for (int flags : testFlags)
+		{
+			// CTF_Indexed explicitly ignores remaps. Exercise both identity and
+			// non-identity source-pixel paths for every RGBA conversion mode.
+			const int translations[] = { 0, iceTranslation };
+			const int translationCount = (flags & CTF_Indexed) ? 1 : 2;
+			for (int translationIndex = 0; translationIndex < translationCount;
+				++translationIndex)
+			{
+				const int translation = translations[translationIndex];
+				FTexturePixelSnapshot source;
+				FTexturePixelResult processed;
+				if (!texture->CreatePixelSnapshot(translation, flags, source) ||
+					!FTexture::ProcessPixelSnapshot(source, processed))
+				{
+					Printf("snapshot self-test: %s translation=%d flags=0x%x: "
+						"snapshot processing failed\n", argv[arg], translation, flags);
+					++failures;
+					continue;
+				}
+
+				FTextureBuffer reference = texture->CreateTexBuffer(translation, flags);
+				const size_t bytesPerPixel = (flags & CTF_Indexed) ? 1 : 4;
+				const size_t byteCount = (size_t)reference.mWidth * reference.mHeight * bytesPerPixel;
+				size_t mismatch = 0;
+				if (processed.indexed != !!(flags & CTF_Indexed) ||
+					processed.bytesPerPixel != (int)bytesPerPixel ||
+					!PixelSnapshotBuffersMatch(reference, processed, byteCount,
+					&mismatch))
+				{
+					Printf("snapshot self-test: %s translation=%d flags=0x%x: "
+						"mismatch at byte %zu (sync=%dx%d snapshot=%dx%d)\n",
+						argv[arg], translation, flags, mismatch, reference.mWidth,
+						reference.mHeight, processed.width, processed.height);
+					++failures;
+					continue;
+				}
+				++comparisons;
+
+				if (!negativeControlPassed && byteCount > 0)
+				{
+					FTexturePixelResult corrupted = processed;
+					corrupted.pixels[0] ^= 1;
+					negativeControlPassed = !PixelSnapshotBuffersMatch(reference,
+						corrupted, byteCount);
+				}
+			}
+		}
+	}
+
+	bool passed = comparisons > 0 && failures == 0 && negativeControlPassed;
+	Printf("snapshot self-test: %s (%d exact comparisons incl. Ice remap, "
+		"%d failures, one-byte negative control %s)\n", passed ? "PASS" : "FAIL",
+		comparisons, failures, negativeControlPassed ? "detected" : "missed");
+}
+
 //===========================================================================
-// 
+//
 // Dummy texture for the 0-entry.
 //
 //===========================================================================
@@ -573,4 +985,3 @@ FWrapperTexture::FWrapperTexture(int w, int h, int bits)
 	// todo: Initialize here.
 	SystemTextures.AddHardwareTexture(0, false, hwtex);
 }
-

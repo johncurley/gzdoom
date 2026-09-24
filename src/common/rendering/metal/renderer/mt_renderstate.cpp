@@ -42,6 +42,7 @@
 #include "hw_lightbuffer.h"
 #include "hw_skydome.h"
 #include "hw_viewpointuniforms.h"
+#include "hwrenderer/frame/hw_framegraph.h"
 #include "hwrenderer/data/hw_viewpointbuffer.h"
 #include "hwrenderer/data/shaderuniforms.h"
 #include "v_text.h"
@@ -1061,10 +1062,17 @@ void MtRenderState::ApplyMaterial() {
                   blit->endEncoding();
 
                   // CRITICAL: Force synchronization for textures during startup or first frames
+                  cmdBuf->commit();
                   if (gamestate == GS_STARTUP || fb->GetFrameCount() < 100) {
-                      cmdBuf->commit();
                       cmdBuf->waitUntilCompleted();
                   }
+                  cmdBuf->release();
+                  fb->GetTextureManager()->RegisterGraphTexture(
+                      mtlTexture, mtHwTexture->GetFrameGraphResourceName());
+                  fb->Graph().RecordUpload({
+                      mtHwTexture->GetFrameGraphResourceName().c_str(),
+                      "MtRenderState::ApplyMaterial",
+                      FrameGraphPreparation::RenderThread, true, true, true });
                 }
                 fb->RecycleBuffer(staging);
               }

@@ -39,6 +39,7 @@
 
 #include <cstdint>
 #include "tarray.h"
+#include "zstring.h"
 
 class FString;
 
@@ -78,9 +79,31 @@ struct PassDesc
 	TArray<ResourceUse> uses;	// optional backend-observed usage contract
 };
 
+enum class FrameGraphPreparation : uint8_t
+{
+	RenderThread,
+	Worker
+};
+
+// Observation of an upload that the backend has already recorded. These
+// fields describe facts about existing work; they do not submit or synchronize
+// GPU work. stagingRetained means the source remains valid until the backend
+// consumes it (including APIs that synchronously consume client memory).
+struct FrameGraphUploadDesc
+{
+	const char *resource = nullptr;
+	const char *owner = nullptr;
+	FrameGraphPreparation preparation = FrameGraphPreparation::RenderThread;
+	bool stagingRetained = false;
+	bool transferRecorded = false;
+	bool orderedBeforeConsumers = false;
+};
+
 class FrameGraph
 {
 public:
+	// Clears pass/per-frame read data. Committed uploads that have not yet had
+	// a sampled read remain pending across the reset.
 	void Reset();
 
 	// Passes must be added in a legal sequence for now -- see the versioning
@@ -99,6 +122,13 @@ public:
 	// under multiple stable names, such as GL's non-MSAA SceneColor /
 	// PipelineImage[0] alias.
 	void DeclareAlias(const char *name, const char *canonical);
+
+	// Record an already-submitted upload and sampled-resource observations.
+	// Uploads can predate the current frame; they remain pending until a sampled
+	// read is observed. Build() checks the upload facts, and Dump() shows whether
+	// a consumer read followed the upload.
+	void RecordUpload(const FrameGraphUploadDesc &desc);
+	void ObserveResourceRead(const char *name);
 
 	// Builds RAW edges from the declared reads/writes and computes a
 	// deterministic topological order (Kahn's algorithm, ties broken by
@@ -131,7 +161,16 @@ private:
 		int pass = -1;
 		ResourceUse use;
 	};
-
+	struct UploadObservation
+	{
+		FString resource;
+		FString owner;
+		FrameGraphPreparation preparation = FrameGraphPreparation::RenderThread;
+		bool stagingRetained = false;
+		bool transferRecorded = false;
+		bool orderedBeforeConsumers = false;
+		uint64_t sequence = 0;
+	};
 	TArray<PassDesc> mPasses;
 	TArray<const char *> mExternals;
 	struct Alias
@@ -144,10 +183,14 @@ private:
 	TArray<int> mOrder;
 	TArray<uint8_t> mBackendObserved;
 	TArray<ObservedUse> mObservedUses;
+	TArray<UploadObservation> mUploads;
+	TMap<FString, uint64_t> mResourceReads;
+	uint64_t mObservationSequence = 0;
 	int mActivePass = -1;
 
 	const char *CanonicalName(const char *name) const;
 	void BuildEdges(FString *report);
 	bool TopoSort(FString *report);
 	void ValidateUses(FString *report) const;
+	void ValidateUploads(FString *report) const;
 };

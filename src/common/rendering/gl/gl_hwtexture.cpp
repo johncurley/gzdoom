@@ -45,6 +45,8 @@
 #include "gl_renderstate.h"
 #include "gl_samplers.h"
 #include "gl_hwtexture.h"
+#include "hwrenderer/frame/hw_framegraph.h"
+#include <atomic>
 
 namespace OpenGLRenderer
 {
@@ -66,6 +68,15 @@ TexFilter_s TexFilter[] = {
 //
 //===========================================================================
 unsigned int FHardwareTexture::lastbound[FHardwareTexture::MAX_TEXTURES];
+
+static std::atomic<uint64_t> sNextFrameGraphTextureId{1};
+
+FHardwareTexture::FHardwareTexture(int numchannels, bool disablefilter)
+	: forcenofilter(disablefilter), glTextureBytes(numchannels)
+{
+	mFrameGraphResourceName.AppendFormat("GL.Texture.%llu",
+		static_cast<unsigned long long>(sNextFrameGraphTextureId++));
+}
 
 //===========================================================================
 // 
@@ -334,9 +345,15 @@ bool FHardwareTexture::BindOrCreate(FTexture *tex, int texunit, int clampmode, i
 			// could not create texture
 			return false;
 		}
+		if (!tex->isHardwareCanvas() && texbuffer.mBuffer && screen)
+			screen->Graph().RecordUpload({ GetFrameGraphResourceName(),
+				"OpenGL FHardwareTexture::BindOrCreate", FrameGraphPreparation::RenderThread,
+				true, true, true });
 	}
 	if (forcenofilter && clampmode <= CLAMP_XY) clampmode += CLAMP_NOFILTER - CLAMP_NONE;
 	GLRenderer->mSamplerManager->Bind(texunit, clampmode, 255);
+	if (screen)
+		screen->Graph().ObserveResourceRead(GetFrameGraphResourceName());
 	return true;
 }
 

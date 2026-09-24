@@ -2638,4 +2638,3 @@ DEFINE_ACTION_FUNCTION(FLevelLocals, GetEpisodeName)
 	// which should be fine unless cheating.
 	ACTION_RETURN_STRING(GStrings.localize(STAT_EpisodeName().GetChars()));
 }
-

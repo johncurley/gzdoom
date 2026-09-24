@@ -5,6 +5,7 @@
 #include "c_cvars.h"
 #include "filesystem.h" // For ns_graphics
 #include "gamestate.h"
+#include "hwrenderer/frame/hw_framegraph.h"
 #include "hwrenderer/postprocessing/hw_postprocess.h"
 #include "image.h"
 #include "metal/renderer/mt_debug.h"
@@ -20,6 +21,7 @@
 #include "textures.h"
 #include <chrono>
 #include <cmath>
+#include <atomic>
 
 EXTERN_CVAR(Bool, mt_debug)
 EXTERN_CVAR(Int, gl_texture_filter)
@@ -39,12 +41,17 @@ MtTextureImage::~MtTextureImage() {
 }
 
 // MtHardwareTexture
+static std::atomic<uint64_t> sNextGraphTextureId{1};
+
 MtHardwareTexture::MtHardwareTexture(MetalRenderDevice *fb, int numchannels)
     : fb(fb), mNumChannels(numchannels) {
   mImage = std::make_unique<MtTextureImage>(fb);
+  mFrameGraphResourceName = "Metal.Texture." + std::to_string(sNextGraphTextureId++);
 }
 
 MtHardwareTexture::~MtHardwareTexture() {
+  if (fb && fb->GetTextureManager())
+    fb->GetTextureManager()->CancelHardwareTextureLoad(this);
   if (mBackingBuffer) {
     mBackingBuffer->release();
     mBackingBuffer = nullptr;
@@ -86,6 +93,7 @@ void MtHardwareTexture::AllocateBuffer(int w, int h, int texelsize) {
 
     MTL::Texture *texture = fb->device->device->newTexture(desc);
     mImage->SetTexture(texture);
+    fb->GetTextureManager()->RegisterGraphTexture(texture, mFrameGraphResourceName);
     mImage->SetWidth(w);
     mImage->SetHeight(h);
     mImage->SetFormat((int)format);
@@ -202,11 +210,17 @@ unsigned int MtHardwareTexture::CreateTexture(unsigned char *buffer, int w,
           blit->endEncoding();
           cmdBuf->commit();
           cmdBuf->release();
+		  fb->Graph().RecordUpload({ mFrameGraphResourceName.c_str(),
+			  "MtHardwareTexture::CreateTexture", FrameGraphPreparation::RenderThread,
+			  true, true, true });
         }
         fb->RecycleBuffer(staging);
       }
     }
   }
+	if (mImage->GetTexture())
+		fb->GetTextureManager()->RegisterGraphTexture(
+			mImage->GetTexture(), mFrameGraphResourceName);
 
   return 1;
 }
@@ -279,6 +293,8 @@ MtTextureImage *MtHardwareTexture::GetDepthStencil(FCanvasTexture *tex) {
 }
 
 void MtHardwareTexture::Reset() {
+  if (fb && fb->GetTextureManager())
+    fb->GetTextureManager()->CancelHardwareTextureLoad(this);
   if (mImage && mImage->GetTexture()) {
     fb->RecycleTexture(mImage->GetTexture());
     mImage->SetTexture(nullptr);
@@ -292,6 +308,11 @@ void MtHardwareTexture::Reset() {
 }
 
 void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
+  // A synchronous request supersedes any precache still in flight for this
+  // wrapper. Its task remains loader-owned, but must not upload over this one.
+  if (fb && fb->GetTextureManager())
+    fb->GetTextureManager()->CancelHardwareTextureLoad(this);
+
   if (tex) {
     char buf[128];
     const char *lumpName = "";
@@ -344,6 +365,8 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
                 
                 // Mark as filled so the renderer doesn't try to clear it if used as a target
                 static_cast<MtRenderState*>(fb->RenderState())->MarkAsFilled(mImage->GetTexture());
+				fb->GetTextureManager()->RegisterGraphTexture(
+					mImage->GetTexture(), mFrameGraphResourceName);
 
                 if (mImage->GetTexture()->mipmapLevelCount() > 1) {
                     fb->GetTextureManager()->GenerateMipmaps(mImage->GetTexture());
@@ -474,7 +497,7 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
             }
 
             auto cmdBuf = fb->GetCommands()->GetBlitCommandBuffer();
-            if (cmdBuf) {
+                if (cmdBuf) {
                 auto blit = cmdBuf->blitCommandEncoder();
                 blit->copyFromBuffer(staging, 0, alignedPitch, 0,
                                      MTL::Size::Make(expectedW, expectedH, 1), texture, 0,
@@ -485,6 +508,9 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
                 blit->endEncoding();
                 cmdBuf->commit();
                 cmdBuf->release();
+				fb->Graph().RecordUpload({ mFrameGraphResourceName.c_str(),
+					"MtHardwareTexture::CreateImage", FrameGraphPreparation::RenderThread,
+					true, true, true });
             }
             fb->RecycleBuffer(staging);
         }
@@ -498,6 +524,8 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
     }
 
     static_cast<MtRenderState *>(fb->RenderState())->MarkAsFilled(texture);
+	if (texture)
+		fb->GetTextureManager()->RegisterGraphTexture(texture, mFrameGraphResourceName);
     mNeedsUpload = false;
   } else {
     // Hardware canvas (render target) - create empty texture for rendering
@@ -506,6 +534,8 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
 
     if (mImage->GetTexture()) {
       if (mImage->GetWidth() == w && mImage->GetHeight() == h) {
+		fb->GetTextureManager()->RegisterGraphTexture(
+			mImage->GetTexture(), mFrameGraphResourceName);
         return;
       }
       Reset();
@@ -536,6 +566,7 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
     mImage->SetWidth(w);
     mImage->SetHeight(h);
     mImage->SetFormat((int)format);
+	fb->GetTextureManager()->RegisterGraphTexture(texture, mFrameGraphResourceName);
   }
 }
 
@@ -544,11 +575,34 @@ MtTextureManager::MtTextureManager(MetalRenderDevice *fb) : fb(fb) {
   mTextureLoader = std::make_unique<MtTextureLoader>(fb);
 }
 MtTextureManager::~MtTextureManager() {
+  // Hardware-texture wrappers can outlive the device's manager. Clear their
+  // task IDs and remove all raw wrapper pointers before stopping the worker.
+  for (auto &entry : mPendingUploads) {
+    if (entry.second.hwTex)
+      entry.second.hwTex->SetPendingLoadId(0);
+  }
+  mPendingUploads.clear();
   mTextureLoader.reset();
   if (mLightmapStaging) {
     mLightmapStaging->release();
     mLightmapStaging = nullptr;
   }
+}
+
+void MtTextureManager::RegisterGraphTexture(MTL::Texture *texture,
+												const std::string &name) {
+	if (texture && !name.empty())
+		mGraphResourceNames[texture] = name;
+}
+
+void MtTextureManager::ForgetGraphTexture(MTL::Texture *texture) {
+	if (texture)
+		mGraphResourceNames.erase(texture);
+}
+
+const char *MtTextureManager::GetGraphResourceName(MTL::Texture *texture) const {
+	auto it = mGraphResourceNames.find(texture);
+	return it == mGraphResourceNames.end() ? nullptr : it->second.c_str();
 }
 
 void MtTextureManager::SetLightmap(int LMTextureSize, int LMTextureCount,
@@ -729,6 +783,10 @@ static MTL::PixelFormat GetMetalPPTextureFormat(PixelFormat format,
     metalFormat = MTL::PixelFormatR32Float;
     bpp = 4;
     break;
+  case PixelFormat::R16f:
+    metalFormat = MTL::PixelFormatR16Float;
+    bpp = 2;
+    break;
   case PixelFormat::Rg16f:
     metalFormat = MTL::PixelFormatRG16Float;
     bpp = 4;
@@ -860,12 +918,35 @@ void MtTextureManager::QueueHardwareTextureLoad(MtHardwareTexture *hwTex,
                                                 int flags, bool wantMipmap) {
   if (!hwTex || !tex || !mTextureLoader) return;
   if (hwTex->GetPendingLoadId() != 0) return; // already queued
+  // Match the GL/Vulkan precache path: a resident hardware image is already
+  // cached. Content changes clear the FTexture's hardware-texture container,
+  // so a later precache gets a fresh wrapper and queues the required upload.
+  if (hwTex->GetImage()->GetTexture()) return;
 
   uint32_t taskId = mTextureLoader->QueueTextureLoad(tex, translation, flags);
   if (taskId == 0) return;
 
   hwTex->SetPendingLoadId(taskId);
-  mPendingUploads[taskId] = {hwTex, wantMipmap};
+  PendingUpload pending;
+  pending.hwTex = hwTex;
+  pending.wantMipmap = wantMipmap;
+  pending.sourceTexture = tex;
+  mPendingUploads[taskId] = std::move(pending);
+}
+
+void MtTextureManager::CancelHardwareTextureLoad(MtHardwareTexture *hwTex) {
+  if (!hwTex)
+    return;
+
+  // Normally the wrapper's task ID identifies exactly one entry. Scan as
+  // well so a stale/mismatched ID can never leave a dangling raw pointer.
+  for (auto it = mPendingUploads.begin(); it != mPendingUploads.end();) {
+    if (it->second.hwTex == hwTex)
+      it = mPendingUploads.erase(it);
+    else
+      ++it;
+  }
+  hwTex->SetPendingLoadId(0);
 }
 
 void MtTextureManager::ProcessAsyncTextureLoads() {
@@ -881,49 +962,53 @@ void MtTextureManager::ProcessAsyncTextureLoads() {
 
     MtHardwareTexture *hwTex = it->second.hwTex;
     bool wantMipmap = it->second.wantMipmap;
-    mPendingUploads.erase(it);
 
-    if (hwTex && task.completed && !task.pixelData.empty()) {
+    if (task.completed && it->second.sourceTexture.get())
+      it->second.sourceTexture->ApplyPixelSnapshotResult(task.result);
+
+    if (hwTex && task.completed && !task.result.pixels.empty()) {
       PerformAsyncGPUUpload(hwTex, task, wantMipmap);
     }
     if (hwTex) {
       hwTex->SetPendingLoadId(0);
     }
+    mPendingUploads.erase(it);
   }
 }
 
 void MtTextureManager::PerformAsyncGPUUpload(MtHardwareTexture *hwTex,
                                              const TextureLoadTask &task,
                                              bool wantMipmap) {
-  if (!hwTex || task.pixelData.empty() || task.width <= 0 || task.height <= 0)
+  const FTexturePixelResult &result = task.result;
+  if (!hwTex || result.pixels.empty() || result.width <= 0 || result.height <= 0)
     return;
 
   MtTextureImage *image = hwTex->GetImage();
   if (!image) return;
 
   MTL::PixelFormat format =
-      task.indexed ? MTL::PixelFormatR8Unorm : MTL::PixelFormatBGRA8Unorm;
-  int pitch = task.width * task.bytesPerPixel;
+      result.indexed ? MTL::PixelFormatR8Unorm : MTL::PixelFormatBGRA8Unorm;
+  int pitch = result.width * result.bytesPerPixel;
 
   int desiredMipLevels = 1;
-  if (wantMipmap && !task.indexed && task.width > 1 && task.height > 1) {
+  if (wantMipmap && !result.indexed && result.width > 1 && result.height > 1) {
     desiredMipLevels =
-        (int)floor(log2(std::max(task.width, task.height))) + 1;
+        (int)floor(log2(std::max(result.width, result.height))) + 1;
   }
 
   // Reuse existing texture if dimensions and format match; otherwise recreate.
   MTL::Texture *texture = image->GetTexture();
   if (!texture ||
       texture->storageMode() != MTL::StorageModePrivate ||
-      (int)texture->width() != task.width ||
-      (int)texture->height() != task.height ||
+      (int)texture->width() != result.width ||
+      (int)texture->height() != result.height ||
       texture->mipmapLevelCount() != (NS::UInteger)desiredMipLevels) {
     if (texture) {
       fb->RecycleTexture(texture);
     }
     auto desc = MTL::TextureDescriptor::alloc()->init();
-    desc->setWidth(task.width);
-    desc->setHeight(task.height);
+    desc->setWidth(result.width);
+    desc->setHeight(result.height);
     desc->setPixelFormat(format);
     desc->setMipmapLevelCount(desiredMipLevels);
     desc->setStorageMode(MTL::StorageModePrivate);
@@ -933,8 +1018,8 @@ void MtTextureManager::PerformAsyncGPUUpload(MtHardwareTexture *hwTex,
     }
     texture = fb->device->device->newTexture(desc);
     image->SetTexture(texture);
-    image->SetWidth(task.width);
-    image->SetHeight(task.height);
+    image->SetWidth(result.width);
+    image->SetHeight(result.height);
     image->SetFormat((int)format);
     desc->release();
   }
@@ -949,13 +1034,13 @@ void MtTextureManager::PerformAsyncGPUUpload(MtHardwareTexture *hwTex,
   auto uploadStart = std::chrono::high_resolution_clock::now();
 
   size_t alignedPitch = (pitch + 1023) & ~1023;
-  size_t totalSize = alignedPitch * task.height;
+  size_t totalSize = alignedPitch * result.height;
   MTL::Buffer *staging = fb->GetStagingBuffer(totalSize);
   if (!staging) return;
 
   uint8_t *dst = (uint8_t *)staging->contents();
-  const uint8_t *src = task.pixelData.data();
-  for (int y = 0; y < task.height; y++) {
+  const uint8_t *src = result.pixels.data();
+  for (int y = 0; y < result.height; y++) {
     memcpy(dst + y * alignedPitch, src + y * pitch, pitch);
   }
 
@@ -963,7 +1048,7 @@ void MtTextureManager::PerformAsyncGPUUpload(MtHardwareTexture *hwTex,
   if (cmdBuf) {
     auto blit = cmdBuf->blitCommandEncoder();
     blit->copyFromBuffer(staging, 0, alignedPitch, 0,
-                         MTL::Size::Make(task.width, task.height, 1),
+                         MTL::Size::Make(result.width, result.height, 1),
                          texture, 0, 0, MTL::Origin::Make(0, 0, 0));
     if (desiredMipLevels > 1) {
       blit->generateMipmaps(texture);
@@ -971,6 +1056,11 @@ void MtTextureManager::PerformAsyncGPUUpload(MtHardwareTexture *hwTex,
     blit->endEncoding();
     cmdBuf->commit();
     cmdBuf->release();
+	fb->GetTextureManager()->RegisterGraphTexture(
+		texture, hwTex->GetFrameGraphResourceName());
+	fb->Graph().RecordUpload({ hwTex->GetFrameGraphResourceName().c_str(),
+		"MtTextureManager::PerformAsyncGPUUpload", FrameGraphPreparation::Worker,
+		true, true, true });
   }
   fb->RecycleBuffer(staging);
 

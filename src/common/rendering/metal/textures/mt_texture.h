@@ -4,6 +4,7 @@
 #include "hwrenderer/postprocessing/hw_postprocess.h"
 #include "mt_textureloader.h"
 #include <memory>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -65,6 +66,7 @@ public:
   bool NeedsUpload() const { return mNeedsUpload; }
   void SetNeedsUpload(bool needs) { mNeedsUpload = true; }
   const std::string& GetDebugName() const { return mDebugName; }
+  const std::string& GetFrameGraphResourceName() const { return mFrameGraphResourceName; }
   int GetBufferPitch() const { return mBufferPitch; }
   int GetNumChannels() const { return mNumChannels; }
   uint32_t GetPendingLoadId() const { return mPendingLoadId; }
@@ -78,6 +80,7 @@ private:
   MTL::Buffer *mBackingBuffer = nullptr; // For zero-copy dynamic textures
   bool mNeedsUpload = false;
   std::string mDebugName;
+  std::string mFrameGraphResourceName;
   int mBufferPitch = 0;
   uint32_t mPendingLoadId = 0;       // GCD async load task ID
   bool mNeedsAsyncUpload = false;    // Flag: async load completed, needs GPU upload
@@ -107,11 +110,21 @@ public:
   void QueueHardwareTextureLoad(MtHardwareTexture *hwTex, FTexture *tex,
                                 int translation, int flags, bool wantMipmap);
 
+  // Detach a wrapper from any queued/completed task before it is reset,
+  // destroyed, or filled synchronously. The worker owns its pixel snapshot
+  // and may finish; its result will be discarded when drained.
+  void CancelHardwareTextureLoad(MtHardwareTexture *hwTex);
+
   // Process completed async texture loads (call from render thread)
   void ProcessAsyncTextureLoads();
 
   // PP Texture support
   MTL::Texture *GetPPTexture(PPTexture *texture);
+
+  // Map live Metal texture handles to stable, per-hardware-texture graph names.
+  void RegisterGraphTexture(MTL::Texture *texture, const std::string &name);
+  void ForgetGraphTexture(MTL::Texture *texture);
+  const char *GetGraphResourceName(MTL::Texture *texture) const;
 
   // Palette support
   IHardwareTexture *GetPaletteTexture(int translation, bool highlight);
@@ -127,6 +140,7 @@ private:
   struct PendingUpload {
     MtHardwareTexture *hwTex = nullptr;
     bool wantMipmap = false;
+    RefCountedPtr<FTexture> sourceTexture;
   };
 
   void PerformAsyncGPUUpload(MtHardwareTexture *hwTex,
@@ -134,6 +148,7 @@ private:
 
   MetalRenderDevice *fb = nullptr;
   std::unordered_map<PPTexture *, MTL::Texture *> mPPTextures;
+  std::unordered_map<MTL::Texture *, std::string> mGraphResourceNames;
   std::unordered_map<uint32_t, std::unique_ptr<MtHardwareTexture>> mPaletteTextures;
   std::unique_ptr<MtTextureImage> mLightmap;
   MTL::Buffer *mLightmapStaging = nullptr;

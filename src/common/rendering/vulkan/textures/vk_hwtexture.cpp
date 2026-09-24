@@ -35,11 +35,17 @@
 #include "vulkan/renderer/vk_descriptorset.h"
 #include "vulkan/renderer/vk_postprocess.h"
 #include "vulkan/shaders/vk_shader.h"
+#include "hwrenderer/frame/hw_framegraph.h"
 #include "vk_hwtexture.h"
+#include <atomic>
+
+static std::atomic<uint64_t> sNextFrameGraphTextureId{1};
 
 VkHardwareTexture::VkHardwareTexture(VulkanRenderDevice* fb, int numchannels) : fb(fb)
 {
 	mTexelsize = numchannels;
+	mFrameGraphResourceName.AppendFormat("Vulkan.Texture.%llu",
+		static_cast<unsigned long long>(sNextFrameGraphTextureId++));
 	fb->GetTextureManager()->AddTexture(this);
 }
 
@@ -110,6 +116,10 @@ void VkHardwareTexture::CreateImage(FTexture *tex, int translation, int flags)
 		FTextureBuffer texbuffer = tex->CreateTexBuffer(translation, flags | CTF_ProcessData);
 		bool indexed = flags & CTF_Indexed;
 		CreateTexture(texbuffer.mWidth, texbuffer.mHeight,indexed? 1 : 4, indexed? VK_FORMAT_R8_UNORM : VK_FORMAT_B8G8R8A8_UNORM, texbuffer.mBuffer, !indexed);
+		if (texbuffer.mBuffer)
+			fb->Graph().RecordUpload({ GetFrameGraphResourceName(),
+				"Vulkan VkHardwareTexture::CreateImage", FrameGraphPreparation::RenderThread,
+				true, true, true });
 	}
 	else
 	{
@@ -178,7 +188,12 @@ void VkHardwareTexture::CreateTexture(int w, int h, int pixelsize, VkFormat form
 	region.imageExtent.height = h;
 	cmdbuffer->copyBufferToImage(stagingBuffer->buffer, mImage.Image->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
-	if (mipmap) mImage.GenerateMipmaps(cmdbuffer);
+	if (mipmap)
+		mImage.GenerateMipmaps(cmdbuffer);
+	else
+		VkImageTransition()
+			.AddImage(&mImage, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, false)
+			.Execute(cmdbuffer);
 
 	// If we queued more than 64 MB of data already: wait until the uploads finish before continuing
 	fb->GetCommands()->TransferDeleteList->Add(std::move(stagingBuffer));
@@ -337,7 +352,11 @@ VulkanDescriptorSet* VkMaterial::GetDescriptorSet(const FMaterialState& state)
 
 	for (auto& set : mDescriptorSets)
 	{
-		if (set.descriptor && set.clampmode == clampmode && set.remap == translationp) return set.descriptor.get();
+		if (set.descriptor && set.clampmode == clampmode && set.remap == translationp)
+		{
+			ObserveTextureReads(state);
+			return set.descriptor.get();
+		}
 	}
 
 	int numLayers = NumLayers();
@@ -381,6 +400,32 @@ VulkanDescriptorSet* VkMaterial::GetDescriptorSet(const FMaterialState& state)
 	}
 
 	update.Execute(fb->device.get());
+	ObserveTextureReads(state);
 	mDescriptorSets.emplace_back(clampmode, translationp, std::move(descriptor));
 	return mDescriptorSets.back().descriptor.get();
+}
+
+void VkMaterial::ObserveTextureReads(const FMaterialState& state)
+{
+	int numLayers = NumLayers();
+	MaterialLayerInfo *layer;
+	auto systex = static_cast<VkHardwareTexture*>(GetLayer(0, state.mTranslation, &layer));
+	fb->Graph().ObserveResourceRead(systex->GetFrameGraphResourceName());
+
+	if (!(layer->scaleFlags & CTF_Indexed))
+	{
+		for (int i = 1; i < numLayers; i++)
+		{
+			auto syslayer = static_cast<VkHardwareTexture*>(GetLayer(i, 0, &layer));
+			fb->Graph().ObserveResourceRead(syslayer->GetFrameGraphResourceName());
+		}
+	}
+	else
+	{
+		for (int i = 1; i < 3; i++)
+		{
+			auto syslayer = static_cast<VkHardwareTexture*>(GetLayer(i, state.mTranslation, &layer));
+			fb->Graph().ObserveResourceRead(syslayer->GetFrameGraphResourceName());
+		}
+	}
 }

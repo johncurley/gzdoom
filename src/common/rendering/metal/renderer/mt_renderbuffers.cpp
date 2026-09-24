@@ -34,6 +34,10 @@ MtRenderBuffers::MtRenderBuffers(MetalRenderDevice *fb, const char *tag)
     else
       mResNames[i].Format("%s.%s", mTag, kBase[i]);
   }
+  if (strcmp(mTag, "screen") == 0)
+    mShadowMapName = "ShadowMap";
+  else
+    mShadowMapName.Format("%s.ShadowMap", mTag);
 }
 
 MtRenderBuffers::~MtRenderBuffers() {}
@@ -47,6 +51,7 @@ static ResourceFormat ToResourceFormat(MTL::PixelFormat format) {
   switch (format) {
   case MTL::PixelFormatRGBA8Unorm: return ResourceFormat::RGBA8;
   case MTL::PixelFormatBGRA8Unorm: return ResourceFormat::BGRA8;
+  case MTL::PixelFormatR16Float: return ResourceFormat::R16F;
   case MTL::PixelFormatRGBA16Float: return ResourceFormat::RGBA16F;
   case MTL::PixelFormatDepth24Unorm_Stencil8: return ResourceFormat::D24S8;
   case MTL::PixelFormatDepth32Float_Stencil8: return ResourceFormat::D32FS8;
@@ -201,6 +206,9 @@ void MtRenderBuffers::CreateShadowMap() {
   ShadowMap->SetTexture(texture);
   ShadowMap->SetWidth(quality);
   ShadowMap->SetHeight(1024);
+  fb->Resources().Declare({mShadowMapName.GetChars(), "MtRenderBuffers", quality,
+                           1024, 1, ResourceFormat::R32F,
+                           SizeRule{SizeRule::Fixed}, false}, texture);
   desc->release();
 }
 
