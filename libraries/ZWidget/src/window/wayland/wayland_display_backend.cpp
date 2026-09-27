@@ -1,6 +1,7 @@
 #include "wayland_display_backend.h"
 #include "wayland_display_window.h"
 #include "wayland_dynamic.h"
+#include "core/image.h"
 #include "xdg-shell-client-protocol.h"
 #include "xdg-output-unstable-v1-client-protocol.h"
 #include "xdg-foreign-unstable-v2-client-protocol.h"
@@ -20,6 +21,8 @@
 #define wl_fixed_to_int_hack(f) ((f) >> 8)
 #include <cstring>
 #include <stdarg.h>
+#include <new>
+#include <cstdio>
 
 #ifdef USE_DBUS
 #include "window/dbus/dbus_open_file_dialog.h"
@@ -57,6 +60,24 @@
 #undef xkb_state_key_get_utf8
 #define xkb_state_key_get_utf8 WAYLAND->p_xkb_state_key_get_utf8
 #define WAYLAND_wl_fixed_to_double(f) ((double)(f) / 256.0)
+
+struct WaylandCursorBuffer
+{
+	WaylandDisplayBackend* backend = nullptr;
+	wl_buffer* buffer = nullptr;
+	std::shared_ptr<SharedMemHelper> memory;
+	bool released = false;
+	bool attached = false;
+};
+
+static void cursor_buffer_handle_release(void* data, struct wl_buffer* buffer)
+{
+	(void)buffer;
+	auto* cursorBuffer = static_cast<WaylandCursorBuffer*>(data);
+	if (cursorBuffer && cursorBuffer->backend)
+		cursorBuffer->backend->OnCursorBufferReleased(cursorBuffer);
+}
+static const struct wl_buffer_listener cursor_buffer_listener = { cursor_buffer_handle_release };
 
 // Listeners
 static void registry_handle_global(void* data, struct wl_registry* registry, uint32_t name, const char* interface, uint32_t version);
@@ -197,11 +218,23 @@ WaylandDisplayBackend::~WaylandDisplayBackend()
 	if (m_PointerConstraints) zwp_pointer_constraints_v1_destroy(m_PointerConstraints);
 	if (m_RelativePointerManager) zwp_relative_pointer_manager_v1_destroy(m_RelativePointerManager);
 	if (m_XDGWMBase) xdg_wm_base_destroy(m_XDGWMBase);
+	for (auto* cursorBuffer : m_cursorBuffers)
+	{
+		if (cursorBuffer->buffer)
+		{
+			wl_buffer_destroy(cursorBuffer->buffer);
+			cursorBuffer->buffer = nullptr;
+		}
+	}
 	if (m_waylandSHM) wl_shm_destroy(m_waylandSHM);
 	if (m_waylandCompositor) wl_compositor_destroy(m_waylandCompositor);
 	if (m_waylandSeat) wl_seat_destroy(m_waylandSeat);
 	if (s_waylandRegistry) wl_registry_destroy(s_waylandRegistry);
 	if (s_waylandDisplay) wl_display_disconnect(s_waylandDisplay);
+	for (auto* cursorBuffer : m_cursorBuffers)
+		delete cursorBuffer;
+	m_cursorBuffers.clear();
+	m_currentCursorBuffer = nullptr;
 
 	if (m_KeyboardState) WAYLAND->p_xkb_state_unref(m_KeyboardState);
 	if (m_Keymap) WAYLAND->p_xkb_keymap_unref(m_Keymap);
@@ -458,17 +491,195 @@ void WaylandDisplayBackend::OnWindowDestroyed(WaylandDisplayWindow* window)
 	if (m_HoverWindow == window) m_HoverWindow = nullptr;
 }
 
-void WaylandDisplayBackend::SetCursor(StandardCursor cursor)
+void WaylandDisplayBackend::SetCursor(StandardCursor cursor, std::shared_ptr<CustomCursor> custom)
 {
-    // Implementation for cursor setting using wp_cursor_shape_v1 or wl_cursor
+	WaylandCursorBuffer* oldCursorBuffer = m_currentCursorBuffer;
+	m_currentCursorBuffer = nullptr;
+	m_currentCustomCursor.reset();
+	m_obtainedCursor = nullptr;
+	m_cursorImage = nullptr;
+
+	if (oldCursorBuffer && (oldCursorBuffer->released || !oldCursorBuffer->attached))
+		OnCursorBufferReleased(oldCursorBuffer);
+
+	if (m_waylandCompositor && !m_cursorSurface)
+		m_cursorSurface = wl_compositor_create_surface(m_waylandCompositor);
+
+	if (custom && m_waylandSHM && m_cursorSurface)
+	{
+		const auto& frames = custom->GetFrames();
+		if (!frames.empty() && frames.front().FrameImage)
+		{
+			const auto& image = frames.front().FrameImage;
+			const int width = image->GetWidth();
+			const int height = image->GetHeight();
+			const uint8_t* source = static_cast<const uint8_t*>(image->GetData());
+			if (source && width > 0 && height > 0 && width <= 32 && height <= 32)
+			{
+				const int stride = width * 4;
+				const int size = stride * height;
+				try
+				{
+					m_cursorBuffers.reserve(m_cursorBuffers.size() + 1);
+					auto memory = std::make_shared<SharedMemHelper>(size);
+					wl_shm_pool* pool = wl_shm_create_pool(m_waylandSHM, memory->get_fd(), size);
+					if (pool)
+					{
+						wl_buffer* buffer = wl_shm_pool_create_buffer(pool, 0, width, height, stride, WL_SHM_FORMAT_ARGB8888);
+						wl_shm_pool_destroy(pool);
+						if (buffer)
+						{
+							uint32_t* destination = static_cast<uint32_t*>(memory->get_mem());
+							const bool bgra = image->GetFormat() == ImageFormat::B8G8R8A8;
+							for (int i = 0; i < width * height; ++i)
+							{
+								const uint8_t* pixel = source + i * 4;
+								const uint32_t red = bgra ? pixel[2] : pixel[0];
+								const uint32_t green = pixel[1];
+								const uint32_t blue = bgra ? pixel[0] : pixel[2];
+								const uint32_t alpha = pixel[3];
+								destination[i] = (alpha << 24) |
+									((red * alpha / 255) << 16) |
+									((green * alpha / 255) << 8) |
+									(blue * alpha / 255);
+							}
+
+							auto* cursorBuffer = new (std::nothrow) WaylandCursorBuffer{ this, buffer, std::move(memory), false };
+							if (cursorBuffer && wl_buffer_add_listener(buffer, &cursor_buffer_listener, cursorBuffer) == 0)
+							{
+								m_cursorBuffers.push_back(cursorBuffer);
+								m_currentCursorBuffer = cursorBuffer;
+								m_currentCustomCursor = std::move(custom);
+								Point hotspot = m_currentCustomCursor->GetHotspot();
+								m_cursorHotspot.x = std::clamp(std::round(hotspot.x), 0.0, (double)(width - 1));
+								m_cursorHotspot.y = std::clamp(std::round(hotspot.y), 0.0, (double)(height - 1));
+								m_cursorWidth = width;
+								m_cursorHeight = height;
+							}
+							else
+							{
+								delete cursorBuffer;
+								wl_buffer_destroy(buffer);
+							}
+						}
+					}
+				}
+				catch (const std::exception&)
+				{
+					// Fall back to the requested standard cursor if shared memory allocation fails.
+				}
+			}
+		}
+	}
+
+	if (!m_currentCursorBuffer)
+	{
+		auto* wayland = WaylandDynamic::Get();
+		if (m_waylandSHM && wayland->p_cursor_theme_load && wayland->p_cursor_theme_get_cursor &&
+			wayland->p_cursor_image_get_buffer)
+		{
+			if (!m_cursorTheme)
+				m_cursorTheme = wl_cursor_theme_load(nullptr, 32, m_waylandSHM);
+
+			if (m_cursorTheme)
+			{
+				const char* cursorName = "left_ptr";
+				switch (cursor)
+				{
+				case StandardCursor::appstarting: cursorName = "watch"; break;
+				case StandardCursor::cross: cursorName = "crosshair"; break;
+				case StandardCursor::hand: cursorName = "hand2"; break;
+				case StandardCursor::ibeam: cursorName = "xterm"; break;
+				case StandardCursor::no: cursorName = "crossed_circle"; break;
+				case StandardCursor::size_all: cursorName = "fleur"; break;
+				case StandardCursor::size_nesw: cursorName = "size_bdiag"; break;
+				case StandardCursor::size_ns: cursorName = "sb_v_double_arrow"; break;
+				case StandardCursor::size_nwse: cursorName = "size_fdiag"; break;
+				case StandardCursor::size_we: cursorName = "sb_h_double_arrow"; break;
+				case StandardCursor::uparrow: cursorName = "sb_up_arrow"; break;
+				case StandardCursor::wait: cursorName = "watch"; break;
+				case StandardCursor::arrow: break;
+				}
+
+				m_obtainedCursor = wl_cursor_theme_get_cursor(m_cursorTheme, cursorName);
+				if (!m_obtainedCursor && cursor != StandardCursor::arrow)
+					m_obtainedCursor = wl_cursor_theme_get_cursor(m_cursorTheme, "left_ptr");
+				if (m_obtainedCursor && m_obtainedCursor->image_count > 0)
+				{
+					m_cursorImage = m_obtainedCursor->images[0];
+					m_cursorHotspot = Point(m_cursorImage->hotspot_x, m_cursorImage->hotspot_y);
+					m_cursorWidth = m_cursorImage->width;
+					m_cursorHeight = m_cursorImage->height;
+				}
+			}
+		}
+	}
+
+	ApplyCursor();
+}
+
+void WaylandDisplayBackend::OnCursorBufferReleased(WaylandCursorBuffer* cursorBuffer)
+{
+	if (!cursorBuffer)
+		return;
+	cursorBuffer->released = true;
+	if (cursorBuffer == m_currentCursorBuffer)
+		return;
+
+	if (cursorBuffer->buffer)
+	{
+		wl_buffer_destroy(cursorBuffer->buffer);
+		cursorBuffer->buffer = nullptr;
+	}
+	auto it = std::find(m_cursorBuffers.begin(), m_cursorBuffers.end(), cursorBuffer);
+	if (it != m_cursorBuffers.end())
+		m_cursorBuffers.erase(it);
+	delete cursorBuffer;
+}
+
+void WaylandDisplayBackend::ApplyCursor()
+{
+	if (!m_waylandPointer || !m_PointerSerial)
+		return;
+
+	if (!m_CursorVisible)
+	{
+		wl_pointer_set_cursor(m_waylandPointer, m_PointerSerial, nullptr, 0, 0);
+		return;
+	}
+
+	if (!m_cursorSurface)
+		return;
+
+	wl_buffer* buffer = nullptr;
+	if (m_currentCursorBuffer)
+		buffer = m_currentCursorBuffer->buffer;
+	else if (m_cursorImage && m_obtainedCursor)
+	{
+		auto* wayland = WaylandDynamic::Get();
+		if (wayland->p_cursor_image_get_buffer)
+			buffer = wl_cursor_image_get_buffer(m_cursorImage);
+	}
+	if (!buffer)
+		return;
+
+	wl_surface_attach(m_cursorSurface, buffer, 0, 0);
+	wl_surface_damage(m_cursorSurface, 0, 0, m_cursorWidth, m_cursorHeight);
+	wl_surface_commit(m_cursorSurface);
+	if (m_currentCursorBuffer)
+		m_currentCursorBuffer->attached = true;
+	wl_pointer_set_cursor(m_waylandPointer, m_PointerSerial, m_cursorSurface,
+		(int32_t)m_cursorHotspot.x, (int32_t)m_cursorHotspot.y);
 }
 
 void WaylandDisplayBackend::ShowCursor(bool enable)
 {
+	// Remember the requested state even before the compositor has announced a
+	// pointer. pointer_handle_enter() applies this state when it has a serial.
+	m_CursorVisible = enable;
+
 	if (!m_waylandPointer)
 		return;
-
-	m_CursorVisible = enable;
 
 	if (!enable)
 	{
@@ -476,13 +687,11 @@ void WaylandDisplayBackend::ShowCursor(bool enable)
 		// separate hide request. This is what makes the cursor disappear during
 		// mouse-look in a windowed game, where the pointer is locked in place
 		// but would otherwise still be drawn.
-		wl_pointer_set_cursor(m_waylandPointer, m_PointerSerial, nullptr, 0, 0);
+		if (m_PointerSerial)
+			wl_pointer_set_cursor(m_waylandPointer, m_PointerSerial, nullptr, 0, 0);
 	}
-	else if (m_cursorSurface && m_cursorImage)
-	{
-		wl_pointer_set_cursor(m_waylandPointer, m_PointerSerial, m_cursorSurface,
-			m_cursorImage->hotspot_x, m_cursorImage->hotspot_y);
-	}
+	else
+		ApplyCursor();
 }
 
 bool WaylandDisplayBackend::GetKeyState(InputKey key)
@@ -797,6 +1006,7 @@ void pointer_handle_enter(void* data, struct wl_pointer* wl_pointer, uint32_t se
 {
 	WaylandDisplayBackend* backend = (WaylandDisplayBackend*)data;
 	backend->m_PointerSerial = serial;
+	backend->ApplyCursor();
 	for (auto window : backend->s_Windows) {
 		if (window->m_AppSurface == surface) {
 			backend->m_HoverWindow = window;
@@ -808,6 +1018,7 @@ void pointer_handle_enter(void* data, struct wl_pointer* wl_pointer, uint32_t se
 void pointer_handle_leave(void* data, struct wl_pointer* wl_pointer, uint32_t serial, struct wl_surface* surface)
 {
 	WaylandDisplayBackend* backend = (WaylandDisplayBackend*)data;
+	backend->m_PointerSerial = 0;
 	if (backend->m_HoverWindow && backend->m_HoverWindow->m_AppSurface == surface) {
 		backend->m_HoverWindow->windowHost->OnWindowMouseLeave();
 		backend->m_HoverWindow = NULL;
@@ -826,7 +1037,6 @@ void pointer_handle_motion(void* data, struct wl_pointer* wl_pointer, uint32_t t
 void pointer_handle_button(void* data, struct wl_pointer* wl_pointer, uint32_t serial, uint32_t time, uint32_t button, uint32_t state)
 {
 	WaylandDisplayBackend* backend = (WaylandDisplayBackend*)data;
-	backend->m_PointerSerial = serial;
 	InputKey ik = InputKey::None;
 	if (button == 0x110) ik = InputKey::LeftMouse;
 	else if (button == 0x111) ik = InputKey::RightMouse;

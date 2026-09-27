@@ -114,7 +114,9 @@ static void locked_pointer_handle_unlocked(void* data, struct zwp_locked_pointer
 {
 	WaylandDisplayWindow* window = (WaylandDisplayWindow*)data;
 	window->backend->SetMouseLocked(false);
-	window->ShowCursor(true);
+	// The compositor may unlock the pointer without the application ending its
+	// capture request. Keep the requested cursor visibility; UnlockCursor() is
+	// the explicit path that restores it when capture is released.
 }
 static const struct zwp_locked_pointer_v1_listener locked_pointer_listener = { locked_pointer_handle_locked, locked_pointer_handle_unlocked };
 
@@ -339,7 +341,7 @@ void WaylandDisplayWindow::ReleaseMouseCapture()
 
 void WaylandDisplayWindow::Update() { m_NeedsUpdate = true; }
 bool WaylandDisplayWindow::GetKeyState(InputKey key) { return backend->GetKeyState(key); }
-void WaylandDisplayWindow::SetCursor(StandardCursor cursor, std::shared_ptr<CustomCursor> custom) { backend->SetCursor(cursor); }
+void WaylandDisplayWindow::SetCursor(StandardCursor cursor, std::shared_ptr<CustomCursor> custom) { backend->SetCursor(cursor, std::move(custom)); }
 Rect WaylandDisplayWindow::GetClientFrame() const { return Rect(m_WindowGlobalPos.x, m_WindowGlobalPos.y, m_LogicalSize.width, m_LogicalSize.height); }
 Size WaylandDisplayWindow::GetClientSize() const { return m_LogicalSize; }
 int WaylandDisplayWindow::GetPixelWidth() const { return m_WindowSize.width; }

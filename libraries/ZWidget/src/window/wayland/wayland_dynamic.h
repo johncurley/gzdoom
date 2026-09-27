@@ -87,10 +87,10 @@ struct WaylandDynamic
 	PFN_wl_display_create_queue p_display_create_queue;
 	PFN_wl_event_queue_destroy p_event_queue_destroy;
 
-	PFN_wl_cursor_theme_load p_cursor_theme_load;
-	PFN_wl_cursor_theme_destroy p_cursor_theme_destroy;
-	PFN_wl_cursor_theme_get_cursor p_cursor_theme_get_cursor;
-	PFN_wl_cursor_image_get_buffer p_cursor_image_get_buffer;
+	PFN_wl_cursor_theme_load p_cursor_theme_load = nullptr;
+	PFN_wl_cursor_theme_destroy p_cursor_theme_destroy = nullptr;
+	PFN_wl_cursor_theme_get_cursor p_cursor_theme_get_cursor = nullptr;
+	PFN_wl_cursor_image_get_buffer p_cursor_image_get_buffer = nullptr;
 
 	PFN_xkb_context_new p_xkb_context_new;
 	PFN_xkb_context_unref p_xkb_context_unref;

@@ -31,6 +31,64 @@ namespace
 		g_ShmAttachFailed = true;
 		return 0;
 	}
+
+	Cursor CreateCustomCursor(Display* display, const std::shared_ptr<CustomCursor>& cursor)
+	{
+#ifdef HAVE_XCURSOR
+		if (!cursor || cursor->GetFrames().empty())
+			return 0L;
+
+		const auto& frame = cursor->GetFrames().front();
+		if (!frame.FrameImage)
+			return 0L;
+
+		Image* source = frame.FrameImage.get();
+		const int width = source->GetWidth();
+		const int height = source->GetHeight();
+		if (width <= 0 || height <= 0 || width > 32 || height > 32)
+			return 0L;
+
+		auto* xcursor = X11Dynamic::Get();
+		if (!xcursor->p_CursorImageCreate || !xcursor->p_CursorImageDestroy ||
+			!xcursor->p_CursorImageLoadCursor)
+			return 0L;
+
+		XcursorImage* image = xcursor->p_CursorImageCreate(width, height);
+		if (!image)
+			return 0L;
+
+		const uint8_t* pixels = static_cast<const uint8_t*>(source->GetData());
+		if (!pixels)
+		{
+			xcursor->p_CursorImageDestroy(image);
+			return 0L;
+		}
+		const bool bgra = source->GetFormat() == ImageFormat::B8G8R8A8;
+		for (int i = 0; i < width * height; ++i)
+		{
+			const uint8_t* pixel = pixels + i * 4;
+			const uint32_t red = bgra ? pixel[2] : pixel[0];
+			const uint32_t green = pixel[1];
+			const uint32_t blue = bgra ? pixel[0] : pixel[2];
+			const uint32_t alpha = pixel[3];
+			image->pixels[i] = (alpha << 24) |
+				((red * alpha / 255) << 16) |
+				((green * alpha / 255) << 8) |
+				(blue * alpha / 255);
+		}
+
+		Point hotspot = cursor->GetHotspot();
+		image->xhot = (unsigned int)std::clamp((int)std::lround(hotspot.x), 0, width - 1);
+		image->yhot = (unsigned int)std::clamp((int)std::lround(hotspot.y), 0, height - 1);
+		Cursor result = xcursor->p_CursorImageLoadCursor(display, image);
+		xcursor->p_CursorImageDestroy(image);
+		return result;
+#else
+		(void)display;
+		(void)cursor;
+		return 0L;
+#endif
+	}
 }
 
 X11DisplayWindow::X11DisplayWindow(DisplayWindowHost* windowHost, WidgetType windowType, X11DisplayWindow* owner, RenderAPI renderAPI) : windowHost(windowHost), owner(owner)
@@ -169,6 +227,8 @@ X11DisplayWindow::X11DisplayWindow(DisplayWindowHost* windowHost, WidgetType win
 
 X11DisplayWindow::~X11DisplayWindow()
 {
+	if (customCursor != 0L)
+		XFreeCursor(display, customCursor);
 	if (hidden_cursor != 0L)
 	{
 		XFreeCursor(display, hidden_cursor);
@@ -441,17 +501,28 @@ bool X11DisplayWindow::GetKeyState(InputKey key)
 
 void X11DisplayWindow::SetCursor(StandardCursor newcursor, std::shared_ptr<CustomCursor> custom)
 {
-	if (cursor != newcursor)
-	{
-		cursor = newcursor;
-		UpdateCursor();
-	}
+	if (cursor == newcursor && currentCustomCursor == custom)
+		return;
+
+	cursor = newcursor;
+	Cursor newCustomCursor = custom ? CreateCustomCursor(display, custom) : 0L;
+	if (customCursor != 0L)
+		XFreeCursor(display, customCursor);
+	customCursor = newCustomCursor;
+	currentCustomCursor = customCursor ? std::move(custom) : nullptr;
+	UpdateCursor();
 }
 
 void X11DisplayWindow::UpdateCursor()
 {
 	if (isCursorEnabled)
 	{
+		if (customCursor != 0L)
+		{
+			XDefineCursor(display, window, customCursor);
+			return;
+		}
+
 		Cursor& x11cursor = GetX11Connection()->standardCursors[cursor];
 		if (x11cursor == 0L)
 		{

@@ -106,6 +106,8 @@ private:
 	Colormap colormap = {};
 	XIC xic = nullptr;
 	StandardCursor cursor = {};
+	Cursor customCursor = 0L;
+	std::shared_ptr<CustomCursor> currentCustomCursor;
 	bool isCursorEnabled = true;
 	bool isMapped = false;
 	// Activation requested before the window was mapped; discharged by Show().

@@ -8,6 +8,9 @@
 #include <X11/XKBlib.h>
 #include <X11/extensions/XInput2.h>
 #include <X11/extensions/XShm.h>
+#ifdef HAVE_XCURSOR
+#include <X11/Xcursor/Xcursor.h>
+#endif
 #include <dlfcn.h>
 #include <stdexcept>
 
@@ -95,6 +98,11 @@ struct X11Dynamic
 	typedef Bool (*PFN_XShmDetach)(Display*, XShmSegmentInfo*);
 	typedef Bool (*PFN_XShmPutImage)(Display*, Drawable, GC, XImage*, int, int, int, int, unsigned int, unsigned int, Bool);
 	typedef XImage* (*PFN_XShmCreateImage)(Display*, Visual*, unsigned int, int, char*, XShmSegmentInfo*, unsigned int, unsigned int);
+#ifdef HAVE_XCURSOR
+	typedef XcursorImage* (*PFN_XcursorImageCreate)(int, int);
+	typedef void (*PFN_XcursorImageDestroy)(XcursorImage*);
+	typedef Cursor (*PFN_XcursorImageLoadCursor)(Display*, const XcursorImage*);
+#endif
 
 	PFN_XOpenDisplay p_OpenDisplay;
 	PFN_XCloseDisplay p_CloseDisplay;
@@ -185,6 +193,11 @@ struct X11Dynamic
 	PFN_XShmDetach p_ShmDetach;
 	PFN_XShmPutImage p_ShmPutImage;
 	PFN_XShmCreateImage p_ShmCreateImage;
+#ifdef HAVE_XCURSOR
+	PFN_XcursorImageCreate p_CursorImageCreate = nullptr;
+	PFN_XcursorImageDestroy p_CursorImageDestroy = nullptr;
+	PFN_XcursorImageLoadCursor p_CursorImageLoadCursor = nullptr;
+#endif
 
 	static X11Dynamic* Get()
 	{
@@ -298,5 +311,15 @@ private:
 			p_ShmCreateImage = (PFN_XShmCreateImage)dlsym(xext, "XShmCreateImage");
 			HasShm = p_ShmQueryExtension && p_ShmAttach && p_ShmDetach && p_ShmPutImage && p_ShmCreateImage;
 		}
+
+#ifdef HAVE_XCURSOR
+		void* xcursor = dlopen("libXcursor.so.1", RTLD_NOW | RTLD_GLOBAL);
+		if (xcursor)
+		{
+			p_CursorImageCreate = (PFN_XcursorImageCreate)dlsym(xcursor, "XcursorImageCreate");
+			p_CursorImageDestroy = (PFN_XcursorImageDestroy)dlsym(xcursor, "XcursorImageDestroy");
+			p_CursorImageLoadCursor = (PFN_XcursorImageLoadCursor)dlsym(xcursor, "XcursorImageLoadCursor");
+		}
+#endif
 	}
 };
