@@ -105,8 +105,14 @@ private:
 	Colormap colormap = {};
 	XIC xic = nullptr;
 	StandardCursor cursor = {};
+	Cursor customCursor = 0L;
+	std::shared_ptr<CustomCursor> currentCustomCursor;
 	bool isCursorEnabled = true;
 	bool isMapped = false;
+	// Activation requested before the window was mapped; discharged by Show().
+	bool pendingActivate = false;
+
+	bool IsWindowViewable();
 	bool isMinimized = false;
 	bool isFullscreen = false;
 	double dpiScale = 1.0;
@@ -119,6 +125,7 @@ private:
 		int LastX = -1;
 		int LastY = -1;
 		bool Focused = false;
+		bool KeyboardLocked = false;
 	} RawInput;
 
 	Pixmap cursor_bitmap = 0L;

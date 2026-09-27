@@ -27,6 +27,7 @@ if (UNIX AND NOT APPLE)
 	pkg_check_modules(XKBCOMMON xkbcommon>=0.5.0)
 	pkg_check_modules(GLIB glib-2.0)
 	pkg_check_modules(FONTCONFIG fontconfig)
+	find_path(XCURSOR_INCLUDE_DIR X11/Xcursor/Xcursor.h)
 endif()
 
 # SDL3 finding stuff
@@ -375,6 +376,10 @@ else()
 	set(ZWIDGET_LIBS ${CMAKE_DL_LIBS})
 	set(ZWIDGET_DEFINES -DUNIX -D_UNIX -DUSE_X11)
 	set(ZWIDGET_LINK_OPTIONS -pthread)
+	if (XCURSOR_INCLUDE_DIR)
+		set(ZWIDGET_INCLUDE_DIRS ${ZWIDGET_INCLUDE_DIRS} ${XCURSOR_INCLUDE_DIR})
+		set(ZWIDGET_DEFINES ${ZWIDGET_DEFINES} -DHAVE_XCURSOR)
+	endif()
 
 	if (DBUS_FOUND)
 		include_directories("/usr/lib64/dbus-1.0/include") # Bazzite (and probably Fedora 42) keeps the platform-specific dbus headers in this folder

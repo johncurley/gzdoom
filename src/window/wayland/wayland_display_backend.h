@@ -8,6 +8,8 @@
 #include <poll.h>
 #include <map>
 #include <set>
+#include <memory>
+#include <vector>
 #include <xkbcommon/xkbcommon.h>
 
 // Forward declarations for Wayland C types (proxies)
@@ -95,6 +97,8 @@ public:
 };
 
 class WaylandDisplayWindow;
+class SharedMemHelper;
+struct WaylandCursorBuffer;
 
 class WaylandDisplayBackend : public DisplayBackend
 {
@@ -117,12 +121,15 @@ public:
 	void OnWindowCreated(WaylandDisplayWindow* window);
 	void OnWindowDestroyed(WaylandDisplayWindow* window);
 
-	void SetCursor(StandardCursor cursor);
+	void SetCursor(StandardCursor cursor, std::shared_ptr<CustomCursor> custom);
 	void ShowCursor(bool enable);
+	void ApplyCursor();
+	void OnCursorBufferReleased(WaylandCursorBuffer* cursorBuffer);
 	bool GetKeyState(InputKey key);
 
 	std::string GetClipboardText();
 	void SetClipboardText(const std::string& text);
+	void EnsureDataDevice();
 
 	struct wl_data_device* GetDataDevice() { return m_DataDevice; }
 	uint32_t GetKeyboardSerial() const { return m_KeyboardSerial; }
@@ -175,6 +182,12 @@ public:
 	struct wl_cursor_image* m_cursorImage = nullptr;
 	struct wl_surface* m_cursorSurface = nullptr;
 	struct wl_buffer* m_cursorBuffer = nullptr;
+	std::shared_ptr<CustomCursor> m_currentCustomCursor;
+	WaylandCursorBuffer* m_currentCursorBuffer = nullptr;
+	std::vector<WaylandCursorBuffer*> m_cursorBuffers;
+	Point m_cursorHotspot = Point(0, 0);
+	int m_cursorWidth = 0;
+	int m_cursorHeight = 0;
 	bool m_CursorVisible = true;
 
 	std::map<InputKey, bool> inputKeyStates; // True when the key is pressed, false when isn't
@@ -239,6 +252,7 @@ public:
 
 	uint32_t m_KeyboardSerial = 0;
 	uint32_t m_MouseSerial = 0;
+	// Only the latest wl_pointer.enter serial is valid for wl_pointer.set_cursor.
 	uint32_t m_PointerSerial = 0;
 
 	xkb_context* m_KeymapContext = nullptr;

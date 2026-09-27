@@ -12,6 +12,66 @@
 #include <dlfcn.h>
 #include <unistd.h>
 #include <iostream>
+namespace
+{
+	Cursor CreateCustomCursor(Display* display, const std::shared_ptr<CustomCursor>& cursor)
+	{
+#ifdef HAVE_XCURSOR
+		if (!cursor || cursor->GetFrames().empty())
+			return 0L;
+
+		const auto& frame = cursor->GetFrames().front();
+		if (!frame.FrameImage)
+			return 0L;
+
+		Image* source = frame.FrameImage.get();
+		const int width = source->GetWidth();
+		const int height = source->GetHeight();
+		if (width <= 0 || height <= 0 || width > 32 || height > 32)
+			return 0L;
+
+		auto* xcursor = X11Dynamic::Get();
+		if (!xcursor->p_CursorImageCreate || !xcursor->p_CursorImageDestroy ||
+			!xcursor->p_CursorImageLoadCursor)
+			return 0L;
+
+		XcursorImage* image = xcursor->p_CursorImageCreate(width, height);
+		if (!image)
+			return 0L;
+
+		const uint8_t* pixels = static_cast<const uint8_t*>(source->GetData());
+		if (!pixels)
+		{
+			xcursor->p_CursorImageDestroy(image);
+			return 0L;
+		}
+		const bool bgra = source->GetFormat() == ImageFormat::B8G8R8A8;
+		for (int i = 0; i < width * height; ++i)
+		{
+			const uint8_t* pixel = pixels + i * 4;
+			const uint32_t red = bgra ? pixel[2] : pixel[0];
+			const uint32_t green = pixel[1];
+			const uint32_t blue = bgra ? pixel[0] : pixel[2];
+			const uint32_t alpha = pixel[3];
+			image->pixels[i] = (alpha << 24) |
+				((red * alpha / 255) << 16) |
+				((green * alpha / 255) << 8) |
+				(blue * alpha / 255);
+		}
+
+		Point hotspot = cursor->GetHotspot();
+		image->xhot = (unsigned int)std::clamp((int)std::lround(hotspot.x), 0, width - 1);
+		image->yhot = (unsigned int)std::clamp((int)std::lround(hotspot.y), 0, height - 1);
+		Cursor result = xcursor->p_CursorImageLoadCursor(display, image);
+		xcursor->p_CursorImageDestroy(image);
+		return result;
+#else
+		(void)display;
+		(void)cursor;
+		return 0L;
+#endif
+	}
+}
 
 X11DisplayWindow::X11DisplayWindow(DisplayWindowHost* windowHost, WidgetType windowType, X11DisplayWindow* owner, RenderAPI renderAPI) : windowHost(windowHost), owner(owner)
 {
@@ -149,6 +209,8 @@ X11DisplayWindow::X11DisplayWindow(DisplayWindowHost* windowHost, WidgetType win
 
 X11DisplayWindow::~X11DisplayWindow()
 {
+	if (customCursor != 0L)
+		XFreeCursor(display, customCursor);
 	if (hidden_cursor != 0L)
 	{
 		XFreeCursor(display, hidden_cursor);
@@ -254,6 +316,13 @@ void X11DisplayWindow::Show()
 		XMapRaised(display, window);
 		isMapped = true;
 	}
+
+	// Discharge an activation requested before the window existed on screen.
+	if (pendingActivate)
+	{
+		pendingActivate = false;
+		Activate();
+	}
 }
 
 void X11DisplayWindow::ShowFullscreen()
@@ -304,8 +373,37 @@ void X11DisplayWindow::Hide()
 	}
 }
 
+// XSetInputFocus fails with BadMatch if the focus window is not viewable when
+// the server processes the request, and Xlib's default error handler responds
+// to that by printing and calling exit(1) -- so an unguarded focus of an
+// unmapped window is a hard crash, not a warning.
+//
+// This is also a synchronisation point: XGetWindowAttributes is a round trip,
+// so any map request issued earlier is guaranteed to have been processed by
+// the time it returns.
+bool X11DisplayWindow::IsWindowViewable()
+{
+	XWindowAttributes attr = {};
+	if (!XGetWindowAttributes(display, window, &attr))
+		return false;
+	return attr.map_state == IsViewable;
+}
+
 void X11DisplayWindow::Activate()
 {
+	// Activating a window that has not been mapped yet cannot work at either
+	// site: the EWMH ClientMessage asks the window manager to activate
+	// something it cannot see, and the fallback would fault. Remember the
+	// intent and discharge it from Show().
+	//
+	// This is the normal ordering, not a rare race -- LauncherWindow's
+	// constructor takes focus before ExecModal ever calls Show().
+	if (!isMapped)
+	{
+		pendingActivate = true;
+		return;
+	}
+
 	auto connection = GetX11Connection();
 	Atom activeAtom = connection->GetAtom("_NET_ACTIVE_WINDOW");
 	if (activeAtom != 0L)
@@ -324,7 +422,8 @@ void X11DisplayWindow::Activate()
 	else
 	{
 		XRaiseWindow(display, window);
-		XSetInputFocus(display, window, RevertToParent, CurrentTime);
+		if (IsWindowViewable())
+			XSetInputFocus(display, window, RevertToParent, CurrentTime);
 	}
 }
 
@@ -339,11 +438,12 @@ void X11DisplayWindow::ShowCursor(bool enable)
 
 void X11DisplayWindow::LockKeyboard()
 {
-	// Enables raw keyboard scancode events (OnRawKeyboard should be called for keyboard input)
+	RawInput.KeyboardLocked = true;
 }
 
 void X11DisplayWindow::UnlockKeyboard()
 {
+	RawInput.KeyboardLocked = false;
 }
 
 void X11DisplayWindow::LockCursor()
@@ -383,17 +483,28 @@ bool X11DisplayWindow::GetKeyState(InputKey key)
 
 void X11DisplayWindow::SetCursor(StandardCursor newcursor, std::shared_ptr<CustomCursor> custom)
 {
-	if (cursor != newcursor)
-	{
-		cursor = newcursor;
-		UpdateCursor();
-	}
+	if (cursor == newcursor && currentCustomCursor == custom)
+		return;
+
+	cursor = newcursor;
+	Cursor newCustomCursor = custom ? CreateCustomCursor(display, custom) : 0L;
+	if (customCursor != 0L)
+		XFreeCursor(display, customCursor);
+	customCursor = newCustomCursor;
+	currentCustomCursor = customCursor ? std::move(custom) : nullptr;
+	UpdateCursor();
 }
 
 void X11DisplayWindow::UpdateCursor()
 {
 	if (isCursorEnabled)
 	{
+		if (customCursor != 0L)
+		{
+			XDefineCursor(display, window, customCursor);
+			return;
+		}
+
 		Cursor& x11cursor = GetX11Connection()->standardCursors[cursor];
 		if (x11cursor == 0L)
 		{
@@ -732,9 +843,13 @@ void X11DisplayWindow::OnClientMessage(XEvent* event)
 		}
 		else if (takeFocusAtom != 0L && protocol == takeFocusAtom)
 		{
-			// ICCCM Locally Active input model: WM asks us to take focus
+			// ICCCM Locally Active input model: WM asks us to take focus.
+			// Keep the timestamp the WM supplied -- replacing it with
+			// CurrentTime changes the input model -- but do not focus a
+			// target that cannot legally take focus.
 			Time timestamp = event->xclient.data.l[1];
-			XSetInputFocus(display, window, RevertToParent, timestamp);
+			if (IsWindowViewable())
+				XSetInputFocus(display, window, RevertToParent, timestamp);
 		}
 		else if (pingAtom != 0L && protocol == pingAtom)
 		{
@@ -1040,7 +1155,20 @@ void X11DisplayWindow::OnMotionNotify(XEvent* event)
 bool X11DisplayWindow::OnXInputEvent(XEvent* event)
 {
 	// This API is so horrible it makes Win32 look attractive!
-	if (event->xcookie.evtype == XI_ButtonPress || event->xcookie.evtype == XI_ButtonRelease)
+	if ((event->xcookie.evtype == XI_RawKeyPress || event->xcookie.evtype == XI_RawKeyRelease) &&
+		RawInput.KeyboardLocked && RawInput.Focused)
+	{
+		auto rawEvent = (XIRawEvent*)event->xcookie.data;
+		// X11 keycodes are the evdev scancode plus 8, matching Wayland's
+		// key + 8 input. RawKeycode uses the underlying evdev value.
+		if (rawEvent->detail < 8)
+			return false;
+
+		windowHost->OnWindowRawKey((RawKeycode)(rawEvent->detail - 8),
+			event->xcookie.evtype == XI_RawKeyPress);
+		return true;
+	}
+	else if (event->xcookie.evtype == XI_ButtonPress || event->xcookie.evtype == XI_ButtonRelease)
 	{
 		auto deviceEvent = (XIDeviceEvent*)event->xcookie.data;
 		if (deviceEvent->event != window)

@@ -7,6 +7,9 @@
 #include <X11/keysymdef.h>
 #include <X11/XKBlib.h>
 #include <X11/extensions/XInput2.h>
+#ifdef HAVE_XCURSOR
+#include <X11/Xcursor/Xcursor.h>
+#endif
 #include <dlfcn.h>
 #include <stdexcept>
 
@@ -88,6 +91,11 @@ struct X11Dynamic
 	typedef int (*PFN_XGrabPointer)(Display*, Window, Bool, unsigned int, int, int, Window, Cursor, Time);
 	typedef int (*PFN_XUngrabPointer)(Display*, Time);
 	typedef int (*PFN_XWarpPointer)(Display*, Window, Window, int, int, unsigned int, unsigned int, int, int);
+#ifdef HAVE_XCURSOR
+	typedef XcursorImage* (*PFN_XcursorImageCreate)(int, int);
+	typedef void (*PFN_XcursorImageDestroy)(XcursorImage*);
+	typedef Cursor (*PFN_XcursorImageLoadCursor)(Display*, const XcursorImage*);
+#endif
 
 	PFN_XOpenDisplay p_OpenDisplay;
 	PFN_XCloseDisplay p_CloseDisplay;
@@ -165,6 +173,11 @@ struct X11Dynamic
 	PFN_XGrabPointer p_GrabPointer;
 	PFN_XUngrabPointer p_UngrabPointer;
 	PFN_XWarpPointer p_WarpPointer;
+#ifdef HAVE_XCURSOR
+	PFN_XcursorImageCreate p_CursorImageCreate = nullptr;
+	PFN_XcursorImageDestroy p_CursorImageDestroy = nullptr;
+	PFN_XcursorImageLoadCursor p_CursorImageLoadCursor = nullptr;
+#endif
 
 	static X11Dynamic* Get()
 	{
@@ -266,5 +279,14 @@ private:
 			p_IFreeDeviceInfo = (PFN_XIFreeDeviceInfo)dlsym(xi, "XIFreeDeviceInfo");
 			p_ISelectEvents = (PFN_XISelectEvents)dlsym(xi, "XISelectEvents");
 		}
+#ifdef HAVE_XCURSOR
+		void* xcursor = dlopen("libXcursor.so.1", RTLD_NOW | RTLD_GLOBAL);
+		if (xcursor)
+		{
+			p_CursorImageCreate = (PFN_XcursorImageCreate)dlsym(xcursor, "XcursorImageCreate");
+			p_CursorImageDestroy = (PFN_XcursorImageDestroy)dlsym(xcursor, "XcursorImageDestroy");
+			p_CursorImageLoadCursor = (PFN_XcursorImageLoadCursor)dlsym(xcursor, "XcursorImageLoadCursor");
+		}
+#endif
 	}
 };

@@ -23,6 +23,22 @@ static void xdg_surface_handle_configure(void* data, struct xdg_surface* xdg_sur
 {
 	WaylandDisplayWindow* window = (WaylandDisplayWindow*)data;
 	xdg_surface_ack_configure(xdg_surface, serial);
+
+	// xdg-shell requires a buffer to be attached and committed after this ack;
+	// until that happens the compositor has nothing to show. Ask for a paint
+	// unconditionally here, because the toplevel configure cannot be relied on
+	// to do it: it only requests one when it is given a non-zero size, and the
+	// FIRST configure a compositor sends is normally 0x0 -- that is how it tells
+	// the client to pick its own size. KWin does exactly this, so the launcher
+	// came up blank and stayed blank until some unrelated event (moving the
+	// pointer over it) happened to set m_NeedsUpdate again.
+	//
+	// m_NeedsUpdate starts true, but the run loop consumes it on its first pass,
+	// which can come before this handshake completes -- DrawSurface() then
+	// returns early because no buffer exists yet, and the flag has already been
+	// cleared. Setting it here means every configure, initial or later, is
+	// followed by a paint.
+	window->m_NeedsUpdate = true;
 }
 static const struct xdg_surface_listener xdg_surface_listener = { xdg_surface_handle_configure };
 
@@ -98,7 +114,9 @@ static void locked_pointer_handle_unlocked(void* data, struct zwp_locked_pointer
 {
 	WaylandDisplayWindow* window = (WaylandDisplayWindow*)data;
 	window->backend->SetMouseLocked(false);
-	window->ShowCursor(true);
+	// The compositor may unlock the pointer without the application ending its
+	// capture request. Keep the requested cursor visibility; UnlockCursor() is
+	// the explicit path that restores it when capture is released.
 }
 static const struct zwp_locked_pointer_v1_listener locked_pointer_listener = { locked_pointer_handle_locked, locked_pointer_handle_unlocked };
 
@@ -323,7 +341,7 @@ void WaylandDisplayWindow::ReleaseMouseCapture()
 
 void WaylandDisplayWindow::Update() { m_NeedsUpdate = true; }
 bool WaylandDisplayWindow::GetKeyState(InputKey key) { return backend->GetKeyState(key); }
-void WaylandDisplayWindow::SetCursor(StandardCursor cursor, std::shared_ptr<CustomCursor> custom) { backend->SetCursor(cursor); }
+void WaylandDisplayWindow::SetCursor(StandardCursor cursor, std::shared_ptr<CustomCursor> custom) { backend->SetCursor(cursor, std::move(custom)); }
 Rect WaylandDisplayWindow::GetClientFrame() const { return Rect(m_WindowGlobalPos.x, m_WindowGlobalPos.y, m_LogicalSize.width, m_LogicalSize.height); }
 Size WaylandDisplayWindow::GetClientSize() const { return m_LogicalSize; }
 int WaylandDisplayWindow::GetPixelWidth() const { return m_WindowSize.width; }

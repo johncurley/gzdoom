@@ -81,12 +81,73 @@ void CocoaDisplayBackend::ProcessEvents()
 
 void CocoaDisplayBackend::RunLoop()
 {
+    ExitRunLoop = false;
+
+    // [NSApp run] cannot be nested. An application that starts AppKit itself
+    // and then opens a ZWidget modal window from inside that run loop would
+    // re-enter here. AppKit does not support that: the window is created and
+    // drawn, but events keep going to the outer loop, so the modal window renders
+    // and then ignores all input.
+    //
+    // When someone else already owns the run loop, pump events ourselves
+    // instead. distantFuture blocks rather than spins; ExitLoop()'s wake event
+    // breaks us out.
+    if ([NSApp isRunning])
+    {
+        while (!ExitRunLoop)
+        {
+            @autoreleasepool
+            {
+                NSEvent* event = [NSApp nextEventMatchingMask:NSEventMaskAny
+                                                    untilDate:[NSDate distantFuture]
+                                                       inMode:NSDefaultRunLoopMode
+                                                      dequeue:YES];
+                if (event)
+                    [NSApp sendEvent:event];
+            }
+        }
+        return;
+    }
+
+    StartedRunLoop = true;
     [NSApp run];
+    StartedRunLoop = false;
+}
+
+void CocoaDisplayBackend::RunModalLoop(DisplayWindow* modal)
+{
+    // The canonical AppKit modal loop. Unlike the manual pump in RunLoop(), this
+    // maintains a real modal session -- AppKit disables the application's other
+    // windows for its duration and nests correctly inside a host's own run loop,
+    // which is what a multi-window host (an editor with a document window behind
+    // a dialog) requires. RunLoop()'s pump merely delivers events, so a host
+    // like that would keep accepting clicks on the window behind the modal.
+    auto* cocoaWindow = static_cast<CocoaDisplayWindow*>(modal);
+    NSWindow* nsWindow = cocoaWindow ? (__bridge NSWindow*)cocoaWindow->GetNSWindow() : nil;
+    if (!nsWindow)
+    {
+        // No window to be modal for -- fall back rather than fail.
+        RunLoop();
+        return;
+    }
+
+    ExitRunLoop = false;
+    InModalSession = true;
+    [NSApp runModalForWindow:nsWindow];
+    InModalSession = false;
 }
 
 void CocoaDisplayBackend::ExitLoop()
 {
-    [NSApp stop:nil];
+    ExitRunLoop = true;
+
+    // Three terminations, and using the wrong one is destructive: stopModal on a
+    // non-modal loop does nothing, while stop: on a host application's run loop
+    // would terminate the host rather than the modal window.
+    if (InModalSession)
+        [NSApp stopModal];
+    else if (StartedRunLoop)
+        [NSApp stop:nil];
 
     // Post a dummy event to wake up the event loop so stop: takes effect
     NSEvent* event = [NSEvent otherEventWithType:NSEventTypeApplicationDefined

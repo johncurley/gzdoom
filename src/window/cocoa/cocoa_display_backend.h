@@ -12,6 +12,7 @@ public:
 
     void ProcessEvents() override;
     void RunLoop() override;
+    void RunModalLoop(DisplayWindow* modal) override;
     void ExitLoop() override;
     
     bool IsCocoa() override { return true; }
@@ -26,4 +27,18 @@ public:
     std::unique_ptr<OpenFolderDialog> CreateOpenFolderDialog(DisplayWindow* owner) override;
 
     static std::unique_ptr<DisplayBackend> TryCreateCocoa();
+
+private:
+    // RunLoop() has to cope with being called while the host application is
+    // already inside [NSApp run] -- see the comment on RunLoop(). ExitRunLoop
+    // ends the manual pump used in that case; StartedRunLoop records whether
+    // this backend owns the run loop, so ExitLoop() only stops a loop it
+    // started and never tears down the host's.
+    bool ExitRunLoop = false;
+    bool StartedRunLoop = false;
+    // Set while inside -[NSApplication runModalForWindow:]. ExitLoop has three
+    // cases now and they need different terminations: a modal session ends with
+    // stopModal, a loop this backend started ends with stop:, and a manual pump
+    // ends by flipping ExitRunLoop.
+    bool InModalSession = false;
 };
