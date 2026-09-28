@@ -31,9 +31,23 @@ the persistent `Exposure.Camera`, are also represented as read/write. The
 missing previous-frame `Exposure.Camera` external boundary found during the
 first GL run was added before the final captures. Logs are in
 `/tmp/gzdoom-framegraph-{gl,vulkan}-attachment-fix.log` on the Linux machine.
-This confirms one enabled-effects live path only; postprocess-disabled and
-other conditional configurations still need coverage. No GPU execution or
-rendering order changed.
+These captures confirm the enabled-effects path. No GPU execution or rendering
+order changed.
+
+The conditional Linux coverage was completed immediately afterward on the
+same machine, WAD, map, resolution, and Wayland session. Each run issued
+`r_framegraph` and `r_resources` after 240 and 250 frames, then quit at 260:
+
+| Configuration | GL | Vulkan | Graph result |
+| --- | ---: | ---: | --- |
+| All listed effects disabled | 4 passes / 4 edges | 5 / 5 | No candidates or errors |
+| SSAO 3 only | 9 / 13 | 10 / 14 | Five `ssao.*` passes present; no candidates or errors |
+| Bloom + tonemap + FXAA, SSAO/lens off | 40 / 42 | 41 / 43 | SSAO absent; no candidates or errors |
+
+Vulkan's one extra pass and edge in each configuration are its explicit scene
+resolve. Logs are `/tmp/gzdoom-framegraph-{gl,vulkan}-{effects-off,ssao-only,no-ssao}.log`.
+This closes the listed Linux conditional-path checks for this
+MAP01 scene. It does not cover every map or toggle, or Metal execution.
 
 ## CPU graph diagnostics added
 
@@ -65,11 +79,11 @@ unused.
 1. **Continue validating the CPU graph contract.** The enabled-effects GL and
    Vulkan MAP01 route now confirms `Backbuffer` reaches its producer chain,
    scene attachments and blended postprocess outputs are linked, no passes are
-   candidates, and there are no declaration/observer errors. Still exercise
-   postprocess-disabled and other conditional paths, then add the user's Metal
-   run as a third backend check. Confirm retained side effects stay rooted and
-   transient lifetimes match ping-pong uses and aliases. Keep live rendering
-   in backend order during this stage.
+   candidates, and there are no declaration/observer errors. Postprocess-off,
+   SSAO-only, and SSAO-disabled bloom paths are also checked on Linux. Next add
+   the user's Metal run as a third backend check. Confirm retained side effects
+   stay rooted and transient lifetimes match ping-pong uses and aliases. Keep
+   live rendering in backend order during this stage.
 2. **Move one bounded chain to graph-driven execution.** Start with the
    `Pass2` chain identified in `docs/frame-analysis.md` §4. Specify RAW, WAR,
    and WAW handling and per-backend synchronization before changing execution.
