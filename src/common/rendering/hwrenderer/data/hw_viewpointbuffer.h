@@ -14,7 +14,7 @@ class HWViewpointBuffer
 
 	unsigned int mBufferSize;
 	unsigned int mBlockAlign;
-	unsigned int mUploadIndex;
+	unsigned int mUploadIndex = 0;
 	unsigned int mLastMappedIndex;
 	unsigned int mByteSize;
 	TArray<bool> mClipPlaneInfo;
@@ -30,7 +30,7 @@ public:
 	void Clear();
 	int Bind(FRenderState &di, unsigned int index);
 	void Set2D(FRenderState &di, int width, int height, int pll = 0);
-	int SetViewpoint(FRenderState &di, HWViewpointUniforms *vp);
+	int SetViewpoint(FRenderState &di, const HWViewpointUniforms &vp);
 	unsigned int GetBlockSize() const { return mBlockSize; }
 };
 

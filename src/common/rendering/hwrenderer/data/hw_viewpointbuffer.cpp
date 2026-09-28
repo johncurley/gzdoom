@@ -116,17 +116,17 @@ void HWViewpointBuffer::Set2D(FRenderState &di, int width, int height, int pll)
 	Bind(di, mUploadIndex++);
 }
 
-int HWViewpointBuffer::SetViewpoint(FRenderState &di, HWViewpointUniforms *vp)
+int HWViewpointBuffer::SetViewpoint(FRenderState &di, const HWViewpointUniforms &vp)
 {
 	if (screen->IsMetal())
 	{
 #ifdef __APPLE__
 		auto fb = static_cast<MetalRenderDevice*>(screen);
-		fb->mLastSceneViewpoint = *vp;
+		fb->mLastSceneViewpoint = vp;
 
 		// Winding Fix: Standard GZDoom view matrix has a -1 scale on X (det < 0).
 		// Mirrors apply an additional flip (det > 0).
-		auto m = vp->mViewMatrix.get();
+		auto m = vp.mViewMatrix.get();
 		float det = m[0] * (m[5] * m[10] - m[6] * m[9]) -
 					m[4] * (m[1] * m[10] - m[2] * m[9]) +
 					m[8] * (m[1] * m[6] - m[2] * m[5]);
@@ -136,10 +136,10 @@ int HWViewpointBuffer::SetViewpoint(FRenderState &di, HWViewpointUniforms *vp)
 
 	CheckSize();
 	mBuffer->Map();
-	memcpy(((char*)mBuffer->Memory()) + mUploadIndex * mBlockAlign, vp, sizeof(*vp));
+	memcpy(((char*)mBuffer->Memory()) + mUploadIndex * mBlockAlign, &vp, sizeof(vp));
 	mBuffer->Unmap();
 
-	mClipPlaneInfo.Push(vp->mClipHeightDirection != 0.f || vp->mClipLine.X > -10000000.0f);
+	mClipPlaneInfo.Push(vp.mClipHeightDirection != 0.f || vp.mClipLine.X > -10000000.0f);
 	return Bind(di, mUploadIndex++);
 }
 

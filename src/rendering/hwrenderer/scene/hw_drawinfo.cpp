@@ -440,7 +440,7 @@ void HWDrawInfo::SetupView(FRenderState &state, float vx, float vy, float vz, bo
 	SetViewMatrix(vp.HWAngles, vx, vy, vz, mirror, planemirror);
 	SetCameraPos(vp.Pos);
 	VPUniforms.CalcDependencies();
-	vpIndex = screen->mViewpoints->SetViewpoint(state, &VPUniforms);
+	vpIndex = screen->mViewpoints->SetViewpoint(state, VPUniforms);
 }
 
 //-----------------------------------------------------------------------------
@@ -868,7 +868,7 @@ void HWDrawInfo::DrawCoronas(FRenderState& state)
 	HWViewpointUniforms vp = VPUniforms;
 	vp.mViewMatrix.loadIdentity();
 	vp.mProjectionMatrix = VRMode::GetVRMode(true)->GetHUDSpriteProjection();
-	screen->mViewpoints->SetViewpoint(state, &vp);
+	screen->mViewpoints->SetViewpoint(state, vp);
 
 	float timeElapsed = (screen->FrameTime - LastFrameTime) / 1000.0f;
 	LastFrameTime = screen->FrameTime;
@@ -943,7 +943,7 @@ void HWDrawInfo::EndDrawScene(sector_t * viewsector, FRenderState &state)
 		HWViewpointUniforms oldVP = VPUniforms;
 		VPUniforms = vp;
 
-		screen->mViewpoints->SetViewpoint(state, &vp);
+		screen->mViewpoints->SetViewpoint(state, vp);
 
 		DrawPlayerSprites(true, state);
 
@@ -978,7 +978,7 @@ void HWDrawInfo::DrawEndScene2D(sector_t * viewsector, FRenderState &state)
 		vp.mProjectionMatrix.ortho(left_ofs, left_ofs + scaled_w, 0, (float)h, -1.0f, 1.0f);
 	}
 	vp.CalcDependencies();
-	screen->mViewpoints->SetViewpoint(state, &vp);
+	screen->mViewpoints->SetViewpoint(state, vp);
 	state.EnableDepthTest(false);
 	state.EnableMultisampling(false);
 

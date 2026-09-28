@@ -1,5 +1,7 @@
 #pragma once
 
+#include <type_traits>
+
 #include "matrix.h"
 
 struct HWDrawInfo;
@@ -39,5 +41,7 @@ struct HWViewpointUniforms
 	}
 };
 
+static_assert(std::is_trivially_copyable<HWViewpointUniforms>::value,
+	"HWViewpointUniforms is copied byte-for-byte into backend buffers");
 
 

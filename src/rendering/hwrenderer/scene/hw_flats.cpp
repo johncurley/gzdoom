@@ -373,10 +373,10 @@ void HWFlat::DrawFlat(HWDrawInfo *di, FRenderState &state, bool translucent)
 			state.SetMaterial(texture, UF_Texture, 0, CLAMP_NONE, NO_TRANSLATION, -1);
 			SetPlaneTextureRotation(state, &plane, texture);
 			di->VPUniforms.mViewMatrix.translate(0.0, zshift, 0.0);
-			screen->mViewpoints->SetViewpoint(state, &di->VPUniforms);
+			screen->mViewpoints->SetViewpoint(state, di->VPUniforms);
 			DrawSubsectors(di, state);
 			di->VPUniforms.mViewMatrix.translate(0.0, -zshift, 0.0);
-			screen->mViewpoints->SetViewpoint(state, &di->VPUniforms);
+			screen->mViewpoints->SetViewpoint(state, di->VPUniforms);
 			state.EnableTextureMatrix(false);
 		}
 		state.SetRenderStyle(DefaultRenderStyle());
@@ -748,4 +748,3 @@ void HWFlat::ProcessSector(HWDrawInfo *di, sector_t * frontsector, int which)
 		}
 	}
 }
-
