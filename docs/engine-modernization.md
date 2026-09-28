@@ -35,8 +35,12 @@ not first.
    [`audit-render-view-snapshot-linux-2026-09-26.md`](audits/audit-render-view-snapshot-linux-2026-09-26.md).
    The shader-facing value slice already exists as `HWViewpointUniforms` and is
    copied synchronously into `HWViewpointBuffer`; scene/BSP data remains serial.
-3. Build a backend-neutral frame graph.
-4. Migrate AO, bloom, presentation, and other bounded postprocess passes.
+3. Complete the CPU-side frame-graph contract: explicit outputs, resource
+   lifetimes, dead-pass candidates, and scene-material reads attached to the
+   passes that consume them.
+4. Migrate a bounded pass chain to graph-driven execution, then add backend
+   synchronization and hazard handling before widening to AO, bloom, and
+   presentation.
 5. Introduce backend-neutral render packets.
 6. Separate BSP visibility discovery from surface generation.
 7. Add compute light-list construction and clustered forward lighting.
@@ -71,9 +75,10 @@ workloads. SPU-13 support is deferred while that project remains experimental.
     architecture guard found on audit (2026-07-10). Apple Silicon and any
     other ARM64 target currently get either a silent fallback to the VM
     interpreter or a broken JIT path — needs verifying before scoping — and
-    either way represents a real, unclaimed performance opportunity. An
-    ARM64/AArch64 asmjit backend for the JIT is a candidate Track C /
-    per-platform item once VM dispatch profiling above is further along.
+    either way represents a real, unclaimed performance opportunity. ARM64 /
+    AArch64 JIT work is deferred until Apple Silicon hardware is available for
+    implementation and runtime validation; reassess the scope after VM dispatch
+    profiling above is further along.
 - Expose deterministic asynchronous services for pure workloads such as
   pathfinding and sight queries.
 - Keep legacy ZScript, ACS, and thinker execution serial and authoritative.
@@ -83,14 +88,32 @@ workloads. SPU-13 support is deferred while that project remains experimental.
 ## Track D: Per-operating-system optimization (future)
 
 Once the compute-shader postprocess conversion (Track A) covers the
-significant passes, and after the ARM64 JIT gap above is scoped, the next
-horizon is per-OS/per-architecture optimization work rather than
-per-rendering-backend work: e.g. the ARM64 JIT backend, and any
+significant passes, and after the ARM64 JIT gap above can be validated on
+Apple Silicon, the next horizon is per-OS/per-architecture optimization work
+rather than per-rendering-backend work: e.g. the ARM64 JIT backend, and any
 platform-specific paths worth adding for Linux and Windows once the macOS
 Metal path is mature. Not yet broken into concrete steps — revisit once
 Tracks A/C above are further along.
 
-## Current milestone: compute postprocess
+## Current milestone: frame graph foundations
+
+The resource registry, diagnostic pass graph, backend-use observations, and
+upload observations are implemented across Metal, OpenGL, and Vulkan. Linux
+GL/Vulkan runtime checks and observer-cost measurements closed on 2026-09-24;
+see [`handoff-linux-2026-09-24.md`](handoff-linux-2026-09-24.md). The graph
+does not yet drive execution. Its current pass inputs and outputs are inferred
+from recorded reads and writes, and the real scene-material reads are not yet
+attached to their consuming scene passes.
+
+The next graph work is CPU-only: make final outputs explicit, compute resource
+lifetimes, report dead-pass candidates, and attach material reads to actual
+passes. Validate those contracts on GL and Vulkan before moving a bounded
+postprocess chain to graph-driven execution. Backend barriers and scheduling
+follow that proof. Transient aliasing and pass culling depend on complete,
+validated outputs and lifetimes. Metal/TBDR policy remains gated on Apple
+Silicon hardware.
+
+## Deferred milestone: compute postprocess
 
 Metal AO and bloom are the first compute vertical slices. Complete visual and
 fallback validation before starting another renderer-wide refactor.
@@ -139,12 +162,17 @@ stabilization change.
 
 ## Near-term order
 
-1. Finish Tier 1/Tier 2 bloom runtime validation.
-2. Record stable Intel baseline measurements.
-3. Define the render snapshot and frame-graph interfaces.
-4. Migrate existing postprocess passes incrementally.
-5. Prototype compute light-list construction.
-6. Start the standalone deterministic visibility CPU reference.
+1. Complete explicit output, lifetime, dead-pass, and scene-material-read
+   contracts in the CPU graph.
+2. Validate graph diagnostics on GL and Vulkan with real rendered frames.
+3. Migrate the bounded `Pass2` chain to graph-driven execution and implement
+   the required backend hazards and synchronization.
+4. Extend execution incrementally to bloom/exposure, then AO; keep transient
+   aliasing and culling behind validated lifetimes and outputs.
+5. Revisit Metal execution policy and ARM64 JIT work when Apple Silicon is
+   available for runtime validation.
+6. Prototype compute light-list construction.
+7. Start the standalone deterministic visibility CPU reference.
 
 ## Follow-on (not started): public developer wiki
 

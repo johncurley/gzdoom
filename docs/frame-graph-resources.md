@@ -1,14 +1,34 @@
-# Resource registry — phase 1 design and coverage
+# Frame resources and graph — design and current status
 
-Step 1 of the migration order in `docs/frame-analysis.md` §4: **declare the
-resources, keep the existing execution.** No behaviour change, no new allocator, no
-graph yet — a description of what exists, maintained at the sites that already
-create these textures.
+This document began as step 1 of the migration order in
+`docs/frame-analysis.md` §4: **declare the resources, keep the existing
+execution.** The registry and a diagnostic pass graph now exist. Neither
+allocates resources nor drives pass execution; the original design remains
+useful for registry policy and coverage.
 
 Written 2026-08-16; coverage updated 2026-09-20. The phase-1 registry is now
 implemented through the shared `FrameResources` interface on Metal, OpenGL, and
 Vulkan. This document remains the design reference for the validation policy; it
-is not yet a complete inventory of every backend allocation.
+is not a complete inventory of every backend allocation.
+
+## Current graph boundary — 2026-09-28
+
+`FrameGraph` records pass read/write uses, RAW dependencies, backend-use
+observations, and upload/read facts. It validates the recorded uses and builds
+a deterministic order for diagnostics. OpenGL, Vulkan, and Metal still execute
+their existing render paths and ordering; the graph does not schedule, reorder,
+or synchronize GPU work.
+
+The following are not implemented in the current graph source: explicit final
+output declarations, resource lifetime analysis, dead-pass candidate
+reporting, and scene-material reads attached to their consuming passes. The
+material upload/read observer records resource reads globally for upload
+validation; it does not complete scene-pass dependency declarations. These are
+the next CPU-side graph contracts. Backend execution migration, hazard/barrier
+handling, transient aliasing, and pass culling follow after those contracts are
+complete and validated. See
+[`handoff-framegraph-2026-09-28.md`](handoff-framegraph-2026-09-28.md) for the
+current work order and acceptance gates.
 
 Current coverage includes the scene/pipeline targets, AO's primary and
 full-resolution compute targets, the depth pyramid, and all compute-bloom targets:
@@ -23,7 +43,7 @@ the result pointers select between the already-declared AO textures. Registering
 those aliases as allocations would double-count memory and obscure the actual
 producer resource.
 
-## Current declaration table
+## Registry declaration table
 
 This is the phase-1 vocabulary currently emitted by the shared registry. It is the
 starting resource table for the future graph; it does not yet imply ownership by a

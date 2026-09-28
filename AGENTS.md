@@ -22,11 +22,12 @@ it is unusual).
 2. **NO Demo/Tick Desynchronization:** Game-logic hot paths must remain strictly deterministic. No unseeded randoms, non-deterministic floating-point operations, or unstable iteration orders in game-state updates.
 3. **NO ZScript/VM ABI Breakage:** Do not modify exported engine symbols or VM bytecode layouts without updating bindings and reflection tables.
 4. **NO Root Directory or Build Tree Pollution:** Temporary test scripts, scratch code dumps, and unapproved CMake targets must never be committed.
-5. **Mandatory Build & Verification Gate:**
+5. **Mandatory Build Gate:**
    ```bash
    cmake --build build -j$(nproc)
-   ./build/gzdoom -timedemo demo1.lmp -nosound -nogui
    ```
+   Run verification steps specified by `CONTRIBUTING.md` and the relevant
+   task handoff. Do not assume a demo recording is available.
 
 ---
 
@@ -432,13 +433,18 @@ it is unusual).
   `ssao.fp`, `lineardepth.fp`) — Metal's
   separate compute AO module (`mt_ao.cpp`) is untouched, doesn't build on
   this box, and was explicitly out of scope per the contract.
-- **Current handoff:** `docs/handoff-linux-2026-09-24.md` — the Intel macOS
-  framegraph/upload validation is recorded, and the next renderer tranche is
-  real Vulkan runtime validation plus GL/Vulkan observer-cost measurement on
-  Linux. The cold MAP08 capture still misses strict byte-repeatability and is
-  explicitly not closed as a parity result. Apple Silicon remains the gate for
-  TBDR-specific policy and performance; the Metal adapter must stay
-  correctness-first until an M-series baseline exists.
+- **Current handoff:** `docs/handoff-framegraph-2026-09-28.md` — the GL/Vulkan
+  Linux framegraph/upload and observer-cost tranche is closed. The live graph
+  remains diagnostic: explicit outputs, resource lifetimes, dead-pass
+  reporting, and scene-material reads attached to passes remain future CPU
+  graph work before execution migration. Vulkan indexed non-mip upload
+  validation remains open pending a confirmed draw route. Apple Silicon is
+  still required for Metal/TBDR performance policy; ARM64 JIT work is deferred
+  until that hardware is available. The cold MAP08 capture still misses strict
+  byte-repeatability and is not a parity result.
+- **Linux validation record:** `docs/handoff-linux-2026-09-24.md` — includes
+  the completed GL/Vulkan runtime and observer-cost results, plus its remaining
+  indexed-image coverage boundary.
 - **Previous handoff:** `docs/handoff-macos-2026-09-23.md` — the detailed Intel
   Metal session record, including upload observations, source-pixel snapshot
   parity, observer/sorting measurements, and the remaining capture-repeatability

@@ -1,5 +1,10 @@
 # Handoff to Linux — Vulkan framegraph and upload validation — 2026-09-24
 
+> **Status update (2026-09-28):** The Linux validation tranche described
+> below is closed; its completed results are appended at the end of this
+> document. For current frame-graph status and next steps, see
+> [`handoff-framegraph-2026-09-28.md`](handoff-framegraph-2026-09-28.md).
+
 Written at the end of the Intel macOS validation session. The framegraph and
 upload-observation work is shared across GL/Vulkan/Metal; the next useful step
 is to validate the Linux Vulkan runtime path on the RX 550, then quantify the
@@ -42,11 +47,10 @@ not a replacement for those tasks.
   18/18 exact comparisons; indexed output correctly remains translation-0 only,
   and the one-byte negative control was detected. This is CPU conversion
   evidence, not GPU upload or rendered-scene parity.
-- `cmake --build build --parallel 4` passed on macOS. The repository's
-  prescribed `./build/gzdoom -timedemo demo1.lmp -nosound -nogui` gate was not
-  runnable there: this build exposes the executable inside the app bundle, and
-  `demo1.lmp` is absent from the checkout. Linux should run its normal build and
-  timedemo gates with the local demo/IWAD setup.
+- `cmake --build build --parallel 4` passed on macOS. The former
+  `./build/gzdoom -timedemo demo1.lmp -nosound -nogui` command was not run:
+  `demo1.lmp` is absent from the checkout. It has since been removed from the
+  mandatory gate because no compatible demo input was provided.
 - `gl_sort_textures` was image-neutral on the tested MAP07 view on both GL and
   Metal, but showed no Intel Metal speedup. Do not change its default based on
   this result; a CPU-bound Linux scene could behave differently.
@@ -157,3 +161,102 @@ including the optional lavapipe CI runtime experiment and the deliberately
 reasoned-not-dynamically-verified X11 findings. This tranche does not authorize
 expanding into those tasks unless the renderer validation leads directly to a
 relevant finding.
+
+## Linux progress — 2026-09-24
+
+The handoff commit was checked out at `31dd07fee` on the RX 550 Linux machine.
+The Vulkan-enabled RelWithDebInfo configure and `cmake --build build
+--parallel 8` both passed. The prescribed timedemo command initialized the
+Vulkan backend and identified the RX 550, but `demo1.lmp` is absent from this
+checkout, so no timedemo result is claimed.
+
+The GL/Vulkan matrix baseline and SSAO controls passed before comparison:
+
+| Config | GL self-check mean | Vulkan self-check mean | Comparison |
+|---|---:|---:|---|
+| baseline | 21.224 | 21.278 | OK, tone x1.00, median band mean 0.113 |
+| ssao | 20.481 | 20.537 | OK, tone x1.00, median band mean 0.123 |
+
+Both comparisons had one sparse high-delta pixel below the 100-pixel coverage
+floor; neither produced a structured band difference. Captures are retained
+under `/tmp/gzdoom-matrix`.
+
+Real RX 550 sessions exercised both backends. With bloom, SSAO, exposure,
+tonemap, lens, and FXAA enabled, each produced 45 passes and 46 edges. GL
+reported 28 registry resources / 2.8 MB, with only `PipelineDepthStencil`
+untouched; Vulkan reported 29 / 4.8 MB, with only `ShadowMap` and
+`PipelineDepthStencil` untouched. Neither report contained a stale-size
+diagnostic. `r_framegraph_selftest` passed. Early-frame dumps caught pending
+uploads before the following graph reset retired them: GL showed two sampled
+uploads and Vulkan showed 18; every displayed record had staging, transfer,
+ordering, and later-read facts set to `yes`/`observed`. `read-after-upload`
+remains a CPU observation, not GPU-completion evidence.
+
+A short Vulkan MAP06 run with
+`VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation` completed without validation
+messages in its output. The upload dump does not identify mip status per
+resource, so a specifically identified non-mipmapped sampled image has not yet
+been isolated as an acceptance case.
+
+Follow-up probe on 2026-09-24: a temporary diagnostic printed the mip choice
+inside `VkHardwareTexture::CreateTexture` and the resource names read by
+`VkMaterial::ObserveTextureReads`. The stable baseline scene sampled only
+mipmapped textures. Repeating with the MAP06 status bar visible exercised more
+material reads, but those creations were also all mipmapped. Thus these runtime
+captures do not reach the `mipmap == false` branch or its explicit
+`TRANSFER_DST_OPTIMAL` to `SHADER_READ_ONLY_OPTIMAL` barrier in
+`vk_hwtexture.cpp`; source order shows the barrier after
+`copyBufferToImage`, but dynamic validation of that exact branch remains open.
+The temporary probe was removed. A purpose-built indexed texture draw or other
+route that actually selects `CTF_Indexed` is needed before claiming closure.
+An attempted temporary ZScript `RenderOverlay` draw of `TITLEPIC` with
+`DTA_Indexed` did not emit its runtime sentinel or any indexed-upload/read
+diagnostics, despite loading the package and rendering the map. It is not
+evidence for the barrier path; the next probe needs a confirmed active draw
+route before collecting Vulkan validation output.
+
+## Observer overhead A/B — 2026-09-24
+
+A temporary `r_framegraph_observe` control disabled the full active GL/Vulkan
+observer path: FrameGraph records and backend-use observations, resource
+registry touches, upload/read records, plus caller-side postprocess pass-name
+resolution and `PassDesc` construction. The gate was not retained in the
+renderer. Both arms used the same MAP06 route, 640x480 mode, frame cap, and
+full postprocess settings (bloom, SSAO, exposure, tonemap, lens, FXAA); the
+on-arm live graph reported 45 passes / 46 edges, while the off-arm reported
+zero. Three interleaved launches per backend and arm produced two 8-second
+`vid_frametrace` windows each. All captured MAP06 images reproduced byte for
+byte within each backend and between observer on/off.
+
+| Backend | Observer | Samples | Weighted avg | Median window p50 | Median window p95 | Median window p99 | Max | >33ms | >100ms |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| GL | off | 1,683 | 28.572 ms | 28.595 ms | 30.255 ms | 31.045 ms | 35.09 ms | 3 | 0 |
+| GL | on | 1,683 | 28.572 ms | 28.680 ms | 30.065 ms | 30.330 ms | 35.27 ms | 2 | 0 |
+| Vulkan | off | 1,683 | 28.570 ms | 28.590 ms | 30.220 ms | 30.380 ms | 33.24 ms | 0 | 0 |
+| Vulkan | on | 1,682 | 28.572 ms | 28.665 ms | 30.230 ms | 30.530 ms | 38.47 ms | 1 | 0 |
+
+The percentile columns are medians of the six per-window percentile reports;
+they are not recomputed from raw frame samples. All means were between 28.570
+and 28.572 ms, and the p95/p99 windows overlap. `vid_frametrace` p50 includes
+the display wait and sits at this session's 35 fps pacing floor, so that value
+is not renderer cost. This A/B found no measurable observer overhead on this
+RX 550 under this route and configuration. It does not establish zero cost on
+other scenes, GPUs, or Apple Silicon.
+
+The first full-effects attempt used MAP01. Its live graph checks passed, but
+Vulkan screenshots varied even between observer-identical runs, so those
+timings were excluded from the conclusion. MAP06 then reproduced exactly and
+was used for the reported A/B. MAP06 is a measurement route here, not evidence
+that bloom visibly affects that map.
+
+## Tranche disposition — closed 2026-09-24
+
+The Linux framegraph/upload and observer-overhead tranche is closed at the
+user's direction. The build, live GL/Vulkan framegraph/resource checks,
+baseline/SSAO comparisons, sampled-upload observations, and interleaved
+observer A/B are recorded above. This closure does **not** claim dynamic
+validation of Vulkan's indexed non-mip sampled-image barrier: the attempted
+test did not reach an active indexed draw. Keep that as an explicit follow-up
+if a confirmed `DTF_Indexed` 2D draw route becomes available. The earlier
+`demo1.lmp` timedemo command was not run because its input was absent; it is no
+longer part of the mandatory gate.
