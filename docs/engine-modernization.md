@@ -28,7 +28,13 @@ not first.
 
 
 1. Establish performance and compatibility baselines.
-2. Introduce an immutable render-world snapshot.
+2. Define pointer-free per-view inputs and scene-data ownership before
+   introducing any render snapshot. The Linux source audit found that
+   `FRenderViewpoint` is a shallow, mutable traversal context with live gameplay
+   pointers, not a safe thread-handoff object; see
+   [`audit-render-view-snapshot-linux-2026-09-26.md`](audits/audit-render-view-snapshot-linux-2026-09-26.md).
+   The shader-facing value slice already exists as `HWViewpointUniforms` and is
+   copied synchronously into `HWViewpointBuffer`; scene/BSP data remains serial.
 3. Build a backend-neutral frame graph.
 4. Migrate AO, bloom, presentation, and other bounded postprocess passes.
 5. Introduce backend-neutral render packets.
