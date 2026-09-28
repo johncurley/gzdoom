@@ -2,6 +2,9 @@
 
 ## Current state
 
+The latest session results and Metal checklist are in
+[`handoff-framegraph-attachments-2026-09-28.md`](handoff-framegraph-attachments-2026-09-28.md).
+
 The shared renderer has a resource registry and a CPU-side diagnostic
 `FrameGraph` in `src/common/rendering/hwrenderer/frame/`. It records real
 postprocess passes, pass resource uses, read-after-write dependencies, backend

@@ -433,16 +433,17 @@ it is unusual).
   `ssao.fp`, `lineardepth.fp`) — Metal's
   separate compute AO module (`mt_ao.cpp`) is untouched, doesn't build on
   this box, and was explicitly out of scope per the contract.
-- **Current handoff:** `docs/handoff-framegraph-2026-09-28.md` — the GL/Vulkan
-  Linux framegraph/upload and observer-cost tranche is closed. The graph now
-  reports required-output reachability, keep-alive passes, dead-pass candidates,
-  per-frame transient lifetimes, and main-view scene-material reads; this has
-  built but awaits live GL/Vulkan validation. Offscreen-only scene traversals
-  are not yet represented. Vulkan indexed non-mip upload validation
-  remains open pending a confirmed draw route. Apple Silicon is still required
-  for Metal/TBDR performance policy; ARM64 JIT work is deferred until that
-  hardware is available. The cold MAP08 capture still misses strict
-  byte-repeatability and is not a parity result.
+- **Current handoff:** `docs/handoff-framegraph-attachments-2026-09-28.md` —
+  the attachment read/write audit and six conditional GL/Vulkan Wayland
+  captures are closed on the RX 550 MAP01 route; all reports have zero
+  dead-pass candidates and no graph/use errors. Metal build/runtime validation
+  is the immediate handoff task. `docs/handoff-framegraph-2026-09-28.md` is the
+  broader roadmap. Offscreen-only scene traversals are not yet represented.
+  Vulkan indexed non-mip upload validation remains open pending a confirmed
+  draw route. Apple Silicon is still required for Metal/TBDR performance
+  policy; ARM64 JIT work is deferred until that hardware is available. The cold
+  MAP08 capture still misses strict byte-repeatability and is not a parity
+  result.
 - **Linux validation record:** `docs/handoff-linux-2026-09-24.md` — includes
   the completed GL/Vulkan runtime and observer-cost results, plus its remaining
   indexed-image coverage boundary.
