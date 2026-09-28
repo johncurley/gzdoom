@@ -23,6 +23,7 @@
 #include "vk_pprenderstate.h"
 #include "vk_postprocess.h"
 #include "vulkan/system/vk_renderdevice.h"
+#include <cstring>
 #include "vulkan/system/vk_commandbuffer.h"
 #include <zvulkan/vulkanswapchain.h>
 #include "vulkan/system/vk_buffer.h"
@@ -67,10 +68,9 @@ void VkPPRenderState::Draw()
 	fb->GetRenderState()->EndRenderPass();
 
 	int graphPass = -1;
-	// Record this pass in the frame graph (hw_framegraph.h) -- only when every
-	// input and the output resolve to a registry name. Must run before the
-	// pipeline-image advance below.
-	if (PassName)
+	// Record named postprocess passes and the final swapchain write. Must run
+	// before the pipeline-image advance below.
+	if (PassName || Output.Type == PPTextureType::SwapChain)
 	{
 		auto textureManager = fb->GetTextureManager();
 		TArray<const char *> reads;
@@ -87,15 +87,21 @@ void VkPPRenderState::Draw()
 		if (writeName)
 		{
 			PassDesc desc;
-			desc.name = PassName;
+			desc.name = PassName ? PassName : "present";
 			desc.owner = "Postprocess";
 			desc.reads = reads;
 			desc.writes = { writeName };
 			for (const char *name : reads)
+			{
+				if (strcmp(name, "Present.Dither") == 0)
+					fb->Graph().DeclareExternal(name);
 				desc.uses.Push({ name, FrameGraphAccess::Read, FrameGraphUsage::Sampled });
+			}
 			desc.uses.Push({ writeName, FrameGraphAccess::Write,
 				Output.Type == PPTextureType::SwapChain ? FrameGraphUsage::Present : FrameGraphUsage::ColorAttachment });
 			graphPass = fb->Graph().AddPass(desc);
+			if (Output.Type == PPTextureType::SwapChain)
+				fb->Graph().DeclareOutput(writeName);
 		}
 	}
 	fb->Graph().BeginBackendPass(graphPass);

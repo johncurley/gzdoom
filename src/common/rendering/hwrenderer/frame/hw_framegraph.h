@@ -1,13 +1,12 @@
 /*
 **  Frame graph -- pass description, dependency graph, topological order
 **
-**  Phase 2 of the staged plan in docs/frame-graph-resources.md: pure CPU-side
-**  bookkeeping over each pass's declared reads/writes, built on the resource
-**  registry's stable names (hw_resources.h). No scheduling decision, no
-**  allocation, no barrier emission, no backend calls -- that stays gated on
-**  Apple Silicon per docs/handoff-framegraph-2026-08-18.md, because that is
-**  where the TBDR-vs-IMR risk actually lives. This is the part of the
-**  design that doesn't need a GPU to get right.
+**  CPU-side diagnostics over each pass's declared reads/writes, built on the
+**  resource registry's stable names (hw_resources.h). It reports dependencies,
+**  required-output reachability, and within-frame lifetimes for explicitly
+**  transient resources. It does not schedule, allocate, alias, emit barriers,
+**  or call a backend. Metal/TBDR execution policy remains gated on Apple
+**  Silicon evidence.
 **
 **  Versioning model: a pass "writes" a resource name at the moment it is
 **  added -- AddPass order is version-assignment order, exactly as in
@@ -30,9 +29,9 @@
 **      declared). Build() reports it rather than crashing -- same failure
 **      policy as FrameResources::ValidateFrame.
 **
-**  Deliberately not yet: reordering passes for scheduling, culling passes
-**  whose writes nothing reads, WAR/WAW edges. Those need this piece agreed
-**  on first.
+**  Lifetime intervals are diagnostics, not permission to alias: only RAW
+**  dependencies exist today, so WAR/WAW ordering and backend hazards still
+**  need a separate contract before execution can move to this graph.
 */
 
 #pragma once
@@ -77,6 +76,14 @@ struct PassDesc
 	TArray<const char *> reads;
 	TArray<const char *> writes;
 	TArray<ResourceUse> uses;	// optional backend-observed usage contract
+	bool keepAlive = false;		// external side effect or cross-frame result
+};
+
+struct FrameGraphLifetime
+{
+	const char *resource = nullptr;
+	int firstOrder = -1;	// position in the deterministic topological order
+	int lastOrder = -1;
 };
 
 enum class FrameGraphPreparation : uint8_t
@@ -102,8 +109,9 @@ struct FrameGraphUploadDesc
 class FrameGraph
 {
 public:
-	// Clears pass/per-frame read data. Committed uploads that have not yet had
-	// a sampled read remain pending across the reset.
+	// Clears pass/per-frame declarations and analysis. Unconsumed uploads
+	// persist across the reset; transient classifications are reimported from
+	// FrameResources when the diagnostic graph is built.
 	void Reset();
 
 	// Passes must be added in a legal sequence for now -- see the versioning
@@ -116,6 +124,14 @@ public:
 	// Without this, every graph that doesn't start from nothing would fail
 	// Build()'s missing-writer check on its very first read.
 	void DeclareExternal(const char *name);
+
+	// Names a resource whose final value must be produced by this frame graph.
+	// The latest writer becomes a liveness root during diagnostic analysis.
+	void DeclareOutput(const char *name);
+
+	// Marks a backend-owned resource as transient for within-frame lifetime
+	// reporting. Imported and persistent resources must not be declared transient.
+	void DeclareTransient(const char *name);
 
 	// Declares two names as the same physical resource for dependency
 	// validation. This is needed for backend layouts that expose one object
@@ -140,6 +156,8 @@ public:
 	const TArray<int> &Order() const { return mOrder; }
 	const PassDesc &Pass(int index) const { return mPasses[index]; }
 	int PassCount() const { return (int)mPasses.Size(); }
+	const TArray<int> &DeadPassCandidates() const { return mDeadPassCandidates; }
+	const TArray<FrameGraphLifetime> &Lifetimes() const { return mLifetimes; }
 
 	// Backend observation hooks. These record what the existing renderer did;
 	// they do not emit barriers or alter execution.
@@ -173,6 +191,8 @@ private:
 	};
 	TArray<PassDesc> mPasses;
 	TArray<const char *> mExternals;
+	TArray<const char *> mOutputs;
+	TArray<const char *> mTransientResources;
 	struct Alias
 	{
 		const char *name;
@@ -181,6 +201,8 @@ private:
 	TArray<Alias> mAliases;
 	TArray<Edge> mEdges;
 	TArray<int> mOrder;
+	TArray<int> mDeadPassCandidates;
+	TArray<FrameGraphLifetime> mLifetimes;
 	TArray<uint8_t> mBackendObserved;
 	TArray<ObservedUse> mObservedUses;
 	TArray<UploadObservation> mUploads;
@@ -189,6 +211,8 @@ private:
 	int mActivePass = -1;
 
 	const char *CanonicalName(const char *name) const;
+	void AnalyzeLiveness(FString *report);
+	void AnalyzeLifetimes();
 	void BuildEdges(FString *report);
 	bool TopoSort(FString *report);
 	void ValidateUses(FString *report) const;

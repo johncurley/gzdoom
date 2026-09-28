@@ -12,6 +12,7 @@ void MtWipeProbeIfArmed(MetalRenderDevice *fb);
 #include <Metal/Metal.hpp>
 #include <QuartzCore/QuartzCore.hpp>
 #include <chrono>
+#include <cstring>
 
 #include "c_cvars.h"
 #include "printf.h"
@@ -429,7 +430,7 @@ public:
     } else {
       writeName = ResolveResourceName(Output.Type, Output.Texture);
     }
-    if (PassName) {
+    if (PassName || Output.Type == PPTextureType::SwapChain) {
       TArray<const char *> reads;
       bool resolvable = true;
       for (unsigned int index = 0; index < Textures.Size() && resolvable; index++) {
@@ -441,16 +442,21 @@ public:
       }
       if (writeName && resolvable) {
         PassDesc desc;
-        desc.name = PassName;
+        desc.name = PassName ? PassName : "present";
         desc.owner = "Postprocess";
         desc.reads = reads;
         desc.writes = { writeName };
-        for (const char *name : reads)
+        for (const char *name : reads) {
+          if (strcmp(name, "Present.Dither") == 0)
+            screen->Graph().DeclareExternal(name);
           desc.uses.Push({ name, FrameGraphAccess::Read, FrameGraphUsage::Sampled });
+        }
         desc.uses.Push({ writeName, FrameGraphAccess::Write,
           Output.Type == PPTextureType::SwapChain ? FrameGraphUsage::Present :
                                                      FrameGraphUsage::ColorAttachment });
         graphPass = screen->Graph().AddPass(desc);
+        if (Output.Type == PPTextureType::SwapChain)
+          screen->Graph().DeclareOutput(writeName);
       }
     }
     screen->Graph().BeginBackendPass(graphPass);

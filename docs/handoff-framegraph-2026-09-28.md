@@ -18,36 +18,40 @@ postprocess configuration. The observer on/off A/B found no measurable cost
 for that RX 550 MAP06 route. This is not an Apple Silicon or Metal performance
 result.
 
-## Corrections to the graph status
+## CPU graph diagnostics added
 
-An audit of the current `hw_framegraph.{h,cpp}` and backend call sites found
-that the following pieces are **not implemented**, despite appearing in a
-local draft handoff:
+The CPU graph now supports explicit required outputs, `keepAlive` pass roots,
+dead-pass candidates, and lifetime intervals for resources marked transient in
+the `FrameResources` registry. Lifetimes are first/last positions in the
+deterministic topological order. They exclude imported resources and registry
+resources marked persistent. These intervals are diagnostic only; no memory
+aliasing or culling uses them.
 
-- explicit declarations of the final outputs whose producers must be kept;
-- resource lifetime intervals derived from complete pass uses;
-- reporting of passes that are unreachable from required outputs;
-- scene material texture reads attached to the scene passes that sample them.
+The GL presenter and the Vulkan/Metal postprocess presenters declare
+`Backbuffer` as an output when their producer pass is recorded. Screenshot
+readbacks, wipe captures, and partial GL backbuffer copies are marked
+keep-alive so output reachability does not discard their external or
+cross-frame effects. The fixed presentation dither texture is named as an
+external input so the Vulkan and Metal present pass can be recorded.
 
-The upload observer's resource reads are global facts used to validate upload
-ordering. They do not form scene-pass dependencies. Likewise, the existing
-read/write lists imply the present graph's outputs for current postprocess
-passes; they do not constitute a final-output contract. These gaps prevent
-reliable dead-pass analysis, lifetime conclusions, and safe allocation reuse.
+The upload observer's material texture reads remain global upload-ordering
+facts. They are **not yet attached to the scene pass that samples them**, so
+they do not complete the scene's dependency declarations. Also audit any new
+side-effecting or cross-frame passes and mark them keep-alive before treating a
+reported candidate as unused.
 
 ## Remaining work, in order
 
-1. **Finish the CPU graph contract.** Add explicit required outputs, derive
-   resource first/last use only from complete declarations, report dead-pass
-   candidates by walking dependencies back from required outputs, and attach
-   scene material reads to the actual scene pass. Define how external,
-   persistent, aliased, and conditionally active resources participate.
+1. **Finish the CPU graph contract.** Attach scene material texture reads to
+   the actual scene pass. Preserve the distinction between imported external
+   resources and graph-produced resources, and audit keep-alive coverage for
+   side effects and cross-frame results.
 2. **Validate the diagnostic model on GL and Vulkan.** Exercise real frames
    with representative scene materials, postprocess enabled and disabled, and
-   conditional paths. Confirm the output walk retains required producers,
-   marks only genuinely unused passes, and computes stable lifetimes across
-   ping-pong resources and aliases. Keep live rendering in backend order during
-   this stage.
+   conditional paths. Confirm `Backbuffer` reaches its producer chain, retained
+   side effects stay rooted, candidates are interpreted correctly, and
+   transient lifetimes match ping-pong uses and aliases. Keep live rendering in
+   backend order during this stage.
 3. **Move one bounded chain to graph-driven execution.** Start with the
    `Pass2` chain identified in `docs/frame-analysis.md` §4. Specify RAW, WAR,
    and WAW handling and per-backend synchronization before changing execution.
@@ -76,5 +80,10 @@ reliable dead-pass analysis, lifetime conclusions, and safe allocation reuse.
 
 Follow `CONTRIBUTING.md` for renderer changes: prove the control can detect the
 failure, capture real rendered frames, and report noise and coverage limits.
-The `r_framegraph_selftest` and the Xvfb `+quit` smoke command are useful
-structural checks, but neither substitutes for a live frame on each backend.
+The self-test now covers an output-rooted chain, a dead candidate, missing
+output detection, screenshot keep-alive, and a transient lifetime interval.
+`cmake --build build -j$(nproc)` passed on Linux. The self-test could not be
+run in this session: the sandbox blocked Xvfb's Unix socket, and the
+out-of-sandbox Xvfb launch did not finish GZDoom startup before its timeout.
+The diagnostic model therefore still needs a live GL/Vulkan run before step 2
+can be closed. Xvfb `+quit` checks do not substitute for real rendered frames.

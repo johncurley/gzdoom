@@ -137,6 +137,7 @@ void FGLRenderer::Flush()
 		desc.uses.Push({ "EyeTexture[1]", FrameGraphAccess::Read, FrameGraphUsage::Sampled });
 		desc.uses.Push({ "Backbuffer", FrameGraphAccess::Write, FrameGraphUsage::Present });
 		int graphPass = screen->Graph().AddPass(desc);
+		screen->Graph().DeclareOutput("Backbuffer");
 		screen->Graph().BeginBackendPass(graphPass);
 		// Note: This here is the ONLY place in the entire engine where the OpenGL dependent parts of the Stereo3D code need to be dealt with.
 		// There's absolutely no need to create a overly complex class hierarchy for just this.
@@ -170,11 +171,14 @@ void FGLRenderer::CopyToBackbuffer(const IntRect *bounds, bool applyGamma)
 	PassDesc desc;
 	desc.name = bounds ? "backbuffer.copy" : "present";
 	desc.owner = "FGLRenderer";
+	desc.keepAlive = bounds != nullptr;
 	desc.reads = { readName };
 	desc.writes = { "Backbuffer" };
 	desc.uses.Push({ readName, FrameGraphAccess::Read, FrameGraphUsage::Sampled });
 	desc.uses.Push({ "Backbuffer", FrameGraphAccess::Write, outputUsage });
 	int graphPass = screen->Graph().AddPass(desc);
+	if (!bounds)
+		screen->Graph().DeclareOutput("Backbuffer");
 	screen->Graph().BeginBackendPass(graphPass);
 	mBuffers->BindOutputFB();
 

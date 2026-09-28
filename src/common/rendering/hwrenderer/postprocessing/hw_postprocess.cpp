@@ -1096,6 +1096,7 @@ PPPresent::PPPresent()
 	std::shared_ptr<void> pixels(new float[64], [](void *p) { delete[](float*)p; });
 	memcpy(pixels.get(), data, 64 * sizeof(float));
 	Dither = { 8, 8, PixelFormat::R32f, pixels };
+	Dither.Name = "Present.Dither";
 }
 
 /////////////////////////////////////////////////////////////////////////////

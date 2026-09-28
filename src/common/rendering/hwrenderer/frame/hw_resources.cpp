@@ -117,6 +117,13 @@ size_t FrameResources::TotalBytes() const
 	return total;
 }
 
+void FrameResources::GetTransientNames(TArray<const char *> &names) const
+{
+	for (const Entry &entry : mEntries)
+		if (entry.desc.transient && entry.desc.name)
+			names.Push(entry.desc.name);
+}
+
 void FrameResources::ValidateFrame(FString *report) const
 {
 	*report = "";

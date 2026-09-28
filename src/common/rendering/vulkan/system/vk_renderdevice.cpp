@@ -453,6 +453,7 @@ void VulkanRenderDevice::CopyScreenToBuffer(int w, int h, uint8_t *data)
 	PassDesc desc;
 	desc.name = "screenshot.readback";
 	desc.owner = "VulkanRenderDevice";
+	desc.keepAlive = true;
 	if (sourceName)
 	{
 		desc.reads = { sourceName };

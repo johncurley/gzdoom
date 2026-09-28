@@ -105,13 +105,16 @@ does not yet drive execution. Its current pass inputs and outputs are inferred
 from recorded reads and writes, and the real scene-material reads are not yet
 attached to their consuming scene passes.
 
-The next graph work is CPU-only: make final outputs explicit, compute resource
-lifetimes, report dead-pass candidates, and attach material reads to actual
-passes. Validate those contracts on GL and Vulkan before moving a bounded
-postprocess chain to graph-driven execution. Backend barriers and scheduling
-follow that proof. Transient aliasing and pass culling depend on complete,
-validated outputs and lifetimes. Metal/TBDR policy remains gated on Apple
-Silicon hardware.
+The CPU graph now declares required outputs, retains explicitly marked
+side-effect passes, reports dead-pass candidates, and reports within-frame
+lifetimes for transient registry resources. These remain diagnostic: scene
+material reads are not yet attached to their consuming scene pass, and the new
+reports have not yet been validated on a live GL/Vulkan frame. Complete that
+read contract and validation before moving a bounded postprocess chain to
+graph-driven execution. Backend barriers and scheduling follow that proof.
+Transient aliasing and pass culling depend on complete, validated outputs,
+reads, and lifetimes. Metal/TBDR policy remains gated on Apple Silicon
+hardware.
 
 ## Deferred milestone: compute postprocess
 
@@ -162,9 +165,10 @@ stabilization change.
 
 ## Near-term order
 
-1. Complete explicit output, lifetime, dead-pass, and scene-material-read
-   contracts in the CPU graph.
-2. Validate graph diagnostics on GL and Vulkan with real rendered frames.
+1. Attach scene-material texture reads to the consuming scene pass and audit
+   the keep-alive roots for external side effects and cross-frame resources.
+2. Validate output reachability, dead-pass candidates, and transient lifetimes
+   on GL and Vulkan with real rendered frames.
 3. Migrate the bounded `Pass2` chain to graph-driven execution and implement
    the required backend hazards and synchronization.
 4. Extend execution incrementally to bloom/exposure, then AO; keep transient

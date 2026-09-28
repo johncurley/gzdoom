@@ -19,14 +19,19 @@ a deterministic order for diagnostics. OpenGL, Vulkan, and Metal still execute
 their existing render paths and ordering; the graph does not schedule, reorder,
 or synchronize GPU work.
 
-The following are not implemented in the current graph source: explicit final
-output declarations, resource lifetime analysis, dead-pass candidate
-reporting, and scene-material reads attached to their consuming passes. The
-material upload/read observer records resource reads globally for upload
-validation; it does not complete scene-pass dependency declarations. These are
-the next CPU-side graph contracts. Backend execution migration, hazard/barrier
-handling, transient aliasing, and pass culling follow after those contracts are
-complete and validated. See
+The graph now has explicit required-output roots, keep-alive pass roots for
+external side effects and cross-frame results, dead-pass candidate reporting,
+and topological-order lifetime intervals for resources marked transient in
+`FrameResources`. These are diagnostic results only; they do not authorize
+reordering, aliasing, or culling. Imported resources and registry resources
+marked persistent are excluded from transient lifetimes.
+
+Scene material texture reads are still observed globally for upload ordering,
+but are not attached as reads of the consuming scene pass. That is the next CPU
+graph contract, followed by live validation of output reachability and
+lifetime reports on GL and Vulkan. Backend execution migration,
+hazard/barrier handling, transient aliasing, and pass culling follow after the
+complete graph contract has been validated. See
 [`handoff-framegraph-2026-09-28.md`](handoff-framegraph-2026-09-28.md) for the
 current work order and acceptance gates.
 

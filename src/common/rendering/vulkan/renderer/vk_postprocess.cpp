@@ -180,6 +180,7 @@ void VkPostprocess::BlitCurrentToImage(VkTextureImage *dstimage, VkImageLayout f
 		PassDesc desc;
 		desc.name = "wipe.copy";
 		desc.owner = "VkPostprocess";
+		desc.keepAlive = true;
 		desc.reads = { sourceName };
 		desc.writes = { destinationName };
 		desc.uses.Push({ sourceName, FrameGraphAccess::Read, FrameGraphUsage::TransferSource });

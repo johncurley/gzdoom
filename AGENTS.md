@@ -434,13 +434,14 @@ it is unusual).
   separate compute AO module (`mt_ao.cpp`) is untouched, doesn't build on
   this box, and was explicitly out of scope per the contract.
 - **Current handoff:** `docs/handoff-framegraph-2026-09-28.md` — the GL/Vulkan
-  Linux framegraph/upload and observer-cost tranche is closed. The live graph
-  remains diagnostic: explicit outputs, resource lifetimes, dead-pass
-  reporting, and scene-material reads attached to passes remain future CPU
-  graph work before execution migration. Vulkan indexed non-mip upload
-  validation remains open pending a confirmed draw route. Apple Silicon is
-  still required for Metal/TBDR performance policy; ARM64 JIT work is deferred
-  until that hardware is available. The cold MAP08 capture still misses strict
+  Linux framegraph/upload and observer-cost tranche is closed. The graph now
+  reports required-output reachability, keep-alive passes, dead-pass candidates,
+  and per-frame transient lifetimes; this has built but awaits live GL/Vulkan
+  validation. Scene-material reads still need to attach to the consuming scene
+  pass before execution migration. Vulkan indexed non-mip upload validation
+  remains open pending a confirmed draw route. Apple Silicon is still required
+  for Metal/TBDR performance policy; ARM64 JIT work is deferred until that
+  hardware is available. The cold MAP08 capture still misses strict
   byte-repeatability and is not a parity result.
 - **Linux validation record:** `docs/handoff-linux-2026-09-24.md` — includes
   the completed GL/Vulkan runtime and observer-cost results, plus its remaining

@@ -3,10 +3,9 @@
 **
 **  Design: docs/frame-graph-resources.md. Backend-neutral description of the
 **  textures a frame's renderer already creates, keyed by a stable literal
-**  name. The registry never allocates or owns GPU memory in this phase -- it
-**  is bookkeeping over what the backend made, so a first answer exists for
-**  "how much memory does a frame use" and "which resources did this frame
-**  actually touch" without needing the graph/scheduler this is step one of.
+**  name. The registry never allocates or owns GPU memory -- it is bookkeeping
+**  over what the backend made, so resource coverage and size checks remain
+**  independent of the diagnostic frame graph and any future scheduler.
 */
 
 #pragma once
@@ -67,6 +66,7 @@ public:
 	void ValidateFrame(FString *report) const;
 
 	void Dump(FString *out) const;
+	void GetTransientNames(TArray<const char *> &names) const;
 	size_t TotalBytes() const;
 	int SceneWidth() const { return mSceneWidth; }
 	int SceneHeight() const { return mSceneHeight; }

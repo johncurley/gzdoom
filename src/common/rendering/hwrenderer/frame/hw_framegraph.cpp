@@ -63,9 +63,13 @@ void FrameGraph::Reset()
 
 	mPasses.Clear();
 	mExternals.Clear();
+	mOutputs.Clear();
+	mTransientResources.Clear();
 	mAliases.Clear();
 	mEdges.Clear();
 	mOrder.Clear();
+	mDeadPassCandidates.Clear();
+	mLifetimes.Clear();
 	mBackendObserved.Clear();
 	mObservedUses.Clear();
 	mResourceReads.Clear();
@@ -81,7 +85,32 @@ int FrameGraph::AddPass(const PassDesc &desc)
 
 void FrameGraph::DeclareExternal(const char *name)
 {
+	if (!name)
+		return;
+	for (const char *external : mExternals)
+		if (NameEq(external, name))
+			return;
 	mExternals.Push(name);
+}
+
+void FrameGraph::DeclareOutput(const char *name)
+{
+	if (!name)
+		return;
+	for (const char *output : mOutputs)
+		if (NameEq(output, name))
+			return;
+	mOutputs.Push(name);
+}
+
+void FrameGraph::DeclareTransient(const char *name)
+{
+	if (!name)
+		return;
+	for (const char *resource : mTransientResources)
+		if (NameEq(resource, name))
+			return;
+	mTransientResources.Push(name);
 }
 
 void FrameGraph::DeclareAlias(const char *name, const char *canonical)
@@ -356,11 +385,107 @@ bool FrameGraph::TopoSort(FString *report)
 bool FrameGraph::Build(FString *report)
 {
 	*report = "";
+	mDeadPassCandidates.Clear();
+	mLifetimes.Clear();
 	ValidateUses(report);
 	ValidateUploads(report);
 	BuildEdges(report);
 	bool ok = TopoSort(report);
+	if (ok)
+	{
+		AnalyzeLiveness(report);
+		AnalyzeLifetimes();
+	}
 	return ok && report->Len() == 0;
+}
+
+void FrameGraph::AnalyzeLiveness(FString *report)
+{
+	mDeadPassCandidates.Clear();
+	TArray<uint8_t> live;
+	live.Resize(mPasses.Size());
+	for (unsigned int i = 0; i < live.Size(); i++)
+		live[i] = 0;
+
+	TArray<int> pending;
+	for (const char *output : mOutputs)
+	{
+		int writer = -1;
+		const char *canonicalOutput = CanonicalName(output);
+		for (int passIndex = 0; passIndex < (int)mPasses.Size(); passIndex++)
+		{
+			for (const char *written : mPasses[passIndex].writes)
+			{
+				if (NameEq(CanonicalName(written), canonicalOutput))
+					writer = passIndex;
+			}
+		}
+		if (writer < 0)
+			report->AppendFormat("required output '%s' has no producer in this frame\n", output);
+		else
+			pending.Push(writer);
+	}
+
+	for (int i = 0; i < (int)mPasses.Size(); i++)
+		if (mPasses[i].keepAlive)
+			pending.Push(i);
+
+	while (pending.Size() > 0)
+	{
+		int passIndex = pending[pending.Size() - 1];
+		pending.Delete(pending.Size() - 1);
+		if (live[passIndex])
+			continue;
+		live[passIndex] = 1;
+		for (const Edge &edge : mEdges)
+			if (edge.to == passIndex)
+				pending.Push(edge.from);
+	}
+
+	for (int i = 0; i < (int)mPasses.Size(); i++)
+		if (!live[i])
+			mDeadPassCandidates.Push(i);
+}
+
+void FrameGraph::AnalyzeLifetimes()
+{
+	mLifetimes.Clear();
+	for (int order = 0; order < (int)mOrder.Size(); order++)
+	{
+		const PassDesc &pass = mPasses[mOrder[order]];
+			auto recordUse = [&](const char *name)
+		{
+			if (!name)
+				return;
+			const char *canonical = CanonicalName(name);
+			for (const char *external : mExternals)
+				if (NameEq(CanonicalName(external), canonical))
+					return;
+			bool transient = false;
+			for (const char *resource : mTransientResources)
+				if (NameEq(CanonicalName(resource), canonical))
+				{
+					transient = true;
+					break;
+				}
+			if (!transient)
+				return;
+
+			for (FrameGraphLifetime &lifetime : mLifetimes)
+			{
+				if (NameEq(lifetime.resource, canonical))
+				{
+					lifetime.lastOrder = order;
+					return;
+				}
+			}
+			mLifetimes.Push({ canonical, order, order });
+		};
+		for (const char *name : pass.reads)
+			recordUse(name);
+		for (const char *name : pass.writes)
+			recordUse(name);
+	}
 }
 
 void FrameGraph::ValidateUploads(FString *report) const
@@ -390,6 +515,15 @@ void FrameGraph::Dump(FString *out) const
 {
 	*out = "";
 	out->AppendFormat("%u passes, %u edges\n\n", mPasses.Size(), mEdges.Size());
+	out->AppendFormat("  outputs:");
+	if (mOutputs.Size() == 0)
+		out->AppendFormat(" none\n");
+	else
+	{
+		for (const char *output : mOutputs)
+			out->AppendFormat(" %s", output);
+		out->AppendFormat("\n");
+	}
 
 	out->AppendFormat("  order  pass                 owner            reads -> writes\n");
 	for (int idx : mOrder)
@@ -401,10 +535,33 @@ void FrameGraph::Dump(FString *out) const
 		for (unsigned int i = 0; i < pass.writes.Size(); i++)
 			writes.AppendFormat("%s%s", i ? ", " : "", pass.writes[i]);
 
-		out->AppendFormat("  %-7d%-21s%-17s%s -> %s\n",
-			idx, pass.name, pass.owner, reads.GetChars(), writes.GetChars());
+		out->AppendFormat("  %-7d%-21s%-17s%s -> %s%s\n",
+			idx, pass.name, pass.owner, reads.GetChars(), writes.GetChars(),
+			pass.keepAlive ? " [keep-alive]" : "");
 		for (const ResourceUse &use : pass.uses)
 			out->AppendFormat("           use: %-12s %-18s %s\n", AccessName(use.access), UsageName(use.usage), use.name);
+	}
+
+	out->AppendFormat("\n  dead-pass candidates:");
+	if (mDeadPassCandidates.Size() == 0)
+		out->AppendFormat(" none\n");
+	else
+	{
+		for (int passIndex : mDeadPassCandidates)
+			out->AppendFormat(" %s", mPasses[passIndex].name);
+		out->AppendFormat("\n");
+	}
+
+	out->AppendFormat("\n  transient lifetimes (topological order):\n");
+	if (mLifetimes.Size() == 0)
+		out->AppendFormat("    none\n");
+	for (const FrameGraphLifetime &lifetime : mLifetimes)
+	{
+		const char *first = mPasses[mOrder[lifetime.firstOrder]].name;
+		const char *last = mPasses[mOrder[lifetime.lastOrder]].name;
+		out->AppendFormat("    %-28s %d (%s) .. %d (%s)\n",
+			lifetime.resource, lifetime.firstOrder, first,
+			lifetime.lastOrder, last);
 	}
 
 	if (mEdges.Size() > 0)
@@ -447,6 +604,7 @@ CCMD(r_framegraph_selftest)
 	// sub-graph, not produced by any of these four passes.
 	graph.DeclareExternal("PipelineImage[0]");
 	graph.DeclareExternal("PaletteTexture");
+	graph.DeclareOutput("PipelineImage[0]");
 	graph.AddPass({ "tonemap", "Postprocess", { "PipelineImage[0]", "PaletteTexture" }, { "PipelineImage[1]" } });
 	graph.AddPass({ "colormap", "Postprocess", { "PipelineImage[1]" }, { "PipelineImage[0]" } });
 	graph.AddPass({ "lens", "Postprocess", { "PipelineImage[0]" }, { "PipelineImage[1]" } });
@@ -584,8 +742,62 @@ CCMD(r_framegraph_selftest)
 	bool badUploadDetected = !badUploadGraph.Build(&badUploadReport) &&
 		strstr(badUploadReport.GetChars(), "not ordered before consumer reads") != nullptr;
 
+	FrameGraph livenessGraph;
+	livenessGraph.DeclareExternal("Input");
+	livenessGraph.DeclareTransient("Input"); // imported inputs never get transient lifetimes
+	livenessGraph.DeclareTransient("Scratch");
+	PassDesc producer;
+	producer.name = "producer";
+	producer.owner = "selftest";
+	producer.writes.Push("Scratch");
+	livenessGraph.AddPass(producer);
+	PassDesc consumer;
+	consumer.name = "consumer";
+	consumer.owner = "selftest";
+	consumer.reads.Push("Scratch");
+	consumer.writes.Push("Color");
+	livenessGraph.AddPass(consumer);
+	PassDesc readback;
+	readback.name = "screenshot.readback";
+	readback.owner = "selftest";
+	readback.reads.Push("Color");
+	readback.keepAlive = true;
+	livenessGraph.AddPass(readback);
+	PassDesc unused;
+	unused.name = "unused";
+	unused.owner = "selftest";
+	unused.reads.Push("Input");
+	unused.writes.Push("Unused");
+	livenessGraph.AddPass(unused);
+	livenessGraph.DeclareOutput("Color");
+	FString livenessReport;
+	bool livenessOK = livenessGraph.Build(&livenessReport) &&
+		livenessGraph.DeadPassCandidates().Size() == 1 &&
+		strcmp(livenessGraph.Pass(livenessGraph.DeadPassCandidates()[0]).name, "unused") == 0 &&
+		livenessGraph.Lifetimes().Size() == 1 &&
+		strcmp(livenessGraph.Lifetimes()[0].resource, "Scratch") == 0 &&
+		livenessGraph.Lifetimes()[0].firstOrder == 0 &&
+		livenessGraph.Lifetimes()[0].lastOrder == 1;
+
+	FrameGraph missingOutputGraph;
+	missingOutputGraph.DeclareOutput("Missing");
+	FString missingOutputReport;
+	bool missingOutputDetected = !missingOutputGraph.Build(&missingOutputReport) &&
+		strstr(missingOutputReport.GetChars(), "has no producer") != nullptr;
+
+	FrameGraph wipeGraph;
+	PassDesc wipeCapture;
+	wipeCapture.name = "wipe.copy";
+	wipeCapture.owner = "selftest";
+	wipeCapture.writes.Push("WipeStartScreen");
+	wipeCapture.keepAlive = true;
+	wipeGraph.AddPass(wipeCapture);
+	FString wipeReport;
+	bool wipeOK = wipeGraph.Build(&wipeReport) && wipeGraph.DeadPassCandidates().Size() == 0;
+
 	Printf(ok && orderMatchesDeclaration && useOK && aliasOK && customOK && badDetected &&
-		uploadOK && badUploadDetected ? "selftest: PASS\n" : "selftest: FAIL\n");
+		uploadOK && badUploadDetected && livenessOK && missingOutputDetected && wipeOK ?
+		"selftest: PASS\n" : "selftest: FAIL\n");
 }
 
 // Real per-frame data: whatever GLPPRenderState::Draw()/VkPPRenderState::Draw()
@@ -619,6 +831,10 @@ CCMD(r_framegraph)
 	graph.DeclareExternal("AO.RandomTexture0");
 	graph.DeclareExternal("AO.RandomTexture1");
 	graph.DeclareExternal("AO.RandomTexture2");
+	TArray<const char *> transientNames;
+	screen->Resources().GetTransientNames(transientNames);
+	for (const char *name : transientNames)
+		graph.DeclareTransient(name);
 
 	FString report;
 	bool ok = graph.Build(&report);

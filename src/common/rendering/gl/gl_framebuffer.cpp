@@ -235,6 +235,7 @@ void OpenGLFrameBuffer::CaptureFrameForScreenshot()
 	PassDesc desc;
 	desc.name = "screenshot.readback";
 	desc.owner = "OpenGLFrameBuffer";
+	desc.keepAlive = true;
 	desc.reads = { "Backbuffer" };
 	desc.uses.Push({ "Backbuffer", FrameGraphAccess::Read, FrameGraphUsage::TransferSource });
 	int graphPass = screen->Graph().AddPass(desc);
@@ -757,6 +758,7 @@ FTexture *OpenGLFrameBuffer::WipeStartScreen()
 	PassDesc desc;
 	desc.name = "wipe.copy";
 	desc.owner = "OpenGLFrameBuffer";
+	desc.keepAlive = true;
 	desc.reads = { sourceName };
 	desc.writes = { "WipeStartScreen" };
 	desc.uses.Push({ sourceName, FrameGraphAccess::Read, FrameGraphUsage::TransferSource });
@@ -792,6 +794,7 @@ FTexture *OpenGLFrameBuffer::WipeEndScreen()
 	PassDesc desc;
 	desc.name = "wipe.copy";
 	desc.owner = "OpenGLFrameBuffer";
+	desc.keepAlive = true;
 	desc.reads = { sourceName };
 	desc.writes = { "WipeEndScreen" };
 	desc.uses.Push({ sourceName, FrameGraphAccess::Read, FrameGraphUsage::TransferSource });
