@@ -1068,6 +1068,70 @@ void MetalRenderDevice::SetSceneRenderTarget(bool useSSAO) {
   }
   Graph().EndBackendPass();
 }
+void MetalRenderDevice::BeginFrameGraphScenePass(const char *name, bool gbuffer,
+                                                 bool depthWrite) {
+  auto *buffers = GetBuffers();
+  if (!buffers)
+    return;
+
+  const char *sceneColor = buffers->ResName(MtRenderBuffers::RES_SceneColor);
+  const char *sceneDepth = buffers->ResName(MtRenderBuffers::RES_SceneDepth);
+  const char *sceneFog = buffers->ResName(MtRenderBuffers::RES_SceneFog);
+  const char *sceneNormal = buffers->ResName(MtRenderBuffers::RES_SceneNormal);
+  const char *shadowMap = buffers->ShadowMapResourceName();
+
+  PassDesc desc;
+  desc.name = name;
+  desc.owner = "MetalRenderDevice";
+  desc.writes.Push(sceneColor);
+  desc.uses.Push({ sceneColor, FrameGraphAccess::Write,
+                   FrameGraphUsage::ColorAttachment });
+  if (depthWrite) {
+    desc.writes.Push(sceneDepth);
+    desc.uses.Push({ sceneDepth, FrameGraphAccess::Write,
+                     FrameGraphUsage::DepthStencilAttachment });
+  }
+  if (gbuffer) {
+    desc.writes.Push(sceneFog);
+    desc.writes.Push(sceneNormal);
+    desc.uses.Push({ sceneFog, FrameGraphAccess::Write,
+                     FrameGraphUsage::ColorAttachment });
+    desc.uses.Push({ sceneNormal, FrameGraphAccess::Write,
+                     FrameGraphUsage::ColorAttachment });
+  }
+  if (mShadowMap.Enabled()) {
+    desc.reads.Push(shadowMap);
+    desc.uses.Push({ shadowMap, FrameGraphAccess::Read,
+                     FrameGraphUsage::Sampled });
+  }
+
+  int scenePass = Graph().AddPass(desc);
+  Graph().BeginBackendPass(scenePass);
+  Resources().Touch(sceneColor, true);
+  Graph().ObserveBackendUse(sceneColor, FrameGraphAccess::Write,
+                            FrameGraphUsage::ColorAttachment);
+  if (depthWrite) {
+    Resources().Touch(sceneDepth, true);
+    Graph().ObserveBackendUse(sceneDepth, FrameGraphAccess::Write,
+                              FrameGraphUsage::DepthStencilAttachment);
+  }
+  if (gbuffer) {
+    Resources().Touch(sceneFog, true);
+    Graph().ObserveBackendUse(sceneFog, FrameGraphAccess::Write,
+                              FrameGraphUsage::ColorAttachment);
+    Resources().Touch(sceneNormal, true);
+    Graph().ObserveBackendUse(sceneNormal, FrameGraphAccess::Write,
+                              FrameGraphUsage::ColorAttachment);
+  }
+  if (mShadowMap.Enabled()) {
+    Resources().Touch(shadowMap, false);
+    Graph().ObserveBackendUse(shadowMap, FrameGraphAccess::Read,
+                              FrameGraphUsage::Sampled);
+  }
+}
+void MetalRenderDevice::EndFrameGraphScenePass() {
+  Graph().EndBackendPass();
+}
 void MetalRenderDevice::SetLevelMesh(hwrenderer::LevelMesh *mesh) {}
 void MetalRenderDevice::UpdateShadowMap() {
   if (mPostprocess)

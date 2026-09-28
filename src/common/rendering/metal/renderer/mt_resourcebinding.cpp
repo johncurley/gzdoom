@@ -109,7 +109,7 @@ void MtResourceBindingManager::ApplyBindings(MTL::RenderCommandEncoder *encoder,
     const char *resourceName = fb->GetTextureManager()
         ? fb->GetTextureManager()->GetGraphResourceName(texture) : nullptr;
     if (resourceName)
-      fb->Graph().ObserveResourceRead(resourceName);
+      fb->Graph().ObserveSceneMaterialRead(resourceName);
     MTL::SamplerState *sampler = mMaterialTextures[i].sampler;
 
     if (vertex) {

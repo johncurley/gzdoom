@@ -353,7 +353,7 @@ bool FHardwareTexture::BindOrCreate(FTexture *tex, int texunit, int clampmode, i
 	if (forcenofilter && clampmode <= CLAMP_XY) clampmode += CLAMP_NOFILTER - CLAMP_NONE;
 	GLRenderer->mSamplerManager->Bind(texunit, clampmode, 255);
 	if (screen)
-		screen->Graph().ObserveResourceRead(GetFrameGraphResourceName());
+		screen->Graph().ObserveSceneMaterialRead(GetFrameGraphResourceName());
 	return true;
 }
 

@@ -145,6 +145,11 @@ public:
 	// a consumer read followed the upload.
 	void RecordUpload(const FrameGraphUploadDesc &desc);
 	void ObserveResourceRead(const char *name);
+	// Records the upload observation and attaches a deduplicated sampled read
+	// to the active scene pass, when one is active. A resource with an earlier
+	// graph writer remains graph-produced; otherwise its current value is an
+	// imported input to this frame.
+	void ObserveSceneMaterialRead(const char *name);
 
 	// Builds RAW edges from the declared reads/writes and computes a
 	// deterministic topological order (Kahn's algorithm, ties broken by
@@ -206,6 +211,7 @@ private:
 	TArray<uint8_t> mBackendObserved;
 	TArray<ObservedUse> mObservedUses;
 	TArray<UploadObservation> mUploads;
+	TArray<FString> mOwnedSceneReadNames;
 	TMap<FString, uint64_t> mResourceReads;
 	uint64_t mObservationSequence = 0;
 	int mActivePass = -1;

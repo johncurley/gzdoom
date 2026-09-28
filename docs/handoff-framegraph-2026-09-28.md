@@ -34,33 +34,33 @@ keep-alive so output reachability does not discard their external or
 cross-frame effects. The fixed presentation dither texture is named as an
 external input so the Vulkan and Metal present pass can be recorded.
 
-The upload observer's material texture reads remain global upload-ordering
-facts. They are **not yet attached to the scene pass that samples them**, so
-they do not complete the scene's dependency declarations. Also audit any new
-side-effecting or cross-frame passes and mark them keep-alive before treating a
-reported candidate as unused.
+Material texture reads now retain their global upload-order observations and
+are also attached as deduplicated sampled reads to the active main-view scene
+pass on GL, Vulkan, and Metal. If an earlier graph pass writes the same name,
+the read creates the corresponding graph dependency. Otherwise the current
+texture value is declared as an imported input. Offscreen-only scene traversals
+do not yet have equivalent graph scopes. Continue auditing side-effecting and
+cross-frame passes and mark them keep-alive before treating any candidate as
+unused.
 
 ## Remaining work, in order
 
-1. **Finish the CPU graph contract.** Attach scene material texture reads to
-   the actual scene pass. Preserve the distinction between imported external
-   resources and graph-produced resources, and audit keep-alive coverage for
-   side effects and cross-frame results.
-2. **Validate the diagnostic model on GL and Vulkan.** Exercise real frames
+1. **Validate the completed CPU graph contract.** Exercise real frames
    with representative scene materials, postprocess enabled and disabled, and
    conditional paths. Confirm `Backbuffer` reaches its producer chain, retained
    side effects stay rooted, candidates are interpreted correctly, and
-   transient lifetimes match ping-pong uses and aliases. Keep live rendering in
-   backend order during this stage.
-3. **Move one bounded chain to graph-driven execution.** Start with the
+   transient lifetimes match ping-pong uses and aliases. Run GL and Vulkan on
+   Linux hardware; add the user's Metal run as a third backend check. Keep live
+   rendering in backend order during this stage.
+2. **Move one bounded chain to graph-driven execution.** Start with the
    `Pass2` chain identified in `docs/frame-analysis.md` §4. Specify RAW, WAR,
    and WAW handling and per-backend synchronization before changing execution.
    Compare captured output against the existing path and exercise resize,
    enabled/disabled effects, and ping-pong direction.
-4. **Widen in measured steps.** Add bloom and exposure, then AO. Keep resource
+3. **Widen in measured steps.** Add bloom and exposure, then AO. Keep resource
    aliasing and pass culling disabled until output roots, all relevant reads,
    writes, and lifetimes have been proven on the migrated paths.
-5. **Validate Metal policy on Apple Silicon.** CPU graph algorithms and
+4. **Validate Metal policy on Apple Silicon.** CPU graph algorithms and
    backend-neutral contracts can proceed on Linux. Metal scheduling,
    transient aliasing policy, and TBDR performance choices need M-series runtime
    evidence. ARM64/AArch64 JIT work is also deferred until Apple Silicon is
@@ -83,7 +83,24 @@ failure, capture real rendered frames, and report noise and coverage limits.
 The self-test now covers an output-rooted chain, a dead candidate, missing
 output detection, screenshot keep-alive, and a transient lifetime interval.
 `cmake --build build -j$(nproc)` passed on Linux. The self-test could not be
-run in this session: the sandbox blocked Xvfb's Unix socket, and the
+run in the previous session: the sandbox blocked Xvfb's Unix socket, and the
 out-of-sandbox Xvfb launch did not finish GZDoom startup before its timeout.
-The diagnostic model therefore still needs a live GL/Vulkan run before step 2
-can be closed. Xvfb `+quit` checks do not substitute for real rendered frames.
+The diagnostic model therefore still needs live GL/Vulkan runs before its
+validation can be closed. Xvfb `+quit` checks do not substitute for real
+rendered frames.
+
+## Metal handoff check
+
+On the available Metal machine, run a real map scene, then issue `r_framegraph`
+after at least one rendered frame. Confirm `scene.opaque` and
+`scene.portal_translucent` list sampled material resources, `Backbuffer` reaches
+the present chain, and `Build()` reports no undeclared-resource or observed-use
+errors. Material inputs without a prior graph writer are expected to be
+external; names with a prior graph writer should produce edges. This checks the
+Metal hook and graph contract, not Apple Silicon/TBDR performance policy.
+
+The latest Linux build includes GL/Vulkan and passed after the scene-material
+hook was added. It does not compile the Metal backend. Live output/lifetime and
+material-edge validation remains open on GL/Vulkan hardware as well as the
+Metal handoff check above. Offscreen-only scene traversals remain outside the
+new material-read scopes.

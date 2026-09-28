@@ -410,14 +410,14 @@ void VkMaterial::ObserveTextureReads(const FMaterialState& state)
 	int numLayers = NumLayers();
 	MaterialLayerInfo *layer;
 	auto systex = static_cast<VkHardwareTexture*>(GetLayer(0, state.mTranslation, &layer));
-	fb->Graph().ObserveResourceRead(systex->GetFrameGraphResourceName());
+	fb->Graph().ObserveSceneMaterialRead(systex->GetFrameGraphResourceName());
 
 	if (!(layer->scaleFlags & CTF_Indexed))
 	{
 		for (int i = 1; i < numLayers; i++)
 		{
 			auto syslayer = static_cast<VkHardwareTexture*>(GetLayer(i, 0, &layer));
-			fb->Graph().ObserveResourceRead(syslayer->GetFrameGraphResourceName());
+			fb->Graph().ObserveSceneMaterialRead(syslayer->GetFrameGraphResourceName());
 		}
 	}
 	else
@@ -425,7 +425,7 @@ void VkMaterial::ObserveTextureReads(const FMaterialState& state)
 		for (int i = 1; i < 3; i++)
 		{
 			auto syslayer = static_cast<VkHardwareTexture*>(GetLayer(i, state.mTranslation, &layer));
-			fb->Graph().ObserveResourceRead(syslayer->GetFrameGraphResourceName());
+			fb->Graph().ObserveSceneMaterialRead(syslayer->GetFrameGraphResourceName());
 		}
 	}
 }

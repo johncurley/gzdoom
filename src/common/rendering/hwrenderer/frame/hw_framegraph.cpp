@@ -72,6 +72,7 @@ void FrameGraph::Reset()
 	mLifetimes.Clear();
 	mBackendObserved.Clear();
 	mObservedUses.Clear();
+	mOwnedSceneReadNames.Clear();
 	mResourceReads.Clear();
 	mActivePass = -1;
 }
@@ -149,6 +150,80 @@ void FrameGraph::ObserveResourceRead(const char *name)
 		*lastSequence = sequence;
 	else
 		mResourceReads.Insert(FString(name), sequence);
+}
+
+void FrameGraph::ObserveSceneMaterialRead(const char *name)
+{
+	if (!name)
+		return;
+
+	// Keep the existing upload-order observation for reads outside a scene
+	// scope too; only the dependency declaration below is scene-specific.
+	ObserveResourceRead(name);
+	if (mActivePass < 0 || mActivePass >= (int)mPasses.Size())
+		return;
+
+	PassDesc &pass = mPasses[mActivePass];
+	if (!pass.name || strncmp(pass.name, "scene.", 6) != 0)
+		return;
+
+	const char *canonicalName = CanonicalName(name);
+	bool hasEarlierWriter = false;
+	for (int passIndex = 0; passIndex < mActivePass && !hasEarlierWriter; passIndex++)
+	{
+		for (const char *written : mPasses[passIndex].writes)
+		{
+			if (NameEq(CanonicalName(written), canonicalName))
+			{
+				hasEarlierWriter = true;
+				break;
+			}
+		}
+	}
+
+	const char *graphName = nullptr;
+	for (const char *read : pass.reads)
+	{
+		if (NameEq(CanonicalName(read), canonicalName))
+			graphName = read;
+	}
+	if (!graphName)
+	{
+		mOwnedSceneReadNames.Push(FString(name));
+		graphName = mOwnedSceneReadNames[mOwnedSceneReadNames.Size() - 1].GetChars();
+		pass.reads.Push(graphName);
+	}
+
+	if (!hasEarlierWriter)
+		DeclareExternal(graphName);
+
+	bool hasSampledRead = false;
+	for (const ResourceUse &use : pass.uses)
+	{
+		if (use.access == FrameGraphAccess::Read && use.usage == FrameGraphUsage::Sampled &&
+			NameEq(CanonicalName(use.name), canonicalName))
+		{
+			hasSampledRead = true;
+			break;
+		}
+	}
+	if (!hasSampledRead)
+		pass.uses.Push({ graphName, FrameGraphAccess::Read, FrameGraphUsage::Sampled });
+
+	bool alreadyObserved = false;
+	for (const ObservedUse &observed : mObservedUses)
+	{
+		if (observed.pass == mActivePass && observed.use.access == FrameGraphAccess::Read &&
+			observed.use.usage == FrameGraphUsage::Sampled &&
+			NameEq(CanonicalName(observed.use.name), canonicalName))
+		{
+			alreadyObserved = true;
+			break;
+		}
+	}
+	if (!alreadyObserved)
+		mObservedUses.Push({ mActivePass, { graphName, FrameGraphAccess::Read, FrameGraphUsage::Sampled } });
+	mBackendObserved[mActivePass] = 1;
 }
 
 const char *FrameGraph::CanonicalName(const char *name) const

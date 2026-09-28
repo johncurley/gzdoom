@@ -436,9 +436,9 @@ it is unusual).
 - **Current handoff:** `docs/handoff-framegraph-2026-09-28.md` — the GL/Vulkan
   Linux framegraph/upload and observer-cost tranche is closed. The graph now
   reports required-output reachability, keep-alive passes, dead-pass candidates,
-  and per-frame transient lifetimes; this has built but awaits live GL/Vulkan
-  validation. Scene-material reads still need to attach to the consuming scene
-  pass before execution migration. Vulkan indexed non-mip upload validation
+  per-frame transient lifetimes, and main-view scene-material reads; this has
+  built but awaits live GL/Vulkan validation. Offscreen-only scene traversals
+  are not yet represented. Vulkan indexed non-mip upload validation
   remains open pending a confirmed draw route. Apple Silicon is still required
   for Metal/TBDR performance policy; ARM64 JIT work is deferred until that
   hardware is available. The cold MAP08 capture still misses strict

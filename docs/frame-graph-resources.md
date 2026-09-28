@@ -26,10 +26,13 @@ and topological-order lifetime intervals for resources marked transient in
 reordering, aliasing, or culling. Imported resources and registry resources
 marked persistent are excluded from transient lifetimes.
 
-Scene material texture reads are still observed globally for upload ordering,
-but are not attached as reads of the consuming scene pass. That is the next CPU
-graph contract, followed by live validation of output reachability and
-lifetime reports on GL and Vulkan. Backend execution migration,
+Material texture reads now retain their global upload-order observations and
+are also attached as deduplicated sampled reads to the active main-view scene
+pass on GL, Vulkan, and Metal. If an earlier graph pass writes the same name,
+the read creates the corresponding graph dependency. Otherwise the current
+texture value is declared as an imported input. Offscreen-only scene traversals
+do not yet have equivalent graph scopes. Live validation of output reachability
+and lifetime reports remains next. Backend execution migration,
 hazard/barrier handling, transient aliasing, and pass culling follow after the
 complete graph contract has been validated. See
 [`handoff-framegraph-2026-09-28.md`](handoff-framegraph-2026-09-28.md) for the
