@@ -1067,7 +1067,7 @@ void HWDrawInfo::DrawScene(int drawmode)
 
 	RenderState.SetDepthMask(true);
 	if (graphScene)
-		screen->BeginFrameGraphScenePass("scene.opaque", sceneHasGBuffer, true);
+		screen->BeginFrameGraphScenePass("scene.opaque", sceneHasGBuffer, true, false);
 	if (!gl_no_skyclear) portalState.RenderFirstSkyPortal(recursion, this, RenderState);
 
 	RenderScene(RenderState);
@@ -1088,7 +1088,7 @@ void HWDrawInfo::DrawScene(int drawmode)
 	// Handle all portals after rendering the opaque objects but before
 	// doing all translucent stuff
 	if (graphScene)
-		screen->BeginFrameGraphScenePass("scene.portal_translucent", false, true);
+		screen->BeginFrameGraphScenePass("scene.portal_translucent", false, true, true);
 	recursion++;
 	portalState.EndFrame(this, RenderState);
 	recursion--;

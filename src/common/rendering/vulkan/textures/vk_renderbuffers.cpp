@@ -279,7 +279,7 @@ void VkRenderBuffers::CreateSceneNormal(int width, int height, VkSampleCountFlag
 		ResourceFormat::RGBA8, { SizeRule::SceneFull } }, SceneNormal.Image.get());
 }
 
-VulkanFramebuffer* VkRenderBuffers::GetOutput(VkPPRenderPassSetup* passSetup, const PPOutput& output, WhichDepthStencil stencilTest, int& framebufferWidth, int& framebufferHeight)
+VulkanFramebuffer* VkRenderBuffers::GetOutput(VkPPRenderPassSetup* passSetup, const PPOutput& output, WhichDepthStencil stencilTest, bool colorReadWrite, int& framebufferWidth, int& framebufferHeight)
 {
 	VkTextureImage* tex = fb->GetTextureManager()->GetTexture(output.Type, output.Texture);
 	if (output.Type == PPTextureType::PPTexture)
@@ -287,13 +287,14 @@ VulkanFramebuffer* VkRenderBuffers::GetOutput(VkPPRenderPassSetup* passSetup, co
 		if (output.Texture->Name)
 		{
 			fb->Resources().Touch(output.Texture->Name, true);
-			fb->Graph().ObserveBackendUse(output.Texture->Name, FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
+			fb->Graph().ObserveBackendUse(output.Texture->Name,
+				colorReadWrite ? FrameGraphAccess::ReadWrite : FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
 		}
 	}
 	else if (const char *name = fb->GetTextureManager()->GetTextureResourceName(output.Type))
 	{
 		fb->Resources().Touch(name, true);
-		fb->Graph().ObserveBackendUse(name, FrameGraphAccess::Write,
+		fb->Graph().ObserveBackendUse(name, colorReadWrite ? FrameGraphAccess::ReadWrite : FrameGraphAccess::Write,
 			output.Type == PPTextureType::SwapChain ? FrameGraphUsage::Present : FrameGraphUsage::ColorAttachment);
 	}
 

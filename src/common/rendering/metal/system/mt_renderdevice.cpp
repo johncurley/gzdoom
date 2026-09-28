@@ -1069,7 +1069,7 @@ void MetalRenderDevice::SetSceneRenderTarget(bool useSSAO) {
   Graph().EndBackendPass();
 }
 void MetalRenderDevice::BeginFrameGraphScenePass(const char *name, bool gbuffer,
-                                                 bool depthWrite) {
+                                                 bool depthWrite, bool colorReadWrite) {
   auto *buffers = GetBuffers();
   if (!buffers)
     return;
@@ -1084,11 +1084,14 @@ void MetalRenderDevice::BeginFrameGraphScenePass(const char *name, bool gbuffer,
   desc.name = name;
   desc.owner = "MetalRenderDevice";
   desc.writes.Push(sceneColor);
-  desc.uses.Push({ sceneColor, FrameGraphAccess::Write,
+  if (colorReadWrite)
+    desc.reads.Push(sceneColor);
+  desc.uses.Push({ sceneColor, colorReadWrite ? FrameGraphAccess::ReadWrite : FrameGraphAccess::Write,
                    FrameGraphUsage::ColorAttachment });
   if (depthWrite) {
+    desc.reads.Push(sceneDepth);
     desc.writes.Push(sceneDepth);
-    desc.uses.Push({ sceneDepth, FrameGraphAccess::Write,
+    desc.uses.Push({ sceneDepth, FrameGraphAccess::ReadWrite,
                      FrameGraphUsage::DepthStencilAttachment });
   }
   if (gbuffer) {
@@ -1108,11 +1111,11 @@ void MetalRenderDevice::BeginFrameGraphScenePass(const char *name, bool gbuffer,
   int scenePass = Graph().AddPass(desc);
   Graph().BeginBackendPass(scenePass);
   Resources().Touch(sceneColor, true);
-  Graph().ObserveBackendUse(sceneColor, FrameGraphAccess::Write,
+  Graph().ObserveBackendUse(sceneColor, colorReadWrite ? FrameGraphAccess::ReadWrite : FrameGraphAccess::Write,
                             FrameGraphUsage::ColorAttachment);
   if (depthWrite) {
     Resources().Touch(sceneDepth, true);
-    Graph().ObserveBackendUse(sceneDepth, FrameGraphAccess::Write,
+    Graph().ObserveBackendUse(sceneDepth, FrameGraphAccess::ReadWrite,
                               FrameGraphUsage::DepthStencilAttachment);
   }
   if (gbuffer) {

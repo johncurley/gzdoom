@@ -86,10 +86,15 @@ void VkPPRenderState::Draw()
 		const char *writeName = resolvable ? ResolvePPTextureName(textureManager, Output.Type, Output.Texture) : nullptr;
 		if (writeName)
 		{
+			const bool outputReadWrite = Output.Type != PPTextureType::SwapChain &&
+				!(BlendMode.BlendOp == STYLEOP_Add && BlendMode.SrcAlpha == STYLEALPHA_One &&
+					BlendMode.DestAlpha == STYLEALPHA_Zero && BlendMode.Flags == 0);
 			PassDesc desc;
 			desc.name = PassName ? PassName : "present";
 			desc.owner = "Postprocess";
 			desc.reads = reads;
+			if (outputReadWrite)
+				desc.reads.Push(writeName);
 			desc.writes = { writeName };
 			for (const char *name : reads)
 			{
@@ -97,7 +102,7 @@ void VkPPRenderState::Draw()
 					fb->Graph().DeclareExternal(name);
 				desc.uses.Push({ name, FrameGraphAccess::Read, FrameGraphUsage::Sampled });
 			}
-			desc.uses.Push({ writeName, FrameGraphAccess::Write,
+			desc.uses.Push({ writeName, outputReadWrite ? FrameGraphAccess::ReadWrite : FrameGraphAccess::Write,
 				Output.Type == PPTextureType::SwapChain ? FrameGraphUsage::Present : FrameGraphUsage::ColorAttachment });
 			graphPass = fb->Graph().AddPass(desc);
 			if (Output.Type == PPTextureType::SwapChain)
@@ -137,7 +142,10 @@ void VkPPRenderState::Draw()
 
 	int framebufferWidth = 0, framebufferHeight = 0;
 	VulkanDescriptorSet *input = fb->GetDescriptorSetManager()->GetInput(passSetup, Textures, ShadowMapBuffers);
-	VulkanFramebuffer *output = fb->GetBuffers()->GetOutput(passSetup, Output, key.StencilTest, framebufferWidth, framebufferHeight);
+	const bool outputReadWrite = Output.Type != PPTextureType::SwapChain &&
+		!(BlendMode.BlendOp == STYLEOP_Add && BlendMode.SrcAlpha == STYLEALPHA_One &&
+			BlendMode.DestAlpha == STYLEALPHA_Zero && BlendMode.Flags == 0);
+	VulkanFramebuffer *output = fb->GetBuffers()->GetOutput(passSetup, Output, key.StencilTest, outputReadWrite, framebufferWidth, framebufferHeight);
 
 	RenderScreenQuad(passSetup, input, output, framebufferWidth, framebufferHeight, Viewport.left, Viewport.top, Viewport.width, Viewport.height, Uniforms.Data.Data(), Uniforms.Data.Size(), key.StencilTest == WhichDepthStencil::Scene);
 

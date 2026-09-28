@@ -258,8 +258,26 @@ void FrameGraph::BeginBackendPass(int passIndex)
 
 void FrameGraph::ObserveBackendUse(const char *name, FrameGraphAccess access, FrameGraphUsage usage)
 {
-	if (mActivePass >= 0)
-		mObservedUses.Push({ mActivePass, { name, access, usage } });
+	if (!name || mActivePass < 0 || mActivePass >= (int)mPasses.Size())
+		return;
+
+	// A framebuffer bind choke point can observe an attachment's write side
+	// without knowing whether the active pass also blends or depth-tests
+	// against existing contents. If the pass contract declares that
+	// attachment ReadWrite, record the complete attachment access here.
+	if (access == FrameGraphAccess::Write)
+	{
+		for (const ResourceUse &use : mPasses[mActivePass].uses)
+		{
+			if (use.access == FrameGraphAccess::ReadWrite && use.usage == usage &&
+				NameEq(CanonicalName(use.name), CanonicalName(name)))
+			{
+				access = FrameGraphAccess::ReadWrite;
+				break;
+			}
+		}
+	}
+	mObservedUses.Push({ mActivePass, { name, access, usage } });
 }
 
 void FrameGraph::EndBackendPass()
@@ -903,6 +921,7 @@ CCMD(r_framegraph)
 	graph.DeclareExternal("EyeTexture[0]");
 	graph.DeclareExternal("EyeTexture[1]");
 	graph.DeclareExternal("PaletteTexture");
+	graph.DeclareExternal("Exposure.Camera");
 	graph.DeclareExternal("AO.RandomTexture0");
 	graph.DeclareExternal("AO.RandomTexture1");
 	graph.DeclareExternal("AO.RandomTexture2");

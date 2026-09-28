@@ -286,7 +286,7 @@ public:
 	virtual void SetSceneRenderTarget(bool useSSAO) {}
 	// Framegraph-only scene boundaries. Backends that have not adopted scene
 	// observation yet keep the default no-op behavior.
-	virtual void BeginFrameGraphScenePass(const char *name, bool gbuffer, bool depthWrite) {}
+	virtual void BeginFrameGraphScenePass(const char *name, bool gbuffer, bool depthWrite, bool colorReadWrite) {}
 	virtual void EndFrameGraphScenePass() {}
 	virtual void UpdateShadowMap() {}
 	virtual void WaitForCommands(bool finish) {}

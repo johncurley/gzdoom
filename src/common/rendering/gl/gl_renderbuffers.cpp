@@ -1091,14 +1091,19 @@ void GLPPRenderState::Draw()
 		const char *writeName = resolvable ? ResolvePPTextureName(buffers, Output.Type, Output.Texture) : nullptr;
 		if (writeName)
 		{
+			const bool outputReadWrite = Output.Type != PPTextureType::SwapChain &&
+				!(BlendMode.BlendOp == STYLEOP_Add && BlendMode.SrcAlpha == STYLEALPHA_One &&
+					BlendMode.DestAlpha == STYLEALPHA_Zero && BlendMode.Flags == 0);
 			PassDesc desc;
 			desc.name = PassName;
 			desc.owner = "Postprocess";
 			desc.reads = reads;
+			if (outputReadWrite)
+				desc.reads.Push(writeName);
 			desc.writes = { writeName };
 			for (const char *name : reads)
 				desc.uses.Push({ name, FrameGraphAccess::Read, FrameGraphUsage::Sampled });
-			desc.uses.Push({ writeName, FrameGraphAccess::Write,
+			desc.uses.Push({ writeName, outputReadWrite ? FrameGraphAccess::ReadWrite : FrameGraphAccess::Write,
 				Output.Type == PPTextureType::SwapChain ? FrameGraphUsage::Present : FrameGraphUsage::ColorAttachment });
 			graphPass = screen->Graph().AddPass(desc);
 		}
@@ -1175,7 +1180,10 @@ void GLPPRenderState::Draw()
 		if (Output.Texture->Name)
 		{
 			screen->Resources().Touch(Output.Texture->Name, true);
-			screen->Graph().ObserveBackendUse(Output.Texture->Name, FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
+			const bool outputReadWrite = BlendMode.BlendOp != STYLEOP_Add || BlendMode.SrcAlpha != STYLEALPHA_One ||
+				BlendMode.DestAlpha != STYLEALPHA_Zero || BlendMode.Flags != 0;
+			screen->Graph().ObserveBackendUse(Output.Texture->Name,
+				outputReadWrite ? FrameGraphAccess::ReadWrite : FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
 		}
 		break;
 

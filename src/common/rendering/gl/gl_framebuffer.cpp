@@ -671,17 +671,20 @@ void OpenGLFrameBuffer::Draw2D()
 	}
 }
 
-void OpenGLFrameBuffer::BeginFrameGraphScenePass(const char *name, bool gbuffer, bool depthWrite)
+void OpenGLFrameBuffer::BeginFrameGraphScenePass(const char *name, bool gbuffer, bool depthWrite, bool colorReadWrite)
 {
 	PassDesc sceneDesc;
 	sceneDesc.name = name;
 	sceneDesc.owner = "OpenGLFrameBuffer";
 	sceneDesc.writes = { "SceneColor" };
-	sceneDesc.uses.Push({ "SceneColor", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
+	if (colorReadWrite)
+		sceneDesc.reads.Push("SceneColor");
+	sceneDesc.uses.Push({ "SceneColor", colorReadWrite ? FrameGraphAccess::ReadWrite : FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
 	if (depthWrite)
 	{
+		sceneDesc.reads.Push("SceneDepthStencil");
 		sceneDesc.writes.Push("SceneDepthStencil");
-		sceneDesc.uses.Push({ "SceneDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment });
+		sceneDesc.uses.Push({ "SceneDepthStencil", FrameGraphAccess::ReadWrite, FrameGraphUsage::DepthStencilAttachment });
 	}
 	if (gbuffer)
 	{
@@ -698,11 +701,11 @@ void OpenGLFrameBuffer::BeginFrameGraphScenePass(const char *name, bool gbuffer,
 	int scenePass = screen->Graph().AddPass(sceneDesc);
 	screen->Graph().BeginBackendPass(scenePass);
 	screen->Resources().Touch("SceneColor", true);
-	screen->Graph().ObserveBackendUse("SceneColor", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
+	screen->Graph().ObserveBackendUse("SceneColor", colorReadWrite ? FrameGraphAccess::ReadWrite : FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
 	if (depthWrite)
 	{
 		screen->Resources().Touch("SceneDepthStencil", true);
-		screen->Graph().ObserveBackendUse("SceneDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment);
+		screen->Graph().ObserveBackendUse("SceneDepthStencil", FrameGraphAccess::ReadWrite, FrameGraphUsage::DepthStencilAttachment);
 	}
 	if (gbuffer)
 	{

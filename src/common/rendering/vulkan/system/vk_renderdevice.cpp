@@ -271,17 +271,20 @@ void VulkanRenderDevice::RenderTextureView(FCanvasTexture* tex, std::function<vo
 	tex->SetUpdated(true);
 }
 
-void VulkanRenderDevice::BeginFrameGraphScenePass(const char *name, bool gbuffer, bool depthWrite)
+void VulkanRenderDevice::BeginFrameGraphScenePass(const char *name, bool gbuffer, bool depthWrite, bool colorReadWrite)
 {
 	PassDesc sceneDesc;
 	sceneDesc.name = name;
 	sceneDesc.owner = "VulkanRenderDevice";
 	sceneDesc.writes = { "SceneColor" };
-	sceneDesc.uses.Push({ "SceneColor", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
+	if (colorReadWrite)
+		sceneDesc.reads.Push("SceneColor");
+	sceneDesc.uses.Push({ "SceneColor", colorReadWrite ? FrameGraphAccess::ReadWrite : FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
 	if (depthWrite)
 	{
+		sceneDesc.reads.Push("SceneDepthStencil");
 		sceneDesc.writes.Push("SceneDepthStencil");
-		sceneDesc.uses.Push({ "SceneDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment });
+		sceneDesc.uses.Push({ "SceneDepthStencil", FrameGraphAccess::ReadWrite, FrameGraphUsage::DepthStencilAttachment });
 	}
 	if (gbuffer)
 	{
@@ -298,11 +301,11 @@ void VulkanRenderDevice::BeginFrameGraphScenePass(const char *name, bool gbuffer
 	int scenePass = Graph().AddPass(sceneDesc);
 	Graph().BeginBackendPass(scenePass);
 	Resources().Touch("SceneColor", true);
-	Graph().ObserveBackendUse("SceneColor", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
+	Graph().ObserveBackendUse("SceneColor", colorReadWrite ? FrameGraphAccess::ReadWrite : FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
 	if (depthWrite)
 	{
 		Resources().Touch("SceneDepthStencil", true);
-		Graph().ObserveBackendUse("SceneDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment);
+		Graph().ObserveBackendUse("SceneDepthStencil", FrameGraphAccess::ReadWrite, FrameGraphUsage::DepthStencilAttachment);
 	}
 	if (gbuffer)
 	{

@@ -441,17 +441,23 @@ public:
           reads.Push(name);
       }
       if (writeName && resolvable) {
+        const bool outputReadWrite = Output.Type != PPTextureType::SwapChain &&
+            !(BlendMode.BlendOp == STYLEOP_Add &&
+              BlendMode.SrcAlpha == (uint8_t)STYLEALPHA_One &&
+              BlendMode.DestAlpha == (uint8_t)STYLEALPHA_Zero);
         PassDesc desc;
         desc.name = PassName ? PassName : "present";
         desc.owner = "Postprocess";
         desc.reads = reads;
+        if (outputReadWrite)
+          desc.reads.Push(writeName);
         desc.writes = { writeName };
         for (const char *name : reads) {
           if (strcmp(name, "Present.Dither") == 0)
             screen->Graph().DeclareExternal(name);
           desc.uses.Push({ name, FrameGraphAccess::Read, FrameGraphUsage::Sampled });
         }
-        desc.uses.Push({ writeName, FrameGraphAccess::Write,
+        desc.uses.Push({ writeName, outputReadWrite ? FrameGraphAccess::ReadWrite : FrameGraphAccess::Write,
           Output.Type == PPTextureType::SwapChain ? FrameGraphUsage::Present :
                                                      FrameGraphUsage::ColorAttachment });
         graphPass = screen->Graph().AddPass(desc);
@@ -472,10 +478,16 @@ public:
     }
     if (writeName) {
       screen->Resources().Touch(writeName, true);
-      if (graphPass >= 0)
-        screen->Graph().ObserveBackendUse(writeName, FrameGraphAccess::Write,
+      if (graphPass >= 0) {
+        const bool outputReadWrite = Output.Type != PPTextureType::SwapChain &&
+            !(BlendMode.BlendOp == STYLEOP_Add &&
+              BlendMode.SrcAlpha == (uint8_t)STYLEALPHA_One &&
+              BlendMode.DestAlpha == (uint8_t)STYLEALPHA_Zero);
+        screen->Graph().ObserveBackendUse(writeName,
+                                          outputReadWrite ? FrameGraphAccess::ReadWrite : FrameGraphAccess::Write,
                                           Output.Type == PPTextureType::SwapChain ?
                                             FrameGraphUsage::Present : FrameGraphUsage::ColorAttachment);
+      }
     }
 
     mtRenderState->SetRenderTarget(outputTex, depthStencil, width, height,

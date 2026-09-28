@@ -41,7 +41,7 @@ public:
 	VkTextureImage PipelineDepthStencil;
 	VkTextureImage PipelineImage[NumPipelineImages];
 
-	VulkanFramebuffer* GetOutput(VkPPRenderPassSetup* passSetup, const PPOutput& output, WhichDepthStencil stencilTest, int& framebufferWidth, int& framebufferHeight);
+	VulkanFramebuffer* GetOutput(VkPPRenderPassSetup* passSetup, const PPOutput& output, WhichDepthStencil stencilTest, bool colorReadWrite, int& framebufferWidth, int& framebufferHeight);
 
 private:
 	void CreatePipelineDepthStencil(int width, int height);
