@@ -91,12 +91,13 @@ that understanding rather than on a false assurance.
 
 ## ZWidget is a subtree
 
-`libraries/ZWidget` tracks a fork of dpjudas/ZWidget. Do not hand-edit it and
-leave it there — fixes that are not specific to this fork should go upstream:
+`libraries/ZWidget` tracks `johncurley/ZWidget` `master`, the canonical source
+for this engine. Do not hand-edit it and leave it there — publish changes to
+the fork first, then import them here:
 
 ```bash
 # Pulling upstream changes DOWN works normally:
-git subtree pull --prefix=libraries/ZWidget zwidget <branch> --squash
+git subtree pull --prefix=libraries/ZWidget zwidget master --squash
 ```
 
 **`git subtree push` does NOT work for this repository. Do not use it.** ZWidget
@@ -111,9 +112,9 @@ To publish changes UP, cherry-pick onto a branch off the fork instead:
 
 ```bash
 git subtree split --prefix=libraries/ZWidget -b zwidget-split   # for the SHAs only
-git checkout -b zwidget-fork zwidget/wayland-c-bindings
+git checkout -b zwidget-fork zwidget/master
 git cherry-pick <split SHAs>
-git push zwidget zwidget-fork:wayland-c-bindings
+git push zwidget zwidget-fork:master
 ```
 
 A previous plain-directory copy let three lineages drift until eight API
