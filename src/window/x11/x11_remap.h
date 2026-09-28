@@ -91,6 +91,12 @@
 #undef XGrabPointer
 #undef XUngrabPointer
 #undef XWarpPointer
+#undef XSetErrorHandler
+#undef XShmQueryExtension
+#undef XShmAttach
+#undef XShmDetach
+#undef XShmPutImage
+#undef XShmCreateImage
 
 #define XDefaultDepth X11Dynamic::Get()->p_DefaultDepth
 #define XDefaultVisual X11Dynamic::Get()->p_DefaultVisual
@@ -168,3 +174,9 @@
 #define XGrabPointer X11Dynamic::Get()->p_GrabPointer
 #define XUngrabPointer X11Dynamic::Get()->p_UngrabPointer
 #define XWarpPointer X11Dynamic::Get()->p_WarpPointer
+#define XSetErrorHandler X11Dynamic::Get()->p_SetErrorHandler
+#define XShmQueryExtension X11Dynamic::Get()->p_ShmQueryExtension
+#define XShmAttach X11Dynamic::Get()->p_ShmAttach
+#define XShmDetach X11Dynamic::Get()->p_ShmDetach
+#define XShmPutImage X11Dynamic::Get()->p_ShmPutImage
+#define XShmCreateImage X11Dynamic::Get()->p_ShmCreateImage

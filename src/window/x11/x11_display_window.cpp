@@ -12,8 +12,26 @@
 #include <dlfcn.h>
 #include <unistd.h>
 #include <iostream>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+
 namespace
 {
+	// XShmAttach reports failure (eg. a non-local display, where shared memory
+	// cannot cross the connection) as an asynchronous protocol error, not
+	// reliably through its return value -- and the default X error handler
+	// treats any error as fatal (see the BadMatch trap elsewhere in this file).
+	// This narrowly-scoped handler, installed only around the attach+sync
+	// below, is what makes the plain-XPutImage fallback reachable instead of
+	// the whole process exiting.
+	bool g_ShmAttachFailed = false;
+
+	int ShmAttachErrorHandler(Display*, XErrorEvent*)
+	{
+		g_ShmAttachFailed = true;
+		return 0;
+	}
+
 	Cursor CreateCustomCursor(Display* display, const std::shared_ptr<CustomCursor>& cursor)
 	{
 #ifdef HAVE_XCURSOR
@@ -628,8 +646,77 @@ double X11DisplayWindow::GetDpiScale() const
 
 void X11DisplayWindow::CreateBackbuffer(int width, int height)
 {
-	backbuffer.pixels = malloc(width * height * sizeof(uint32_t));
-	backbuffer.image = XCreateImage(display, DefaultVisual(display, screen), depth, ZPixmap, 0, (char*)backbuffer.pixels, width, height, 32, 0);
+	backbuffer.usingShm = false;
+
+	// MIT-SHM avoids ever putting the whole backbuffer through the protocol
+	// socket as one giant synchronous write -- see AGENTS.md Tasks -- Linux
+	// item 13 for why that matters: a large XPutImage that never returns to
+	// draining events can deadlock the entire connection against a window
+	// manager's post-map event burst, not just this client.
+	if (X11Dynamic::Get()->HasShm)
+	{
+		// The server-side extension check is a round trip; cache it rather
+		// than repeating it on every resize.
+		static int shmSupported = -1;
+		if (shmSupported == -1)
+			shmSupported = XShmQueryExtension(display) ? 1 : 0;
+
+		if (shmSupported == 1)
+		{
+			backbuffer.shmInfo = {};
+			backbuffer.image = XShmCreateImage(display, DefaultVisual(display, screen), depth, ZPixmap, nullptr, &backbuffer.shmInfo, width, height);
+			if (backbuffer.image)
+			{
+				backbuffer.shmInfo.shmid = shmget(IPC_PRIVATE, (size_t)backbuffer.image->bytes_per_line * backbuffer.image->height, IPC_CREAT | 0600);
+				if (backbuffer.shmInfo.shmid != -1)
+				{
+					backbuffer.shmInfo.shmaddr = (char*)shmat(backbuffer.shmInfo.shmid, nullptr, 0);
+					backbuffer.image->data = backbuffer.shmInfo.shmaddr;
+					backbuffer.shmInfo.readOnly = False;
+
+					if (backbuffer.shmInfo.shmaddr != (char*)-1)
+					{
+						g_ShmAttachFailed = false;
+						XErrorHandler previousHandler = XSetErrorHandler(&ShmAttachErrorHandler);
+						Bool attached = XShmAttach(display, &backbuffer.shmInfo);
+						XSync(display, False);
+						XSetErrorHandler(previousHandler);
+
+						if (attached && !g_ShmAttachFailed)
+						{
+							// Mark for removal now: the kernel keeps the segment
+							// alive until every attach (ours and the server's)
+							// goes away, so this can't leak even if we crash
+							// before DestroyBackbuffer runs.
+							shmctl(backbuffer.shmInfo.shmid, IPC_RMID, nullptr);
+							backbuffer.pixels = backbuffer.image->data;
+							backbuffer.usingShm = true;
+						}
+					}
+
+					if (!backbuffer.usingShm)
+					{
+						if (backbuffer.shmInfo.shmaddr != (char*)-1)
+							shmdt(backbuffer.shmInfo.shmaddr);
+						shmctl(backbuffer.shmInfo.shmid, IPC_RMID, nullptr);
+					}
+				}
+
+				if (!backbuffer.usingShm)
+				{
+					XDestroyImage(backbuffer.image);
+					backbuffer.image = nullptr;
+				}
+			}
+		}
+	}
+
+	if (!backbuffer.usingShm)
+	{
+		backbuffer.pixels = malloc(width * height * sizeof(uint32_t));
+		backbuffer.image = XCreateImage(display, DefaultVisual(display, screen), depth, ZPixmap, 0, (char*)backbuffer.pixels, width, height, 32, 0);
+	}
+
 	backbuffer.pixmap = XCreatePixmap(display, window, width, height, depth);
 	backbuffer.width = width;
 	backbuffer.height = height;
@@ -639,13 +726,25 @@ void X11DisplayWindow::DestroyBackbuffer()
 {
 	if (backbuffer.width > 0 && backbuffer.height > 0)
 	{
-		XDestroyImage(backbuffer.image);
+		if (backbuffer.usingShm)
+		{
+			XShmDetach(display, &backbuffer.shmInfo);
+			XDestroyImage(backbuffer.image);
+			if (backbuffer.shmInfo.shmaddr && backbuffer.shmInfo.shmaddr != (char*)-1)
+				shmdt(backbuffer.shmInfo.shmaddr);
+		}
+		else
+		{
+			XDestroyImage(backbuffer.image);
+		}
 		XFreePixmap(display, backbuffer.pixmap);
 		backbuffer.width = 0;
 		backbuffer.height = 0;
 		backbuffer.pixmap = 0L;
 		backbuffer.image = nullptr;
 		backbuffer.pixels = nullptr;
+		backbuffer.usingShm = false;
+		backbuffer.shmInfo = {};
 	}
 }
 
@@ -662,7 +761,10 @@ void X11DisplayWindow::PresentBitmap(int width, int height, const uint32_t* pixe
 	{
 		memcpy(backbuffer.pixels, pixels, width * height * sizeof(uint32_t));
 		GC gc = XDefaultGC(display, screen);
-		XPutImage(display, backbuffer.pixmap, gc, backbuffer.image, 0, 0, 0, 0, width, height);
+		if (backbuffer.usingShm)
+			XShmPutImage(display, backbuffer.pixmap, gc, backbuffer.image, 0, 0, 0, 0, width, height, False);
+		else
+			XPutImage(display, backbuffer.pixmap, gc, backbuffer.image, 0, 0, 0, 0, width, height);
 		XCopyArea(display, backbuffer.pixmap, window, gc, 0, 0, width, height, 0, 0);
 	}
 }
@@ -866,7 +968,6 @@ void X11DisplayWindow::OnExpose(XEvent* event)
 
 void X11DisplayWindow::OnFocusIn(XEvent* event)
 {
-	fprintf(stderr, "[X11] OnFocusIn called: mode=%d, detail=%d\n", event->xfocus.mode, event->xfocus.detail);
 	if (event->xfocus.detail == NotifyPointer) return;
 
 	if (xic)
@@ -878,10 +979,29 @@ void X11DisplayWindow::OnFocusIn(XEvent* event)
 
 void X11DisplayWindow::OnFocusOut(XEvent* event)
 {
-	fprintf(stderr, "[X11] OnFocusOut called: mode=%d, detail=%d\n", event->xfocus.mode, event->xfocus.detail);
 	if (event->xfocus.detail == NotifyPointer) return;
 
 	RawInput.Focused = false;
+
+	// Per protocol, focus loss releases every held key -- KeyRelease for a
+	// key released while a different window has focus goes to that window,
+	// not this one, so the server will never deliver it here. Synthesize the
+	// up events now, mirroring Wayland's keyboard_handle_leave, or the stale
+	// keyState entry silently eats the next real keypress on this window
+	// (nativevideo.cpp's isRepeat classification treats a live keyRoutes
+	// entry as an auto-repeat and drops the fresh EV_KeyDown).
+	//
+	// Snapshot and clear before dispatching, matching Wayland's reasoning: a
+	// key-up handler is free to have side effects that would otherwise be
+	// iterating over the same map being mutated.
+	std::map<InputKey, bool> held;
+	held.swap(keyState);
+	for (const auto& entry : held)
+	{
+		if (entry.second)
+			windowHost->OnWindowKeyUp(entry.first);
+	}
+
 	windowHost->OnWindowDeactivated();
 }
 

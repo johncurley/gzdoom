@@ -7,6 +7,7 @@
 #include <X11/keysymdef.h>
 #include <X11/XKBlib.h>
 #include <X11/extensions/XInput2.h>
+#include <X11/extensions/XShm.h>
 #ifdef HAVE_XCURSOR
 #include <X11/Xcursor/Xcursor.h>
 #endif
@@ -91,6 +92,12 @@ struct X11Dynamic
 	typedef int (*PFN_XGrabPointer)(Display*, Window, Bool, unsigned int, int, int, Window, Cursor, Time);
 	typedef int (*PFN_XUngrabPointer)(Display*, Time);
 	typedef int (*PFN_XWarpPointer)(Display*, Window, Window, int, int, unsigned int, unsigned int, int, int);
+	typedef XErrorHandler (*PFN_XSetErrorHandler)(XErrorHandler);
+	typedef Bool (*PFN_XShmQueryExtension)(Display*);
+	typedef Bool (*PFN_XShmAttach)(Display*, XShmSegmentInfo*);
+	typedef Bool (*PFN_XShmDetach)(Display*, XShmSegmentInfo*);
+	typedef Bool (*PFN_XShmPutImage)(Display*, Drawable, GC, XImage*, int, int, int, int, unsigned int, unsigned int, Bool);
+	typedef XImage* (*PFN_XShmCreateImage)(Display*, Visual*, unsigned int, int, char*, XShmSegmentInfo*, unsigned int, unsigned int);
 #ifdef HAVE_XCURSOR
 	typedef XcursorImage* (*PFN_XcursorImageCreate)(int, int);
 	typedef void (*PFN_XcursorImageDestroy)(XcursorImage*);
@@ -173,6 +180,19 @@ struct X11Dynamic
 	PFN_XGrabPointer p_GrabPointer;
 	PFN_XUngrabPointer p_UngrabPointer;
 	PFN_XWarpPointer p_WarpPointer;
+	PFN_XSetErrorHandler p_SetErrorHandler;
+
+	// libXext, MIT-SHM: optional -- absent entirely on some minimal installs,
+	// and even when present, XShmAttach can still fail per-connection (eg. a
+	// remote/non-local display, where the server cannot map this process's
+	// shared memory). HasShm only means the symbols resolved; callers still
+	// need to handle XShmAttach failing and fall back to plain XPutImage.
+	bool HasShm = false;
+	PFN_XShmQueryExtension p_ShmQueryExtension;
+	PFN_XShmAttach p_ShmAttach;
+	PFN_XShmDetach p_ShmDetach;
+	PFN_XShmPutImage p_ShmPutImage;
+	PFN_XShmCreateImage p_ShmCreateImage;
 #ifdef HAVE_XCURSOR
 	PFN_XcursorImageCreate p_CursorImageCreate = nullptr;
 	PFN_XcursorImageDestroy p_CursorImageDestroy = nullptr;
@@ -271,6 +291,7 @@ private:
 		LOAD_SYM(x11, GrabPointer);
 		LOAD_SYM(x11, UngrabPointer);
 		LOAD_SYM(x11, WarpPointer);
+		LOAD_SYM(x11, SetErrorHandler);
 
 		if (xi)
 		{
@@ -279,6 +300,18 @@ private:
 			p_IFreeDeviceInfo = (PFN_XIFreeDeviceInfo)dlsym(xi, "XIFreeDeviceInfo");
 			p_ISelectEvents = (PFN_XISelectEvents)dlsym(xi, "XISelectEvents");
 		}
+
+		void* xext = dlopen("libXext.so.6", RTLD_NOW | RTLD_GLOBAL);
+		if (xext)
+		{
+			p_ShmQueryExtension = (PFN_XShmQueryExtension)dlsym(xext, "XShmQueryExtension");
+			p_ShmAttach = (PFN_XShmAttach)dlsym(xext, "XShmAttach");
+			p_ShmDetach = (PFN_XShmDetach)dlsym(xext, "XShmDetach");
+			p_ShmPutImage = (PFN_XShmPutImage)dlsym(xext, "XShmPutImage");
+			p_ShmCreateImage = (PFN_XShmCreateImage)dlsym(xext, "XShmCreateImage");
+			HasShm = p_ShmQueryExtension && p_ShmAttach && p_ShmDetach && p_ShmPutImage && p_ShmCreateImage;
+		}
+
 #ifdef HAVE_XCURSOR
 		void* xcursor = dlopen("libXcursor.so.1", RTLD_NOW | RTLD_GLOBAL);
 		if (xcursor)
