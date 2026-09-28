@@ -1,4 +1,5 @@
 #pragma once
+#include <stdint.h>
 //==========================================================================
 //
 // One wall segment in the draw list
@@ -24,6 +25,7 @@ struct FSectorPortalGroup;
 struct FFlatVertex;
 struct FLinePortalSpan;
 struct FDynLightData;
+struct HWDrawInfo;
 class VSMatrix;
 struct FSpriteModelFrame;
 struct particle_t;
@@ -31,6 +33,25 @@ class FRenderState;
 struct HWDecal;
 struct FSection;
 enum area_t : int;
+
+// Fully resolved per-flat color and fog state. This can be captured with a
+// same-view flat packet and applied without consulting level or portal state.
+struct HWFlatDrawState
+{
+	PalEntry Color;
+	PalEntry FogColor;
+	float Alpha;
+	float FogDensity;
+	float FogLightFactor;
+	float FogLightDistance;
+	int Desaturation;
+	int SoftLightLevel;
+	int SoftLightBlend;
+	bool HasSoftLight;
+	bool FogEnabled;
+	bool HasFogLightParms;
+	bool FogSetsSoftLight;
+};
 
 enum HWRenderStyle
 {
@@ -91,6 +112,31 @@ struct HWSectorPlane
 		plane = sec->GetSecPlane(ceiling);
 		Texheight = (float)((ceiling == sector_t::ceiling)? plane.fD() : -plane.fD());
 	}
+};
+
+// Same-view value payload for a standard indexed flat draw. Buffer slots and
+// ranges identify only the currently active frame-local buffers.
+struct HWFlatPacket
+{
+	FTextureID TextureID;
+	HWSectorPlane Plane;
+	TextureManipulation TextureFx;
+	HWFlatDrawState DrawState;
+	PalEntry FlatColor;
+	PalEntry AddColor;
+	float z;
+	uintptr_t TextureSortKey;
+	int firstIndex;
+	int vertexCount;
+	int vertexBufferSlot;
+	int lightBufferSlot;
+	int dynlightindex;
+	ERenderStyle renderstyle;
+	bool HasTexture;
+	bool HasTextureFx;
+	bool ceiling;
+
+	void DrawFlat(HWDrawInfo *di, FRenderState &state, bool translucent);
 };
 
 struct HWSeg
@@ -331,6 +377,7 @@ public:
 	//int vboheight;
 
 	int dynlightindex;
+	HWFlatDrawState drawstate;
 
 	void CreateSkyboxVertices(FFlatVertex *buffer);
 	void SetupLights(HWDrawInfo *di, FDynLightData &lightdata, int portalgroup);

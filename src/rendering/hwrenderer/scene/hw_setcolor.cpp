@@ -162,3 +162,115 @@ void SetFog(FRenderState &state, FLevelLocals* Level, ELightMode lightmode, int 
 	}
 }
 
+// Resolve the state used by a standard flat draw while level and portal
+// context are available. A same-view packet can then apply only these values.
+HWFlatDrawState ResolveFlatDrawState(FLevelLocals* Level, ELightMode lightmode, int lightlevel, int rellight, bool fullbright, const FColormap& cmap, float alpha, bool isadditive)
+{
+	HWFlatDrawState result{};
+	result.Alpha = alpha;
+
+	if (fullbright)
+	{
+		result.Color = 0xffffff;
+		result.Desaturation = 0;
+		result.HasSoftLight = isSoftwareLighting(lightmode);
+		result.SoftLightLevel = 255;
+		result.SoftLightBlend = 0;
+	}
+	else
+	{
+		int hwlightlevel = CalcLightLevel(lightmode, lightlevel, rellight, false, cmap.BlendFactor);
+		result.Color = CalcLightColor(lightmode, hwlightlevel, cmap.LightColor, cmap.BlendFactor);
+		result.Desaturation = cmap.Desaturation;
+		result.HasSoftLight = isSoftwareLighting(lightmode);
+		result.SoftLightLevel = hw_ClampLight(lightlevel + rellight);
+		result.SoftLightBlend = cmap.BlendFactor;
+	}
+
+	PalEntry fogcolor;
+	if (Level->flags & LEVEL_HASFADETABLE)
+	{
+		result.FogDensity = 70;
+		fogcolor = 0x808080;
+	}
+	else if (!fullbright)
+	{
+		fogcolor = cmap.FadeColor;
+		result.FogDensity = GetFogDensity(Level, lightmode, lightlevel, fogcolor, cmap.FogDensity, cmap.BlendFactor);
+		fogcolor.a = 0;
+	}
+	else
+	{
+		fogcolor = 0;
+		result.FogDensity = 0;
+	}
+
+	if (portalState.inskybox) result.FogDensity += result.FogDensity / 2;
+	result.FogEnabled = result.FogDensity != 0 && gl_fogmode != 0;
+	if (!result.FogEnabled)
+	{
+		result.FogColor = 0;
+		result.FogDensity = 0;
+		return result;
+	}
+
+	if ((lightmode == ELightMode::Doom || (isSoftwareLighting(lightmode) && cmap.BlendFactor > 0)) && fogcolor == 0)
+	{
+		float level = (float)CalcLightLevel(lightmode, lightlevel, rellight, false, cmap.BlendFactor);
+		const float MAXDIST = 256.f;
+		const float THRESHOLD = 96.f;
+		const float FACTOR = 0.75f;
+		if (level > 0)
+		{
+			float lightdist;
+			float olight = (float)lightlevel;
+			if (olight < THRESHOLD)
+			{
+				lightdist = (MAXDIST / 2) + (olight * MAXDIST / THRESHOLD / 2);
+				olight = THRESHOLD;
+			}
+			else lightdist = MAXDIST;
+
+			float lightfactor = 1.f + ((olight / level) - 1.f) * FACTOR;
+			if (lightfactor == 1.f) lightdist = 0.f;
+			result.FogLightFactor = lightfactor;
+			result.FogLightDistance = lightdist;
+		}
+		else
+		{
+			result.FogLightFactor = 1.f;
+			result.FogLightDistance = 0.f;
+		}
+		result.HasFogLightParms = true;
+	}
+	else if (lightmode == ELightMode::Build)
+	{
+		result.FogLightFactor = 0.2f * result.FogDensity;
+		result.FogLightDistance = 1.f / 31.f;
+		result.HasFogLightParms = true;
+	}
+	else
+	{
+		result.FogLightFactor = 1.f;
+		result.FogLightDistance = 0.f;
+		result.HasFogLightParms = true;
+	}
+
+	if (isadditive) fogcolor = 0;
+	result.FogColor = fogcolor;
+	result.FogSetsSoftLight = isSoftwareLighting(lightmode) && cmap.BlendFactor == 0 && Level->brightfog && result.FogDensity != 0 && fogcolor != 0;
+	return result;
+}
+
+void ApplyFlatDrawState(FRenderState& state, const HWFlatDrawState& drawstate)
+{
+	state.SetColorAlpha(drawstate.Color, drawstate.Alpha, drawstate.Desaturation);
+	if (drawstate.HasSoftLight) state.SetSoftLightLevel(drawstate.SoftLightLevel, drawstate.SoftLightBlend);
+	else state.SetNoSoftLightLevel();
+
+	if (drawstate.HasFogLightParms)
+		state.SetLightParms(drawstate.FogLightFactor, drawstate.FogLightDistance);
+	state.EnableFog(drawstate.FogEnabled);
+	state.SetFog(drawstate.FogColor, drawstate.FogDensity);
+	if (drawstate.FogSetsSoftLight) state.SetSoftLightLevel(255);
+}

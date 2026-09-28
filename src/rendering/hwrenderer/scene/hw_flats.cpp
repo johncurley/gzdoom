@@ -318,13 +318,10 @@ void HWFlat::DrawFlat(HWDrawInfo *di, FRenderState &state, bool translucent)
 	}
 #endif
 
-	int rel = getExtraLight();
-
 	state.SetNormal(plane.plane.Normal().X, plane.plane.Normal().Z, plane.plane.Normal().Y);
 	double zshift = (plane.plane.Normal().Z > 0.0 ? 0.1f : -0.1f); // The HWPlaneMirrorPortal::DrawPortalStencil() z-fights with flats
 
-	SetColor(state, di->Level, di->lightmode, lightlevel, rel, di->isFullbrightScene(), Colormap, alpha);
-	SetFog(state, di->Level, di->lightmode, lightlevel, rel, di->isFullbrightScene(), &Colormap, false);
+	ApplyFlatDrawState(state, drawstate);
 	state.SetObjectColor(FlatColor | 0xff000000);
 	state.SetAddColor(AddColor | 0xff000000);
 	state.ApplyTextureManipulation(TextureFx);
@@ -385,6 +382,69 @@ void HWFlat::DrawFlat(HWDrawInfo *di, FRenderState &state, bool translucent)
 	state.SetAddColor(0);
 	state.ApplyTextureManipulation(nullptr);
 	if (plane.plane.dithertransflag) state.SetEffect(EFF_NONE);
+}
+
+void HWFlatPacket::DrawFlat(HWDrawInfo *di, FRenderState &state, bool translucent)
+{
+	assert(vertexBufferSlot == screen->mVertexData->GetPipelinePos());
+	assert(lightBufferSlot == screen->mLights->GetPipelinePos());
+	FGameTexture *texture = HasTexture ? TexMan.GetGameTexture(TextureID, false) : nullptr;
+	assert(!HasTexture || texture != nullptr);
+
+	state.SetNormal(Plane.plane.Normal().X, Plane.plane.Normal().Z, Plane.plane.Normal().Y);
+	double zshift = (Plane.plane.Normal().Z > 0.0 ? 0.1f : -0.1f);
+	ApplyFlatDrawState(state, DrawState);
+	state.SetObjectColor(FlatColor | 0xff000000);
+	state.SetAddColor(AddColor | 0xff000000);
+	state.ApplyTextureManipulation(HasTextureFx ? &TextureFx : nullptr);
+	if (Plane.plane.dithertransflag) state.SetEffect(EFF_DITHERTRANS);
+
+	if (!translucent)
+	{
+		state.SetMaterial(texture, UF_Texture, 0, CLAMP_NONE, NO_TRANSLATION, -1);
+		SetPlaneTextureRotation(state, &Plane, texture);
+		state.SetLightIndex(dynlightindex);
+		state.DrawIndexed(DT_Triangles, firstIndex, vertexCount);
+		flatvertices += vertexCount;
+		flatprimitives++;
+		state.EnableTextureMatrix(false);
+	}
+	else
+	{
+		state.SetRenderStyle(renderstyle);
+		if (!texture || !texture->isValid())
+		{
+			state.AlphaFunc(Alpha_GEqual, 0.f);
+			state.EnableTexture(false);
+			state.SetLightIndex(dynlightindex);
+			state.DrawIndexed(DT_Triangles, firstIndex, vertexCount);
+			flatvertices += vertexCount;
+			flatprimitives++;
+			state.EnableTexture(true);
+		}
+		else
+		{
+			if (!texture->GetTranslucency()) state.AlphaFunc(Alpha_GEqual, gl_mask_threshold);
+			else state.AlphaFunc(Alpha_GEqual, 0.f);
+			state.SetMaterial(texture, UF_Texture, 0, CLAMP_NONE, NO_TRANSLATION, -1);
+			SetPlaneTextureRotation(state, &Plane, texture);
+			di->VPUniforms.mViewMatrix.translate(0.0, zshift, 0.0);
+			screen->mViewpoints->SetViewpoint(state, di->VPUniforms);
+			state.SetLightIndex(dynlightindex);
+			state.DrawIndexed(DT_Triangles, firstIndex, vertexCount);
+			flatvertices += vertexCount;
+			flatprimitives++;
+			di->VPUniforms.mViewMatrix.translate(0.0, -zshift, 0.0);
+			screen->mViewpoints->SetViewpoint(state, di->VPUniforms);
+			state.EnableTextureMatrix(false);
+		}
+		state.SetRenderStyle(DefaultRenderStyle());
+	}
+
+	state.SetObjectColor(0xffffffff);
+	state.SetAddColor(0);
+	state.ApplyTextureManipulation(nullptr);
+	if (Plane.plane.dithertransflag) state.SetEffect(EFF_NONE);
 }
 
 //==========================================================================

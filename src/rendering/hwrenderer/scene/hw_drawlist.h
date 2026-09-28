@@ -1,14 +1,20 @@
 #pragma once
 
 #include "memarena.h"
+#include "hwrenderer/scene/hw_drawstructs.h"
 
 extern FMemArena RenderDataAllocator;
 void ResetRenderDataAllocator();
 struct HWDrawInfo;
 class HWWall;
-class HWFlat;
 class HWSprite;
 class FRenderState;
+
+struct HWFlatEntry
+{
+	int index;
+	bool isPacket;
+};
 
 //==========================================================================
 //
@@ -63,6 +69,8 @@ struct HWDrawList
 	//private:
 	TArray<HWWall*> walls;
 	TArray<HWFlat*> flats;
+	TArray<HWFlatPacket> flatPackets;
+	TArray<HWFlatEntry> flatEntries;
 	TArray<HWSprite*> sprites;
 	TArray<HWDrawItem> drawitems;
 	int SortNodeStart;
@@ -90,6 +98,11 @@ public:
 	
 	HWWall *NewWall();
 	HWFlat *NewFlat();
+	void ReplaceLastFlatWithPacket(const HWFlatPacket& packet);
+	float GetFlatZ(int drawItemIndex) const;
+	bool GetFlatCeiling(int drawItemIndex) const;
+	uintptr_t GetFlatTextureSortKey(int flatEntryIndex) const;
+	void DrawFlatEntry(HWDrawInfo *di, FRenderState &state, bool translucent, int drawItemIndex);
 	HWSprite *NewSprite();
 	void Reset();
 	void SortWalls();
@@ -119,5 +132,3 @@ public:
 
 	HWDrawList * next;
 } ;
-
-

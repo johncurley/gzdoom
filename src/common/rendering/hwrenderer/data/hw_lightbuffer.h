@@ -35,6 +35,7 @@ public:
 	void Map() { mBuffer->Map(); }
 	void Unmap() { mBuffer->Unmap(); }
 	unsigned int GetBlockSize() const { return mBlockSize; }
+	int GetPipelinePos() const { return mPipelinePos; }
 	bool GetBufferType() const { return mBufferType; }
 	int GetBinding(unsigned int index, size_t* pOffset, size_t* pSize);
 
@@ -48,4 +49,3 @@ public:
 
 
 #endif
-

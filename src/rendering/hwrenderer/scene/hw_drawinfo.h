@@ -36,6 +36,7 @@ class FFlatVertexBuffer;
 class IRenderQueue;
 class HWScenePortalBase;
 class FRenderState;
+struct HWFlatDrawState;
 
 //==========================================================================
 //
@@ -359,3 +360,5 @@ bool CheckFog(FLevelLocals* Level, sector_t* frontsector, sector_t* backsector, 
 void SetColor(FRenderState& state, FLevelLocals* Level, ELightMode lightmode, int sectorlightlevel, int rellight, bool fullbright, const FColormap& cm, float alpha, bool weapon = false);
 void SetShaderLight(FRenderState& state, FLevelLocals* Level, float level, float olight);
 void SetFog(FRenderState& state, FLevelLocals* Level, ELightMode lightmode, int lightlevel, int rellight, bool fullbright, const FColormap* cmap, bool isadditive);
+HWFlatDrawState ResolveFlatDrawState(FLevelLocals* Level, ELightMode lightmode, int lightlevel, int rellight, bool fullbright, const FColormap& cmap, float alpha, bool isadditive);
+void ApplyFlatDrawState(FRenderState& state, const HWFlatDrawState& drawstate);

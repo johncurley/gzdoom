@@ -23,11 +23,15 @@
 #include "hw_dynlightdata.h"
 #include "hw_cvars.h"
 #include "hw_lightbuffer.h"
+#include "hwrenderer/scene/hw_lighting.h"
 #include "hwrenderer/scene/hw_drawstructs.h"
 #include "hwrenderer/scene/hw_drawinfo.h"
 #include "hw_material.h"
+#include "flatvertices.h"
+#include "r_sections.h"
 #include "actor.h"
 #include "g_levellocals.h"
+#include "p_lnspec.h"
 
 EXTERN_CVAR(Bool, gl_seamless)
 
@@ -132,6 +136,31 @@ void HWDrawInfo::AddFlat(HWFlat *flat, bool fog)
 	}
 	auto newflat = drawlists[list].NewFlat();
 	*newflat = *flat;
+	newflat->drawstate = ResolveFlatDrawState(Level, lightmode, flat->lightlevel, getExtraLight(), isFullbrightScene(), flat->Colormap, flat->alpha, false);
+
+	if (newflat->sector && newflat->section && !newflat->hacktype && newflat->sector->special != GLSector_Skybox &&
+		!(screen->BuffersArePersistent() && Level->HasDynamicLights && !isFullbrightScene()))
+	{
+		HWFlatPacket packet{};
+		packet.HasTexture = newflat->texture != nullptr;
+		packet.TextureID = packet.HasTexture ? newflat->texture->GetID() : FTextureID(nullptr);
+		packet.TextureSortKey = reinterpret_cast<uintptr_t>(newflat->texture);
+		packet.Plane = newflat->plane;
+		packet.HasTextureFx = newflat->TextureFx != nullptr;
+		if (packet.HasTextureFx) packet.TextureFx = *newflat->TextureFx;
+		packet.DrawState = newflat->drawstate;
+		packet.FlatColor = newflat->FlatColor;
+		packet.AddColor = newflat->AddColor;
+		packet.z = newflat->z;
+		packet.firstIndex = newflat->iboindex + newflat->section->vertexindex;
+		packet.vertexCount = newflat->section->vertexcount;
+		packet.vertexBufferSlot = screen->mVertexData->GetPipelinePos();
+		packet.lightBufferSlot = screen->mLights->GetPipelinePos();
+		packet.dynlightindex = newflat->dynlightindex;
+		packet.renderstyle = newflat->renderstyle;
+		packet.ceiling = newflat->ceiling;
+		drawlists[list].ReplaceLastFlatWithPacket(packet);
+	}
 }
 
 
@@ -156,4 +185,3 @@ void HWDrawInfo::AddSprite(HWSprite *sprite, bool translucent)
 	auto newsprt = drawlists[list].NewSprite();
 	*newsprt = *sprite;
 }
-
