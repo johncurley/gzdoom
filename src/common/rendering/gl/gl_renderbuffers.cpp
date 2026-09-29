@@ -1096,6 +1096,11 @@ void GLPPRenderState::Draw()
 			desc.owner = "Postprocess";
 			desc.reads = reads;
 			desc.writes = { writeName };
+			if (ReadsDestination())
+			{
+				desc.reads.Push(writeName);
+				screen->Resources().Touch(writeName, false);
+			}
 			for (const char *name : reads)
 				desc.uses.Push({ name, FrameGraphAccess::Read, FrameGraphUsage::Sampled });
 			desc.uses.Push({ writeName, FrameGraphAccess::Write,

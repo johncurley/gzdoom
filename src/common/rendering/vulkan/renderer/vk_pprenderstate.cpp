@@ -91,6 +91,11 @@ void VkPPRenderState::Draw()
 			desc.owner = "Postprocess";
 			desc.reads = reads;
 			desc.writes = { writeName };
+			if (ReadsDestination())
+			{
+				desc.reads.Push(writeName);
+				fb->Resources().Touch(writeName, false);
+			}
 			for (const char *name : reads)
 			{
 				if (strcmp(name, "Present.Dither") == 0)

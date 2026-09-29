@@ -215,6 +215,17 @@ public:
 		BlendMode.Flags = 0;
 	}
 
+	// Blended draws consume the existing output attachment value even though
+	// the shader only writes the new fragment color. The diagnostic graph uses
+	// this to retain the prior attachment version as an input dependency.
+	bool ReadsDestination() const
+	{
+		return !(BlendMode.BlendOp == STYLEOP_Add &&
+			BlendMode.SrcAlpha == STYLEALPHA_One &&
+			BlendMode.DestAlpha == STYLEALPHA_Zero &&
+			BlendMode.Flags == 0);
+	}
+
 	void SetAdditiveBlend()
 	{
 		BlendMode.BlendOp = STYLEOP_Add;

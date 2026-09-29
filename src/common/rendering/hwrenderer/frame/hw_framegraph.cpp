@@ -289,7 +289,11 @@ void FrameGraph::ValidateUses(FString *report) const
 				isWrite |= NameEq(CanonicalName(name), canonicalName);
 			bool roleMatches =
 				(use.access == FrameGraphAccess::Read && isRead && !isWrite) ||
-				(use.access == FrameGraphAccess::Write && isWrite && !isRead) ||
+				// An output attachment can be a logical read/write dependency
+				// because blending or attachment load preserves its previous
+				// contents, while the backend bind observer still reports the
+				// attachment as an output write.
+				(use.access == FrameGraphAccess::Write && isWrite) ||
 				(use.access == FrameGraphAccess::ReadWrite && isRead && isWrite);
 			if (!roleMatches)
 			{
@@ -870,8 +874,100 @@ CCMD(r_framegraph_selftest)
 	FString wipeReport;
 	bool wipeOK = wipeGraph.Build(&wipeReport) && wipeGraph.DeadPassCandidates().Size() == 0;
 
+	// Scene attachments are preserved across draws and alpha-blended postprocess
+	// outputs. Model those implicit reads so output reachability retains the
+	// clear, scene, AO composite, and translucent contributions.
+	FrameGraph attachmentGraph;
+	attachmentGraph.DeclareExternal("AO.Ambient0");
+	PassDesc targetPass;
+	targetPass.name = "scene.target";
+	targetPass.owner = "selftest";
+	targetPass.writes = { "SceneColor", "SceneDepthStencil", "SceneFog", "SceneNormal" };
+	attachmentGraph.AddPass(targetPass);
+	PassDesc opaquePass;
+	opaquePass.name = "scene.opaque";
+	opaquePass.owner = "selftest";
+	opaquePass.reads = { "SceneColor", "SceneDepthStencil", "SceneFog", "SceneNormal" };
+	opaquePass.writes = opaquePass.reads;
+	opaquePass.uses.Push({ "SceneColor", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
+	attachmentGraph.AddPass(opaquePass);
+	PassDesc aoComposite;
+	aoComposite.name = "ssao.combine";
+	aoComposite.owner = "selftest";
+	aoComposite.reads = { "SceneColor", "SceneFog", "AO.Ambient0" };
+	aoComposite.writes = { "SceneColor" };
+	attachmentGraph.AddPass(aoComposite);
+	PassDesc translucentPass;
+	translucentPass.name = "scene.portal_translucent";
+	translucentPass.owner = "selftest";
+	translucentPass.reads = { "SceneColor", "SceneDepthStencil" };
+	translucentPass.writes = { "SceneColor", "SceneDepthStencil" };
+	attachmentGraph.AddPass(translucentPass);
+	PassDesc attachmentResolve;
+	attachmentResolve.name = "scene.resolve";
+	attachmentResolve.owner = "selftest";
+	attachmentResolve.reads = { "SceneColor" };
+	attachmentResolve.writes = { "PipelineImage[0]" };
+	attachmentGraph.AddPass(attachmentResolve);
+	PassDesc outputPass;
+	outputPass.name = "present";
+	outputPass.owner = "selftest";
+	outputPass.reads = { "PipelineImage[0]" };
+	outputPass.writes = { "Backbuffer" };
+	attachmentGraph.AddPass(outputPass);
+	attachmentGraph.DeclareOutput("Backbuffer");
+	FString attachmentReport;
+	bool attachmentOK = attachmentGraph.Build(&attachmentReport) &&
+		attachmentGraph.DeadPassCandidates().Size() == 0;
+
+	// Negative control: omit the translucent attachment's implicit read and
+	// require the graph to flag the AO composite as dead again.
+	FrameGraph missingAttachmentReadGraph;
+	PassDesc missingTarget;
+	missingTarget.name = "scene.target";
+	missingTarget.owner = "selftest";
+	missingTarget.writes = { "SceneColor" };
+	missingAttachmentReadGraph.AddPass(missingTarget);
+	PassDesc missingOpaque;
+	missingOpaque.name = "scene.opaque";
+	missingOpaque.owner = "selftest";
+	missingOpaque.reads = { "SceneColor" };
+	missingOpaque.writes = { "SceneColor" };
+	missingAttachmentReadGraph.AddPass(missingOpaque);
+	PassDesc missingAORead;
+	missingAORead.name = "ssao.combine";
+	missingAORead.owner = "selftest";
+	missingAORead.reads = { "SceneColor" };
+	missingAORead.writes = { "SceneColor" };
+	missingAttachmentReadGraph.AddPass(missingAORead);
+	PassDesc missingTranslucentRead;
+	missingTranslucentRead.name = "scene.portal_translucent";
+	missingTranslucentRead.owner = "selftest";
+	missingTranslucentRead.writes = { "SceneColor" };
+	missingAttachmentReadGraph.AddPass(missingTranslucentRead);
+	PassDesc missingResolve;
+	missingResolve.name = "scene.resolve";
+	missingResolve.owner = "selftest";
+	missingResolve.reads = { "SceneColor" };
+	missingResolve.writes = { "PipelineImage[0]" };
+	missingAttachmentReadGraph.AddPass(missingResolve);
+	PassDesc missingPresent;
+	missingPresent.name = "present";
+	missingPresent.owner = "selftest";
+	missingPresent.reads = { "PipelineImage[0]" };
+	missingPresent.writes = { "Backbuffer" };
+	missingAttachmentReadGraph.AddPass(missingPresent);
+	missingAttachmentReadGraph.DeclareOutput("Backbuffer");
+	FString missingAttachmentReadReport;
+	bool missingAttachmentReadDetected = missingAttachmentReadGraph.Build(&missingAttachmentReadReport);
+	bool missingAOReportedDead = false;
+	for (int passIndex : missingAttachmentReadGraph.DeadPassCandidates())
+		missingAOReportedDead |= strcmp(missingAttachmentReadGraph.Pass(passIndex).name, "ssao.combine") == 0;
+	missingAttachmentReadDetected = missingAttachmentReadDetected && missingAOReportedDead;
+
 	Printf(ok && orderMatchesDeclaration && useOK && aliasOK && customOK && badDetected &&
-		uploadOK && badUploadDetected && livenessOK && missingOutputDetected && wipeOK ?
+		uploadOK && badUploadDetected && livenessOK && missingOutputDetected && wipeOK &&
+		attachmentOK && missingAttachmentReadDetected ?
 		"selftest: PASS\n" : "selftest: FAIL\n");
 }
 
@@ -903,6 +999,8 @@ CCMD(r_framegraph)
 	graph.DeclareExternal("EyeTexture[0]");
 	graph.DeclareExternal("EyeTexture[1]");
 	graph.DeclareExternal("PaletteTexture");
+	graph.DeclareExternal("Exposure.Camera"); // persistent value read by blended adaptation
+	graph.DeclareExternal("Backbuffer"); // prior contents may be consumed by a blended present
 	graph.DeclareExternal("AO.RandomTexture0");
 	graph.DeclareExternal("AO.RandomTexture1");
 	graph.DeclareExternal("AO.RandomTexture2");

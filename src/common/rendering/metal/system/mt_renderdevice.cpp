@@ -1083,15 +1083,22 @@ void MetalRenderDevice::BeginFrameGraphScenePass(const char *name, bool gbuffer,
   PassDesc desc;
   desc.name = name;
   desc.owner = "MetalRenderDevice";
+  // Scene draws load the previous attachment contents for blending and depth
+  // testing. Record that logical dependency separately from the output bind,
+  // which remains an attachment write in the backend-use observer.
+  desc.reads.Push(sceneColor);
   desc.writes.Push(sceneColor);
   desc.uses.Push({ sceneColor, FrameGraphAccess::Write,
                    FrameGraphUsage::ColorAttachment });
   if (depthWrite) {
+    desc.reads.Push(sceneDepth);
     desc.writes.Push(sceneDepth);
     desc.uses.Push({ sceneDepth, FrameGraphAccess::Write,
                      FrameGraphUsage::DepthStencilAttachment });
   }
   if (gbuffer) {
+    desc.reads.Push(sceneFog);
+    desc.reads.Push(sceneNormal);
     desc.writes.Push(sceneFog);
     desc.writes.Push(sceneNormal);
     desc.uses.Push({ sceneFog, FrameGraphAccess::Write,
@@ -1107,15 +1114,19 @@ void MetalRenderDevice::BeginFrameGraphScenePass(const char *name, bool gbuffer,
 
   int scenePass = Graph().AddPass(desc);
   Graph().BeginBackendPass(scenePass);
+  Resources().Touch(sceneColor, false);
   Resources().Touch(sceneColor, true);
   Graph().ObserveBackendUse(sceneColor, FrameGraphAccess::Write,
                             FrameGraphUsage::ColorAttachment);
   if (depthWrite) {
+    Resources().Touch(sceneDepth, false);
     Resources().Touch(sceneDepth, true);
     Graph().ObserveBackendUse(sceneDepth, FrameGraphAccess::Write,
                               FrameGraphUsage::DepthStencilAttachment);
   }
   if (gbuffer) {
+    Resources().Touch(sceneFog, false);
+    Resources().Touch(sceneNormal, false);
     Resources().Touch(sceneFog, true);
     Graph().ObserveBackendUse(sceneFog, FrameGraphAccess::Write,
                               FrameGraphUsage::ColorAttachment);

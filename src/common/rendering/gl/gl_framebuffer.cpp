@@ -676,15 +676,22 @@ void OpenGLFrameBuffer::BeginFrameGraphScenePass(const char *name, bool gbuffer,
 	PassDesc sceneDesc;
 	sceneDesc.name = name;
 	sceneDesc.owner = "OpenGLFrameBuffer";
+	// Scene draws load the previous attachment contents for blending and depth
+	// testing. Record that logical dependency separately from the output bind,
+	// which remains an attachment write in the backend-use observer.
+	sceneDesc.reads.Push("SceneColor");
 	sceneDesc.writes = { "SceneColor" };
 	sceneDesc.uses.Push({ "SceneColor", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
 	if (depthWrite)
 	{
+		sceneDesc.reads.Push("SceneDepthStencil");
 		sceneDesc.writes.Push("SceneDepthStencil");
 		sceneDesc.uses.Push({ "SceneDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment });
 	}
 	if (gbuffer)
 	{
+		sceneDesc.reads.Push("SceneFog");
+		sceneDesc.reads.Push("SceneNormal");
 		sceneDesc.writes.Push("SceneFog");
 		sceneDesc.writes.Push("SceneNormal");
 		sceneDesc.uses.Push({ "SceneFog", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
@@ -697,15 +704,19 @@ void OpenGLFrameBuffer::BeginFrameGraphScenePass(const char *name, bool gbuffer,
 	}
 	int scenePass = screen->Graph().AddPass(sceneDesc);
 	screen->Graph().BeginBackendPass(scenePass);
+	screen->Resources().Touch("SceneColor", false);
 	screen->Resources().Touch("SceneColor", true);
 	screen->Graph().ObserveBackendUse("SceneColor", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
 	if (depthWrite)
 	{
+		screen->Resources().Touch("SceneDepthStencil", false);
 		screen->Resources().Touch("SceneDepthStencil", true);
 		screen->Graph().ObserveBackendUse("SceneDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment);
 	}
 	if (gbuffer)
 	{
+		screen->Resources().Touch("SceneFog", false);
+		screen->Resources().Touch("SceneNormal", false);
 		screen->Resources().Touch("SceneFog", true);
 		screen->Graph().ObserveBackendUse("SceneFog", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
 		screen->Resources().Touch("SceneNormal", true);

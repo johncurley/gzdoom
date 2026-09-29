@@ -43,15 +43,46 @@ do not yet have equivalent graph scopes. Continue auditing side-effecting and
 cross-frame passes and mark them keep-alive before treating any candidate as
 unused.
 
+Scene attachment preservation and blended postprocess outputs now also record
+logical reads of their prior contents. These feed the existing RAW dependency
+builder while backend-use observations continue to describe attachment binding
+as a write. The graph still does not model WAR/WAW hazards for scheduling.
+
+### Intel Metal live validation — 2026-09-29
+
+After the attachment-read correction, a real MAP06 run on the Intel Metal
+renderer used `gl_bloom 1`, `gl_ssao 3`, `gl_tonemap 1`, `gl_lens 1`, and
+`gl_fxaa 1`. The `r_framegraph_selftest` positive and negative attachment
+controls passed. `r_resources` reported 38 resources / 48.5 MB; resource
+validation emitted no stale-size diagnostics, with only the unused screen/save
+shadow maps untouched.
+
+The live graph reported 52 passes / 65 edges, `Backbuffer` as its required
+output, and no dead-pass candidates or build errors. The retained chain includes
+`scene.target -> scene.opaque -> ssao.combine -> scene.portal_translucent ->
+scene.resolve -> present`; `scene.opaque` and `scene.portal_translucent` also
+show the sampled material reads observed at runtime. The new edge from
+`ssao.combine` to `scene.portal_translucent` carries the blended scene color
+forward. `Exposure.Camera` is listed as an imported persistent value for the
+blended exposure update. Build used the Intel macOS configuration
+(`HAVE_VULKAN=OFF`), so this does not validate GL/Vulkan runtime behavior.
+No renderer execution path changed, and no image-parity or performance claim
+is made from this diagnostic run.
+
+A second isolated MAP06 run set all five effects to zero. Its graph reported
+five passes / six edges and no dead-pass candidates: `scene.target`,
+`scene.opaque`, `scene.portal_translucent`, `scene.resolve`, and `present`.
+SSAO, bloom, exposure, tonemap, lens, and FXAA were absent as expected. The
+self-test passed, and resource validation emitted no stale-size diagnostics.
+
 ## Remaining work, in order
 
-1. **Validate the completed CPU graph contract.** Exercise real frames
-   with representative scene materials, postprocess enabled and disabled, and
-   conditional paths. Confirm `Backbuffer` reaches its producer chain, retained
-   side effects stay rooted, candidates are interpreted correctly, and
-   transient lifetimes match ping-pong uses and aliases. Run GL and Vulkan on
-   Linux hardware; add the user's Metal run as a third backend check. Keep live
-   rendering in backend order during this stage.
+1. **Validate the completed CPU graph contract.** Intel Metal effects-on and
+   all-effects-off cases are now recorded above. Conditional paths remain open
+   on Metal; run representative live GL/Vulkan frames on Linux hardware.
+   Confirm retained side effects stay rooted, candidates are interpreted
+   correctly, and transient lifetimes match ping-pong uses and aliases. Keep
+   live rendering in backend order during this stage.
 2. **Move one bounded chain to graph-driven execution.** Start with the
    `Pass2` chain identified in `docs/frame-analysis.md` §4. Specify RAW, WAR,
    and WAW handling and per-backend synchronization before changing execution.
@@ -80,27 +111,26 @@ unused.
 
 Follow `CONTRIBUTING.md` for renderer changes: prove the control can detect the
 failure, capture real rendered frames, and report noise and coverage limits.
-The self-test now covers an output-rooted chain, a dead candidate, missing
-output detection, screenshot keep-alive, and a transient lifetime interval.
-`cmake --build build -j$(nproc)` passed on Linux. The self-test could not be
-run in the previous session: the sandbox blocked Xvfb's Unix socket, and the
-out-of-sandbox Xvfb launch did not finish GZDoom startup before its timeout.
-The diagnostic model therefore still needs live GL/Vulkan runs before its
-validation can be closed. Xvfb `+quit` checks do not substitute for real
-rendered frames.
+The self-test covers an output-rooted chain, a dead-candidate negative control,
+missing-output detection, screenshot keep-alive, transient lifetime intervals,
+and positive/negative attachment-preservation cases. On Intel macOS,
+`cmake --build build --parallel 4` passed and a real Metal frame passed the
+self-test and output/liveness checks described above. The prior Linux build
+passed, but live GL/Vulkan output/lifetime validation remains open. Xvfb `+quit`
+checks do not substitute for real rendered frames.
 
 ## Metal handoff check
 
-On the available Metal machine, run a real map scene, then issue `r_framegraph`
-after at least one rendered frame. Confirm `scene.opaque` and
-`scene.portal_translucent` list sampled material resources, `Backbuffer` reaches
-the present chain, and `Build()` reports no undeclared-resource or observed-use
-errors. Material inputs without a prior graph writer are expected to be
-external; names with a prior graph writer should produce edges. This checks the
-Metal hook and graph contract, not Apple Silicon/TBDR performance policy.
+The Intel Metal effects-on run confirms sampled material resources for
+`scene.opaque` and `scene.portal_translucent`, a rooted `Backbuffer` present
+chain, and no graph build errors or dead-pass candidates. The all-effects-off
+run confirms only the five scene/present passes remain and are rooted. Material
+inputs without a prior graph writer remain expected imported inputs; names
+with a prior graph writer produce edges. Conditional paths remain open. These
+runs check the Metal hook and graph contract, not Apple Silicon/TBDR
+performance policy.
 
 The latest Linux build includes GL/Vulkan and passed after the scene-material
 hook was added. It does not compile the Metal backend. Live output/lifetime and
-material-edge validation remains open on GL/Vulkan hardware as well as the
-Metal handoff check above. Offscreen-only scene traversals remain outside the
-new material-read scopes.
+material-edge validation remains open on GL/Vulkan hardware. Offscreen-only
+scene traversals remain outside the new material-read scopes.

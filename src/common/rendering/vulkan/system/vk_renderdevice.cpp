@@ -276,15 +276,22 @@ void VulkanRenderDevice::BeginFrameGraphScenePass(const char *name, bool gbuffer
 	PassDesc sceneDesc;
 	sceneDesc.name = name;
 	sceneDesc.owner = "VulkanRenderDevice";
+	// Scene draws load the previous attachment contents for blending and depth
+	// testing. Record that logical dependency separately from the output bind,
+	// which remains an attachment write in the backend-use observer.
+	sceneDesc.reads.Push("SceneColor");
 	sceneDesc.writes = { "SceneColor" };
 	sceneDesc.uses.Push({ "SceneColor", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
 	if (depthWrite)
 	{
+		sceneDesc.reads.Push("SceneDepthStencil");
 		sceneDesc.writes.Push("SceneDepthStencil");
 		sceneDesc.uses.Push({ "SceneDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment });
 	}
 	if (gbuffer)
 	{
+		sceneDesc.reads.Push("SceneFog");
+		sceneDesc.reads.Push("SceneNormal");
 		sceneDesc.writes.Push("SceneFog");
 		sceneDesc.writes.Push("SceneNormal");
 		sceneDesc.uses.Push({ "SceneFog", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
@@ -297,15 +304,19 @@ void VulkanRenderDevice::BeginFrameGraphScenePass(const char *name, bool gbuffer
 	}
 	int scenePass = Graph().AddPass(sceneDesc);
 	Graph().BeginBackendPass(scenePass);
+	Resources().Touch("SceneColor", false);
 	Resources().Touch("SceneColor", true);
 	Graph().ObserveBackendUse("SceneColor", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
 	if (depthWrite)
 	{
+		Resources().Touch("SceneDepthStencil", false);
 		Resources().Touch("SceneDepthStencil", true);
 		Graph().ObserveBackendUse("SceneDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment);
 	}
 	if (gbuffer)
 	{
+		Resources().Touch("SceneFog", false);
+		Resources().Touch("SceneNormal", false);
 		Resources().Touch("SceneFog", true);
 		Graph().ObserveBackendUse("SceneFog", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
 		Resources().Touch("SceneNormal", true);

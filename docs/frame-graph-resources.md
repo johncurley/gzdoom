@@ -11,13 +11,16 @@ implemented through the shared `FrameResources` interface on Metal, OpenGL, and
 Vulkan. This document remains the design reference for the validation policy; it
 is not a complete inventory of every backend allocation.
 
-## Current graph boundary — 2026-09-28
+## Current graph boundary — 2026-09-29
 
 `FrameGraph` records pass read/write uses, RAW dependencies, backend-use
-observations, and upload/read facts. It validates the recorded uses and builds
-a deterministic order for diagnostics. OpenGL, Vulkan, and Metal still execute
-their existing render paths and ordering; the graph does not schedule, reorder,
-or synchronize GPU work.
+observations, and upload/read facts. Pass read/write lists include logical
+prior-content reads for attachment loads, depth tests, and blending, even when
+the backend bind observation is an attachment write. This keeps the producer
+chain visible without claiming a sampled-texture read. It validates the
+recorded uses and builds a deterministic order for diagnostics. OpenGL,
+Vulkan, and Metal still execute their existing render paths and ordering; the
+graph does not schedule, reorder, or synchronize GPU work.
 
 The graph now has explicit required-output roots, keep-alive pass roots for
 external side effects and cross-frame results, dead-pass candidate reporting,
@@ -28,11 +31,13 @@ marked persistent are excluded from transient lifetimes.
 
 Material texture reads now retain their global upload-order observations and
 are also attached as deduplicated sampled reads to the active main-view scene
-pass on GL, Vulkan, and Metal. If an earlier graph pass writes the same name,
-the read creates the corresponding graph dependency. Otherwise the current
-texture value is declared as an imported input. Offscreen-only scene traversals
-do not yet have equivalent graph scopes. Live validation of output reachability
-and lifetime reports remains next. Backend execution migration,
+pass on GL, Vulkan, and Metal. Scene attachment preservation and blended
+postprocess outputs are also represented as logical reads of their prior
+contents. If an earlier graph pass writes the same name, the read creates the
+corresponding graph dependency. Otherwise the current texture value is declared
+as an imported input. Offscreen-only scene traversals do not yet have equivalent
+graph scopes. Live GL/Vulkan validation of output reachability and lifetime
+reports remains open. Backend execution migration,
 hazard/barrier handling, transient aliasing, and pass culling follow after the
 complete graph contract has been validated. See
 [`handoff-framegraph-2026-09-28.md`](handoff-framegraph-2026-09-28.md) for the

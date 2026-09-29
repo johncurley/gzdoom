@@ -446,6 +446,9 @@ public:
         desc.owner = "Postprocess";
         desc.reads = reads;
         desc.writes = { writeName };
+        const bool readsDestination = ReadsDestination();
+        if (readsDestination)
+          desc.reads.Push(writeName);
         for (const char *name : reads) {
           if (strcmp(name, "Present.Dither") == 0)
             screen->Graph().DeclareExternal(name);
@@ -471,6 +474,8 @@ public:
                                           FrameGraphUsage::Sampled);
     }
     if (writeName) {
+      if (graphPass >= 0 && ReadsDestination())
+        screen->Resources().Touch(writeName, false);
       screen->Resources().Touch(writeName, true);
       if (graphPass >= 0)
         screen->Graph().ObserveBackendUse(writeName, FrameGraphAccess::Write,

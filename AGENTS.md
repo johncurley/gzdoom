@@ -437,15 +437,23 @@ it is unusual).
   Linux framegraph/upload and observer-cost tranche is closed. The graph now
   reports required-output reachability, keep-alive passes, dead-pass candidates,
   per-frame transient lifetimes, and main-view scene-material reads; this has
-  built but awaits live GL/Vulkan validation. Offscreen-only scene traversals
-  are not yet represented. Vulkan indexed non-mip upload validation
-  remains open pending a confirmed draw route. Apple Silicon is still required
-  for Metal/TBDR performance policy; ARM64 JIT work is deferred until that
-  hardware is available. The cold MAP08 capture still misses strict
-  byte-repeatability and is not a parity result.
+  built. Attachment-preserving scene draws and blended postprocess outputs now
+  record logical reads of their prior contents. Intel Metal passed live MAP06
+  effects-on (52 passes / 65 edges) and all-effects-off (5 passes / 6 edges)
+  checks with no dead-pass candidates or stale-size reports; its self-test
+  includes positive and negative attachment-preservation controls. Live
+  GL/Vulkan validation of these new attachment/blend dependencies remains open;
+  next steps are in `docs/handoff-linux-2026-09-29.md`. Conditional Metal paths
+  also remain open.
+  Offscreen-only scene traversals are not yet represented. Vulkan indexed
+  non-mip upload validation remains open pending a confirmed draw route. Apple
+  Silicon is still required for Metal/TBDR performance policy; ARM64 JIT work
+  is deferred until that hardware is available. The cold MAP08 capture still
+  misses strict byte-repeatability and is not a parity result.
 - **Linux validation record:** `docs/handoff-linux-2026-09-24.md` — includes
   the completed GL/Vulkan runtime and observer-cost results, plus its remaining
-  indexed-image coverage boundary.
+  indexed-image coverage boundary. The focused 2026-09-29 handoff asks Linux
+  to validate the newer attachment-preservation graph changes on both backends.
 - **Previous handoff:** `docs/handoff-macos-2026-09-23.md` — the detailed Intel
   Metal session record, including upload observations, source-pixel snapshot
   parity, observer/sorting measurements, and the remaining capture-repeatability

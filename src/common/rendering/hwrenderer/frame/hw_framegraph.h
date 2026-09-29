@@ -14,6 +14,10 @@
 **  pass most recently wrote that name *at the reading pass's declaration
 **  time*. Consequences:
 **
+**    - Attachment loads, depth tests, and blending that preserve prior
+**      contents are logical reads: list the attachment in both reads and
+**      writes. The backend-use record may still be a write-only attachment
+**      bind; it describes the binding, not every implicit pixel dependency.
 **    - Edges always point from an earlier-added pass to a later one, so the
 **      graph is acyclic by construction in this phase. Cycle detection is
 **      still implemented (Build() reports rather than assumes), because
@@ -75,7 +79,10 @@ struct PassDesc
 	const char *owner = nullptr;	// e.g. "Postprocess", "MtAOModule"
 	TArray<const char *> reads;
 	TArray<const char *> writes;
-	TArray<ResourceUse> uses;	// optional backend-observed usage contract
+	// Backend-observed bindings. The logical read/write lists may include an
+	// implicit prior-contents read (attachment load/blend) even when the bind
+	// hook observes only the output attachment write.
+	TArray<ResourceUse> uses;
 	bool keepAlive = false;		// external side effect or cross-frame result
 };
 
