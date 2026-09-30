@@ -1069,7 +1069,27 @@ static const char *ResolvePPTextureName(FGLRenderBuffers *buffers, PPTextureType
 	return buffers->GetTextureResourceName(type);
 }
 
-void GLPPRenderState::Draw()
+const char *GLPPRenderState::ResolveResourceName(PPTextureType type, PPTexture *texture) const
+{
+	return ResolvePPTextureName(buffers, type, texture);
+}
+
+int GLPPRenderState::GetPipelineImageIndex() const
+{
+	return buffers->GetPipelineTextureIndex();
+}
+
+void GLPPRenderState::SetPipelineImageIndex(int index)
+{
+	buffers->SetPipelineTextureIndex(index);
+}
+
+void GLPPRenderState::AdvancePipelineImageIndex()
+{
+	buffers->NextTexture();
+}
+
+void GLPPRenderState::DrawImmediate()
 {
 	FGLPostProcessState savedState;
 
@@ -1235,11 +1255,15 @@ void GLPPRenderState::Draw()
 
 void GLPPRenderState::PushGroup(const FString &name)
 {
+	if (RecordGroup(name))
+		return;
 	FGLDebug::PushGroup(name.GetChars());
 }
 
 void GLPPRenderState::PopGroup()
 {
+	if (RecordPopGroup())
+		return;
 	FGLDebug::PopGroup();
 }
 

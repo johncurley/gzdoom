@@ -294,11 +294,17 @@ public:
   // 2026-08-06; the AO composite investigation needed a navigable trace.
   FString mGroupName;
 
-  void PushGroup(const FString &name) override { mGroupName = name; }
+  void PushGroup(const FString &name) override {
+    if (RecordGroup(name)) return;
+    mGroupName = name;
+  }
 
-  void PopGroup() override { mGroupName = ""; }
+  void PopGroup() override {
+    if (RecordPopGroup()) return;
+    mGroupName = "";
+  }
 
-  const char *ResolveResourceName(PPTextureType type, PPTexture *texture) const {
+  const char *ResolveResourceName(PPTextureType type, PPTexture *texture) const override {
     auto buffers = fb->GetBuffers();
     switch (type) {
     case PPTextureType::CurrentPipelineTexture:
@@ -327,7 +333,21 @@ public:
     }
   }
 
-  void Draw() override {
+  int GetPipelineImageIndex() const override {
+    return fb->GetPostprocess()->mCurrentPipelineImage;
+  }
+
+  void SetPipelineImageIndex(int index) override {
+    fb->GetPostprocess()->mCurrentPipelineImage = index % MtRenderBuffers::NumPipelineImages;
+  }
+
+  void AdvancePipelineImageIndex() override {
+    auto postprocess = fb->GetPostprocess();
+    postprocess->mCurrentPipelineImage = (postprocess->mCurrentPipelineImage + 1) %
+                                        MtRenderBuffers::NumPipelineImages;
+  }
+
+  void DrawImmediate() override {
     if (!fb->GetBuffers()) return;
 
     // AO composite probe (mt_ao_probe). Snapshot the render target before the
@@ -730,7 +750,13 @@ void MtPostprocess::AmbientOccludeScene(float m5, const HWViewpointUniforms* cur
   // backends.
   MtPPRenderState renderstate(fb);
   auto aoStart = std::chrono::high_resolution_clock::now();
-  hw_postprocess.ssao.Render(&renderstate, m5, sceneWidth, sceneHeight);
+  if (r_framegraph_ao) {
+    renderstate.BeginPostprocessGraphExecution();
+    hw_postprocess.ssao.Render(&renderstate, m5, sceneWidth, sceneHeight);
+    renderstate.ExecutePostprocessGraph();
+  } else {
+    hw_postprocess.ssao.Render(&renderstate, m5, sceneWidth, sceneHeight);
+  }
   auto aoEnd = std::chrono::high_resolution_clock::now();
   if (fb->GetDebugManager()) {
     float ms = std::chrono::duration<float, std::milli>(aoEnd - aoStart).count();
@@ -863,7 +889,22 @@ void MtPostprocess::PostProcessScene(
     }
 
     SetActiveRenderTarget();
+    const char *targetName = fb->GetBuffers()->ResName(
+        MtRenderBuffers::RES_Pipeline0 + mCurrentPipelineImage);
+    PassDesc desc;
+    desc.name = "ui.hud";
+    desc.owner = "MtPostprocess";
+    desc.reads = {targetName};
+    desc.writes = {targetName};
+    desc.uses.Push({targetName, FrameGraphAccess::Write,
+                    FrameGraphUsage::ColorAttachment});
+    fb->Graph().DeclareExternal(targetName);
+    int graphPass = fb->Graph().AddPass(desc);
+    fb->Graph().BeginBackendPass(graphPass);
+    fb->Graph().ObserveBackendUse(targetName, FrameGraphAccess::Write,
+                                  FrameGraphUsage::ColorAttachment);
     afterBloomDrawEndScene2D();
+    fb->Graph().EndBackendPass();
     hw_postprocess.Pass2(&renderstate, fixedcm, flash, sceneWidth, sceneHeight);
   } else {
     // Software scene post-processing path if needed

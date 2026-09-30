@@ -60,8 +60,22 @@ void FGLRenderer::PostProcessScene(int fixedcm, float flash, const std::function
 	GLPPRenderState renderstate(mBuffers);
 
 	hw_postprocess.Pass1(&renderstate, fixedcm, sceneWidth, sceneHeight);
-	mBuffers->BindCurrentFB();
-	if (afterBloomDrawEndScene2D) afterBloomDrawEndScene2D();
+	if (afterBloomDrawEndScene2D)
+	{
+		const char *targetName = mBuffers->GetTextureResourceName(PPTextureType::CurrentPipelineTexture);
+		PassDesc desc;
+		desc.name = "ui.hud";
+		desc.owner = "FGLRenderer";
+		desc.reads = { targetName };
+		desc.writes = { targetName };
+		desc.uses.Push({ targetName, FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
+		screen->Graph().DeclareExternal(targetName);
+		int graphPass = screen->Graph().AddPass(desc);
+		screen->Graph().BeginBackendPass(graphPass);
+		mBuffers->BindCurrentFB();
+		afterBloomDrawEndScene2D();
+		screen->Graph().EndBackendPass();
+	}
 	hw_postprocess.Pass2(&renderstate, fixedcm, flash, sceneWidth, sceneHeight);
 }
 
@@ -77,7 +91,16 @@ void FGLRenderer::AmbientOccludeScene(float m5)
 	int sceneHeight = mBuffers->GetSceneHeight();
 
 	GLPPRenderState renderstate(mBuffers);
-	hw_postprocess.ssao.Render(&renderstate, m5, sceneWidth, sceneHeight);
+	if (r_framegraph_ao)
+	{
+		renderstate.BeginPostprocessGraphExecution();
+		hw_postprocess.ssao.Render(&renderstate, m5, sceneWidth, sceneHeight);
+		renderstate.ExecutePostprocessGraph();
+	}
+	else
+	{
+		hw_postprocess.ssao.Render(&renderstate, m5, sceneWidth, sceneHeight);
+	}
 }
 
 void FGLRenderer::BlurScene(float gameinfobluramount)

@@ -34,38 +34,116 @@ These checks validate Intel Metal graph recording and liveness reporting; they
 do not establish Apple Silicon behavior, conditional Metal path coverage,
 image parity, or performance.
 
-## Linux work, in order
+## Linux RX 550 validation — 2026-09-29
 
-The Linux GL/Vulkan build and runtime tranche recorded in
-[`handoff-linux-2026-09-24.md`](handoff-linux-2026-09-24.md) remains useful
-baseline evidence: both backends ran on the RX 550, their prior live graph and
-resource checks passed, and the observer A/B showed no measurable overhead in
-that MAP06 route. Those runs predate this attachment-preservation amendment;
-they do not validate the changed dependency model.
+The Linux build passed at `93671600a` with `HAVE_VULKAN=ON`:
 
-1. Check out the commit containing this handoff and read `CONTRIBUTING.md`,
-   `AGENTS.md`, and [`handoff-framegraph-2026-09-28.md`](handoff-framegraph-2026-09-28.md).
-2. Build with Vulkan enabled and run real MAP06 frames on the RX 550 using GL
-   and Vulkan separately. `+quit`/Xvfb self-tests alone do not exercise these
-   live scene dependencies.
-3. Run `r_framegraph_selftest`, then capture `r_framegraph` and
-   `r_resources` after rendering begins with the effects enabled and disabled.
-   Confirm the output-rooted scene/AO/translucency/present chain, material
-   reads, and blended postprocess dependencies; require no unexplained dead
-   candidates, graph build errors, or stale-size reports.
-4. Confirm backend resource touches still agree with graph reads and writes.
-   Attachment prior-value reads are logical data dependencies; the backend
-   observer should continue to report the actual attachment binding as a
-   write. Check for GL/Vulkan validation or driver errors.
-5. If the exercised route reaches relevant conditional paths, record them.
-   Keep offscreen-only scene traversals and paths not reached by the capture
-   listed as open rather than inferring coverage.
+```bash
+cmake --build build --parallel $(nproc)
+```
+
+The build completed successfully. Runtime captures used an AMD Radeon RX 550 /
+RADV POLARIS12 (Mesa 26.2.3-arch3.1; GL 4.6 and Vulkan 1.4.354) on Wayland.
+They rendered DOOM2 MAP06 at 640x480 for 180 in-level frames before
+`r_resources` and `r_framegraph`. Each run executed
+`r_framegraph_selftest` first. GL used `+vid_preferbackend 0`; Vulkan used
+`+vid_preferbackend 1`. Effects-on enabled bloom, SSAO 3, tonemap, lens, and
+FXAA; effects-off set all five to zero. Vulkan runs used
+`VK_LAYER_KHRONOS_validation`.
+
+| Backend | Effects | Graph | Resources | Untouched resources |
+| --- | --- | --- | --- | --- |
+| GL | On | 45 passes / 54 edges | 28 / 2.8 MB | `PipelineDepthStencil` |
+| GL | Off | 4 passes / 5 edges | 5 / 1.1 MB | `PipelineDepthStencil`, `PipelineImage[1]` |
+| Vulkan | On | 46 passes / 55 edges | 29 / 4.8 MB | `ShadowMap`, `PipelineDepthStencil` |
+| Vulkan | Off | 5 passes / 6 edges | 8 / 3.3 MB | `ShadowMap`, `PipelineDepthStencil`, `PipelineImage[1]`, `SceneNormal`, `SceneFog` |
+
+All four self-tests passed. Every live graph had `Backbuffer` as its required
+output, no dead-pass candidates, and no graph build errors. Resource validation
+reported no stale-size diagnostics. GL and Vulkan both showed the attachment
+prior-value chain from `scene.target` through `scene.opaque` and
+`scene.portal_translucent`; the effects-on runs also showed the SSAO composite
+feeding translucency, the exposure/bloom chain, and final postprocess/present
+dependencies. Backend observations continued to describe bound attachments as
+writes, with sampled material reads recorded on the scene passes. Vulkan's
+explicit `scene.resolve` accounts for its additional pass and edge. The
+Khronos validation layer emitted no errors in either Vulkan run.
+
+The captures close the Linux effects-on/effects-off validation for the
+attachment-preservation change. They do not cover offscreen-only scene
+traversals or every intermediate effect-toggle combination. Vulkan's indexed
+non-mip sampled-image barrier remains open until a confirmed `DTF_Indexed`
+draw route reaches it; the 2026-09-24 handoff records the unsuccessful route
+probes.
+
+## Pass1 exposure and bloom graph execution — 2026-09-30
+
+The Linux build passed with `HAVE_VULKAN=ON`. A GL run on the RX 550 rendered
+DOOM2 MAP06 at 640x480 with bloom enabled, `r_framegraph_exposure 1`,
+`r_framegraph_bloom 1`, and `r_framegraph_pass2 0`. After 121 in-level frames,
+`r_framegraph` reported 36 passes / 72 edges, a required `Backbuffer`, no dead
+pass candidates, and the live scene → exposure → bloom → present chain. The
+framegraph self-test passed. No graph replay fallback was reported.
+
+Vulkan with the Khronos validation layer reported 37 passes / 73 edges,
+including `scene.resolve` → exposure → bloom → present. It had no dead-pass
+candidates, no replay fallback, and no validation errors. Matched graph-on and
+immediate captures were byte-identical on both backends at 640x480: GL mean
+luminance was 17.491 in both arms; Vulkan was 17.553. Each comparison had
+maximum channel delta 0 and 0 differing pixels. Metal runtime validation and
+performance remain open. Detailed evidence is in
+[`handoff-framegraph-2026-09-28.md`](handoff-framegraph-2026-09-28.md).
+
+## Shared raster AO graph execution — 2026-09-30
+
+The build passed with `HAVE_VULKAN=ON`. GL quality-3 SSAO on MAP06 reported
+9 passes / 27 edges; Vulkan quality-3 SSAO with `vk_compute_ssao 1` reported
+10 / 28, including its earlier `ssao.lineardepth.compute` producer. Both
+graphs were rooted at `Backbuffer`, had no dead-pass candidates, and emitted
+no graph replay fallback diagnostic. The Khronos validation layer reported
+no Vulkan errors.
+
+Graph-on versus immediate captures were byte-identical at 640x480 (0 differing
+pixels, maximum delta 0): GL raster depth mean luminance 16.767, Vulkan
+compute-depth 16.833, and Vulkan raster-depth 16.829 in both arms. Vulkan's
+compute and raster graph reports both retained the linear-depth producer before
+occlusion.
+
+Conditional routes were also checked on both backends. At 4× multisampling,
+GL and Vulkan each reported 10 passes / 28 edges, rooted at `Backbuffer`, with
+no dead-pass candidates or fallback; Vulkan validation was clean. Captures
+were byte-identical (GL mean luminance 16.770, Vulkan 16.832). With
+`gl_ssao_debug 2`, GL reported 7 passes / 22 edges and Vulkan 8 / 23, correctly
+omitting both blur passes; again there were no dead-pass candidates or
+fallback, Vulkan validation was clean, and captures were byte-identical (GL
+mean luminance 240.677, Vulkan 240.560). All comparisons were 640x480 with
+maximum channel delta 0 and 0 differing pixels. Other quality tiers and Metal
+runtime remain open; the native Metal compute AO path does not use this shared
+raster wrapper. See
+[`handoff-framegraph-2026-09-28.md`](handoff-framegraph-2026-09-28.md) for the
+full pass and image evidence.
 
 The 2026-09-24 observer-cost A/B does not need to be repeated unless these
 changes produce a measurable regression or the Linux session changes the
-observer path. The existing Vulkan indexed non-mip sampled-image barrier
-coverage boundary also remains open until a confirmed indexed draw reaches
-that path; see the 2026-09-24 handoff for the failed route probes.
+observer path.
+
+## Offscreen and UI/HUD graph coverage — 2026-10-01
+
+GL and Vulkan live MAP06 runs with all tested effects enabled and
+`screenblocks 10` exercised the HUD and 2D UI graph scopes. GL reported 47
+passes / 104 edges; Vulkan reported 48 / 105. Both graphs were rooted at
+`Backbuffer`, had no dead-pass candidates or graph-build failures, and included
+`ui.hud` between bloom and tonemap plus `ui.2d` before present. The
+`r_framegraph_selftest` passed; Vulkan validation emitted no errors.
+
+Canvas/camera texture updates now have `offscreen.canvas` and
+`offscreen.camera` producers, and material reads inside those callbacks attach
+to the producer. The self-test covers preserved canvas contents, a camera
+producer, sampled material reads, UI consumption, and present reachability.
+Stock MAP06 created no canvas or camera texture, so a live offscreen fixture is
+still needed. The Metal implementation was not compiled or run on this Linux
+machine. Full details are in
+[`handoff-framegraph-2026-09-28.md`](handoff-framegraph-2026-09-28.md).
 
 ## Later Metal testing
 

@@ -23,6 +23,10 @@ public:
 // CVARs
 //
 //==========================================================================
+EXTERN_CVAR(Bool, r_framegraph_pass2)
+EXTERN_CVAR(Bool, r_framegraph_exposure)
+EXTERN_CVAR(Bool, r_framegraph_bloom)
+EXTERN_CVAR(Bool, r_framegraph_ao)
 EXTERN_CVAR(Bool, gl_bloom)
 EXTERN_CVAR(Float, gl_bloom_amount)
 EXTERN_CVAR(Float, gl_exposure_scale)
@@ -53,4 +57,3 @@ EXTERN_CVAR(Float, vid_brightness)
 EXTERN_CVAR(Float, vid_contrast)
 EXTERN_CVAR(Float, vid_saturation)
 EXTERN_CVAR(Int, gl_satformula)
-

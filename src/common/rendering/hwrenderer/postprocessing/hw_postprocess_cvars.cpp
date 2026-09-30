@@ -27,6 +27,10 @@
 // CVARs
 //
 //==========================================================================
+CVAR(Bool, r_framegraph_pass2, true, CVAR_CHEAT)
+CVAR(Bool, r_framegraph_exposure, true, CVAR_CHEAT)
+CVAR(Bool, r_framegraph_bloom, true, CVAR_CHEAT)
+CVAR(Bool, r_framegraph_ao, true, CVAR_CHEAT)
 CVAR(Bool, gl_bloom, false, CVAR_ARCHIVE);
 CUSTOM_CVAR(Float, gl_bloom_amount, 1.4f, CVAR_ARCHIVE)
 {
@@ -97,4 +101,3 @@ CUSTOM_CVAR(Bool, gl_paltonemap_reverselookup, true, CVAR_ARCHIVE | CVAR_NOINITC
 }
 
 CVAR(Float, gl_menu_blur, -1.0f, CVAR_ARCHIVE)
-

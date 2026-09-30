@@ -1170,6 +1170,27 @@ void MetalRenderDevice::Draw2D() {
     mPostprocess->SetActiveRenderTarget();
   }
 
+  const char *targetName = GetBuffers()->ResName(
+      MtRenderBuffers::RES_Pipeline0 + mPostprocess->mCurrentPipelineImage);
+  PassDesc desc;
+  desc.name = "ui.2d";
+  desc.owner = "MetalRenderDevice";
+  desc.reads = {targetName};
+  desc.writes = {targetName, "PipelineDepthStencil"};
+  desc.uses.Push({targetName, FrameGraphAccess::Write,
+                  FrameGraphUsage::ColorAttachment});
+  desc.uses.Push({"PipelineDepthStencil", FrameGraphAccess::Write,
+                  FrameGraphUsage::DepthStencilAttachment});
+  Graph().DeclareExternal(targetName);
+  int graphPass = Graph().AddPass(desc);
+  Graph().BeginBackendPass(graphPass);
+  Resources().Touch(targetName, true);
+  Graph().ObserveBackendUse(targetName, FrameGraphAccess::Write,
+                            FrameGraphUsage::ColorAttachment);
+  Resources().Touch("PipelineDepthStencil", true);
+  Graph().ObserveBackendUse("PipelineDepthStencil", FrameGraphAccess::Write,
+                            FrameGraphUsage::DepthStencilAttachment);
+
   // Explicitly set viewport for 2D pass
   mMtRenderState->SetViewport(0, 0, GetWidth(), GetHeight());
 
@@ -1184,12 +1205,15 @@ void MetalRenderDevice::Draw2D() {
   mMtRenderState->SetScissor(0, 0, -1, -1);
 
   ::Draw2D(twod, static_cast<FRenderState &>(*mMtRenderState));
+  Graph().EndBackendPass();
 }
 
 void MetalRenderDevice::RenderTextureView(
     FCanvasTexture *tex, std::function<void(IntRect &)> renderFunc) {
   auto baseLayer =
       static_cast<MtHardwareTexture *>(tex->GetHardwareTexture(0, 0));
+  const char *resourceName =
+      baseLayer->GetFrameGraphResourceName().c_str();
   auto image = baseLayer->GetImage();
   auto depthStencil = baseLayer->GetDepthStencil(tex);
   auto oldTarget = mMtRenderState->GetRenderTarget();
@@ -1198,6 +1222,23 @@ void MetalRenderDevice::RenderTextureView(
       image->GetTexture(),
       depthStencil ? (MTL::Texture *)depthStencil->GetTexture() : nullptr,
       image->GetWidth(), image->GetHeight(), image->GetFormat(), 1);
+
+  PassDesc desc;
+  desc.name = tex->Canvas ? "offscreen.canvas" : "offscreen.camera";
+  desc.owner = "MetalRenderDevice";
+  desc.keepAlive = true;
+  if (tex->Canvas) {
+    // Canvas draws may leave untouched pixels from the previous update.
+    desc.reads = {resourceName};
+    Graph().DeclareExternal(resourceName);
+  }
+  desc.writes = {resourceName};
+  desc.uses.Push({resourceName, FrameGraphAccess::Write,
+                  FrameGraphUsage::ColorAttachment});
+  int graphPass = Graph().AddPass(desc);
+  Graph().BeginBackendPass(graphPass);
+  Graph().ObserveBackendUse(resourceName, FrameGraphAccess::Write,
+                            FrameGraphUsage::ColorAttachment);
   IntRect bounds;
   bounds.left = bounds.top = 0;
   bounds.width = min(tex->GetWidth(), image->GetWidth());
@@ -1206,6 +1247,7 @@ void MetalRenderDevice::RenderTextureView(
   mMtRenderState->SetInRenderTextureView(true);
   renderFunc(bounds);
   mMtRenderState->SetInRenderTextureView(false);
+  Graph().EndBackendPass();
 
   mMtRenderState->EndRenderPass();
   mMtRenderState->SetRenderTarget(oldTarget.Image, oldTarget.DepthStencil,

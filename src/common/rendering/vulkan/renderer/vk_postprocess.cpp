@@ -79,7 +79,19 @@ void VkPostprocess::PostProcessScene(int fixedcm, float flash, const std::functi
 
 	hw_postprocess.Pass1(&renderstate, fixedcm, sceneWidth, sceneHeight);
 	SetActiveRenderTarget();
+	const char *targetName = fb->GetTextureManager()->GetTextureResourceName(PPTextureType::CurrentPipelineTexture);
+	PassDesc desc;
+	desc.name = "ui.hud";
+	desc.owner = "VkPostprocess";
+	desc.reads = { targetName };
+	desc.writes = { targetName };
+	desc.uses.Push({ targetName, FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
+	fb->Graph().DeclareExternal(targetName);
+	int graphPass = fb->Graph().AddPass(desc);
+	fb->Graph().BeginBackendPass(graphPass);
+	fb->Graph().ObserveBackendUse(targetName, FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
 	afterBloomDrawEndScene2D();
+	fb->Graph().EndBackendPass();
 	hw_postprocess.Pass2(&renderstate, fixedcm, flash, sceneWidth, sceneHeight);
 }
 
@@ -294,7 +306,16 @@ void VkPostprocess::AmbientOccludeScene(float m5)
 	bool computeLinearDepth = false;
 	if (vk_compute_ssao && fb->GetBuffers()->GetSceneSamples() == VK_SAMPLE_COUNT_1_BIT)
 		computeLinearDepth = ComputeLinearDepth(sceneWidth, sceneHeight);
-	hw_postprocess.ssao.Render(&renderstate, m5, sceneWidth, sceneHeight, computeLinearDepth);
+	if (r_framegraph_ao)
+	{
+		renderstate.BeginPostprocessGraphExecution();
+		hw_postprocess.ssao.Render(&renderstate, m5, sceneWidth, sceneHeight, computeLinearDepth);
+		renderstate.ExecutePostprocessGraph();
+	}
+	else
+	{
+		hw_postprocess.ssao.Render(&renderstate, m5, sceneWidth, sceneHeight, computeLinearDepth);
+	}
 
 	ImageTransitionScene(false);
 }

@@ -2,14 +2,13 @@
 
 ## Current state
 
-The shared renderer has a resource registry and a CPU-side diagnostic
-`FrameGraph` in `src/common/rendering/hwrenderer/frame/`. It records real
-postprocess passes, pass resource uses, read-after-write dependencies, backend
-resource-use observations, and upload/read observations. It checks consistency
-of recorded uses and produces a deterministic topological order for reporting.
-GL, Vulkan, and Metal still execute their existing backend command paths in
-their existing order. The graph does not schedule or reorder GPU work, issue
-barriers, allocate resources, or cull passes.
+The shared renderer has a resource registry and a CPU-side `FrameGraph` in
+`src/common/rendering/hwrenderer/frame/`. It records real postprocess passes,
+pass resource uses, RAW/WAR/WAW dependencies, backend resource-use
+observations, and upload/read observations. Pass2 now records each draw's
+state and physical ping-pong index, then dispatches it in graph order through
+the existing backend draw path. The graph does not allocate resources or cull
+passes; each backend still handles its normal resource transitions.
 
 The Linux GL/Vulkan runtime and observer-cost tranche closed on 2026-09-24; its
 evidence is in [`handoff-linux-2026-09-24.md`](handoff-linux-2026-09-24.md).
@@ -43,10 +42,10 @@ do not yet have equivalent graph scopes. Continue auditing side-effecting and
 cross-frame passes and mark them keep-alive before treating any candidate as
 unused.
 
-Scene attachment preservation and blended postprocess outputs now also record
-logical reads of their prior contents. These feed the existing RAW dependency
-builder while backend-use observations continue to describe attachment binding
-as a write. The graph still does not model WAR/WAW hazards for scheduling.
+Scene attachment preservation and blended postprocess outputs record logical
+reads of their prior contents. RAW edges retain producer dependencies; WAR and
+WAW edges constrain ordering without propagating pass liveness. Backend-use
+observations continue to describe attachment binding as a write.
 
 ### Intel Metal live validation — 2026-09-29
 
@@ -75,27 +74,177 @@ five passes / six edges and no dead-pass candidates: `scene.target`,
 SSAO, bloom, exposure, tonemap, lens, and FXAA were absent as expected. The
 self-test passed, and resource validation emitted no stale-size diagnostics.
 
+### Pass2 graph execution — 2026-09-29
+
+`PPRenderState` now captures shader, textures, uniforms, viewport, blend
+state, debug group, and the physical pipeline-image index for each Pass2 draw.
+It builds the subgraph before executing those snapshots in `FrameGraph::Order()`.
+FXAA is represented by its two actual draws, even though both keep the `fxaa`
+label. Custom scene shaders remain after the scheduled chain. `r_framegraph_pass2`
+defaults on; when off, it calls the original immediate pass sequence directly.
+Graph replay calls the existing GL, Vulkan, or Metal draw function for every
+snapshot, so backend command recording and image transitions stay on those paths.
+
+The graph builder now creates RAW, WAR, and WAW edges. RAW edges alone carry
+liveness; anti-dependencies only constrain order. The self-test includes an
+imported read followed by overwrite and rewrite, and passed in every capture.
+With current declaration-time versioning, the Pass2 dependency edges point
+forward, so the computed order matches the original sequence. This establishes
+graph-controlled execution and hazard coverage without claiming pass
+reordering or a performance change.
+
+The Linux `cmake --build build -j$(nproc)` gate passed. On the RX 550, MAP06
+captures compared graph execution against the original immediate path on GL and
+Vulkan. Effects-off, tonemap+lens+FXAA, and an active colormap flash produced
+identical decoded pixels in all six backend/mode comparisons. The effects-on
+Vulkan live graph had 9 passes / 20 edges, a rooted `Backbuffer`, no dead-pass
+candidates, and the expected two FXAA draws. The Khronos validation layer
+reported no errors. Live captures resized from 640x480 to 800x600 also produced
+identical decoded pixels between the immediate and graph paths on both backends.
+
+The standard Linux golden-image effect relations passed for baseline, tonemap,
+lens, FXAA, and colormap, covering the single-draw paths ending on the opposite
+ping-pong image and FXAA's two-draw return to the starting image. Both repeat
+runs produced stable pixels, but all five signatures differed slightly from
+the stored Linux baseline (mean luminance shifted by 0.02-0.05); no baseline was
+rewritten. The direct legacy-versus-graph pixel comparisons above passed. No
+Metal build or runtime was available in this Linux session, and Apple Silicon
+scheduling/performance policy remains open.
+
+### Pass1 exposure and bloom graph execution — 2026-09-30
+
+Added `r_framegraph_exposure` and `r_framegraph_bloom` switches so Pass1 can
+record and execute each complete exposure or bloom chain through the same
+`PPRenderState` graph replay path. Each chain is built independently: exposure
+updates the persistent `Exposure.Camera`, then bloom reads it in the same frame.
+The immediate path remains available by setting the corresponding switch to
+zero. Pass2 and AO were not changed in this tranche.
+
+The mandatory Linux build passed with Vulkan enabled. On the RX 550, OpenGL ran
+DOOM2 MAP06 at 640x480 for 120 in-level frames with bloom enabled and Pass2
+graph execution disabled. `r_framegraph_selftest` passed. A live `r_framegraph`
+dump reported 36 passes / 72 edges, `Backbuffer` as the required output, no
+dead-pass candidates, and a connected scene → exposure → bloom → present
+chain. Exposure ran nine average reductions between extract and combine;
+bloom's extract, blur, downscale, upscale, and combine draws were present. The
+graph build emitted no fallback diagnostic.
+
+Vulkan was then run with the Khronos validation layer. Its live graph reported
+37 passes / 73 edges, rooted at `Backbuffer`, including `scene.resolve` before
+exposure, `Exposure.Camera` feeding `bloom.extract`, and the bloom composite
+feeding present. The framegraph self-test passed, no replay fallback appeared,
+and the validation layer emitted no errors.
+
+The prediction was exact pixel identity between graph replay and the immediate
+path. Matched captures with exposure and bloom replay both enabled versus both
+disabled were byte-identical on both backends at 640x480 RGB. GL mean luminance
+was 17.491 in both arms; Vulkan was 17.553 in both. Each comparison had maximum
+channel delta 0 and 0 differing pixels. No baseline was changed. This validates
+output preservation on the tested GL and Vulkan routes, not Metal runtime
+behavior or performance.
+
+### Ambient-occlusion graph execution — 2026-09-30
+
+Added `r_framegraph_ao` for the shared raster SSAO path. Each AO graph imports
+the scene attachments (`SceneColor`, `SceneDepthStencil`, `SceneNormal`,
+`SceneFog`), the possibly precomputed `AO.LinearDepth`, and the three persistent
+random inputs (`AO.RandomTexture0` through `AO.RandomTexture2`). A raster
+linear-depth draw inside the graph still creates its normal write dependency;
+the external declaration covers Vulkan's optional compute producer, which runs
+before the AO graph begins. Metal's native compute AO path bypasses this shared
+raster wrapper, as before.
+
+The Linux build passed with Vulkan enabled. On the RX 550, GL rendered MAP06
+with `gl_ssao 3`, graph replay on, and the other optional postprocess paths off.
+The live graph reported 9 passes / 27 edges, rooted at `Backbuffer`, with no
+dead-pass candidates. Its chain included `ssao.lineardepth` → `ssao.occlude` →
+horizontal/vertical blur → `ssao.combine`; the composite read and rewrote
+`SceneColor` before translucency. There was no postprocess graph fallback
+diagnostic.
+
+Vulkan ran the same scene with `gl_ssao 3`, `vk_compute_ssao 1`, and the Khronos
+validation layer. The live graph reported 10 passes / 28 edges, no dead-pass
+candidates, and `ssao.lineardepth.compute` → `ssao.occlude` → blur → combine.
+This confirms the imported `AO.LinearDepth` dependency from the compute pass
+before graph replay. The validation layer emitted no errors and there was no
+fallback diagnostic.
+
+A second Vulkan route set `vk_compute_ssao 0` to exercise raster linear depth.
+Its live graph also reported 10 passes / 28 edges, with the raster
+`ssao.lineardepth` draw writing `AO.LinearDepth` before occlusion. The graph was
+rooted, had no dead-pass candidates or fallback diagnostic, and the Khronos
+validation layer emitted no errors.
+
+For both backends, the prediction was exact pixel identity between graph replay
+and immediate execution. Same-route 640x480 captures were byte-identical:
+GL mean luminance 16.767, Vulkan compute-depth 16.833, and Vulkan raster-depth
+16.829 in both arms; each comparison had maximum channel delta 0 and 0 differing
+pixels. This validates the tested quality-3 routes, including both Vulkan
+linear-depth producers.
+
+Conditional-route checks then covered 4× multisampling on both backends. Vulkan
+disabled its compute-depth option at this sample count and used raster
+`ssao.lineardepth`; both GL and Vulkan reported 10 passes / 28 edges, rooted at
+`Backbuffer`, with no dead-pass candidates or fallback. Vulkan validation was
+clean. Graph-on/off captures were byte-identical at 640x480: GL mean luminance
+16.770 and Vulkan 16.832, with maximum delta 0 and 0 differing pixels.
+
+Both backends were also checked with `gl_ssao_debug 2`, which omits the blur
+draws. GL reported 7 passes / 22 edges and Vulkan 8 / 23; both graphs remained
+rooted at `Backbuffer`, with no dead-pass candidates or fallback. Vulkan
+validation was clean. The matching captures were byte-identical at 640x480:
+GL mean luminance 240.677 and Vulkan 240.560, with maximum delta 0 and 0
+differing pixels. Other quality tiers, Metal runtime, and performance remain
+open.
+
+### Offscreen and UI/HUD coverage — 2026-10-01
+
+Added producer scopes for `RenderTextureView()` on GL, Vulkan, and Metal.
+Canvas updates read and rewrite their named texture because 2D canvas drawing
+can preserve pixels outside the updated area; camera-texture updates write
+their target after the viewpoint setup clears it. Both are keep-alive passes.
+Sampled material reads observed during these callbacks now attach to the active
+`offscreen.*` pass. Added a `scene.hud_model` scope, a `ui.hud` consumer around
+the post-bloom HUD callback, and `ui.2d` scopes that record blended reads and
+writes of the current pipeline image plus the stencil clear.
+
+The self-test now exercises a preserved canvas update, a camera producer with
+a sampled world material, and a UI overlay that samples both textures before
+present. It checks the dependency edges, output reachability, no dead-pass
+candidates, and the UI depth/stencil backend observation. The updated
+`r_framegraph_selftest` passed.
+
+Live RX 550 MAP06 runs with all tested effects enabled and `screenblocks 10`
+exercised HUD and 2D UI on both GL and Vulkan. GL reported 47 passes / 104
+edges; Vulkan reported 48 / 105, including its explicit resolve. Both graphs
+were rooted at `Backbuffer`, had no dead-pass candidates or graph-build
+failures, and showed the bloom → `ui.hud` → tonemap chain and `ui.2d` before
+present. Vulkan validation emitted no errors. MAP06 did not create a canvas or
+camera texture, so the offscreen producers have self-test coverage but still
+need a live fixture that exercises those routes. Metal code was updated but
+could not be compiled or run in this Linux configuration.
+
 ## Remaining work, in order
 
-1. **Validate the completed CPU graph contract.** Intel Metal effects-on and
-   all-effects-off cases are now recorded above. Conditional paths remain open
-   on Metal; run representative live GL/Vulkan frames on Linux hardware.
-   Confirm retained side effects stay rooted, candidates are interpreted
-   correctly, and transient lifetimes match ping-pong uses and aliases. Keep
-   live rendering in backend order during this stage.
-2. **Move one bounded chain to graph-driven execution.** Start with the
-   `Pass2` chain identified in `docs/frame-analysis.md` §4. Specify RAW, WAR,
-   and WAW handling and per-backend synchronization before changing execution.
-   Compare captured output against the existing path and exercise resize,
-   enabled/disabled effects, and ping-pong direction.
-3. **Widen in measured steps.** Add bloom and exposure, then AO. Keep resource
+1. **Validate the completed CPU graph contract.** The Intel Metal and Linux
+   GL/Vulkan effects-on/off runs are recorded above. UI/HUD scopes are live on
+   Linux; offscreen canvas/camera producers still need a live fixture.
+   Conditional paths remain open on Metal; continue checking retained side
+   effects, candidates, and lifetimes as more paths are added.
+2. **Widen in measured steps.** Exposure, bloom, and quality-3 raster AO now
+   have live Linux graph-replay controls. AO quality-3 multisample and debug
+   routes are covered on GL and Vulkan; check the reference raster path on
+   Metal where available, then cover other quality tiers. Keep resource
    aliasing and pass culling disabled until output roots, all relevant reads,
    writes, and lifetimes have been proven on the migrated paths.
-4. **Validate Metal policy on Apple Silicon.** CPU graph algorithms and
+3. **Validate Metal policy on Apple Silicon.** CPU graph algorithms and
    backend-neutral contracts can proceed on Linux. Metal scheduling,
    transient aliasing policy, and TBDR performance choices need M-series runtime
-   evidence. ARM64/AArch64 JIT work is also deferred until Apple Silicon is
-   available for runtime validation, as requested.
+   evidence. The Intel Metal compile and live correctness checks for the
+   offscreen/UI scopes are listed in
+   [`handoff-macos-2026-10-01.md`](handoff-macos-2026-10-01.md). ARM64/AArch64
+   JIT work is also deferred until Apple Silicon is available for runtime
+   validation, as requested.
 
 ## Open validation boundaries
 
@@ -130,7 +279,7 @@ with a prior graph writer produce edges. Conditional paths remain open. These
 runs check the Metal hook and graph contract, not Apple Silicon/TBDR
 performance policy.
 
-The latest Linux build includes GL/Vulkan and passed after the scene-material
-hook was added. It does not compile the Metal backend. Live output/lifetime and
-material-edge validation remains open on GL/Vulkan hardware. Offscreen-only
-scene traversals remain outside the new material-read scopes.
+The latest Linux build includes GL/Vulkan and passed after the UI/HUD scope
+changes. It does not compile the Metal backend. Offscreen-only scene traversals
+now have producer and material-read scopes, but still need live fixture
+validation on GL/Vulkan.
