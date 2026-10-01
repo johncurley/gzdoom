@@ -445,8 +445,12 @@ it is unusual).
   GL/Vulkan validation of these new attachment/blend dependencies remains open;
   next steps are in `docs/handoff-linux-2026-09-29.md`. Intel Metal compute-AO
   graph coverage now includes algorithms 0, 1, and 2; see the current handoff
-  for live results. Other conditional Metal paths remain open.
-  Offscreen-only scene traversals are not yet represented. Vulkan indexed
+  for live results. The 2026-10-01 Mac follow-up also verified live canvas
+  producer/consumer graph reads and byte-identical immediate/replay MAP06
+  captures; the independent camera-texture producer route and untested Metal
+  quality-tier combinations remain open. See
+  `docs/handoff-macos-2026-10-01.md`. Other offscreen-only scene traversals are
+  not yet represented. Vulkan indexed
   non-mip upload validation remains open pending a confirmed draw route. Apple
   Silicon is still required for Metal/TBDR performance policy; ARM64 JIT work
   is deferred until that hardware is available. The cold MAP08 capture still

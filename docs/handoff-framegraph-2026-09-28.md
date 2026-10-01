@@ -224,6 +224,34 @@ camera texture, so the offscreen producers have self-test coverage but still
 need a live fixture that exercises those routes. Metal code was updated but
 could not be compiled or run in this Linux configuration.
 
+### Intel Metal follow-up — 2026-10-01
+
+Live canvas recording exposed that sampled 2D material reads could be observed
+after their offscreen graph scope had closed. Added a backend hook called by
+shared `Draw2D()` immediately after material selection; Metal resolves the
+material's hardware texture layers and records reads only during an offscreen
+view. The other backends use the default no-op hook.
+
+A temporary MAP09 fixture updated `FGSOURCE` and `FGTARGET` canvas textures.
+The source drew `BRICK1`; the target sampled the source. The Metal graph
+reported 9 passes / 15 edges, `Backbuffer`, and no dead-pass candidates. It
+recorded the source canvas's preservation read, sampled input, and stable
+resource name, then a later `offscreen.canvas` read of that source with a RAW
+edge from its producer. The Metal self-test passed. The first `CCTV1` attempt
+had no placed camera actor. A follow-up defined `CCTV1` as a camera texture,
+explicitly spawned the camera and canvas driver, and sampled it while updating
+the canvases; the graph recorded both canvas passes (10 passes / 17 edges
+total) but still no `offscreen.camera` producer. This closes live Intel Metal
+canvas coverage only. Camera-texture scheduling remains unverified on Metal.
+
+On deterministic MAP06 captures with all postprocess effects and Intel compute
+AO/bloom enabled, immediate mode and replay mode each reported 29 passes / 60
+edges with no dead-pass candidates. Their 1440x900 captures were byte
+identical (max channel delta 0); two immediate captures also matched. This
+closes the Intel Metal canvas producer/consumer and replay-pixel checks. Live
+GL/Vulkan validation of the attachment-preserving graph changes remains open
+as recorded in [`handoff-linux-2026-09-29.md`](handoff-linux-2026-09-29.md).
+
 ### Intel Metal compute-AO conditional coverage — 2026-10-01
 
 Before the subsequent graph-replay merge, Intel Metal captures exercised the
@@ -270,14 +298,16 @@ returns.
 
 1. **Continue validating the CPU graph contract.** Intel Metal and Linux
    GL/Vulkan effects-on/off runs are recorded above. UI/HUD scopes are live on
-   all three backends; offscreen canvas/camera producers still need a live
-   fixture. Extend conditional-route coverage as fixtures and hardware permit.
+   all three backends, and the canvas producer/consumer is live on Intel Metal.
+   Camera-texture producers still need a live fixture on Metal and Linux.
+   Extend conditional-route coverage as fixtures and hardware permit.
 2. **Widen in measured steps.** Exposure, bloom, and quality-3 raster AO now
    have live Linux graph-replay controls. AO quality-3 multisample and debug
-   routes are covered on GL and Vulkan; check the reference raster path on
-   Metal where available, then cover other quality tiers. Keep resource
-   aliasing and pass culling disabled until output roots, all relevant reads,
-   writes, and lifetimes have been proven on the migrated paths.
+   routes are covered on GL and Vulkan, and Metal's reference raster fallback
+   observer route is covered. Other Metal quality-tier combinations remain
+   open. Keep resource aliasing and pass culling disabled until output roots,
+   all relevant reads, writes, and lifetimes have been proven on the migrated
+   paths.
 3. **Validate Metal policy on Apple Silicon.** CPU graph algorithms and
    backend-neutral contracts can proceed on Linux. Metal scheduling,
    transient aliasing policy, and TBDR performance choices need M-series runtime
@@ -304,17 +334,18 @@ failure, capture real rendered frames, and report noise and coverage limits.
 The self-test covers an output-rooted chain, a dead-candidate negative control,
 missing-output detection, screenshot keep-alive, transient lifetime intervals,
 positive/negative attachment-preservation cases, graph hazards, offscreen/UI
-consumption, compute-bloom topology, and compute-AO pyramid selection. On Intel macOS,
-`cmake --build build --parallel 4` passed and a real Metal frame passed the
+consumption, compute-bloom topology, and compute-AO pyramid selection. On Intel
+macOS, `cmake --build build --parallel 4` passed and a real Metal frame passed the
 self-test and output/liveness checks described above. The prior Linux build
 passed, but live GL/Vulkan output/lifetime validation remains open. Xvfb `+quit`
 checks do not substitute for real rendered frames.
 
 ## Metal handoff check
 
-Intel Metal effects-on/off, conditional AO, and UI/HUD runs are recorded above.
-The offscreen producer paths still lack a live fixture. Apple Silicon runtime
-and TBDR performance policy remain unvalidated.
+Intel Metal effects-on/off, conditional AO fallback, and UI/HUD runs are
+recorded above. The canvas producer/consumer has a live fixture; the camera
+texture producer still lacks a live pass. Apple Silicon runtime and TBDR
+performance policy remain unvalidated.
 
 The latest Linux build includes GL/Vulkan and passed after the UI/HUD scope
 changes. It does not compile the Metal backend. Offscreen-only scene traversals

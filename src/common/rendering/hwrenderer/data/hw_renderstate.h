@@ -247,6 +247,8 @@ protected:
 	EPassType mPassType = NORMAL_PASS;
 
 public:
+	// Backend hook for observing the material selected by a shared 2D draw.
+	virtual void ObserveGraphMaterialReads() {}
 
 	uint64_t firstFrame = 0;
 	VSMatrix mModelMatrix;
@@ -752,4 +754,3 @@ public:
 	}
 
 };
-

@@ -1149,7 +1149,7 @@ void MtRenderState::ApplyMaterial() {
 
             MTL::SamplerState *sampler =
                 fb->GetSamplerManager()->GetSamplerState(samplerKey);
-            
+
             fb->GetResourceBindingManager()->BindMaterialTexture(i, mtlTexture, sampler);
           }
         }
@@ -1165,6 +1165,31 @@ void MtRenderState::SetInRenderTextureView(bool on) {
     mInRenderTextureView = on;
     mCullModeChanged = true;
     mNeedApply = true;
+  }
+}
+
+void MtRenderState::ObserveGraphMaterialReads() {
+  if (!mInRenderTextureView || !mMaterial.mMaterial)
+    return;
+
+  int numLayers = mMaterial.mMaterial->NumLayers();
+  const bool isIndexed = (mMaterial.mMaterial->GetScaleFlags() & CTF_Indexed) != 0;
+  if (isIndexed)
+    numLayers = 3;
+
+  for (int i = 0; i < numLayers; ++i) {
+    const int translation = (isIndexed && i > 0)
+                                ? mMaterial.mTranslation
+                                : ((i == 0) ? mMaterial.mTranslation : 0);
+    MaterialLayerInfo *layerInfo = nullptr;
+    auto hwTexture = mMaterial.mMaterial->GetLayer(i, translation, &layerInfo);
+    if (!hwTexture)
+      continue;
+
+    auto mtHwTexture = static_cast<MtHardwareTexture *>(hwTexture);
+    const auto &resourceName = mtHwTexture->GetFrameGraphResourceName();
+    if (!resourceName.empty())
+      fb->Graph().ObserveSceneMaterialRead(resourceName.c_str());
   }
 }
 

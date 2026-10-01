@@ -62,6 +62,7 @@ public:
   void EndFrame();
   void ResetApplyCount() { mApplyCount = 0; }
   void SetInRenderTextureView(bool on);
+  void ObserveGraphMaterialReads() override;
   void SetMirrored(bool mirrored) { mMirror = mirrored; mCullModeChanged = true; }
   // Set the logical draw category used by debug stats for the next draw call(s).
   // Resets to "geometry" at the start of each frame. Valid values: "sky", "portal", "hud", "geometry".

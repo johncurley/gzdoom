@@ -61,12 +61,45 @@ absent while `ui.hud` and `ui.2d` remained. Resource validation reported 16
 resources / 42.5 MB, no stale-size diagnostics, and only the unused shadow maps
 untouched. The self-test passed in this run as well.
 
-Neither stock MAP06 run created a canvas or camera texture. Those producer
-paths have self-test coverage but still need a live fixture. No graph-on/off
-pixel comparison was made on Metal; the separate Linux handoff records exact
-pixel matches for the tested GL/Vulkan graph-replay routes. This closes the
-Intel Metal build, self-test, and live UI/HUD effects-on/off tasks, not the
-offscreen fixture or Apple Silicon runtime boundary.
+Neither stock MAP06 run created a canvas or camera texture. The continuation
+below closes the live canvas fixture and graph-replay comparison. The camera
+producer itself was not separately exercised; Apple Silicon runtime and
+performance remain hardware-specific open boundaries.
+
+## Final coverage completion — 2026-10-01
+
+The Metal encoder-binding observer ran after batched 2D canvas commands had
+left their offscreen graph scope, so it missed those sampled inputs. Added a
+no-op backend hook to `FRenderState`, called from shared `Draw2D()` after a
+texture material is selected. Metal resolves the material's hardware texture
+layers and records them only while rendering a canvas or camera view. GL and
+Vulkan retain the no-op implementation.
+
+The Intel build passed with `cmake --build build --parallel 4`. A final live
+MAP09 probe used a temporary PK3 outside the repository: `FGSOURCE` drew
+`BRICK1`, and `FGTARGET` sampled `FGSOURCE`. Metal reported 9 passes / 15
+edges, `Backbuffer` as output, no dead-pass candidates, and no graph-build
+failure. The source canvas used stable resource `Metal.Texture.92` in the final
+run and carried its preservation read; the later target canvas sampled that
+resource, producing a RAW edge between the two `offscreen.canvas` passes. The
+source pass also recorded its sampled texture layers. `r_framegraph_selftest`
+reported `selftest: PASS`. Resource validation reported no stale-size
+diagnostics; only the unused screen/save shadow maps were untouched.
+
+The separate Metal replay comparison used the deterministic DOOM2 MAP06 scene,
+`screenblocks 12`, bloom/SSAO/tonemap/lens/FXAA enabled, Intel compute AO and
+bloom enabled, and 120 settled frames. Immediate mode had all four
+`r_framegraph_*` switches disabled; replay mode enabled them. Both final-build
+graphs reported 29 passes / 60 edges, `Backbuffer`, and no dead-pass
+candidates. The 1440x900 captures were byte identical: max channel delta 0,
+zero differing pixels. A repeated immediate capture also matched exactly.
+The change therefore closes the live canvas producer/consumer and
+graph-replay pixel coverage. The first `CCTV1` probe lacked a placed camera
+actor. A follow-up defined `CCTV1` as a camera texture, explicitly spawned the
+camera and canvas driver, and sampled it while updating the canvases; the graph
+still showed only the two `offscreen.canvas` passes (10 passes / 17 edges
+total), with no `offscreen.camera`. Camera-texture scheduling therefore
+remains unverified on Intel Metal.
 
 ## Tasks
 
@@ -95,17 +128,15 @@ offscreen fixture or Apple Silicon runtime boundary.
    disappear while the scene, UI, and present passes that still execute remain
    represented. Explain any absent HUD pass by the actual runtime condition.
 
-5. If a reproducible canvas/camera-texture fixture is available, force an
-   update and dump the graph in a real Metal frame. Confirm the producer uses
-   the texture's stable resource name, observed material reads attach to the
-   producer, the canvas carries its prior-value dependency, and a later
-   consumer reads the updated value. If no fixture is available, report that
-   boundary explicitly; do not treat the self-test as a live-render result.
+5. The live two-canvas fixture verified stable producer names, preservation
+   reads, sampled inputs attached to the producer, and a later canvas consumer
+   dependency. A second fixture explicitly spawned and sampled a camera
+   texture but still produced no `offscreen.camera` pass; camera scheduling
+   remains open.
 
-6. If the live UI/HUD recording or offscreen fixture changes rendered output,
-   compare against a same-machine capture with graph observation disabled or
-   the established Metal/OpenGL capture control. These scopes are diagnostic;
-   no image change is expected.
+6. Completed with same-machine MAP06 captures in immediate and replay modes,
+   plus a repeated immediate control. All compared images matched byte for
+   byte.
 
 ## Acceptance record
 
