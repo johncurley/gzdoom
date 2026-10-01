@@ -154,3 +154,30 @@ on Intel, Apple Silicon runtime behavior, and platform-specific graph behavior
 should each be recorded when hardware and a reproducible route are available.
 Keep Metal execution correctness-first until Apple Silicon has a measured
 baseline; this diagnostic work makes no TBDR scheduling or performance claim.
+
+## Shared raster AO allocated-sample routing — Linux follow-up 2026-10-02
+
+The Intel Metal multisample implementation exposed a shared postprocess
+assumption: `PPAmbientOcclusion::Render()` chose its `sampler2DMS` shaders from
+the requested `gl_multisample` cvar. It now accepts the actual allocated scene
+sample count instead. GL passes `FGLRenderBuffers::GetSceneSamples()` and
+Vulkan passes its render-buffer sample count; the shader choice and AO combine
+uniform use that value. This keeps the raster AO route aligned with the actual
+attachments when a backend clamps a request to a supported count. The Metal
+4× path was exercised live on Intel. The macOS build also compiled the shared
+GL/Vulkan call sites, but Linux runtime coverage below predates this change.
+
+**Next Linux validation:** rebuild with Vulkan enabled and run the framegraph
+self-test, then exercise GL and Vulkan at 1× and 4× with `gl_ssao 3`, plus the
+existing debug-mode-2 route. Confirm the backend reports/allocates the expected
+sample count, the single-sample and multisample AO shader routes match that
+allocated count, the AO passes remain rooted at `Backbuffer`, and there are no
+dead-pass candidates, graph errors, stale-size reports, or Vulkan validation
+errors. If the driver clamps a requested count, record both requested and
+allocated values and verify AO follows the latter. The prior Linux 4× graph and
+pixel-parity results remain useful baselines but do not close this follow-up.
+
+The other open Linux items remain: a live offscreen canvas/camera fixture for
+GL and Vulkan, and a confirmed Vulkan `DTF_Indexed` draw route for the indexed
+non-mip sampled-image barrier. No Metal scheduling or performance policy is
+part of this handoff.

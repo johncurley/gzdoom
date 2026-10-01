@@ -3,6 +3,7 @@
 */
 
 #include "i_time.h"
+#include "i_system.h"
 
 #include "../mt_system_wrapper.h"
 
@@ -14,6 +15,7 @@
 #include "printf.h"
 
 EXTERN_CVAR(Int, gl_shadowmap_quality)
+EXTERN_CVAR(Int, gl_multisample)
 
 // Half-float scene colour / postprocess pipeline, matching the OpenGL and
 // Vulkan backends (both use RGBA16F). Metal has historically used BGRA8Unorm,
@@ -23,11 +25,11 @@ EXTERN_CVAR(Int, gl_shadowmap_quality)
 CVAR(Bool, mt_hdr_pipeline, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 MtRenderBuffers::MtRenderBuffers(MetalRenderDevice *fb, const char *tag)
-    : fb(fb), mTag(tag ? tag : "screen") {
+    : mTag(tag ? tag : "screen"), fb(fb) {
   static const char *kBase[RES_Count] = {"SceneColor",       "SceneDepthStencil",
                                          "SceneNormal",      "SceneFog",
                                          "PipelineImage[0]", "PipelineImage[1]",
-                                         "PipelineDepthStencil"};
+                                         "PipelineDepthStencil", "SceneColor.Resolve"};
   for (int i = 0; i < RES_Count; ++i) {
     if (strcmp(mTag, "screen") == 0)
       mResNames[i] = kBase[i];
@@ -45,6 +47,10 @@ MtRenderBuffers::~MtRenderBuffers() {}
 SizeRule MtRenderBuffers::SceneRule() const {
   return strcmp(mTag, "screen") == 0 ? SizeRule{SizeRule::SceneFull}
                                      : SizeRule{SizeRule::Fixed};
+}
+
+MTL::Texture *MtRenderBuffers::GetSceneColorResolveTexture() const {
+  return SceneColorResolve ? SceneColorResolve->GetTexture() : nullptr;
 }
 
 static ResourceFormat ToResourceFormat(MTL::PixelFormat format) {
@@ -81,11 +87,24 @@ void MtRenderBuffers::BeginFrame(int width, int height, int sceneWidth,
     CreatePipelineDepthStencil(width, height);
   }
 
+  int samples = 1;
+  if (strcmp(mTag, "screen") == 0 && fb->device && fb->device->device) {
+    int requestedSamples = clamp((int)gl_multisample, 1, 64);
+    for (int candidate = 64; candidate >= 2; candidate >>= 1) {
+      if (candidate <= requestedSamples &&
+          fb->device->device->supportsTextureSampleCount(candidate)) {
+        samples = candidate;
+        break;
+      }
+    }
+  }
+
   if (mSceneWidth != sceneWidth || mSceneHeight != sceneHeight ||
-      formatChanged) {
+      formatChanged || mSamples != samples) {
     mSceneWidth = sceneWidth;
     mSceneHeight = sceneHeight;
-    CreateScene(sceneWidth, sceneHeight, 1); // samples=1 for now
+    CreateScene(sceneWidth, sceneHeight, samples);
+    mSamples = samples;
   }
 
   // Touch only. The frame boundary is MetalRenderDevice::BeginFrame -- this
@@ -213,6 +232,8 @@ void MtRenderBuffers::CreateShadowMap() {
 }
 
 void MtRenderBuffers::CreateSceneColor(int width, int height, int samples) {
+  fb->Resources().Forget(ResName(RES_SceneColorResolve));
+  SceneColorResolve.reset();
   SceneColor = std::make_unique<MtTextureImage>(fb);
 
   auto desc = MTL::TextureDescriptor::alloc()->init();
@@ -220,7 +241,7 @@ void MtRenderBuffers::CreateSceneColor(int width, int height, int samples) {
   desc->setHeight(height);
   desc->setPixelFormat((MTL::PixelFormat)mColorFormat);
   // Allow compute shaders (e.g. bloom combine) to write into the scene color texture only on devices that support read-write BGRA8
-  if (fb->mVersionManager.supportsReadWriteBGRA8) {
+  if (samples == 1 && fb->mVersionManager.supportsReadWriteBGRA8) {
     desc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead | MTL::TextureUsageShaderWrite);
   } else {
     desc->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
@@ -231,6 +252,9 @@ void MtRenderBuffers::CreateSceneColor(int width, int height, int samples) {
     desc->setTextureType(MTL::TextureType2DMultisample);
 
   MTL::Texture *texture = fb->device->device->newTexture(desc);
+  if (!texture && samples > 1)
+    I_FatalError("Metal: Failed to create %d-sample SceneColor (%dx%d).",
+                 samples, width, height);
   LabelTexture(texture, "SceneColor");
   SceneColor->SetTexture(texture);
   SceneColor->SetWidth(width);
@@ -239,6 +263,31 @@ void MtRenderBuffers::CreateSceneColor(int width, int height, int samples) {
                            samples, ToResourceFormat((MTL::PixelFormat)mColorFormat),
                            SceneRule(), false}, texture);
   desc->release();
+
+  if (samples > 1) {
+    SceneColorResolve = std::make_unique<MtTextureImage>(fb);
+    auto resolveDesc = MTL::TextureDescriptor::alloc()->init();
+    resolveDesc->setWidth(width);
+    resolveDesc->setHeight(height);
+    resolveDesc->setPixelFormat((MTL::PixelFormat)mColorFormat);
+    resolveDesc->setUsage(MTL::TextureUsageRenderTarget |
+                          MTL::TextureUsageShaderRead);
+    resolveDesc->setStorageMode(MTL::StorageModePrivate);
+
+    MTL::Texture *resolveTexture = fb->device->device->newTexture(resolveDesc);
+    if (!resolveTexture)
+      I_FatalError("Metal: Failed to create SceneColor resolve texture (%dx%d).",
+                   width, height);
+    LabelTexture(resolveTexture, "SceneColor.Resolve");
+    SceneColorResolve->SetTexture(resolveTexture);
+    SceneColorResolve->SetWidth(width);
+    SceneColorResolve->SetHeight(height);
+    fb->Resources().Declare({ResName(RES_SceneColorResolve), "MtRenderBuffers",
+                             width, height, 1,
+                             ToResourceFormat((MTL::PixelFormat)mColorFormat),
+                             SceneRule(), false}, resolveTexture);
+    resolveDesc->release();
+  }
 }
 
 void MtRenderBuffers::CreateSceneDepthStencil(int width, int height,
@@ -258,6 +307,9 @@ void MtRenderBuffers::CreateSceneDepthStencil(int width, int height,
     desc->setTextureType(MTL::TextureType2DMultisample);
 
   MTL::Texture *texture = fb->device->device->newTexture(desc);
+  if (!texture && samples > 1)
+    I_FatalError("Metal: Failed to create %d-sample SceneDepthStencil (%dx%d).",
+                 samples, width, height);
   LabelTexture(texture, "SceneDepthStencil");
   SceneDepthStencil->SetTexture(texture);
   SceneDepthStencil->SetWidth(width);
@@ -288,6 +340,9 @@ void MtRenderBuffers::CreateSceneNormal(int width, int height, int samples) {
     desc->setTextureType(MTL::TextureType2DMultisample);
 
   MTL::Texture *texture = fb->device->device->newTexture(desc);
+  if (!texture && samples > 1)
+    I_FatalError("Metal: Failed to create %d-sample SceneNormal (%dx%d).",
+                 samples, width, height);
   LabelTexture(texture, "SceneNormal");
   SceneNormal->SetTexture(texture);
   SceneNormal->SetWidth(width);
@@ -313,6 +368,9 @@ void MtRenderBuffers::CreateSceneFog(int width, int height, int samples) {
     desc->setTextureType(MTL::TextureType2DMultisample);
 
   MTL::Texture *texture = fb->device->device->newTexture(desc);
+  if (!texture && samples > 1)
+    I_FatalError("Metal: Failed to create %d-sample SceneFog (%dx%d).",
+                 samples, width, height);
   LabelTexture(texture, "SceneFog");
   SceneFog->SetTexture(texture);
   SceneFog->SetWidth(width);

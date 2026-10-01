@@ -36,6 +36,8 @@
 #include <ctime>
 #include <cstring>
 
+EXTERN_CVAR(Int, gl_multisample)
+
 // Frame-interval trace for ACTUAL GAMEPLAY, in seconds between reports (0 = off).
 //
 // This exists because the benchmark harness is blind to hitching. Measured
@@ -705,6 +707,8 @@ CCMD(mt_caps)
   // prove what the buffers actually are, which is the question a colour A/B
   // cannot answer from screenshots alone.
   if (auto buffers = fb->GetBuffers()) {
+    Printf(PRINT_HIGH, "  Scene samples:           requested %d, allocated %d\n",
+           (int)gl_multisample, buffers->GetSceneSamples());
     const int fmt = buffers->GetSceneColorFormat();
     const char *name = fmt == (int)MTL::PixelFormatRGBA16Float ? "RGBA16Float (HDR)"
                      : fmt == (int)MTL::PixelFormatBGRA8Unorm  ? "BGRA8Unorm (LDR, clamps at 1.0)"
@@ -785,11 +789,15 @@ CCMD(mt_caps)
     // read "on" while mt_postprocess.cpp's architecture gate silently routes
     // the frame to the reference PP path -- so the cvar alone tells you
     // nothing about which code actually ran.
+    const int sceneSamples = fb->GetBuffers()
+        ? fb->GetBuffers()->GetSceneSamples() : 1;
+    const bool multisampleGated = mt_compute_ao && sceneSamples > 1;
     const bool intelGated = mt_compute_ao && !mt_compute_ao_intel &&
                             v.architecture == MtGPUArchitecture::Intel;
     Printf(PRINT_HIGH, "  mt_compute_ao:           %s\n", mt_compute_ao ? "on" : "OFF");
     Printf(PRINT_HIGH, "  AO path in use:          %s\n",
            !mt_compute_ao   ? "reference PP (hw_postprocess.ssao) -- compute AO off"
+           : multisampleGated ? "reference PP (hw_postprocess.ssao) <- multisample scene target"
            : intelGated     ? "reference PP (hw_postprocess.ssao) <- Intel gate, "
                               "compute AO overridden (set mt_compute_ao_intel 1 to force compute)"
                             : "Metal compute (MtAOModule)");

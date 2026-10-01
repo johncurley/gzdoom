@@ -1056,7 +1056,7 @@ void PPAmbientOcclusion::GetLinearDepthUniforms(LinearDepthUniforms &uniforms) c
 	uniforms.Offset = screen->SceneOffset();
 }
 
-void PPAmbientOcclusion::Render(PPRenderState *renderstate, float m5, int sceneWidth, int sceneHeight, bool linearDepthAlreadyComputed)
+void PPAmbientOcclusion::Render(PPRenderState *renderstate, float m5, int sceneWidth, int sceneHeight, bool linearDepthAlreadyComputed, int sceneSamples)
 {
 	if (gl_ssao == 0 || sceneWidth == 0 || sceneHeight == 0)
 	{
@@ -1120,7 +1120,9 @@ void PPAmbientOcclusion::Render(PPRenderState *renderstate, float m5, int sceneW
 	blurUniforms.PowExponent = gl_ssao_exponent;
 
 	AmbientCombineUniforms combineUniforms;
-	combineUniforms.SampleCount = gl_multisample;
+	if (sceneSamples <= 0)
+		sceneSamples = max((int)gl_multisample, 1);
+	combineUniforms.SampleCount = sceneSamples;
 	combineUniforms.Scale = screen->SceneScale();
 	combineUniforms.Offset = screen->SceneOffset();
 	combineUniforms.DebugMode = gl_ssao_debug;
@@ -1148,7 +1150,7 @@ void PPAmbientOcclusion::Render(PPRenderState *renderstate, float m5, int sceneW
 		renderstate->PushGroup("ssao.lineardepth");
 		renderstate->Clear();
 		renderstate->SetPassName("ssao.lineardepth");
-		renderstate->Shader = gl_multisample > 1 ? &LinearDepthMS : &LinearDepth;
+		renderstate->Shader = sceneSamples > 1 ? &LinearDepthMS : &LinearDepth;
 		renderstate->Uniforms.Set(linearUniforms);
 		renderstate->Viewport = ambientViewport;
 		renderstate->SetInputSceneDepth(0);
@@ -1163,7 +1165,7 @@ void PPAmbientOcclusion::Render(PPRenderState *renderstate, float m5, int sceneW
 	renderstate->PushGroup("ssao.occlude");
 	renderstate->Clear();
 	renderstate->SetPassName("ssao.occlude");
-	renderstate->Shader = gl_multisample > 1 ? &AmbientOccludeMS : &AmbientOcclude;
+	renderstate->Shader = sceneSamples > 1 ? &AmbientOccludeMS : &AmbientOcclude;
 	renderstate->Uniforms.Set(ssaoUniforms);
 	renderstate->Viewport = ambientViewport;
 	renderstate->SetInputTexture(0, &LinearDepthTexture);
@@ -1206,7 +1208,7 @@ void PPAmbientOcclusion::Render(PPRenderState *renderstate, float m5, int sceneW
 	renderstate->PushGroup("ssao.combine");
 	renderstate->Clear();
 	renderstate->SetPassName("ssao.combine");
-	renderstate->Shader = gl_multisample > 1 ? &CombineMS : &Combine;
+	renderstate->Shader = sceneSamples > 1 ? &CombineMS : &Combine;
 	renderstate->Uniforms.Set(combineUniforms);
 	renderstate->Viewport = screen->mSceneViewport;
 	if (gl_ssao_debug == 4)

@@ -448,9 +448,14 @@ it is unusual).
   for live results. The 2026-10-01 Mac follow-up also verified live canvas
   producer/consumer graph reads and byte-identical immediate/replay MAP06
   captures; the 2026-10-02 Mac follow-up also captured live camera-texture
-  producers. Intel Metal single-sample raster-AO fallback quality 1/2 and raw
-  debug mode 2 now have live immediate/replay pixel parity; multisample and
-  other debug combinations remain open. See
+  producers. Intel Metal single-sample raster-AO fallback quality 1/2 with
+  debug mode 0, and quality 3 with debug modes 1–10, now have live
+  immediate/replay pixel parity (mode 2 was covered in the preceding run).
+  The mode-4 graph correctly reports the bypassed AO producer passes as dead.
+  Intel Metal now has live 4× scene-target and raster-AO fallback coverage:
+  multisample SceneColor resolves through a declared `SceneColor.Resolve`
+  resource, with repeatable captures and runtime 1×↔4× toggles. Higher sample
+  counts and Apple Silicon behavior/performance remain open. See
   `docs/handoff-macos-2026-10-01.md`. Other offscreen-only scene traversals are
   not yet represented. Vulkan indexed
   non-mip upload validation remains open pending a confirmed draw route. Apple
@@ -553,6 +558,13 @@ it. `docs/handoff-linux.md` is finished — its two tasks passed on 2026-08-10 a
 must not be re-run. This is what came out of that session and the two since,
 roughly in order of value. Everything below is either an unverified fix, an
 unmeasured assumption, or a tool gap; none of it is speculative work.
+
+**New Linux follow-up from the 2026-10-02 Mac tranche:** validate the shared
+raster-AO shader selection against each backend's allocated scene sample count
+on GL and Vulkan at 1×/4×, including the existing debug-mode-2 control. Prior
+Linux 4× captures predate the new allocated-count plumbing. Full commands and
+acceptance checks are recorded in
+[`docs/handoff-linux-2026-09-29.md`](docs/handoff-linux-2026-09-29.md).
 
 An outside audit of this subsystem was run on 2026-08-12 against
 `docs/audits/audit-contract-linux.md`; its report is

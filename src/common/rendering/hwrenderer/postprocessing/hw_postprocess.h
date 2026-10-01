@@ -782,7 +782,7 @@ class PPAmbientOcclusion
 {
 public:
 	PPAmbientOcclusion();
-	void Render(PPRenderState *renderstate, float m5, int sceneWidth, int sceneHeight, bool linearDepthAlreadyComputed = false);
+	void Render(PPRenderState *renderstate, float m5, int sceneWidth, int sceneHeight, bool linearDepthAlreadyComputed = false, int sceneSamples = 0);
 	bool PrepareLinearDepth(int sceneWidth, int sceneHeight);
 	void GetLinearDepthUniforms(LinearDepthUniforms &uniforms) const;
 	PPTexture *GetLinearDepthTexture() { return &LinearDepthTexture; }

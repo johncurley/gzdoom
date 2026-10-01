@@ -94,12 +94,14 @@ void FGLRenderer::AmbientOccludeScene(float m5)
 	if (r_framegraph_ao)
 	{
 		renderstate.BeginPostprocessGraphExecution();
-		hw_postprocess.ssao.Render(&renderstate, m5, sceneWidth, sceneHeight);
+		hw_postprocess.ssao.Render(&renderstate, m5, sceneWidth, sceneHeight,
+			false, mBuffers->GetSceneSamples());
 		renderstate.ExecutePostprocessGraph();
 	}
 	else
 	{
-		hw_postprocess.ssao.Render(&renderstate, m5, sceneWidth, sceneHeight);
+		hw_postprocess.ssao.Render(&renderstate, m5, sceneWidth, sceneHeight,
+			false, mBuffers->GetSceneSamples());
 	}
 }
 

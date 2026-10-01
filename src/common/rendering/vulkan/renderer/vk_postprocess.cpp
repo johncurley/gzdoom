@@ -309,12 +309,14 @@ void VkPostprocess::AmbientOccludeScene(float m5)
 	if (r_framegraph_ao)
 	{
 		renderstate.BeginPostprocessGraphExecution();
-		hw_postprocess.ssao.Render(&renderstate, m5, sceneWidth, sceneHeight, computeLinearDepth);
+		hw_postprocess.ssao.Render(&renderstate, m5, sceneWidth, sceneHeight,
+			computeLinearDepth, (int)fb->GetBuffers()->GetSceneSamples());
 		renderstate.ExecutePostprocessGraph();
 	}
 	else
 	{
-		hw_postprocess.ssao.Render(&renderstate, m5, sceneWidth, sceneHeight, computeLinearDepth);
+		hw_postprocess.ssao.Render(&renderstate, m5, sceneWidth, sceneHeight,
+			computeLinearDepth, (int)fb->GetBuffers()->GetSceneSamples());
 	}
 
 	ImageTransitionScene(false);

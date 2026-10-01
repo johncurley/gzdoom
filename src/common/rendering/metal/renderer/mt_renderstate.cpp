@@ -36,6 +36,7 @@
 
 #include "flatvertices.h"
 #include "gamestate.h"
+#include "i_system.h"
 #include "hw_bonebuffer.h"
 #include "hw_clock.h"
 #include "hw_cvars.h"
@@ -1435,7 +1436,7 @@ void MtRenderState::SetRenderTarget(MTL::Texture *image,
   }
 
   mRenderTarget.Format = image ? (int)image->pixelFormat() : format;
-  mRenderTarget.Samples = samples;
+  mRenderTarget.Samples = image ? (int)image->sampleCount() : samples;
 }
 
 void MtRenderState::BeginRenderPass() {
@@ -1494,11 +1495,28 @@ void MtRenderState::BeginRenderPass() {
       continue;
     colorAtt->setTexture(tex);
 
+    if (i == 0 && buffers && buffers->SceneColor &&
+        targetTex == buffers->SceneColor->GetTexture() &&
+        targetTex->sampleCount() > 1) {
+      MTL::Texture *resolveTexture = buffers->GetSceneColorResolveTexture();
+      if (!resolveTexture || resolveTexture->sampleCount() != 1 ||
+          resolveTexture->width() != targetTex->width() ||
+          resolveTexture->height() != targetTex->height()) {
+        I_FatalError("Metal: invalid multisample SceneColor resolve target.");
+      }
+      colorAtt->setResolveTexture(resolveTexture);
+      colorAtt->setStoreAction(MTL::StoreActionStoreAndMultisampleResolve);
+    }
+
     bool filled = mClearedTargets.find(tex) != mClearedTargets.end();
     bool clear = (mClearTargets & CT_Color) || !filled;
 
     colorAtt->setLoadAction(clear ? MTL::LoadActionClear : MTL::LoadActionLoad);
-    colorAtt->setStoreAction(MTL::StoreActionStore);
+    if (i != 0 || !buffers || !buffers->SceneColor ||
+        targetTex != buffers->SceneColor->GetTexture() ||
+        targetTex->sampleCount() <= 1) {
+      colorAtt->setStoreAction(MTL::StoreActionStore);
+    }
 
     if (clear) {
       MTL::ClearColor cc;

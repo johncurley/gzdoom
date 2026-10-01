@@ -980,6 +980,39 @@ CCMD(r_framegraph_selftest)
 	bool attachmentOK = attachmentGraph.Build(&attachmentReport) &&
 		attachmentGraph.DeadPassCandidates().Size() == 0;
 
+	// Metal's multisample SceneColor resolves into a single-sample companion
+	// before the ordinary postprocess sampler reads it. Keep that producer edge
+	// explicit so the resolve target cannot disappear from the graph unnoticed.
+	FrameGraph multisampleResolveGraph;
+	PassDesc multisampleScene;
+	multisampleScene.name = "scene.multisample";
+	multisampleScene.owner = "selftest";
+	multisampleScene.writes = { "SceneColor", "SceneColor.Resolve" };
+	multisampleResolveGraph.AddPass(multisampleScene);
+	PassDesc multisampleDraw;
+	multisampleDraw.name = "scene.multisample_draw";
+	multisampleDraw.owner = "selftest";
+	multisampleDraw.reads = { "SceneColor" };
+	multisampleDraw.writes = { "SceneColor", "SceneColor.Resolve" };
+	multisampleResolveGraph.AddPass(multisampleDraw);
+	PassDesc multisampleResolve;
+	multisampleResolve.name = "scene.resolve";
+	multisampleResolve.owner = "selftest";
+	multisampleResolve.reads = { "SceneColor.Resolve" };
+	multisampleResolve.writes = { "PipelineImage[0]" };
+	multisampleResolveGraph.AddPass(multisampleResolve);
+	PassDesc multisamplePresent;
+	multisamplePresent.name = "present";
+	multisamplePresent.owner = "selftest";
+	multisamplePresent.reads = { "PipelineImage[0]" };
+	multisamplePresent.writes = { "Backbuffer" };
+	multisampleResolveGraph.AddPass(multisamplePresent);
+	multisampleResolveGraph.DeclareOutput("Backbuffer");
+	FString multisampleResolveReport;
+	bool multisampleResolveOK =
+		multisampleResolveGraph.Build(&multisampleResolveReport) &&
+		multisampleResolveGraph.DeadPassCandidates().Size() == 0;
+
 	// Offscreen texture updates happen before the main view, and may be read by
 	// either that view or a later 2D overlay. Ensure the shared sampled-texture
 	// hook attaches reads to offscreen and UI scopes, including a canvas target
@@ -1242,7 +1275,8 @@ CCMD(r_framegraph_selftest)
 
 	Printf(ok && orderMatchesDeclaration && hazardsOK && useOK && aliasOK && customOK && badDetected &&
 		uploadOK && badUploadDetected && livenessOK && missingOutputDetected && wipeOK &&
-		attachmentOK && missingAttachmentReadDetected && computeBloomLive &&
+		attachmentOK && missingAttachmentReadDetected && multisampleResolveOK &&
+		computeBloomLive &&
 		directComputeBloomLive && missingBloomCompositeDetected && missingBloomExposureDetected &&
 		computeAOCompositeLive && mipAOCompositeLive && baseAOClaimsNoPyramid &&
 		missingAOCompositeDetected && offscreenOK ?
@@ -1253,6 +1287,9 @@ CCMD(r_framegraph_selftest)
 	if (!offscreenOK)
 		Printf("offscreen/UI texture-read selftest failed: edges=%d report=%s\n",
 			offscreenGraph.EdgeCount(), offscreenReport.GetChars());
+	if (!multisampleResolveOK)
+		Printf("multisample resolve selftest failed: report=%s\n",
+			multisampleResolveReport.GetChars());
 }
 
 // Real per-frame data: whatever the backend postprocess DrawImmediate() paths

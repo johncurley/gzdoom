@@ -310,11 +310,13 @@ returns.
 2. **Widen in measured steps.** Exposure, bloom, and quality-3 raster AO now
    have live Linux graph-replay controls. AO quality-3 multisample and debug
    routes are covered on GL and Vulkan. Intel Metal's reference raster fallback
-   now has live single-sample quality-1/2 and raw-debug graph-replay parity;
-   multisample fallback and other Metal debug combinations remain open. Keep
-   resource aliasing and pass culling disabled until output roots,
-   all relevant reads, writes, and lifetimes have been proven on the migrated
-   paths.
+   now has live single-sample quality-1/2 parity with debug mode 0, plus
+   quality-3 debug-mode 1–10 coverage across the recorded runs. Intel Metal
+   now has live 4× scene rendering, resolve-resource tracking, and raster-AO
+   fallback coverage with repeatable captures and runtime sample-count toggles;
+   higher sample counts and Apple Silicon remain open. Keep resource aliasing
+   and pass culling disabled until output roots, all relevant reads, writes,
+   and lifetimes have been proven on the migrated paths.
 3. **Validate Metal policy on Apple Silicon.** CPU graph algorithms and
    backend-neutral contracts can proceed on Linux. Metal scheduling,
    transient aliasing policy, and TBDR performance choices need M-series runtime
@@ -349,11 +351,12 @@ checks do not substitute for real rendered frames.
 
 ## Metal handoff check
 
-Intel Metal effects-on/off, conditional AO fallback, and UI/HUD runs are
-recorded above. The canvas producer/consumer has a live fixture; the camera
-texture producer also has a live frame-1 fixture. Linux still needs live
-offscreen fixture validation on GL/Vulkan. Apple Silicon runtime and TBDR
-performance policy remain unvalidated.
+Intel Metal effects-on/off, conditional AO fallback, all single-sample raster
+AO debug branches, and UI/HUD runs are recorded above. The canvas
+producer/consumer has a live fixture; the camera texture producer also has a
+live frame-1 fixture. Linux still needs live offscreen fixture validation on
+GL/Vulkan. Apple Silicon runtime and TBDR performance policy remain
+unvalidated.
 
 The latest Linux build includes GL/Vulkan and passed after the UI/HUD scope
 changes. It does not compile the Metal backend. Offscreen-only scene traversals

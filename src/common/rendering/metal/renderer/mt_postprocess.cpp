@@ -344,6 +344,12 @@ public:
   MtPPRenderState(MetalRenderDevice *fb) : fb(fb) {}
   MTL::Texture *customOutputTex = nullptr;
 
+  void SetInputResolvedSceneColor(int index, PPFilterMode filter,
+                                  PPWrapMode wrap) {
+    SetInputSceneColor(index, filter, wrap);
+    mResolvedSceneColorInput = index;
+  }
+
   // The group name is recorded rather than pushed as a Metal debug group,
   // because PushGroup is called before this pass's render command encoder
   // exists -- BeginRenderPass happens inside Draw(). Draw() applies it as the
@@ -399,6 +405,11 @@ public:
   void SetPipelineImageIndex(int index) override {
     fb->GetPostprocess()->mCurrentPipelineImage = index % MtRenderBuffers::NumPipelineImages;
   }
+
+private:
+  int mResolvedSceneColorInput = -1;
+
+public:
 
   void AdvancePipelineImageIndex() override {
     auto postprocess = fb->GetPostprocess();
@@ -495,6 +506,12 @@ public:
       height = (int)outputTex->height();
       format = outputTex->pixelFormat();
     }
+    const bool resolvesSceneColor =
+        Output.Type == PPTextureType::SceneColor && outputTex &&
+        outputTex->sampleCount() > 1;
+    const char *sceneColorResolveName = resolvesSceneColor
+        ? fb->GetBuffers()->ResName(MtRenderBuffers::RES_SceneColorResolve)
+        : nullptr;
 
     // Record the pass and its actual backend resource uses. This mirrors the
     // GL/Vulkan postprocess paths and is deliberately observation-only: Metal
@@ -525,6 +542,8 @@ public:
         desc.owner = "Postprocess";
         desc.reads = reads;
         desc.writes = { writeName };
+        if (sceneColorResolveName)
+          desc.writes.Push(sceneColorResolveName);
         const bool readsDestination = ReadsDestination();
         if (readsDestination)
           desc.reads.Push(writeName);
@@ -536,6 +555,9 @@ public:
         desc.uses.Push({ writeName, FrameGraphAccess::Write,
           Output.Type == PPTextureType::SwapChain ? FrameGraphUsage::Present :
                                                      FrameGraphUsage::ColorAttachment });
+        if (sceneColorResolveName)
+          desc.uses.Push({ sceneColorResolveName, FrameGraphAccess::Write,
+                           FrameGraphUsage::ColorAttachment });
         graphPass = screen->Graph().AddPass(desc);
         if (Output.Type == PPTextureType::SwapChain)
           screen->Graph().DeclareOutput(writeName);
@@ -561,9 +583,17 @@ public:
                                           Output.Type == PPTextureType::SwapChain ?
                                             FrameGraphUsage::Present : FrameGraphUsage::ColorAttachment);
     }
+    if (sceneColorResolveName) {
+      screen->Resources().Touch(sceneColorResolveName, true);
+      if (graphPass >= 0)
+        screen->Graph().ObserveBackendUse(sceneColorResolveName,
+                                          FrameGraphAccess::Write,
+                                          FrameGraphUsage::ColorAttachment);
+    }
 
+    const int outputSamples = outputTex ? (int)outputTex->sampleCount() : 1;
     mtRenderState->SetRenderTarget(outputTex, depthStencil, width, height,
-                                   (int)format, 1);
+                                   (int)format, outputSamples);
     // Ensure PP pass uses a single color attachment
     mtRenderState->EnableDrawBuffers(1, false);
 
@@ -651,7 +681,10 @@ public:
           tex = fb->GetTextureManager()->GetPPTexture(input.Texture);
           break;
         case PPTextureType::SceneColor:
-          tex = fb->GetBuffers()->SceneColor->GetTexture();
+          tex = i == mResolvedSceneColorInput &&
+                        fb->GetBuffers()->GetSceneColorResolveTexture()
+                    ? fb->GetBuffers()->GetSceneColorResolveTexture()
+                    : fb->GetBuffers()->SceneColor->GetTexture();
           break;
         case PPTextureType::SceneDepth:
           tex = fb->GetBuffers()->SceneDepthStencil->GetTexture();
@@ -782,7 +815,11 @@ void MtPostprocess::AmbientOccludeScene(float m5, const HWViewpointUniforms* cur
 
   // Intel integrated GPUs default to the reference PP path -- compute AO
   // measured at ~2x its cost there. See mt_compute_ao_intel.
-  bool useComputeAO = mt_compute_ao;
+  // The compute AO kernels bind scene colour/depth/normal as ordinary 2D
+  // textures and combine into a single-sample target. Multisample scene
+  // attachments must use the shared raster AO path and its sampler2DMS
+  // variants instead.
+  bool useComputeAO = mt_compute_ao && fb->GetBuffers()->GetSceneSamples() == 1;
   if (useComputeAO && !mt_compute_ao_intel &&
       fb->mVersionManager.architecture == MtGPUArchitecture::Intel) {
     useComputeAO = false;
@@ -823,10 +860,12 @@ void MtPostprocess::AmbientOccludeScene(float m5, const HWViewpointUniforms* cur
   auto aoStart = std::chrono::high_resolution_clock::now();
   if (r_framegraph_ao) {
     renderstate.BeginPostprocessGraphExecution();
-    hw_postprocess.ssao.Render(&renderstate, m5, sceneWidth, sceneHeight);
+    hw_postprocess.ssao.Render(&renderstate, m5, sceneWidth, sceneHeight, false,
+                               fb->GetBuffers()->GetSceneSamples());
     renderstate.ExecutePostprocessGraph();
   } else {
-    hw_postprocess.ssao.Render(&renderstate, m5, sceneWidth, sceneHeight);
+    hw_postprocess.ssao.Render(&renderstate, m5, sceneWidth, sceneHeight, false,
+                               fb->GetBuffers()->GetSceneSamples());
   }
   auto aoEnd = std::chrono::high_resolution_clock::now();
   if (fb->GetDebugManager()) {
@@ -1006,7 +1045,10 @@ void MtPostprocess::BlitSceneToPostprocess() {
   if (!dst)
     return;
 
-  const char *sceneColor = buffers->ResName(MtRenderBuffers::RES_SceneColor);
+  const bool multisampleScene = buffers->GetSceneSamples() > 1;
+  const char *sceneColor = buffers->ResName(
+      multisampleScene ? MtRenderBuffers::RES_SceneColorResolve
+                       : MtRenderBuffers::RES_SceneColor);
   const char *pipelineImage = buffers->ResName(MtRenderBuffers::RES_Pipeline0);
   PassDesc resolveDesc;
   resolveDesc.name = "scene.resolve";
@@ -1041,7 +1083,8 @@ void MtPostprocess::BlitSceneToPostprocess() {
   uniforms.HdrMode = 0;
   renderstate.Uniforms.Set(uniforms);
   renderstate.Viewport = { 0, 0, fb->GetWidth(), fb->GetHeight() };
-  renderstate.SetInputSceneColor(0, PPFilterMode::Linear);
+  renderstate.SetInputResolvedSceneColor(0, PPFilterMode::Linear,
+                                        PPWrapMode::Clamp);
   // Bind dither texture (present shader expects sampler at index 1)
   renderstate.SetInputTexture(1, &hw_postprocess.present.Dither, PPFilterMode::Nearest, PPWrapMode::Repeat);
   renderstate.SetNoBlend();

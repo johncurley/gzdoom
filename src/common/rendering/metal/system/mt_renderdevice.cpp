@@ -1018,6 +1018,9 @@ void MetalRenderDevice::SetSceneRenderTarget(bool useSSAO) {
     return;
 
   const char *sceneColor = buffers->ResName(MtRenderBuffers::RES_SceneColor);
+  const bool multisampleScene = buffers->GetSceneSamples() > 1;
+  const char *sceneColorResolve =
+      buffers->ResName(MtRenderBuffers::RES_SceneColorResolve);
   const char *sceneDepth = buffers->ResName(MtRenderBuffers::RES_SceneDepth);
   const char *sceneFog = buffers->ResName(MtRenderBuffers::RES_SceneFog);
   const char *sceneNormal = buffers->ResName(MtRenderBuffers::RES_SceneNormal);
@@ -1027,10 +1030,15 @@ void MetalRenderDevice::SetSceneRenderTarget(bool useSSAO) {
   desc.name = "scene.target";
   desc.owner = "MetalRenderDevice";
   desc.writes = { sceneColor, sceneDepth };
+  if (multisampleScene)
+    desc.writes.Push(sceneColorResolve);
   desc.uses.Push({ sceneColor, FrameGraphAccess::Write,
                    FrameGraphUsage::ColorAttachment });
   desc.uses.Push({ sceneDepth, FrameGraphAccess::Write,
                    FrameGraphUsage::DepthStencilAttachment });
+  if (multisampleScene)
+    desc.uses.Push({ sceneColorResolve, FrameGraphAccess::Write,
+                     FrameGraphUsage::ColorAttachment });
   if (useSSAO) {
     desc.writes.Push(sceneFog);
     desc.writes.Push(sceneNormal);
@@ -1053,6 +1061,11 @@ void MetalRenderDevice::SetSceneRenderTarget(bool useSSAO) {
   Resources().Touch(sceneDepth, true);
   Graph().ObserveBackendUse(sceneDepth, FrameGraphAccess::Write,
                             FrameGraphUsage::DepthStencilAttachment);
+  if (multisampleScene) {
+    Resources().Touch(sceneColorResolve, true);
+    Graph().ObserveBackendUse(sceneColorResolve, FrameGraphAccess::Write,
+                              FrameGraphUsage::ColorAttachment);
+  }
   if (useSSAO) {
     Resources().Touch(sceneFog, true);
     Graph().ObserveBackendUse(sceneFog, FrameGraphAccess::Write,
@@ -1075,6 +1088,9 @@ void MetalRenderDevice::BeginFrameGraphScenePass(const char *name, bool gbuffer,
     return;
 
   const char *sceneColor = buffers->ResName(MtRenderBuffers::RES_SceneColor);
+  const bool multisampleScene = buffers->GetSceneSamples() > 1;
+  const char *sceneColorResolve =
+      buffers->ResName(MtRenderBuffers::RES_SceneColorResolve);
   const char *sceneDepth = buffers->ResName(MtRenderBuffers::RES_SceneDepth);
   const char *sceneFog = buffers->ResName(MtRenderBuffers::RES_SceneFog);
   const char *sceneNormal = buffers->ResName(MtRenderBuffers::RES_SceneNormal);
@@ -1088,8 +1104,13 @@ void MetalRenderDevice::BeginFrameGraphScenePass(const char *name, bool gbuffer,
   // which remains an attachment write in the backend-use observer.
   desc.reads.Push(sceneColor);
   desc.writes.Push(sceneColor);
+  if (multisampleScene)
+    desc.writes.Push(sceneColorResolve);
   desc.uses.Push({ sceneColor, FrameGraphAccess::Write,
                    FrameGraphUsage::ColorAttachment });
+  if (multisampleScene)
+    desc.uses.Push({ sceneColorResolve, FrameGraphAccess::Write,
+                     FrameGraphUsage::ColorAttachment });
   if (depthWrite) {
     desc.reads.Push(sceneDepth);
     desc.writes.Push(sceneDepth);
@@ -1118,6 +1139,11 @@ void MetalRenderDevice::BeginFrameGraphScenePass(const char *name, bool gbuffer,
   Resources().Touch(sceneColor, true);
   Graph().ObserveBackendUse(sceneColor, FrameGraphAccess::Write,
                             FrameGraphUsage::ColorAttachment);
+  if (multisampleScene) {
+    Resources().Touch(sceneColorResolve, true);
+    Graph().ObserveBackendUse(sceneColorResolve, FrameGraphAccess::Write,
+                              FrameGraphUsage::ColorAttachment);
+  }
   if (depthWrite) {
     Resources().Touch(sceneDepth, false);
     Resources().Touch(sceneDepth, true);
@@ -1158,7 +1184,8 @@ void MetalRenderDevice::SetActiveRenderTarget() {
   mMtRenderState->SetRenderTarget(
       tex, nullptr, // Disable depth for 2D pass
       mActiveRenderBuffers->GetWidth(), mActiveRenderBuffers->GetHeight(),
-      mActiveRenderBuffers->GetSceneColorFormat(), 1);
+      mActiveRenderBuffers->GetSceneColorFormat(),
+      mActiveRenderBuffers->GetSceneSamples());
 
   // Mark as filled so the renderer doesn't clear it during secondary passes
   // (like 2D)

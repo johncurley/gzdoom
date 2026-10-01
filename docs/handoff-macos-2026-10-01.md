@@ -131,8 +131,79 @@ three routes.
 The low and medium captures differed deterministically by max channel delta 3,
 mean delta 0.2199, with 8 pixels above delta 2 in the harness analysis region.
 This closes single-sample low/medium fallback and raw-debug replay parity; it
-does not cover multisample fallback or other debug modes, and makes no
-performance claim.
+does not cover multisample fallback, and makes no performance claim.
+
+## Intel Metal raster AO debug branches — 2026-10-02
+
+**Prediction:** debug modes 1, 3, and 4–10 on the single-sample raster fallback
+should produce stable immediate/replay captures. Mode 1 should retain blur;
+modes 3 and 5–10 should retain the raw three-pass AO route. Mode 4 displays
+`SceneNormal` in the combine pass, so the graph should identify
+`ssao.lineardepth` and `ssao.occlude` as dead-pass candidates in that debug
+view. Other modes should have no dead-pass candidates.
+
+The real DOOM2 MAP06 captures used the same Intel Metal raster fallback and
+800x572 viewport as the preceding run, with `gl_ssao 3`, `gl_multisample 1`,
+and bloom, tonemap, lens, and FXAA disabled. Every launch proved the active
+`reference PP (hw_postprocess.ssao)` route, queried the requested debug cvar,
+and passed `r_framegraph_selftest`. For each mode, the graph was checked for
+`Backbuffer` reachability and the expected liveness result. Mode 4's combine
+read was `SceneNormal`; every other tested mode read `AO.Ambient0`.
+
+Mode 1 reported 12 passes / 31 edges and kept all five AO passes, including
+both blur passes. Each of modes 3 and 4–10 reported 10 passes / 27 edges and
+kept `ssao.lineardepth`, `ssao.occlude`, and `ssao.combine`, with blur absent.
+Modes 1, 3, and 5–10 had no dead-pass candidates. Mode 4 reported exactly
+`ssao.lineardepth ssao.occlude`, as predicted for its normal-display branch.
+All graphs reported `Backbuffer` as output and no build failure.
+
+Two captures per arm were byte-identical for both immediate and replay, and
+immediate/replay captures also matched byte-for-byte for every mode. The
+first warm-up capture in debug mode 5 replayed a different image, while its
+two settled captures matched the immediate arm exactly; only the settled,
+interleaved captures were used for parity. This closes the remaining
+single-sample raster AO debug branches (debug modes 0–10 across this and the
+preceding run). The subsequent section records the Metal multisample
+implementation and validation. No performance claim is made.
+
+## Intel Metal multisample scene targets and AO fallback — 2026-10-02
+
+**Prediction:** on this Intel device, requesting 4× should allocate 4-sample
+scene color/depth/normal/fog targets plus a single-sample scene-color resolve
+texture. The real render graph should carry that resolve into the postprocess
+chain and keep every pass live through `Backbuffer`. Repeated 4× captures,
+immediate/replay captures, and runtime 1×↔4× toggles should be pixel-identical
+within each sample-count route. Compute AO requested with a multisample target
+should select the shared raster AO fallback, since Metal compute AO reads
+single-sample depth and normal textures.
+
+The final Intel build passed `cmake --build build --parallel 4`; the rebuilt
+`gzdoom.pk3` was copied into the app bundle and verified identical with `cmp`.
+The self-test passed, including a positive multisample resolve graph case.
+Live runs used stock DOOM2 MAP06 on the Intel MacBookAir7,2 / macOS 12.7.6,
+with a settled 800x572 capture viewport. `mt_caps` reported requested 4,
+allocated 4. The 4× graph reported 12 passes / 35 edges, with
+`SceneColor.Resolve` written by the scene target and subsequent scene draws,
+then read by `scene.resolve`; it was declared and touched in `r_resources`.
+There were no stale-size reports or dead-pass candidates. The 1× graph had 12
+passes / 32 edges and no resolve resource.
+
+Two immediate 4× captures and two graph-replay 4× captures were pixel-identical
+to one another; immediate and replay also matched exactly. Runtime 1×→4×
+matched the steady 4× capture, and runtime 4×→1× matched the steady 1× capture.
+With equal-sized 1× and 4× captures, the measured difference had max channel
+delta 18, mean delta 0.7026, 2.89% of pixels above delta 2, and no pixels above
+the harness's hot-pixel threshold. Requesting Intel compute AO at 4× selected
+`reference PP (hw_postprocess.ssao) <- multisample scene target` and matched
+the raster-fallback 4× capture exactly. These results establish functional
+4× support and repeatability on this Intel Mac; higher sample counts and Apple
+Silicon behavior/performance remain unverified.
+
+Operational note: this macOS build aborts in `NSApplication sharedApplication`
+when its GUI executable is launched directly. Live runs must launch the app
+bundle through LaunchServices (`open -W -n -a ...`); the temporary capture
+launcher collected GZDoom's own logfile because `open` does not forward the
+app's stdout to its caller.
 
 ## Validation checklist
 
@@ -165,6 +236,11 @@ performance claim.
 6. **Complete.** Same-machine MAP06 captures in immediate and replay modes,
    plus a repeated immediate control. All compared images matched byte for
    byte.
+7. **Complete.** Single-sample raster AO debug modes 0–10 passed the recorded
+   graph and pixel-repeat checks. Intel Metal 4× scene rendering and AO fallback
+   passed resolve-graph, replay-repeatability, runtime-toggle, and same-size 1×
+   versus 4× checks. Apple Silicon and higher supported sample counts remain
+   open.
 
 ## Acceptance record
 

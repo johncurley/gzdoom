@@ -151,6 +151,7 @@ public:
 
 	int GetSceneWidth() const { return mSceneWidth; }
 	int GetSceneHeight() const { return mSceneHeight; }
+	int GetSceneSamples() const { return max(mSamples, 1); }
 	bool SceneColorAliasesPipeline() const { return mSamples <= 1; }
 
 private:

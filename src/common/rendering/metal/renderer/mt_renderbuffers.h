@@ -35,11 +35,12 @@ public:
   SizeRule SceneRule() const;
   enum ResSlot { RES_SceneColor, RES_SceneDepth, RES_SceneNormal,
                  RES_SceneFog, RES_Pipeline0, RES_Pipeline1,
-                 RES_PipelineDepth, RES_Count };
+                 RES_PipelineDepth, RES_SceneColorResolve, RES_Count };
 
   int GetSceneWidth() const { return mSceneWidth; }
   int GetSceneHeight() const { return mSceneHeight; }
   int GetSceneSamples() const { return mSamples; }
+  MTL::Texture *GetSceneColorResolveTexture() const;
   const char *ShadowMapResourceName() const { return mShadowMapName.GetChars(); }
 
   // Pixel format of SceneColor and the postprocess pipeline images, as an
@@ -56,6 +57,7 @@ public:
   int GetSceneNormalFormat() const { return mNormalFormat; }
 
   std::unique_ptr<MtTextureImage> SceneColor;
+  std::unique_ptr<MtTextureImage> SceneColorResolve;
   std::unique_ptr<MtTextureImage> SceneDepthStencil;
   std::unique_ptr<MtTextureImage> SceneNormal;
   std::unique_ptr<MtTextureImage> SceneFog;
