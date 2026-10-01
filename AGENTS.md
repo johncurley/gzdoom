@@ -447,8 +447,8 @@ it is unusual).
   graph coverage now includes algorithms 0, 1, and 2; see the current handoff
   for live results. The 2026-10-01 Mac follow-up also verified live canvas
   producer/consumer graph reads and byte-identical immediate/replay MAP06
-  captures; the independent camera-texture producer route and untested Metal
-  quality-tier combinations remain open. See
+  captures; the 2026-10-02 Mac follow-up also captured live camera-texture
+  producers. Untested Metal quality-tier combinations remain open. See
   `docs/handoff-macos-2026-10-01.md`. Other offscreen-only scene traversals are
   not yet represented. Vulkan indexed
   non-mip upload validation remains open pending a confirmed draw route. Apple

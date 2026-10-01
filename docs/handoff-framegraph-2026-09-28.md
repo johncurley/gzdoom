@@ -237,12 +237,15 @@ The source drew `BRICK1`; the target sampled the source. The Metal graph
 reported 9 passes / 15 edges, `Backbuffer`, and no dead-pass candidates. It
 recorded the source canvas's preservation read, sampled input, and stable
 resource name, then a later `offscreen.canvas` read of that source with a RAW
-edge from its producer. The Metal self-test passed. The first `CCTV1` attempt
-had no placed camera actor. A follow-up defined `CCTV1` as a camera texture,
-explicitly spawned the camera and canvas driver, and sampled it while updating
-the canvases; the graph recorded both canvas passes (10 passes / 17 edges
-total) but still no `offscreen.camera` producer. This closes live Intel Metal
-canvas coverage only. Camera-texture scheduling remains unverified on Metal.
+edge from its producer. The Metal self-test passed. The camera probe initially
+missed the producer because it dumped at frame 60, after the one-time initial
+camera update had been cleared and the graph had reset. A follow-up added a
+camera thing to temporary MAP09 UDMF, kept it alive with a looping state, and
+dumped on frame 1. Intel Metal recorded two `offscreen.camera` passes; the
+probe's `FGCAMERA` wrote stable resource `Metal.Texture.1908`. The graph had
+10 passes / 17 edges, `Backbuffer`, and no dead-pass candidates. Camera
+producer coverage is now live on Intel Metal; Linux camera fixtures remain
+open.
 
 On deterministic MAP06 captures with all postprocess effects and Intel compute
 AO/bloom enabled, immediate mode and replay mode each reported 29 passes / 60
@@ -299,7 +302,8 @@ returns.
 1. **Continue validating the CPU graph contract.** Intel Metal and Linux
    GL/Vulkan effects-on/off runs are recorded above. UI/HUD scopes are live on
    all three backends, and the canvas producer/consumer is live on Intel Metal.
-   Camera-texture producers still need a live fixture on Metal and Linux.
+   Camera-texture producers now have a live Intel Metal fixture; Linux still
+   needs a live camera fixture.
    Extend conditional-route coverage as fixtures and hardware permit.
 2. **Widen in measured steps.** Exposure, bloom, and quality-3 raster AO now
    have live Linux graph-replay controls. AO quality-3 multisample and debug

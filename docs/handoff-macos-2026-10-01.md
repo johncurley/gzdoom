@@ -94,12 +94,13 @@ graphs reported 29 passes / 60 edges, `Backbuffer`, and no dead-pass
 candidates. The 1440x900 captures were byte identical: max channel delta 0,
 zero differing pixels. A repeated immediate capture also matched exactly.
 The change therefore closes the live canvas producer/consumer and
-graph-replay pixel coverage. The first `CCTV1` probe lacked a placed camera
-actor. A follow-up defined `CCTV1` as a camera texture, explicitly spawned the
-camera and canvas driver, and sampled it while updating the canvases; the graph
-still showed only the two `offscreen.canvas` passes (10 passes / 17 edges
-total), with no `offscreen.camera`. Camera-texture scheduling therefore
-remains unverified on Intel Metal.
+graph-replay pixel coverage. Camera coverage initially appeared absent because
+the dump ran at frame 60, after the one-time initial update and its graph had
+been reset. A corrected temporary MAP09 UDMF fixture placed a camera thing,
+kept it alive with a looping state, and dumped on frame 1. The graph recorded
+two `offscreen.camera` passes, including `FGCAMERA` writing stable resource
+`Metal.Texture.1908`; the graph had 10 passes / 17 edges, `Backbuffer`, and no
+dead-pass candidates. This verifies the Intel Metal camera producer path.
 
 ## Tasks
 
@@ -128,11 +129,11 @@ remains unverified on Intel Metal.
    disappear while the scene, UI, and present passes that still execute remain
    represented. Explain any absent HUD pass by the actual runtime condition.
 
-5. The live two-canvas fixture verified stable producer names, preservation
-   reads, sampled inputs attached to the producer, and a later canvas consumer
-   dependency. A second fixture explicitly spawned and sampled a camera
-   texture but still produced no `offscreen.camera` pass; camera scheduling
-   remains open.
+5. Completed live offscreen coverage. The two-canvas fixture verified stable
+   producer names, preservation reads, sampled inputs attached to the producer,
+   and a later canvas consumer dependency. The frame-1 camera fixture recorded
+   two `offscreen.camera` producers; its first-frame timing is required because
+   the initial camera update is one-shot and later frames reset the graph.
 
 6. Completed with same-machine MAP06 captures in immediate and replay modes,
    plus a repeated immediate control. All compared images matched byte for
