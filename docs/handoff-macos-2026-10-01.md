@@ -1,13 +1,12 @@
-# macOS handoff — Metal offscreen and UI framegraph coverage — 2026-10-01
+# macOS handoff — Metal offscreen, UI, and AO framegraph coverage — 2026-10-02
 
 ## Purpose
 
 The 2026-10-01 Linux tranche added graph scopes for offscreen canvas/camera
 updates and HUD/2D UI consumers across GL, Vulkan, and Metal. GL and Vulkan
 were built and exercised on the RX 550. The Metal source was updated but could
-not be compiled or run in that Linux configuration. This handoff asks the
-Intel macOS machine to validate the Metal implementation and, if practical,
-exercise an actual canvas or camera texture update.
+not be compiled or run in that Linux configuration. This handoff records the
+Intel macOS validation and live canvas, camera, and AO fallback coverage.
 
 This is correctness and graph-coverage work. It does not authorize pass
 reordering, Metal-specific scheduling, transient aliasing, or TBDR policy.
@@ -62,11 +61,11 @@ resources / 42.5 MB, no stale-size diagnostics, and only the unused shadow maps
 untouched. The self-test passed in this run as well.
 
 Neither stock MAP06 run created a canvas or camera texture. The continuation
-below closes the live canvas fixture and graph-replay comparison. The camera
-producer itself was not separately exercised; Apple Silicon runtime and
-performance remain hardware-specific open boundaries.
+below records separate live canvas and frame-1 camera fixtures, as well as the
+graph-replay comparison. Apple Silicon runtime and performance remain
+hardware-specific open boundaries.
 
-## Final coverage completion — 2026-10-01
+## Final coverage completion — 2026-10-01/02
 
 The Metal encoder-binding observer ran after batched 2D canvas commands had
 left their offscreen graph scope, so it missed those sampled inputs. Added a
@@ -102,46 +101,75 @@ two `offscreen.camera` passes, including `FGCAMERA` writing stable resource
 `Metal.Texture.1908`; the graph had 10 passes / 17 edges, `Backbuffer`, and no
 dead-pass candidates. This verifies the Intel Metal camera producer path.
 
-## Tasks
+## Intel Metal raster AO fallback replay — 2026-10-02
 
-1. Build the current tree with the Intel Metal configuration:
+**Prediction:** single-sample quality 1 and 2 each retain the five-pass AO
+chain (`lineardepth`, `occlude`, horizontal/vertical blur, `combine`). Raw
+debug mode 2 should omit both blur passes, leaving three. Immediate and graph
+replay captures should match exactly within each route; repeated launches of
+each arm should also match.
+
+The Intel build passed with `cmake --build build --parallel 4`. CMake refreshed
+`build/gzdoom.pk3`, so it was copied beside the app executable before launch;
+the bundle copy and generated archive compared equal. Real DOOM2 MAP06 captures
+used `screenblocks 12`, 120 settled frames, and an actual 800x572 viewport.
+`mt_caps` identified Intel Metal and the resolved `reference PP
+(hw_postprocess.ssao)` path with compute AO off. Bloom, tonemap, lens, and FXAA
+were disabled. An initial cold warm-up returned 1152x720 and was discarded
+before the final interleaved set; its warm-ups and all retained captures had
+matching 800x572 dimensions.
+
+`r_framegraph_selftest` passed in every launch. Quality 1 and 2 each reported
+12 total frame passes / 32 edges, with the five expected AO passes. Quality 3
+with `gl_ssao_debug 2` reported 10 passes / 27 edges; its graph omitted both
+blur passes and retained linear depth, occlusion, and combine. Every graph was
+rooted at `Backbuffer`, had no dead-pass candidates, and reported no build
+failure. The live cvar query printed `r_framegraph_ao=false` for immediate and
+`true` for replay. Two captures per arm were pixel-identical for immediate
+mode and for replay; immediate and replay were also pixel-identical for all
+three routes.
+The low and medium captures differed deterministically by max channel delta 3,
+mean delta 0.2199, with 8 pixels above delta 2 in the harness analysis region.
+This closes single-sample low/medium fallback and raw-debug replay parity; it
+does not cover multisample fallback or other debug modes, and makes no
+performance claim.
+
+## Validation checklist
+
+1. **Complete.** Built the current tree with the Intel Metal configuration:
 
    ```bash
    cmake --build build --parallel 4
    ```
 
-2. Run `r_framegraph_selftest` in the bundled app and record its output. A
-   self-test pass checks the graph contract, not live Metal pass recording.
+2. **Complete.** Ran `r_framegraph_selftest` in the bundled app. A self-test
+   pass checks the graph contract, not live Metal pass recording.
 
-3. Run a real MAP06 frame with bloom, SSAO, tonemap, lens, and FXAA enabled,
-   plus `screenblocks 10` so both HUD and 2D UI paths draw. Enable resource
-   validation and dump `r_resources` and `r_framegraph` after the scene has
-   rendered. Check that:
-   - `ui.hud` is recorded between the bloom work and later postprocess passes
-     that actually run;
-   - `ui.2d` appears before present;
-   - the graph is rooted at `Backbuffer`, reports no dead-pass candidates or
-     graph-build failures, and resource validation reports no stale sizes;
-   - the UI pipeline-image and depth/stencil backend observations match their
-     declarations.
+3. **Complete.** The effects-on MAP06 run used `screenblocks 10`, resource
+   validation, and a live graph dump. It recorded `ui.hud` in the expected
+   post-bloom position and `ui.2d` before present; the graph was rooted at
+   `Backbuffer`, had no dead-pass candidates or graph-build failures, and
+   resource validation reported no stale sizes. UI pipeline-image and
+   depth/stencil backend observations matched their declarations.
 
-4. Repeat with those five effects disabled. Confirm the optional effect passes
-   disappear while the scene, UI, and present passes that still execute remain
-   represented. Explain any absent HUD pass by the actual runtime condition.
+4. **Complete.** With the five effects disabled, their passes disappeared while
+   scene, UI, and present passes remained represented. The HUD remained because
+   `screenblocks 10` kept that runtime path active.
 
-5. Completed live offscreen coverage. The two-canvas fixture verified stable
+5. **Complete.** The two-canvas fixture verified stable
    producer names, preservation reads, sampled inputs attached to the producer,
    and a later canvas consumer dependency. The frame-1 camera fixture recorded
    two `offscreen.camera` producers; its first-frame timing is required because
    the initial camera update is one-shot and later frames reset the graph.
 
-6. Completed with same-machine MAP06 captures in immediate and replay modes,
+6. **Complete.** Same-machine MAP06 captures in immediate and replay modes,
    plus a repeated immediate control. All compared images matched byte for
    byte.
 
 ## Acceptance record
 
-Record the build configuration and result, `r_framegraph_selftest` output,
+For future handoffs, record the build configuration and result,
+`r_framegraph_selftest` output,
 scene/cvar setup, pass and edge counts, required-output and dead-candidate
 results, resource validation output, and whether an offscreen fixture actually
 ran. Keep Metal correctness evidence separate from Apple Silicon performance

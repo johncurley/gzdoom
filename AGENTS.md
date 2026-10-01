@@ -448,7 +448,9 @@ it is unusual).
   for live results. The 2026-10-01 Mac follow-up also verified live canvas
   producer/consumer graph reads and byte-identical immediate/replay MAP06
   captures; the 2026-10-02 Mac follow-up also captured live camera-texture
-  producers. Untested Metal quality-tier combinations remain open. See
+  producers. Intel Metal single-sample raster-AO fallback quality 1/2 and raw
+  debug mode 2 now have live immediate/replay pixel parity; multisample and
+  other debug combinations remain open. See
   `docs/handoff-macos-2026-10-01.md`. Other offscreen-only scene traversals are
   not yet represented. Vulkan indexed
   non-mip upload validation remains open pending a confirmed draw route. Apple

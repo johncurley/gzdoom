@@ -252,8 +252,10 @@ AO/bloom enabled, immediate mode and replay mode each reported 29 passes / 60
 edges with no dead-pass candidates. Their 1440x900 captures were byte
 identical (max channel delta 0); two immediate captures also matched. This
 closes the Intel Metal canvas producer/consumer and replay-pixel checks. Live
-GL/Vulkan validation of the attachment-preserving graph changes remains open
-as recorded in [`handoff-linux-2026-09-29.md`](handoff-linux-2026-09-29.md).
+GL/Vulkan effects-on/off validation of attachment-preserving graph changes
+also passed; offscreen-only traversals remain to be exercised on those
+backends, as recorded in
+[`handoff-linux-2026-09-29.md`](handoff-linux-2026-09-29.md).
 
 ### Intel Metal compute-AO conditional coverage — 2026-10-01
 
@@ -307,9 +309,10 @@ returns.
    Extend conditional-route coverage as fixtures and hardware permit.
 2. **Widen in measured steps.** Exposure, bloom, and quality-3 raster AO now
    have live Linux graph-replay controls. AO quality-3 multisample and debug
-   routes are covered on GL and Vulkan, and Metal's reference raster fallback
-   observer route is covered. Other Metal quality-tier combinations remain
-   open. Keep resource aliasing and pass culling disabled until output roots,
+   routes are covered on GL and Vulkan. Intel Metal's reference raster fallback
+   now has live single-sample quality-1/2 and raw-debug graph-replay parity;
+   multisample fallback and other Metal debug combinations remain open. Keep
+   resource aliasing and pass culling disabled until output roots,
    all relevant reads, writes, and lifetimes have been proven on the migrated
    paths.
 3. **Validate Metal policy on Apple Silicon.** CPU graph algorithms and
@@ -348,7 +351,8 @@ checks do not substitute for real rendered frames.
 
 Intel Metal effects-on/off, conditional AO fallback, and UI/HUD runs are
 recorded above. The canvas producer/consumer has a live fixture; the camera
-texture producer still lacks a live pass. Apple Silicon runtime and TBDR
+texture producer also has a live frame-1 fixture. Linux still needs live
+offscreen fixture validation on GL/Vulkan. Apple Silicon runtime and TBDR
 performance policy remain unvalidated.
 
 The latest Linux build includes GL/Vulkan and passed after the UI/HUD scope

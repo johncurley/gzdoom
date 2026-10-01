@@ -140,8 +140,9 @@ Canvas/camera texture updates now have `offscreen.canvas` and
 `offscreen.camera` producers, and material reads inside those callbacks attach
 to the producer. The self-test covers preserved canvas contents, a camera
 producer, sampled material reads, UI consumption, and present reachability.
-Stock MAP06 created no canvas or camera texture, so a live offscreen fixture is
-still needed. The Metal implementation was not compiled or run on this Linux
+Intel Metal has live canvas and frame-1 camera fixtures; Linux GL/Vulkan still
+need live offscreen fixture validation because stock MAP06 creates neither
+texture. The Metal implementation was not compiled or run on this Linux
 machine. Full details are in
 [`handoff-framegraph-2026-09-28.md`](handoff-framegraph-2026-09-28.md).
 
