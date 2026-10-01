@@ -1,0 +1,65 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct main0_out
+{
+    float4 FragColor [[color(0)]];
+};
+
+struct main0_in
+{
+    float2 TexCoord [[user(locn0)]];
+};
+
+static inline __attribute__((always_inline))
+float3 Linear(thread const float3& c)
+{
+    return c * c;
+}
+
+static inline __attribute__((always_inline))
+float3 Uncharted2Tonemap(thread const float3& x)
+{
+    float A = 0.1500000059604644775390625;
+    float B = 0.5;
+    float C = 0.100000001490116119384765625;
+    float D = 0.20000000298023223876953125;
+    float E = 0.0199999995529651641845703125;
+    float F = 0.300000011920928955078125;
+    return (((x * ((x * A) + float3(C * B))) + float3(D * E)) / ((x * ((x * A) + float3(B))) + float3(D * F))) - float3(E / F);
+}
+
+static inline __attribute__((always_inline))
+float3 sRGB(thread float3& c)
+{
+    c = fast::max(c, float3(0.0));
+    return sqrt(c);
+}
+
+static inline __attribute__((always_inline))
+float3 Tonemap(thread const float3& color)
+{
+    float W = 11.19999980926513671875;
+    float3 param = color;
+    float3 curr = Uncharted2Tonemap(param);
+    float3 param_1 = float3(W);
+    float3 whiteScale = float3(1.0) / Uncharted2Tonemap(param_1);
+    float3 param_2 = curr * whiteScale;
+    float3 _102 = sRGB(param_2);
+    return _102;
+}
+
+fragment main0_out main0(main0_in in [[stage_in]], texture2d<float> InputTexture [[texture(0)]], sampler InputTextureSmplr [[sampler(0)]])
+{
+    main0_out out = {};
+    float3 color = InputTexture.sample(InputTextureSmplr, in.TexCoord).xyz;
+    float3 param = color;
+    color = Linear(param);
+    float3 param_1 = color;
+    out.FragColor = float4(Tonemap(param_1), 1.0);
+    return out;
+}

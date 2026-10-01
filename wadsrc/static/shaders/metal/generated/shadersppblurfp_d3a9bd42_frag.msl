@@ -1,0 +1,33 @@
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct Uniforms
+{
+    float SampleWeights0;
+    float SampleWeights1;
+    float SampleWeights2;
+    float SampleWeights3;
+    float SampleWeights4;
+    float SampleWeights5;
+    float SampleWeights6;
+    float SampleWeights7;
+};
+
+struct main0_out
+{
+    float4 FragColor [[color(0)]];
+};
+
+struct main0_in
+{
+    float2 TexCoord [[user(locn0)]];
+};
+
+fragment main0_out main0(main0_in in [[stage_in]], constant Uniforms& _26 [[buffer(0)]], texture2d<float> SourceTexture [[texture(0)]], sampler SourceTextureSmplr [[sampler(0)]])
+{
+    main0_out out = {};
+    out.FragColor = ((((((SourceTexture.sample(SourceTextureSmplr, in.TexCoord, int2(0)) * _26.SampleWeights0) + (SourceTexture.sample(SourceTextureSmplr, in.TexCoord, int2(0, 1)) * _26.SampleWeights1)) + (SourceTexture.sample(SourceTextureSmplr, in.TexCoord, int2(0, -1)) * _26.SampleWeights2)) + (SourceTexture.sample(SourceTextureSmplr, in.TexCoord, int2(0, 2)) * _26.SampleWeights3)) + (SourceTexture.sample(SourceTextureSmplr, in.TexCoord, int2(0, -2)) * _26.SampleWeights4)) + (SourceTexture.sample(SourceTextureSmplr, in.TexCoord, int2(0, 3)) * _26.SampleWeights5)) + (SourceTexture.sample(SourceTextureSmplr, in.TexCoord, int2(0, -3)) * _26.SampleWeights6);
+    return out;
+}

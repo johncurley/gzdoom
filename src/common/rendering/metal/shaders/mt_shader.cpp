@@ -2,6 +2,7 @@
 #include <Metal/Metal.hpp>
 
 #include "cmdlib.h"
+#include "c_dispatch.h"
 #include "common/textures/textures.h" // For usershaders array
 #include "common/thirdparty/superfasthash.h"
 #include "engineerrors.h"
@@ -15,6 +16,7 @@
 #include "gamestate.h"
 #include "mt_shader.h"
 #include "printf.h"
+#include <algorithm>
 #include <chrono>
 #include <fstream>
 #include <regex>
@@ -1265,6 +1267,10 @@ MTL::Library *MtShaderManager::LoadNativeLibrary() {
   if (mNativeLibrary)
     return mNativeLibrary;
 
+  ++mNativeLibraryLoadAttempts;
+  mNativeLibraryPath.clear();
+  mNativeLibraryError = "native_shaders.metallib not found in searched paths";
+
   FString base = progdir;
   if (base.IsNotEmpty() && base.Back() != '/')
     base += "/";
@@ -1286,6 +1292,8 @@ MTL::Library *MtShaderManager::LoadNativeLibrary() {
     NS::Error *error = nullptr;
     mNativeLibrary = fb->device->device->newLibrary(libraryPath, &error);
     if (mNativeLibrary) {
+      mNativeLibraryPath = path;
+      mNativeLibraryError.clear();
       if (mt_debug)
         Printf(PRINT_LOG, "Metal: Loaded native shader library: %s\n",
                path.c_str());
@@ -1293,6 +1301,7 @@ MTL::Library *MtShaderManager::LoadNativeLibrary() {
     }
 
     if (error) {
+      mNativeLibraryError = error->localizedDescription()->utf8String();
       Printf(PRINT_LOG, "Metal: Failed to load native shader library %s: %s\n",
              path.c_str(), error->localizedDescription()->utf8String());
       error->release();
@@ -1433,14 +1442,64 @@ std::string MtShaderManager::GeneratedSymbolName(const std::string &key) {
 // they are real heap objects and the bug is fatal. Do not take the surrounding
 // code's `->release()` calls as evidence that releasing is correct.
 MTL::Function *MtShaderManager::LoadPrecompiledFunction(const std::string &key) {
+  ++mPrecompiledLookups;
   MTL::Library *nativeLib = LoadNativeLibrary();
-  if (!nativeLib)
+  if (!nativeLib) {
+    ++mPrecompiledLibraryUnavailable;
     return nullptr;
+  }
 
   const std::string symbol = GeneratedSymbolName(key);
   NS::String *nsName =
       NS::String::string(symbol.c_str(), NS::UTF8StringEncoding);
-  return nativeLib->newFunction(nsName);
+  MTL::Function *function = nativeLib->newFunction(nsName);
+  if (function) {
+    ++mPrecompiledHits;
+    return function;
+  }
+
+  ++mPrecompiledMisses;
+  if (std::find(mPrecompiledMissKeys.begin(), mPrecompiledMissKeys.end(), key) ==
+      mPrecompiledMissKeys.end()) {
+    if (mPrecompiledMissKeys.size() < 128)
+      mPrecompiledMissKeys.push_back(key);
+    else
+      ++mPrecompiledMissKeysOmitted;
+  }
+  return nullptr;
+}
+
+void MtShaderManager::DumpNativeShaderReport() {
+  Printf(PRINT_HIGH, "Metal native shader lookup report:\n");
+  Printf(PRINT_HIGH, "  library attempts=%u loaded=%s path=%s\n",
+         mNativeLibraryLoadAttempts, mNativeLibrary ? "yes" : "no",
+         mNativeLibraryPath.empty() ? "(none)" : mNativeLibraryPath.c_str());
+  if (!mNativeLibrary && !mNativeLibraryError.empty())
+    Printf(PRINT_HIGH, "  library status: %s\n", mNativeLibraryError.c_str());
+  Printf(PRINT_HIGH,
+         "  precompiled lookups=%u hits=%u symbol_misses=%u library_unavailable=%u\n",
+         mPrecompiledLookups, mPrecompiledHits, mPrecompiledMisses,
+         mPrecompiledLibraryUnavailable);
+  for (const auto &key : mPrecompiledMissKeys)
+    Printf(PRINT_HIGH, "  missing symbol: %s -> %s\n", key.c_str(),
+           GeneratedSymbolName(key).c_str());
+  if (mPrecompiledMissKeysOmitted > 0)
+    Printf(PRINT_HIGH, "  unique missing keys omitted=%u (limit 128)\n",
+           mPrecompiledMissKeysOmitted);
+}
+
+CCMD(mt_shader_report) {
+  if (!screen || !screen->IsMetal()) {
+    Printf(PRINT_HIGH, "Metal shader manager is not available.\n");
+    return;
+  }
+  auto *device = static_cast<MetalRenderDevice *>(screen);
+  auto *manager = device->GetShaderManager();
+  if (!manager) {
+    Printf(PRINT_HIGH, "Metal shader manager is not available.\n");
+    return;
+  }
+  manager->DumpNativeShaderReport();
 }
 
 // Pre-translated MSL shipped in gzdoom.pk3. Checked before the on-disk cache

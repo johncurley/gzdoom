@@ -1,0 +1,41 @@
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct Uniforms
+{
+    float Aspect;
+    float Scale;
+    float Padding0;
+    float Padding1;
+    float4 k;
+    float4 kcube;
+};
+
+struct main0_out
+{
+    float4 FragColor [[color(0)]];
+};
+
+struct main0_in
+{
+    float2 TexCoord [[user(locn0)]];
+};
+
+fragment main0_out main0(main0_in in [[stage_in]], constant Uniforms& _25 [[buffer(0)]], texture2d<float> InputTexture [[texture(0)]], sampler InputTextureSmplr [[sampler(0)]])
+{
+    main0_out out = {};
+    float2 position = in.TexCoord - float2(0.5);
+    float2 p = float2(position.x * _25.Aspect, position.y);
+    float r2 = dot(p, p);
+    float3 f = float3(1.0) + ((_25.k.xyz + (_25.kcube.xyz * sqrt(r2))) * r2);
+    float3 x = ((f * position.x) * _25.Scale) + float3(0.5);
+    float3 y = ((f * position.y) * _25.Scale) + float3(0.5);
+    float3 c;
+    c.x = InputTexture.sample(InputTextureSmplr, float2(x.x, y.x)).x;
+    c.y = InputTexture.sample(InputTextureSmplr, float2(x.y, y.y)).y;
+    c.z = InputTexture.sample(InputTextureSmplr, float2(x.z, y.z)).z;
+    out.FragColor = float4(c, 1.0);
+    return out;
+}

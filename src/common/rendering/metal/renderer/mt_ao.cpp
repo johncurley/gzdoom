@@ -1556,7 +1556,8 @@ void MtAOModule::EnsureDepthPyramid(int width, int height) {
     mDepthPyramidHeight = mDepthPyramidTexture ? height : 0;
 }
 
-bool MtAOModule::Render(float m5, int sceneWidth, int sceneHeight, const HWViewpointUniforms* currentViewpoint) {
+bool MtAOModule::Render(float m5, int sceneWidth, int sceneHeight, const HWViewpointUniforms* currentViewpoint, MtAOFrameResult& frameResult) {
+	frameResult = {};
     if (!ssaoPSO || !blurPSO || !combineRenderPSO || !fb->GetBuffers())
         return false;
 
@@ -1799,10 +1800,14 @@ bool MtAOModule::Render(float m5, int sceneWidth, int sceneHeight, const HWViewp
     Execute(cmdBuf, buffers->SceneDepthStencil->GetTexture(),
             buffers->SceneNormal->GetTexture(), buffers->SceneColor->GetTexture(),
             mAOTexture, stencilView, params, blurAO,
-            useFullresCleanup, algorithm);
+            useFullresCleanup, algorithm, frameResult);
     MTL::Texture *combineAO = (useFullresCleanup && mFullresResultTexture) ? mFullresResultTexture :
         (mLowresResultTexture ? mLowresResultTexture : mAOTexture);
-    Combine(combineAO, sceneWidth, sceneHeight, combineAO == mFullresResultTexture);
+    frameResult.resultResource = combineAO == mFullresResultTexture ?
+        (combineAO == mFullresTempTexture ? "AO.FullresTemp" : "AO.FullresAO") :
+        (combineAO == mBlurTexture || combineAO == mAOTexture ?
+            (combineAO == mBlurTexture || mLowresResultTexture == mBlurTexture ? "AO.Blur" : "AO.Ambient") : nullptr);
+    frameResult.compositeDrawn = Combine(combineAO, sceneWidth, sceneHeight, combineAO == mFullresResultTexture);
     auto aoEnd = std::chrono::high_resolution_clock::now();
     if (fb->GetComputeManager()) {
         float ms = std::chrono::duration<float, std::milli>(aoEnd - aoStart).count();
@@ -1812,15 +1817,15 @@ bool MtAOModule::Render(float m5, int sceneWidth, int sceneHeight, const HWViewp
     return true;
 }
 
-void MtAOModule::Combine(MTL::Texture* aoTex, int sceneWidth, int sceneHeight, bool fullresAO) {
+bool MtAOModule::Combine(MTL::Texture* aoTex, int sceneWidth, int sceneHeight, bool fullresAO) {
     if (!aoTex || !combineRenderPSO || !fb->GetBuffers())
-        return;
+        return false;
 
     auto buffers = fb->GetBuffers();
     // mt_hdr_pipeline can change the scene colour format under us; the PSO's
     // colour attachment format has to track it or the render pass is invalid.
     if (!EnsureCombinePSOFormat(buffers->GetSceneColorFormat()))
-        return;
+        return false;
     auto renderState = fb->GetRenderState();
     renderState->SetRenderTarget(buffers->SceneColor->GetTexture(),
                                  buffers->SceneDepthStencil->GetTexture(),
@@ -1835,7 +1840,7 @@ void MtAOModule::Combine(MTL::Texture* aoTex, int sceneWidth, int sceneHeight, b
 
     auto encoder = renderState->GetEncoder();
     if (!encoder)
-        return;
+        return false;
 
     struct AOCombineParams {
         int debugMode;
@@ -1884,9 +1889,10 @@ void MtAOModule::Combine(MTL::Texture* aoTex, int sceneWidth, int sceneHeight, b
     encoder->setFragmentTexture(buffers->SceneColor->GetTexture(), 4);
     encoder->drawPrimitives(MTL::PrimitiveTypeTriangle, (NS::UInteger)0,
                             (NS::UInteger)3);
+    return true;
 }
 
-void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL::Texture* normalTex, MTL::Texture* sceneColorTex, MTL::Texture* aoTex, MTL::Texture* stencilTex, const SSAOParams& params, bool blurAO, bool useFullresCleanup, int algorithm) {
+void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL::Texture* normalTex, MTL::Texture* sceneColorTex, MTL::Texture* aoTex, MTL::Texture* stencilTex, const SSAOParams& params, bool blurAO, bool useFullresCleanup, int algorithm, MtAOFrameResult& frameResult) {
     if (!ssaoPSO || (blurAO && (!blurPSO || !mBlurTexture)) || !depthTex || !normalTex || !sceneColorTex || !aoTex) return;
     mFullresResultTexture = nullptr;
     mLowresResultTexture = aoTex;
@@ -1914,6 +1920,7 @@ void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL
             MTL::Size pyramidGrid = { (NS::UInteger)mDepthPyramidTexture->width(), (NS::UInteger)mDepthPyramidTexture->height(), 1 };
             MtDispatchThreads(linearizeEncoder, fb, pyramidGrid, MTL::Size(8, 8, 1));
             fb->Resources().Touch("AO.DepthPyramid", true);
+            frameResult.depthPyramidWritten = true;
             linearizeEncoder->endEncoding();
 
             auto blit = cmdBuf->blitCommandEncoder();
@@ -1959,6 +1966,7 @@ void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL
     // Touch only after the first AO dispatch has been encoded. Setup failures
     // must not appear as a successfully executed compute path in mt_resources.
     fb->Resources().Touch("AO.Ambient", true);
+    frameResult.dispatched = true;
     
     if (blurAO) {
         encoder->memoryBarrier(MTL::BarrierScopeTextures);
@@ -2011,6 +2019,7 @@ void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL
             encoder->setTexture(normalTex, 2);
             MtDispatchThreads(encoder, fb, gridSize, MTL::Size(8, 8, 1));
             fb->Resources().Touch("AO.Blur", true);
+            frameResult.blurWritten = true;
             src = dst;
         }
         mLowresResultTexture = src;
@@ -2046,6 +2055,7 @@ void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL
         encoder->setTexture(mFullresAOTexture, 3);
         MtDispatchThreads(encoder, fb, fullGrid, MTL::Size(8, 8, 1));
         fb->Resources().Touch("AO.FullresAO", true);
+        frameResult.fullresAOWritten = true;
         mFullresResultTexture = mFullresAOTexture;
 
         int atrousPasses = clamp((int)mt_compute_ao_atrous_passes, 0, 3);
@@ -2063,6 +2073,7 @@ void MtAOModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL
             encoder->setTexture(dstPass, 2);
             MtDispatchThreads(encoder, fb, fullGrid, MTL::Size(8, 8, 1));
             fb->Resources().Touch("AO.FullresTemp", true);
+            frameResult.fullresTempWritten = true;
             mFullresResultTexture = dstPass;
             MTL::Texture *tmp = srcPass;
             srcPass = dstPass;

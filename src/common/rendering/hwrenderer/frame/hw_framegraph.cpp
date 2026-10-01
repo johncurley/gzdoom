@@ -965,9 +965,177 @@ CCMD(r_framegraph_selftest)
 		missingAOReportedDead |= strcmp(missingAttachmentReadGraph.Pass(passIndex).name, "ssao.combine") == 0;
 	missingAttachmentReadDetected = missingAttachmentReadDetected && missingAOReportedDead;
 
+	// Metal compute bloom consumes the adapted exposure, builds a composite
+	// texture, then adds that result into the current pipeline image. Keep the
+	// compute and composite nodes connected to the required present output.
+	auto buildBloomGraph = [](FrameGraph &graph, bool includeExposureRead,
+		bool includeCompositePass, bool rasterComposite)
+	{
+		graph.DeclareExternal("Exposure.Input");
+		graph.DeclareExternal("Exposure.Camera"); // prior-frame adaptation
+		PassDesc resolve;
+		resolve.name = "scene.resolve";
+		resolve.owner = "selftest";
+		resolve.writes.Push("PipelineImage[0]");
+		graph.AddPass(resolve);
+
+		PassDesc exposureExtract;
+		exposureExtract.name = "exposure.extract";
+		exposureExtract.owner = "selftest";
+		exposureExtract.reads.Push("Exposure.Input");
+		exposureExtract.writes.Push("Exposure.Level0");
+		graph.AddPass(exposureExtract);
+
+		PassDesc exposureCombine;
+		exposureCombine.name = "exposure.combine";
+		exposureCombine.owner = "selftest";
+		exposureCombine.reads = { "Exposure.Level0", "Exposure.Camera" };
+		exposureCombine.writes.Push("Exposure.Camera");
+		graph.AddPass(exposureCombine);
+
+		PassDesc bloomCompute;
+		bloomCompute.name = "bloom.compute";
+		bloomCompute.owner = "selftest";
+		bloomCompute.reads.Push("PipelineImage[0]");
+		if (includeExposureRead)
+			bloomCompute.reads.Push("Exposure.Camera");
+		bloomCompute.writes.Push(rasterComposite ? "Bloom.Composite" : "Bloom.A");
+		graph.AddPass(bloomCompute);
+
+		if (includeCompositePass)
+		{
+			PassDesc bloomComposite;
+			bloomComposite.name = "bloom.composite";
+			bloomComposite.owner = "selftest";
+			bloomComposite.reads.Push(rasterComposite ? "Bloom.Composite" : "Bloom.A");
+			bloomComposite.reads.Push("PipelineImage[0]");
+			bloomComposite.writes.Push("PipelineImage[0]");
+			graph.AddPass(bloomComposite);
+		}
+
+		PassDesc present;
+		present.name = "present";
+		present.owner = "selftest";
+		present.reads.Push("PipelineImage[0]");
+		present.writes.Push("Backbuffer");
+		graph.AddPass(present);
+		graph.DeclareOutput("Backbuffer");
+	};
+
+	FrameGraph computeBloomGraph;
+	buildBloomGraph(computeBloomGraph, true, true, true);
+	FString computeBloomReport;
+	bool computeBloomLive = computeBloomGraph.Build(&computeBloomReport) &&
+		computeBloomGraph.DeadPassCandidates().Size() == 0;
+	FrameGraph directComputeBloomGraph;
+	buildBloomGraph(directComputeBloomGraph, true, true, false);
+	FString directComputeBloomReport;
+	bool directComputeBloomLive = directComputeBloomGraph.Build(&directComputeBloomReport) &&
+		directComputeBloomGraph.DeadPassCandidates().Size() == 0;
+
+	// Negative control 1: omitting the final composite must leave the compute
+	// result outside the present chain and identify bloom.compute as dead.
+	FrameGraph missingBloomCompositeGraph;
+	buildBloomGraph(missingBloomCompositeGraph, true, false, true);
+	FString missingBloomCompositeReport;
+	bool missingBloomCompositeDetected = missingBloomCompositeGraph.Build(&missingBloomCompositeReport);
+	bool bloomReportedDead = false;
+	for (int passIndex : missingBloomCompositeGraph.DeadPassCandidates())
+		bloomReportedDead |= strcmp(missingBloomCompositeGraph.Pass(passIndex).name, "bloom.compute") == 0;
+	missingBloomCompositeDetected = missingBloomCompositeDetected && bloomReportedDead;
+
+	// Negative control 2: the bloom output stays live, but omitting its adapted
+	// exposure input must make the exposure producer chain a dead-pass candidate.
+	FrameGraph missingBloomExposureGraph;
+	buildBloomGraph(missingBloomExposureGraph, false, true, true);
+	FString missingBloomExposureReport;
+	bool missingBloomExposureDetected = missingBloomExposureGraph.Build(&missingBloomExposureReport);
+	bool exposureReportedDead = false;
+	for (int passIndex : missingBloomExposureGraph.DeadPassCandidates())
+		exposureReportedDead |= strcmp(missingBloomExposureGraph.Pass(passIndex).name, "exposure.combine") == 0;
+	missingBloomExposureDetected = missingBloomExposureDetected && exposureReportedDead;
+
+	// Compute AO has two observable stages when algorithm 2 is selected: a
+	// depth-pyramid producer, then the AO dispatch, followed by a raster blend
+	// that preserves SceneColor. Algorithms 0/1 must not claim the pyramid.
+	auto buildComputeAOGraph = [](FrameGraph &graph, bool useDepthPyramid, bool includeComposite)
+	{
+		PassDesc scene;
+		scene.name = "scene.render";
+		scene.owner = "selftest";
+		scene.writes = { "SceneColor", "SceneDepthStencil", "SceneNormal", "SceneFog" };
+		graph.AddPass(scene);
+
+		if (useDepthPyramid)
+		{
+			PassDesc pyramid;
+			pyramid.name = "ssao.depth-pyramid";
+			pyramid.owner = "selftest";
+			pyramid.reads.Push("SceneDepthStencil");
+			pyramid.writes.Push("AO.DepthPyramid");
+			graph.AddPass(pyramid);
+		}
+
+		PassDesc computeAO;
+		computeAO.name = "ssao.compute";
+		computeAO.owner = "selftest";
+		computeAO.reads = { "SceneDepthStencil", "SceneNormal", "SceneColor" };
+		if (useDepthPyramid) computeAO.reads.Push("AO.DepthPyramid");
+		computeAO.writes.Push("AO.Ambient");
+		graph.AddPass(computeAO);
+
+		if (includeComposite)
+		{
+			PassDesc composite;
+			composite.name = "ssao.compute.composite";
+			composite.owner = "selftest";
+			composite.reads = { "AO.Ambient", "SceneFog", "SceneNormal", "SceneDepthStencil", "SceneColor" };
+			composite.writes.Push("SceneColor");
+			graph.AddPass(composite);
+		}
+
+		PassDesc present;
+		present.name = "present";
+		present.owner = "selftest";
+		present.reads.Push("SceneColor");
+		present.writes.Push("Backbuffer");
+		graph.AddPass(present);
+		graph.DeclareOutput("Backbuffer");
+	};
+
+	FrameGraph computeAOGraph;
+	buildComputeAOGraph(computeAOGraph, false, true);
+	FString computeAOReport;
+	bool computeAOCompositeLive = computeAOGraph.Build(&computeAOReport) &&
+		computeAOGraph.DeadPassCandidates().Size() == 0;
+	bool baseAOClaimsNoPyramid = true;
+	for (int passIndex = 0; passIndex < computeAOGraph.PassCount(); ++passIndex)
+	{
+		const PassDesc &pass = computeAOGraph.Pass(passIndex);
+		for (const char *resource : pass.reads) baseAOClaimsNoPyramid &= strcmp(resource, "AO.DepthPyramid") != 0;
+		for (const char *resource : pass.writes) baseAOClaimsNoPyramid &= strcmp(resource, "AO.DepthPyramid") != 0;
+	}
+	FrameGraph mipComputeAOGraph;
+	buildComputeAOGraph(mipComputeAOGraph, true, true);
+	FString mipComputeAOReport;
+	bool mipAOCompositeLive = mipComputeAOGraph.Build(&mipComputeAOReport) &&
+		mipComputeAOGraph.DeadPassCandidates().Size() == 0;
+	FrameGraph missingAOCompositeGraph;
+	buildComputeAOGraph(missingAOCompositeGraph, false, false);
+	FString missingAOCompositeReport;
+	bool missingAOCompositeDetected = missingAOCompositeGraph.Build(&missingAOCompositeReport);
+	bool aoComputeReportedDead = false;
+	for (int passIndex : missingAOCompositeGraph.DeadPassCandidates())
+		aoComputeReportedDead |= strcmp(missingAOCompositeGraph.Pass(passIndex).name, "ssao.compute") == 0;
+	missingAOCompositeDetected = missingAOCompositeDetected && aoComputeReportedDead;
+
 	Printf(ok && orderMatchesDeclaration && useOK && aliasOK && customOK && badDetected &&
 		uploadOK && badUploadDetected && livenessOK && missingOutputDetected && wipeOK &&
-		attachmentOK && missingAttachmentReadDetected ?
+		attachmentOK && missingAttachmentReadDetected && computeBloomLive &&
+		directComputeBloomLive &&
+		missingBloomCompositeDetected && missingBloomExposureDetected &&
+		computeAOCompositeLive && mipAOCompositeLive && baseAOClaimsNoPyramid &&
+		missingAOCompositeDetected ?
 		"selftest: PASS\n" : "selftest: FAIL\n");
 }
 

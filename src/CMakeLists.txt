@@ -1463,6 +1463,12 @@ if (HAVE_METAL)
 	)
 	if (APPLE)
 		add_dependencies(zdoom metal_native_shaders)
+		# The post-build copy below must run when only the metallib changes.
+		# Without this link dependency, CMake can rebuild the metallib while
+		# leaving the bundle's Contents/Resources copy stale because zdoom itself
+		# did not relink.
+		set_property(TARGET zdoom APPEND PROPERTY LINK_DEPENDS
+			${METAL_NATIVE_LIBRARY})
 		add_custom_command(TARGET zdoom POST_BUILD
 			COMMAND ${CMAKE_COMMAND} -E make_directory
 				$<TARGET_BUNDLE_DIR:zdoom>/Contents/Resources

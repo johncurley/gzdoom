@@ -1,0 +1,22 @@
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct main0_out
+{
+    float4 FragColor [[color(0)]];
+};
+
+struct main0_in
+{
+    float2 TexCoord [[user(locn0)]];
+};
+
+fragment main0_out main0(main0_in in [[stage_in]], texture2d<float> ExposureTexture [[texture(0)]], sampler ExposureTextureSmplr [[sampler(0)]])
+{
+    main0_out out = {};
+    float4 values = ExposureTexture.gather(ExposureTextureSmplr, in.TexCoord, int2(0), component::x);
+    out.FragColor = float4((((values.x + values.y) + values.z) + values.w) * 0.25, 0.0, 0.0, 1.0);
+    return out;
+}

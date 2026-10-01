@@ -106,6 +106,7 @@ public:
   std::string LoadPublicShaderLump(const char *lumpname);
   std::string LoadPrivateShaderLump(const char *lumpname);
   MTL::Library *LoadNativeLibrary();
+  void DumpNativeShaderReport();
   MTL::ComputePipelineState *CreateComputePipeline(const char *functionName,
                                                    const char *fallbackSource,
                                                    const char *debugName);
@@ -150,6 +151,16 @@ private:
   MTL::Library *mNativeLibrary = nullptr;
 
 private:
+  unsigned int mNativeLibraryLoadAttempts = 0;
+  std::string mNativeLibraryPath;
+  std::string mNativeLibraryError;
+  unsigned int mPrecompiledLookups = 0;
+  unsigned int mPrecompiledHits = 0;
+  unsigned int mPrecompiledMisses = 0;
+  unsigned int mPrecompiledLibraryUnavailable = 0;
+  std::vector<std::string> mPrecompiledMissKeys;
+  unsigned int mPrecompiledMissKeysOmitted = 0;
+
   std::unordered_map<std::string, std::shared_ptr<MtShaderModule>> mShaderCache;
 
   std::vector<MtShaderProgram> mMaterialShaders[MAX_PASS_TYPES];

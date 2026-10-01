@@ -90,35 +90,30 @@ endif()
 function( add_pk3 PK3_NAME PK3_DIR )
 	# Generate target name. Just use "pk3" for main pk3 target.
 	string( REPLACE "." "_" PK3_TARGET ${PK3_NAME} )
+	# The archive must be rebuilt when its contents change, and a new file must
+	# cause CMake to refresh this list during the next build-system check.
+	file(GLOB_RECURSE PK3_SRCS CONFIGURE_DEPENDS ${PK3_DIR}/*)
+	# Exclude files with brackets from the dependency and IDE source lists
+	# because Make interprets those characters as patterns. zipdir still
+	# includes them when it walks the source directory.
+	string(REPLACE "[" confusing_bracket PK3_SRCS "${PK3_SRCS}")
+	string(REPLACE "]" confusing_bracket PK3_SRCS "${PK3_SRCS}")
+	foreach(PK3_SRC ${PK3_SRCS})
+		if(${PK3_SRC} MATCHES confusing_bracket)
+			list(REMOVE_ITEM PK3_SRCS ${PK3_SRC})
+		endif()
+	endforeach()
 
 	if( NOT ZDOOM_OUTPUT_OLDSTYLE )
 		add_custom_command( OUTPUT ${ZDOOM_OUTPUT_DIR}/${PK3_NAME}
 			COMMAND zipdir -udf ${PK3_ZIPDIR_OPTIONS} ${ZDOOM_OUTPUT_DIR}/${PK3_NAME} ${PK3_DIR}
 			COMMAND ${CMAKE_COMMAND} -E copy_if_different ${ZDOOM_OUTPUT_DIR}/${PK3_NAME} $<TARGET_FILE_DIR:zdoom>/${PK3_NAME}
-			DEPENDS zipdir )
+		DEPENDS zipdir ${PK3_SRCS} )
 	else()
 		add_custom_command( OUTPUT ${ZDOOM_OUTPUT_DIR}/${PK3_NAME}
 			COMMAND zipdir -udf ${PK3_ZIPDIR_OPTIONS} ${ZDOOM_OUTPUT_DIR}/${PK3_NAME} ${PK3_DIR}
-			DEPENDS zipdir )
+		DEPENDS zipdir ${PK3_SRCS} )
 	endif()
-	# Create a list of source files for this PK3, for use in the IDE
-	# Phase 1: Create a list of all source files for this PK3 archive, except
-	#  for a couple of strife image file names that confuse CMake.
-	file(GLOB_RECURSE PK3_SRCS ${PK3_DIR}/*)
-	# Exclude from the source list some files with brackets in the
-	# file names here, because they confuse CMake.
-	# This only affects the list of source files shown in the IDE.
-	# It does not actually remove the files from the PK3 archive.
-	# First replace that toxic bracket character with something we can handle
-	string(REPLACE "[" confusing_bracket PK3_SRCS "${PK3_SRCS}")
-	string(REPLACE "]" confusing_bracket PK3_SRCS "${PK3_SRCS}")
-	foreach(PK3_SRC ${PK3_SRCS}) # All source files at all levels
-		# Exclude those quarantined source file source file names that once had a bracket
-		if(${PK3_SRC} MATCHES confusing_bracket)
-			# message(STATUS "Ignoring PK3 file name containing brackets "${PK3_SRC})
-			list(REMOVE_ITEM PK3_SRCS ${PK3_SRC})
-		endif()
-	endforeach()
 	# Phase 2: Create the PK3 build rule, including the source file list for the IDE
 	# Touch the zipdir executable here so that the pk3s are forced to
 	# rebuild each time since their dependency has "changed."

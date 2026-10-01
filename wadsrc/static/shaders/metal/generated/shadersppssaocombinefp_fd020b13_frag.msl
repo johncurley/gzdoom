@@ -1,0 +1,105 @@
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct Uniforms
+{
+    int SampleCount;
+    int DebugMode;
+    int Padding1;
+    int Padding2;
+    float2 Scale;
+    float2 Offset;
+};
+
+struct main0_out
+{
+    float4 FragColor [[color(0)]];
+};
+
+struct main0_in
+{
+    float2 TexCoord [[user(locn0)]];
+};
+
+fragment main0_out main0(main0_in in [[stage_in]], constant Uniforms& _13 [[buffer(0)]], texture2d<float> AODepthTexture [[texture(0)]], texture2d<float> SceneFogTexture [[texture(1)]], sampler AODepthTextureSmplr [[sampler(0)]], sampler SceneFogTextureSmplr [[sampler(1)]])
+{
+    main0_out out = {};
+    float2 uv = _13.Offset + (in.TexCoord * _13.Scale);
+    int2 texSize = int2(SceneFogTexture.get_width(), SceneFogTexture.get_height());
+    int2 ipos = int2(uv * float2(texSize));
+    float4 fogSample = SceneFogTexture.read(uint2(ipos), 0);
+    float3 fogColor = fogSample.xyz;
+    float4 ssao = AODepthTexture.sample(AODepthTextureSmplr, in.TexCoord);
+    float attenutation = ssao.x;
+    float depthSignal = 1.0 - exp2((-ssao.y) * 0.00999999977648258209228515625);
+    float depthMask = fast::clamp(depthSignal, 0.0, 1.0);
+    if (_13.DebugMode == 0)
+    {
+        float _95;
+        if (ssao.y > 2.0)
+        {
+            _95 = (1.0 - attenutation) * depthMask;
+        }
+        else
+        {
+            _95 = 0.0;
+        }
+        out.FragColor = float4(fogColor, _95);
+    }
+    else
+    {
+        if (_13.DebugMode < 3)
+        {
+            out.FragColor = float4(attenutation, attenutation, attenutation, 1.0);
+        }
+        else
+        {
+            if (_13.DebugMode == 3)
+            {
+                out.FragColor = float4(ssao.yyy / float3(1000.0), 1.0);
+            }
+            else
+            {
+                if (_13.DebugMode == 5)
+                {
+                    out.FragColor = float4(float3(ssao.x), 1.0);
+                }
+                else
+                {
+                    if (_13.DebugMode == 6)
+                    {
+                        out.FragColor = float4(float3(depthSignal), 1.0);
+                    }
+                    else
+                    {
+                        if (_13.DebugMode == 7)
+                        {
+                            out.FragColor = float4(float3(step(9.9999997473787516355514526367188e-06, ssao.y)), 1.0);
+                        }
+                        else
+                        {
+                            if (_13.DebugMode == 8)
+                            {
+                                out.FragColor = float4(float3(depthMask), 1.0);
+                            }
+                            else
+                            {
+                                if (_13.DebugMode == 10)
+                                {
+                                    out.FragColor = float4(fogColor, 1.0);
+                                }
+                                else
+                                {
+                                    out.FragColor = float4(ssao.xyz, 1.0);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return out;
+}

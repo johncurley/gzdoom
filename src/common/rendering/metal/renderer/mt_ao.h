@@ -4,6 +4,17 @@
 class MetalRenderDevice;
 struct HWViewpointUniforms;
 
+struct MtAOFrameResult
+{
+	bool dispatched = false;
+	bool depthPyramidWritten = false;
+	bool blurWritten = false;
+	bool fullresAOWritten = false;
+	bool fullresTempWritten = false;
+	bool compositeDrawn = false;
+	const char *resultResource = nullptr;
+};
+
 class MtAOModule {
 public:
     MtAOModule(MetalRenderDevice* fb);
@@ -64,8 +75,8 @@ public:
         // whose stencil differs, i.e. samples from another portal layer.
         uint32_t stencilRef;
     };
-    bool Render(float m5, int sceneWidth, int sceneHeight, const HWViewpointUniforms* currentViewpoint);
-    void Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL::Texture* normalTex, MTL::Texture* sceneColorTex, MTL::Texture* aoTex, MTL::Texture* stencilTex, const SSAOParams& params, bool blurAO, bool useFullresCleanup, int algorithm);
+	bool Render(float m5, int sceneWidth, int sceneHeight, const HWViewpointUniforms* currentViewpoint, MtAOFrameResult& frameResult);
+	void Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* depthTex, MTL::Texture* normalTex, MTL::Texture* sceneColorTex, MTL::Texture* aoTex, MTL::Texture* stencilTex, const SSAOParams& params, bool blurAO, bool useFullresCleanup, int algorithm, MtAOFrameResult& frameResult);
 
 private:
     void EnsureTextures(int width, int height);
@@ -77,7 +88,7 @@ private:
     MTL::Texture* EnsureStencilView(MTL::Texture* depthStencilTex);
     void EnsureFullresTextures(int width, int height);
     void EnsureDepthPyramid(int width, int height);
-    void Combine(MTL::Texture* aoTex, int sceneWidth, int sceneHeight, bool fullresAO);
+	bool Combine(MTL::Texture* aoTex, int sceneWidth, int sceneHeight, bool fullresAO);
 
     MetalRenderDevice* fb;
     MTL::ComputePipelineState* ssaoPSO = nullptr;

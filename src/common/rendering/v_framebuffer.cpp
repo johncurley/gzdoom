@@ -53,6 +53,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <thread>
 
 
@@ -137,6 +138,86 @@ namespace
 
 	constexpr int MAX_LOOP_PHASES = 16;
 	LoopPhaseBucket g_loopPhases[MAX_LOOP_PHASES];
+
+	// Recent Metal framegraph summaries, retained only while vid_stalltrace is
+	// enabled. Fixed storage keeps the per-frame observer bounded and avoids
+	// allocations in the render loop.
+	constexpr int MAX_FRAMEGRAPH_SNAPSHOTS = 128;
+	constexpr size_t FRAMEGRAPH_SNAPSHOT_TEXT = 1024;
+	struct FrameGraphSnapshot
+	{
+		std::chrono::steady_clock::time_point time;
+		char passes[FRAMEGRAPH_SNAPSHOT_TEXT]{};
+		int passCount = 0;
+		bool truncated = false;
+	};
+	FrameGraphSnapshot g_frameGraphSnapshots[MAX_FRAMEGRAPH_SNAPSHOTS];
+	int g_frameGraphSnapshotNext = 0;
+	int g_frameGraphSnapshotCount = 0;
+	uint64_t g_frameGraphSnapshotOverwrites = 0;
+
+	void RecordFrameGraphSnapshot(DFrameBuffer *framebuffer,
+		std::chrono::steady_clock::time_point now)
+	{
+		if (vid_stalltrace <= 0 || !framebuffer || !framebuffer->IsMetal())
+			return;
+
+		auto &snapshot = g_frameGraphSnapshots[g_frameGraphSnapshotNext];
+		snapshot = FrameGraphSnapshot();
+		snapshot.time = now;
+		const auto &graph = framebuffer->Graph();
+		snapshot.passCount = graph.PassCount();
+		size_t used = 0;
+		for (int i = 0; i < snapshot.passCount; ++i)
+		{
+			const char *name = graph.Pass(i).name;
+			if (!name)
+				name = "(unnamed)";
+			const int wrote = std::snprintf(snapshot.passes + used,
+				sizeof(snapshot.passes) - used, "%s%s", i ? "," : "", name);
+			if (wrote < 0 || (size_t)wrote >= sizeof(snapshot.passes) - used)
+			{
+				snapshot.truncated = true;
+				break;
+			}
+			used += (size_t)wrote;
+		}
+
+		if (g_frameGraphSnapshotCount == MAX_FRAMEGRAPH_SNAPSHOTS)
+			++g_frameGraphSnapshotOverwrites;
+		else
+			++g_frameGraphSnapshotCount;
+		g_frameGraphSnapshotNext =
+			(g_frameGraphSnapshotNext + 1) % MAX_FRAMEGRAPH_SNAPSHOTS;
+	}
+
+	void ReportFrameGraphSnapshots(std::chrono::steady_clock::time_point start,
+		std::chrono::steady_clock::time_point end)
+	{
+		int reported = 0;
+		const int first = (g_frameGraphSnapshotNext - g_frameGraphSnapshotCount +
+			MAX_FRAMEGRAPH_SNAPSHOTS) % MAX_FRAMEGRAPH_SNAPSHOTS;
+		for (int i = 0; i < g_frameGraphSnapshotCount; ++i)
+		{
+			const auto &snapshot = g_frameGraphSnapshots[
+				(first + i) % MAX_FRAMEGRAPH_SNAPSHOTS];
+			if (snapshot.time <= start || snapshot.time > end)
+				continue;
+			const double offsetMs = std::chrono::duration<double, std::milli>(
+				snapshot.time - start).count();
+			fprintf(stderr, "    framegraph +%8.2fms passes=%d%s%s\n",
+				offsetMs, snapshot.passCount, snapshot.passCount ? " " : "",
+				snapshot.passes);
+			if (snapshot.truncated)
+				fprintf(stderr, "      (pass list truncated)\n");
+			++reported;
+		}
+		if (reported == 0)
+			fprintf(stderr, "    framegraph: no Metal frame snapshots in this interval\n");
+		if (g_frameGraphSnapshotOverwrites > 0)
+			fprintf(stderr, "    framegraph: ring overwrote %llu older snapshots since tracing began\n",
+				(unsigned long long)g_frameGraphSnapshotOverwrites);
+	}
 
 	// Sampled once per interval, so this catches a change between two Update()
 	// calls -- not every transition, but every transition that could explain an
@@ -298,6 +379,7 @@ void V_LoopTraceBoundary()
 
 	const double iterationMs =
 		std::chrono::duration<double, std::milli>(now - g_lastLoopBoundary).count();
+	const auto intervalStart = g_lastLoopBoundary;
 	g_lastLoopBoundary = now;
 
 	const bool activeNow = LoopTraceAppIsActive();
@@ -305,7 +387,10 @@ void V_LoopTraceBoundary()
 	g_lastAppActive = activeNow;
 
 	if (iterationMs >= (double)stallThreshold)
+	{
 		ReportLoopPhases(iterationMs);
+		ReportFrameGraphSnapshots(intervalStart, now);
+	}
 	ResetLoopPhases();
 }
 
@@ -382,6 +467,7 @@ void DFrameBuffer::TraceFrameInterval()
 
 	using clock = std::chrono::steady_clock;
 	const auto now = clock::now();
+	RecordFrameGraphSnapshot(this, now);
 
 	if (!mFrameTraceStarted)
 	{

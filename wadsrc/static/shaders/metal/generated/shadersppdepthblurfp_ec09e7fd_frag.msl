@@ -1,0 +1,95 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct Uniforms
+{
+    float BlurSharpness;
+    float PowExponent;
+    float Padding0;
+    float Padding1;
+};
+
+struct main0_out
+{
+    float4 FragColor [[color(0)]];
+};
+
+struct main0_in
+{
+    float2 TexCoord [[user(locn0)]];
+};
+
+static inline __attribute__((always_inline))
+void AddSample(thread const float2& blurSample, thread const float& r, thread const float& centerDepth, thread float& totalAO, thread float& totalW, constant Uniforms& _33)
+{
+    float ao = blurSample.x;
+    float z = blurSample.y;
+    float deltaZ = (z - centerDepth) * _33.BlurSharpness;
+    float w = exp2((((-r) * r) * 0.22222222387790679931640625) - (deltaZ * deltaZ));
+    totalAO += (w * ao);
+    totalW += w;
+}
+
+fragment main0_out main0(main0_in in [[stage_in]], constant Uniforms& _33 [[buffer(0)]], texture2d<float> AODepthTexture [[texture(0)]], sampler AODepthTextureSmplr [[sampler(0)]])
+{
+    main0_out out = {};
+    float2 centerSample = AODepthTexture.sample(AODepthTextureSmplr, in.TexCoord, int2(0)).xy;
+    float centerDepth = centerSample.y;
+    float totalAO = centerSample.x;
+    float totalW = 1.0;
+    float2 param = AODepthTexture.sample(AODepthTextureSmplr, in.TexCoord, int2(0, -3)).xy;
+    float param_1 = 3.0;
+    float param_2 = centerDepth;
+    float param_3 = totalAO;
+    float param_4 = totalW;
+    AddSample(param, param_1, param_2, param_3, param_4, _33);
+    totalAO = param_3;
+    totalW = param_4;
+    float2 param_5 = AODepthTexture.sample(AODepthTextureSmplr, in.TexCoord, int2(0, -2)).xy;
+    float param_6 = 2.0;
+    float param_7 = centerDepth;
+    float param_8 = totalAO;
+    float param_9 = totalW;
+    AddSample(param_5, param_6, param_7, param_8, param_9, _33);
+    totalAO = param_8;
+    totalW = param_9;
+    float2 param_10 = AODepthTexture.sample(AODepthTextureSmplr, in.TexCoord, int2(0, -1)).xy;
+    float param_11 = 1.0;
+    float param_12 = centerDepth;
+    float param_13 = totalAO;
+    float param_14 = totalW;
+    AddSample(param_10, param_11, param_12, param_13, param_14, _33);
+    totalAO = param_13;
+    totalW = param_14;
+    float2 param_15 = AODepthTexture.sample(AODepthTextureSmplr, in.TexCoord, int2(0, 1)).xy;
+    float param_16 = 1.0;
+    float param_17 = centerDepth;
+    float param_18 = totalAO;
+    float param_19 = totalW;
+    AddSample(param_15, param_16, param_17, param_18, param_19, _33);
+    totalAO = param_18;
+    totalW = param_19;
+    float2 param_20 = AODepthTexture.sample(AODepthTextureSmplr, in.TexCoord, int2(0, 2)).xy;
+    float param_21 = 2.0;
+    float param_22 = centerDepth;
+    float param_23 = totalAO;
+    float param_24 = totalW;
+    AddSample(param_20, param_21, param_22, param_23, param_24, _33);
+    totalAO = param_23;
+    totalW = param_24;
+    float2 param_25 = AODepthTexture.sample(AODepthTextureSmplr, in.TexCoord, int2(0, 3)).xy;
+    float param_26 = 3.0;
+    float param_27 = centerDepth;
+    float param_28 = totalAO;
+    float param_29 = totalW;
+    AddSample(param_25, param_26, param_27, param_28, param_29, _33);
+    totalAO = param_28;
+    totalW = param_29;
+    float fragAO = totalAO / totalW;
+    out.FragColor = float4(powr(fast::clamp(fragAO, 0.0, 1.0), _33.PowExponent), centerDepth, 0.0, 1.0);
+    return out;
+}

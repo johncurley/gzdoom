@@ -1,0 +1,165 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct Uniforms
+{
+    float2 UVToViewA;
+    float2 UVToViewB;
+    float2 InvFullResolution;
+    float NDotVBias;
+    float NegInvR2;
+    float RadiusToScreen;
+    float AOMultiplier;
+    float AOStrength;
+    int SampleIndex;
+    float FadeStart;
+    float FadeEnd;
+    float2 Scale;
+    float2 Offset;
+};
+
+struct main0_out
+{
+    float4 FragColor [[color(0)]];
+};
+
+struct main0_in
+{
+    float2 TexCoord [[user(locn0)]];
+};
+
+static inline __attribute__((always_inline))
+float3 FetchViewPos(thread const float2& uv, texture2d<float> DepthTexture, sampler DepthTextureSmplr, constant Uniforms& _72)
+{
+    float z = DepthTexture.sample(DepthTextureSmplr, uv).x;
+    return float3(((_72.UVToViewA * uv) + _72.UVToViewB) * z, z);
+}
+
+static inline __attribute__((always_inline))
+float3 SampleNormal(thread const float2& uv, texture2d<float> NormalTexture, sampler NormalTextureSmplr)
+{
+    int2 texSize = int2(NormalTexture.get_width(), NormalTexture.get_height());
+    int2 ipos = int2(uv * float2(texSize));
+    return (NormalTexture.read(uint2(ipos), 0).xyz * 2.0) - float3(1.0);
+}
+
+static inline __attribute__((always_inline))
+float3 FetchNormal(thread const float2& uv, constant Uniforms& _72, texture2d<float> NormalTexture, sampler NormalTextureSmplr)
+{
+    float2 param = _72.Offset + (uv * _72.Scale);
+    float3 normal = SampleNormal(param, NormalTexture, NormalTextureSmplr);
+    if (length(normal) > 0.100000001490116119384765625)
+    {
+        normal = fast::normalize(normal);
+        normal.z = -normal.z;
+        return normal;
+    }
+    else
+    {
+        return float3(0.0);
+    }
+}
+
+static inline __attribute__((always_inline))
+float InterleavedGradientNoise(thread const float2& p)
+{
+    return fract(52.98291778564453125 * fract(dot(p, float2(0.067110560834407806396484375, 0.005837149918079376220703125))));
+}
+
+static inline __attribute__((always_inline))
+float4 GetJitter(thread float4& gl_FragCoord, texture2d<float> RandomTexture, sampler RandomTextureSmplr)
+{
+    float2 param = gl_FragCoord.xy;
+    float ign = InterleavedGradientNoise(param);
+    float4 _noise = RandomTexture.sample(RandomTextureSmplr, (gl_FragCoord.xy / float2(64.0)));
+    return float4(_noise.xy, fract(_noise.z + (ign * 0.75487768650054931640625)), fract(_noise.w + (ign * 0.56984031200408935546875)));
+}
+
+static inline __attribute__((always_inline))
+float2 RotateDirection(thread const float2& dir, thread const float2& cossin)
+{
+    return float2((dir.x * cossin.x) - (dir.y * cossin.y), (dir.x * cossin.y) + (dir.y * cossin.x));
+}
+
+static inline __attribute__((always_inline))
+float ComputeSampleHorizon(thread const float3& viewPosition, thread const float3& viewNormal, thread const float2& sampleUV, thread float& horizon, texture2d<float> DepthTexture, sampler DepthTextureSmplr, constant Uniforms& _72)
+{
+    float2 param = fast::clamp(sampleUV, _72.InvFullResolution * 0.5, float2(1.0) - (_72.InvFullResolution * 0.5));
+    float3 samplePos = FetchViewPos(param, DepthTexture, DepthTextureSmplr, _72);
+    float3 viewDelta = samplePos - viewPosition;
+    float depthMin = fast::max(fast::min(viewPosition.z, samplePos.z), 9.9999997473787516355514526367188e-06);
+    float depthMax = fast::max(viewPosition.z, samplePos.z);
+    if (depthMax > (100.0 * depthMin))
+    {
+        return 0.0;
+    }
+    float distanceSquare = fast::max(dot(viewDelta, viewDelta), 9.9999999747524270787835121154785e-07);
+    float invDistance = rsqrt(distanceSquare);
+    float normalAngle = dot(viewNormal, viewDelta) * invDistance;
+    float sampleHorizon = fast::max(normalAngle - _72.NDotVBias, 0.0);
+    float falloff = fast::clamp((distanceSquare * _72.NegInvR2) + 1.0, 0.0, 1.0);
+    float contribution = fast::max(sampleHorizon - horizon, 0.0) * falloff;
+    horizon = fast::max(horizon, sampleHorizon);
+    return contribution;
+}
+
+static inline __attribute__((always_inline))
+float ComputeAO(thread const float3& viewPosition, thread const float3& viewNormal, texture2d<float> DepthTexture, sampler DepthTextureSmplr, constant Uniforms& _72, thread float4& gl_FragCoord, texture2d<float> RandomTexture, sampler RandomTextureSmplr, thread float2& TexCoord)
+{
+    float4 rand = GetJitter(gl_FragCoord, RandomTexture, RandomTextureSmplr);
+    float radiusPixels = _72.RadiusToScreen / viewPosition.z;
+    float stepSizePixels = radiusPixels / 5.0;
+    float minStepPixels = fast::max(stepSizePixels, 1.0);
+    float ao = 0.0;
+    for (float directionIndex = 0.0; directionIndex < 5.0; directionIndex += 1.0)
+    {
+        float angle = 1.256637096405029296875 * (directionIndex + (rand.w * 0.25));
+        float2 param = float2(cos(angle), sin(angle));
+        float2 param_1 = rand.xy;
+        float2 direction = RotateDirection(param, param_1);
+        float horizon = 0.0;
+        for (float stepIndex = 0.0; stepIndex < 4.0; stepIndex += 1.0)
+        {
+            float rayPixels = ((stepIndex + rand.z) + 1.0) * minStepPixels;
+            float2 sampleUV = TexCoord + ((direction * rayPixels) * _72.InvFullResolution);
+            float3 param_2 = viewPosition;
+            float3 param_3 = viewNormal;
+            float2 param_4 = sampleUV;
+            float param_5 = horizon;
+            float _381 = ComputeSampleHorizon(param_2, param_3, param_4, param_5, DepthTexture, DepthTextureSmplr, _72);
+            horizon = param_5;
+            ao += _381;
+        }
+    }
+    ao *= (_72.AOMultiplier / 20.0);
+    return fast::clamp(1.0 - (ao * 3.150000095367431640625), 0.0, 1.0);
+}
+
+fragment main0_out main0(main0_in in [[stage_in]], constant Uniforms& _72 [[buffer(0)]], texture2d<float> DepthTexture [[texture(0)]], texture2d<float> NormalTexture [[texture(1)]], texture2d<float> RandomTexture [[texture(2)]], sampler DepthTextureSmplr [[sampler(0)]], sampler NormalTextureSmplr [[sampler(1)]], sampler RandomTextureSmplr [[sampler(2)]], float4 gl_FragCoord [[position]])
+{
+    main0_out out = {};
+    float2 param = in.TexCoord;
+    float3 viewPosition = FetchViewPos(param, DepthTexture, DepthTextureSmplr, _72);
+    float2 param_1 = in.TexCoord;
+    float3 viewNormal = FetchNormal(param_1, _72, NormalTexture, NormalTextureSmplr);
+    float distanceFade = 1.0 - smoothstep(_72.FadeStart, _72.FadeEnd, viewPosition.z);
+    float effectiveStrength = _72.AOStrength * distanceFade;
+    float _433;
+    if (any(viewNormal != float3(0.0)))
+    {
+        float3 param_2 = viewPosition;
+        float3 param_3 = viewNormal;
+        _433 = (ComputeAO(param_2, param_3, DepthTexture, DepthTextureSmplr, _72, gl_FragCoord, RandomTexture, RandomTextureSmplr, in.TexCoord) * effectiveStrength) + (1.0 - effectiveStrength);
+    }
+    else
+    {
+        _433 = 1.0;
+    }
+    float occlusion = _433;
+    out.FragColor = float4(occlusion, viewPosition.z, 0.0, 1.0);
+    return out;
+}

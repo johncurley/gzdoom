@@ -443,8 +443,9 @@ it is unusual).
   checks with no dead-pass candidates or stale-size reports; its self-test
   includes positive and negative attachment-preservation controls. Live
   GL/Vulkan validation of these new attachment/blend dependencies remains open;
-  next steps are in `docs/handoff-linux-2026-09-29.md`. Conditional Metal paths
-  also remain open.
+  next steps are in `docs/handoff-linux-2026-09-29.md`. Intel Metal compute-AO
+  graph coverage now includes algorithms 0, 1, and 2; see the current handoff
+  for live results. Other conditional Metal paths remain open.
   Offscreen-only scene traversals are not yet represented. Vulkan indexed
   non-mip upload validation remains open pending a confirmed draw route. Apple
   Silicon is still required for Metal/TBDR performance policy; ARM64 JIT work
@@ -461,14 +462,10 @@ it is unusual).
 - **Previous handoff:** `docs/handoff-ao-2026-08-16.md` — the AO session. macOS
   items 1 and 2 closed, the compute-AO cost premise retired, three SSAO-residual
   suspects killed, and **one new unresolved bug found: compute AO is bistable**.
-  **New Tasks — macOS item 5**, from real play rather than
-  measurement: intermittent freezing, suspect is runtime shader compilation
-  (only two shaders are hand-written MSL; ~50 engine programs still compile
-  GLSL→SPIR-V→MSL live on first hit). Confirm with `mt_frametrace` before
-  reaching for the metallib fix already scoped under "Shader strategy". Item
-  5's cause is now found (see the current handoff above) — this entry's
-  shader-compilation suspicion was excluded by measurement; kept for the
-  session-by-session record, not as live guidance.
+  The intermittent Ashes gameplay freeze is no longer an active task: the user
+  reports it appears resolved after recent renderer/shader/build changes. The
+  historical investigation remains below for context; reopen only if the freeze
+  returns. Its cause was not isolated to a particular recent change.
 - **Previous handoff:** `docs/handoff-linux-2026-08-17.md` — what the Linux box
   should do first (verify the platform-keyed matrix baseline), the fatal X11
   `BadMatch` as the highest-value item there, and what that session's
@@ -1706,9 +1703,17 @@ Needs hardware, so it may block on availability rather than effort.
 The last open row of the Metal-versus-OpenGL parity table: ~0.047 in occlusion
 units. Detail under **Open items** below.
 
-### 5. Intermittent freezing in real gameplay — CAUSE FOUND: `nextDrawable()` blocks ~1s
+### 5. Intermittent gameplay freezing — no longer reported as of 2026-10-01
 
-**Resolved to a cause 2026-08-17, not to a fix.** `CA::MetalLayer::nextDrawable()`
+**Current status (2026-10-01):** The user reports the Ashes gameplay freeze
+appears resolved following recent renderer, shader-coverage, and build fixes.
+Close it as an active task; no controlled before/after capture isolates which
+change resolved it. The traces below are historical diagnostics. In particular,
+the stock demo's map-entry/display wait is distinct from the reported Ashes
+gameplay freeze. Reopen this investigation only if the freeze returns.
+
+**Initial attribution, 2026-08-17 (later qualified below).**
+`CA::MetalLayer::nextDrawable()`
 blocks for ~1002ms mid-play, with two of three drawables free and the wait
 released at almost exactly the timeout interval before *succeeding*. Full
 evidence chain below. The original suspect in this item's title -- runtime shader
@@ -2340,12 +2345,10 @@ whether a player sees a melt or a static frame held for ~1.1-1.2s, which
 would feel exactly like a freeze despite being correct engine-side timing.
 Confirmed by eye (real play, last macOS tranche): it animates, not a freeze.
 So the wipe explanation for reported freezes is **excluded** at the
-level-transition case specifically. Any freeze still reported is therefore a
-mid-play one -- which is not a new unknown, it's the `nextDrawable()` block
-this item already root-caused above, still mitigated (late acquisition) but
-not eliminated. Don't reach for the wipe again for a level-transition
-report; the open work on this item is closing the `nextDrawable()` gap
-itself, not finding a second cause.
+level-transition case specifically. At the time, remaining reports were
+treated as mid-play events and investigated against `nextDrawable()`. Later
+traces below qualified that attribution. The Ashes gameplay freeze is no longer
+reported as of 2026-10-01; this historical section has no active follow-up.
 
 **The inflight-semaphore leak theory: proposed from code reading, REFUTED by
 measurement.** The wait on `mInflightFramesSemaphore` is guarded twice
@@ -2450,18 +2453,86 @@ per-command-buffer instrumentation. Re-run with it unset before trusting any
 figure from that session. (The 35fps p50 is just `cl_capfps=true` locking to the
 Doom tic rate, and `max=51627.51` is the window being backgrounded.)
 
-**Still not confirmed:** none of this is yet the reported freeze. This is idle
-MAP01, and only 5 material PSOs went cold in it. The gate stands — a real play
-session with `+mt_stalltrace 5 +vid_frametrace 5`, looking for `pso_compile` or
-`msl_translate` lines whose frame index lines up with a `>100ms` frame on
-entering new geometry.
+**Recorded-route check, 2026-10-01:** replayed `build/framegraphdemo.lmp`
+normally on Intel Metal with stock DOOM II MAP01 (the header identifies a
+GZDoom `ZDEM`; no mod was loaded), `METAL_CAPTURE_ENABLED` unset,
+`vid_frametrace 5`, `vid_stalltrace 100`, `mt_frametrace 5`, and
+`mt_stalltrace 40`. The first map-entry interval was **1318.53ms**: `display`
+wrapped 1235.47ms, including 1159.57ms unaccounted, while `nextdrawable`
+totalled only 2.36ms over 38 calls. This is an entry/transition event, not a
+stall while traversing new geometry. Across the six steady gameplay windows,
+`vid_frametrace` averaged 28.55-28.71ms (p95 29.71-31.74ms); every window had
+zero frames over 100ms and the largest maximum was 85.04ms. `mt_frametrace`
+also had zero frames over 100ms. Across the run, `compute_pso` totalled
+12.40ms, `msl_tolib` 5.54ms, `pp_pso` 4.27ms, and `pso_compile` 7.88ms, with
+the largest individual compile at 5.71ms. A separate 153.25ms interval was
+stamped `FOCUS-CHANGED`; a 33.1s interval was in the post-demo console/quit
+tail. Neither belongs to steady route traversal. At the time of this capture,
+the reported in-play freeze was not reproduced; the stock route did not
+establish whether Ashes Hard Reset triggered it. The user later reported that
+it appears resolved after subsequent renderer, shader-coverage, and build
+changes. No Ashes-specific before/after trace isolated the cause.
 
-**If confirmed, the fix is already scoped** under "Shader strategy" below:
-translate the engine's own ~50 known programs into the metallib **at build
-time**, since the permutation set is fixed and known — leaving only genuinely
-dynamic mod/PK3 shaders on the runtime path. See the "Recommended order, if the
-native path is expanded" list there for the staged plan and why hand-writing the
-material shaders is explicitly the wrong move.
+**Framegraph and native shader lookup diagnostics, same session:** added a
+bounded 128-frame Metal graph-name ring to `vid_stalltrace` (only populated
+while tracing is enabled) and the `mt_shader_report` command, which reports the
+native library path and per-stage symbol hits/misses without enabling noisy
+`mt_debug`. On a fresh replay with stderr captured, the map-entry interval was
+**1319.69ms**: `display` 1228.98ms, with 1163.91ms unaccounted and
+`nextdrawable` only 2.39ms across 38 calls. The graph ring showed one complete
+10-pass scene/postprocess frame at +155.54ms, then 37 updates containing only
+`present` through the end of the interval. This points to transition/display
+re-presentation rather than 1.16s of scene or postprocess GPU work; it does not
+identify which display-side wait owns the remaining time.
+
+The initial `mt_shader_report` confirmed the bundled metallib loaded from the
+app's `Contents/Resources` path but found nine misses among 101 lookups. These
+were raster postprocess stages: screenquad, linear depth, SSAO, depth blur, AO
+combine, bloom combine, and two blur variants. They incurred 4.05ms of
+`msl_tolib` work and no source translation, so they did not explain the
+map-entry interval. This report counts `MtShaderManager::LoadPrecompiledFunction`
+lookups; it does not count the separate fixed-name functions in
+`mt_ao.metal`/`mt_bloom.metal`. Those hand-written compute shaders were already
+compiled into the native library.
+
+The framegraph snapshot observer is validated on this interval and produced
+the expected full-scene then present-only sequence. Stable-route wall time
+remained in the earlier 28.55-28.71ms mean band (this run's windows included
+28.42-28.58ms settled averages), so no observer cost is apparent at that
+resolution. The user reports the Ashes gameplay freeze appears resolved; reopen
+only if it recurs.
+
+**Postprocess MSL coverage closed, same session:** the runtime `.msl` cache
+already contained the exact source-hash-keyed text for every observed miss.
+The earlier collector only copied newly dumped translations, so cache hits
+never reached the generated source set. The SSAO route supplied nine keys; an
+all-effects route then exposed eight more (exposure, bloom extract, tonemap,
+lens, and both FXAA variants). `tools/collect_metal_shaders.py --from-cache`
+now promotes only explicit keys printed by `mt_shader_report`. This added 17
+stages, taking the generated set from 92 to 109. The current `ssao.fp` and
+`lineardepth.fp` hashes are present, so this also closes the raster AO gap
+caused by those shaders having changed since the previous collection. The
+hand-written compute AO was not missing.
+
+Two build rules also needed correction for reliable refreshes: the Metal app
+bundle now relinks/copies when only `native_shaders.metallib` changes, and
+`add_pk3()` tracks archive source files (with its existing bracketed filenames
+excluded from Make dependencies). A fresh build linked 109 stages and repacked
+`gzdoom.pk3` with 789 files. A real MAP01 replay with bloom, SSAO, tonemap,
+lens, and FXAA enabled reported **109 lookups, 109 hits, zero symbol misses,
+zero unavailable-library lookups**. `r_framegraph` reported 47 passes / 56
+edges with no dead-pass candidates, and `r_framegraph_selftest` passed. No
+`msl_tolib` or `msl_translate` event appeared in the captured run. This closes
+the observed stock-engine postprocess coverage; it does not cover arbitrary
+mod-provided shaders.
+
+The snapshot observer is also validated on the map-entry interval and produced
+the expected full-scene then present-only sequence. Stable-route wall time
+remained near the earlier 28.55-28.71ms band (this run's settled windows were
+28.42-28.58ms), with no observer cost visible at that resolution. The stock
+demo did not reproduce the reported Ashes Hard Reset freeze. The user later
+reported that the gameplay freeze appears resolved after recent changes; reopen
+only if it recurs.
 
 ### Checked already, do not redo
 

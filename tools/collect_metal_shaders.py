@@ -35,6 +35,18 @@ USAGE
          build/tools/zipdir/zipdir -udf \\
              build/gzdoom.app/Contents/MacOS/gzdoom.pk3 wadsrc/static
 
+    A live `mt_shader_report` can also identify engine stages that already
+    exist in the keyed runtime cache but are not in the source generated set.
+    Promote only those exact keys (printed before the arrow):
+
+         python3 tools/collect_metal_shaders.py --from-cache \\
+             shaders/pp/lineardepth.fp_2bfc2051_frag \\
+             shaders/pp/ssao.fp_8027bbc1_frag
+
+    The normal build recompiles the metallib after new stages are added and
+    repacks gzdoom.pk3. Cache keys include the source and defines, so these
+    entries remain safe if their shader source changes later.
+
     Step 3's repack is not optional. Editing wadsrc without repacking leaves the
     running engine on the old contents with no error and no visible sign -- see
     CLAUDE.md.
@@ -54,9 +66,64 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 DEST = os.path.join(REPO, "wadsrc", "static", "shaders", "metal", "generated")
 SRC = os.path.expanduser("~/Library/Application Support/zdoom/cache/generated")
+CACHE = os.path.dirname(SRC)
+
+
+def filter_shader_key(key):
+    """Match MtShaderManager::FilterShaderKey for the ASCII engine keys."""
+    return "".join(c for c in key if c.isascii() and (c.isalnum() or c in "_-"))
+
+
+def collect_cached_keys(keys):
+    if not os.path.isdir(CACHE):
+        print(f"no shader cache at {CACHE}")
+        return 1
+
+    entries = []
+    for key in keys:
+        stem = filter_shader_key(key)
+        if not stem:
+            print(f"invalid empty shader key: {key!r}")
+            return 1
+        src = os.path.join(CACHE, f"mt_{stem}.msl")
+        if not os.path.isfile(src):
+            print(f"no cached MSL for {key}: {src}")
+            return 1
+        with open(src, "rb") as infile:
+            data = infile.read()
+        if not data:
+            print(f"cached MSL is empty for {key}: {src}")
+            return 1
+        entries.append((stem, data))
+
+    os.makedirs(DEST, exist_ok=True)
+    added = updated = same = 0
+    for stem, data in entries:
+        dst = os.path.join(DEST, f"{stem}.msl")
+        if os.path.isfile(dst):
+            with open(dst, "rb") as infile:
+                if infile.read() == data:
+                    same += 1
+                    continue
+            updated += 1
+        else:
+            added += 1
+        with open(dst, "wb") as outfile:
+            outfile.write(data)
+
+    print(f"promoted {len(entries)} exact runtime cache keys -> {DEST}")
+    print(f"  added {added}, updated {updated}, unchanged {same}")
+    print("Reconfigure and build so CMake links the new metallib stages and repacks gzdoom.pk3.")
+    return 0
 
 
 def main():
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "--from-cache" and len(sys.argv) > 2:
+            return collect_cached_keys(sys.argv[2:])
+        print("usage: collect_metal_shaders.py [--from-cache <exact-key> ...]")
+        return 2
+
     if not os.path.isdir(SRC):
         print(f"no dump directory at {SRC}")
         print("Launch with +mt_dumpshaders 1 after clearing the .msl cache.")

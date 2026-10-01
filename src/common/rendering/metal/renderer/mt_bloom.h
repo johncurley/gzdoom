@@ -30,7 +30,7 @@ public:
     // nullptr only when the camera exposure pass did not run this frame;
     // otherwise the extract diverges from the reference PP bloom path.
     bool Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* sceneColor, float amount,
-                 MTL::Texture* exposureTex);
+                 MTL::Texture* exposureTex, bool &usedRasterComposite);
 
     // Read-only access to the pyramid for the mt_bloom_dump debug path, laid
     // out to match PPBloom::DebugLevel: 0 is bloomA, 1..3 are the mips.

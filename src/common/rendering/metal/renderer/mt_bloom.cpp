@@ -441,7 +441,8 @@ void MtBloomModule::ReleaseTextures() {
 }
 
 bool MtBloomModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* srcTex, float amount,
-                            MTL::Texture* exposureTex) {
+                            MTL::Texture* exposureTex, bool &usedRasterComposite) {
+    usedRasterComposite = false;
     auto tStart = std::chrono::high_resolution_clock::now();
     if (!extractPSO || !blurHPSO || !blurVPSO || !cmdBuf || !srcTex) return false;
 
@@ -722,6 +723,7 @@ bool MtBloomModule::Execute(MTL::CommandBuffer* cmdBuf, MTL::Texture* srcTex, fl
                                           (NS::UInteger)3);
         }
         renderState->EndRenderPass();
+        usedRasterComposite = true;
     } else {
         return false;
     }

@@ -73,6 +73,65 @@ static void RecordMetalComputePass(MetalRenderDevice *fb, const char *name,
   fb->Graph().EndBackendPass();
 }
 
+static void RecordMetalBloomCompositePass(MetalRenderDevice *fb, const char *pipelineImage,
+                                          bool rasterComposite)
+{
+  const char *compositeInput = rasterComposite ? "Bloom.Composite" : "Bloom.A";
+  PassDesc desc;
+  desc.name = "bloom.composite";
+  desc.owner = rasterComposite ? "MetalRaster" : "MetalCompute";
+  desc.reads.Push(pipelineImage); // additive composite preserves prior scene contents
+  desc.reads.Push(compositeInput);
+  desc.writes.Push(pipelineImage);
+  desc.uses.Push({ compositeInput, FrameGraphAccess::Read, FrameGraphUsage::Sampled });
+  desc.uses.Push({ pipelineImage,
+    rasterComposite ? FrameGraphAccess::Write : FrameGraphAccess::ReadWrite,
+    rasterComposite ? FrameGraphUsage::ColorAttachment : FrameGraphUsage::Storage });
+
+  int pass = fb->Graph().AddPass(desc);
+  fb->Graph().BeginBackendPass(pass);
+  fb->Resources().Touch(compositeInput, false);
+  fb->Graph().ObserveBackendUse(compositeInput, FrameGraphAccess::Read, FrameGraphUsage::Sampled);
+  if (!rasterComposite)
+  {
+    fb->Resources().Touch(pipelineImage, false);
+    fb->Graph().ObserveBackendUse(pipelineImage, FrameGraphAccess::ReadWrite, FrameGraphUsage::Storage);
+  }
+  fb->Resources().Touch(pipelineImage, true);
+  fb->Graph().ObserveBackendUse(pipelineImage,
+    rasterComposite ? FrameGraphAccess::Write : FrameGraphAccess::ReadWrite,
+    rasterComposite ? FrameGraphUsage::ColorAttachment : FrameGraphUsage::Storage);
+  fb->Graph().EndBackendPass();
+}
+
+static void RecordMetalAOCompositePass(MetalRenderDevice *fb, const MtAOFrameResult &result)
+{
+  if (!result.resultResource || !result.compositeDrawn)
+    return;
+
+  PassDesc desc;
+  desc.name = "ssao.compute.composite";
+  desc.owner = "MetalRaster";
+  desc.reads = { result.resultResource, "SceneFog", "SceneNormal", "SceneDepthStencil", "SceneColor" };
+  desc.writes.Push("SceneColor");
+  desc.uses.Push({ result.resultResource, FrameGraphAccess::Read, FrameGraphUsage::Sampled });
+  desc.uses.Push({ "SceneFog", FrameGraphAccess::Read, FrameGraphUsage::Sampled });
+  desc.uses.Push({ "SceneNormal", FrameGraphAccess::Read, FrameGraphUsage::Sampled });
+  desc.uses.Push({ "SceneDepthStencil", FrameGraphAccess::Read, FrameGraphUsage::Sampled });
+  desc.uses.Push({ "SceneColor", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
+
+  int pass = fb->Graph().AddPass(desc);
+  fb->Graph().BeginBackendPass(pass);
+  for (const char *resource : desc.reads) {
+    fb->Resources().Touch(resource, false);
+    if (strcmp(resource, "SceneColor") != 0)
+      fb->Graph().ObserveBackendUse(resource, FrameGraphAccess::Read, FrameGraphUsage::Sampled);
+  }
+  fb->Resources().Touch("SceneColor", true);
+  fb->Graph().ObserveBackendUse("SceneColor", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
+  fb->Graph().EndBackendPass();
+}
+
 EXTERN_CVAR(Int, gl_dither_bpc)
 // Compute AO is OPT-IN on every platform. It used to default true, which meant
 // the Intel guard below was the only thing keeping it off -- and on Apple Silicon,
@@ -709,18 +768,30 @@ void MtPostprocess::AmbientOccludeScene(float m5, const HWViewpointUniforms* cur
     useComputeAO = false;
   }
 
-  if (useComputeAO && fb->mAOModule->Render(m5, sceneWidth, sceneHeight, currentViewpoint)) {
-    TArray<const char *> reads;
-    reads.Push("SceneDepthStencil");
-    reads.Push("SceneNormal");
-    reads.Push("SceneColor");
-    TArray<const char *> writes;
-    writes.Push("AO.DepthPyramid");
-    writes.Push("AO.Ambient");
-    writes.Push("AO.Blur");
-    writes.Push("AO.FullresAO");
-    writes.Push("AO.FullresTemp");
-    RecordMetalComputePass(fb, "ssao.compute", reads, writes);
+  MtAOFrameResult aoFrameResult;
+  if (useComputeAO && fb->mAOModule->Render(m5, sceneWidth, sceneHeight, currentViewpoint, aoFrameResult)) {
+    if (aoFrameResult.depthPyramidWritten) {
+      TArray<const char *> pyramidReads;
+      pyramidReads.Push("SceneDepthStencil");
+      TArray<const char *> pyramidWrites;
+      pyramidWrites.Push("AO.DepthPyramid");
+      RecordMetalComputePass(fb, "ssao.depth-pyramid", pyramidReads, pyramidWrites);
+    }
+    if (aoFrameResult.dispatched) {
+      TArray<const char *> reads;
+      reads.Push("SceneDepthStencil");
+      reads.Push("SceneNormal");
+      reads.Push("SceneColor");
+      if (aoFrameResult.depthPyramidWritten)
+        reads.Push("AO.DepthPyramid");
+      TArray<const char *> writes;
+      writes.Push("AO.Ambient");
+      if (aoFrameResult.blurWritten) writes.Push("AO.Blur");
+      if (aoFrameResult.fullresAOWritten) writes.Push("AO.FullresAO");
+      if (aoFrameResult.fullresTempWritten) writes.Push("AO.FullresTemp");
+      RecordMetalComputePass(fb, "ssao.compute", reads, writes);
+    }
+    RecordMetalAOCompositePass(fb, aoFrameResult);
     RestoreSceneRenderTargetAfterAO();
     return;
   }
@@ -830,12 +901,15 @@ void MtPostprocess::PostProcessScene(
           // by it; without it compute bloom is visibly dimmer in dark scenes.
           MTL::Texture *exposureTex = fb->GetTextureManager()->GetPPTexture(
               &hw_postprocess.exposure.CameraTexture);
+          bool usedRasterComposite = false;
           computeBloomRendered = fb->mBloomModule->Execute(cmdBuf, srcTex, gl_bloom_amount,
-                                                          exposureTex);
+                                                          exposureTex, usedRasterComposite);
           if (computeBloomRendered) {
             TArray<const char *> reads;
             reads.Push(fb->GetBuffers()->ResName(MtRenderBuffers::RES_Pipeline0 +
                                                   mCurrentPipelineImage));
+            if (exposureTex)
+              reads.Push("Exposure.Camera");
             TArray<const char *> writes;
             writes.Push("Bloom.A");
             writes.Push("Bloom.B");
@@ -845,8 +919,13 @@ void MtPostprocess::PostProcessScene(
             writes.Push("Bloom.Mip1Temp");
             writes.Push("Bloom.Mip2");
             writes.Push("Bloom.Mip2Temp");
-            writes.Push("Bloom.Composite");
+            if (usedRasterComposite)
+              writes.Push("Bloom.Composite");
             RecordMetalComputePass(fb, "bloom.compute", reads, writes);
+            RecordMetalBloomCompositePass(fb,
+              fb->GetBuffers()->ResName(MtRenderBuffers::RES_Pipeline0 +
+                                         mCurrentPipelineImage),
+              usedRasterComposite);
           }
         }
       }
