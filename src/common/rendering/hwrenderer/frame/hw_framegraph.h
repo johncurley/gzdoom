@@ -1,12 +1,12 @@
 /*
 **  Frame graph -- pass description, dependency graph, topological order
 **
-**  CPU-side diagnostics over each pass's declared reads/writes, built on the
-**  resource registry's stable names (hw_resources.h). It reports dependencies,
-**  required-output reachability, and within-frame lifetimes for explicitly
-**  transient resources. It does not schedule, allocate, alias, emit barriers,
-**  or call a backend. Metal/TBDR execution policy remains gated on Apple
-**  Silicon evidence.
+**  CPU-side dependency analysis over each pass's declared reads/writes, built
+**  on the resource registry's stable names (hw_resources.h). It reports
+**  dependencies, required-output reachability, and within-frame lifetimes for
+**  explicitly transient resources. Pass2 consumes this order for recorded
+**  draws; the graph does not allocate, alias, emit backend barriers, or call a
+**  backend. Metal/TBDR execution policy remains gated on Apple Silicon evidence.
 **
 **  Versioning model: a pass "writes" a resource name at the moment it is
 **  added -- AddPass order is version-assignment order, exactly as in
@@ -19,10 +19,9 @@
 **      writes. The backend-use record may still be a write-only attachment
 **      bind; it describes the binding, not every implicit pixel dependency.
 **    - Edges always point from an earlier-added pass to a later one, so the
-**      graph is acyclic by construction in this phase. Cycle detection is
-**      still implemented (Build() reports rather than assumes), because
-**      that stops being true once WAR/WAW anti-dependencies are added for
-**      the transient allocator.
+**      graph is acyclic by construction in this versioning model. Cycle
+**      detection remains in Build() as a defensive check if versioning rules
+**      change later.
 **    - Same-name rewrites -- PipelineImage[0]/[1] ping-ponging across four
 **      or five passes in one frame -- are handled correctly: each rewrite
 **      installs a new "most recent writer", so a read binds to whichever
@@ -33,9 +32,9 @@
 **      declared). Build() reports it rather than crashing -- same failure
 **      policy as FrameResources::ValidateFrame.
 **
-**  Lifetime intervals are diagnostics, not permission to alias: only RAW
-**  dependencies exist today, so WAR/WAW ordering and backend hazards still
-**  need a separate contract before execution can move to this graph.
+**  The graph records logical RAW, WAR, and WAW dependencies. These edges
+**  constrain CPU pass order; they do not replace backend resource transitions.
+**  Lifetimes remain diagnostics, not permission to alias.
 */
 
 #pragma once
@@ -153,12 +152,12 @@ public:
 	void RecordUpload(const FrameGraphUploadDesc &desc);
 	void ObserveResourceRead(const char *name);
 	// Records the upload observation and attaches a deduplicated sampled read
-	// to the active scene pass, when one is active. A resource with an earlier
+	// to an active scene, offscreen, or UI pass. A resource with an earlier
 	// graph writer remains graph-produced; otherwise its current value is an
 	// imported input to this frame.
 	void ObserveSceneMaterialRead(const char *name);
 
-	// Builds RAW edges from the declared reads/writes and computes a
+	// Builds RAW/WAR/WAW edges from the declared reads/writes and computes a
 	// deterministic topological order (Kahn's algorithm, ties broken by
 	// declaration index). Non-fatal: problems go in *report*, nothing
 	// throws or asserts.
@@ -168,6 +167,7 @@ public:
 	const TArray<int> &Order() const { return mOrder; }
 	const PassDesc &Pass(int index) const { return mPasses[index]; }
 	int PassCount() const { return (int)mPasses.Size(); }
+	int EdgeCount() const { return (int)mEdges.Size(); }
 	const TArray<int> &DeadPassCandidates() const { return mDeadPassCandidates; }
 	const TArray<FrameGraphLifetime> &Lifetimes() const { return mLifetimes; }
 
@@ -180,10 +180,12 @@ public:
 	void Dump(FString *out) const;
 
 private:
+	enum class EdgeType : uint8_t { RAW, WAR, WAW };
 	struct Edge
 	{
 		int from = -1, to = -1;	// mPasses indices
 		const char *resource = nullptr;
+		EdgeType type = EdgeType::RAW;
 	};
 
 	struct ObservedUse

@@ -90,9 +90,13 @@ public:
 
 	void PushGroup(const FString &name) override;
 	void PopGroup() override;
-	void Draw() override;
 
 private:
+	const char *ResolveResourceName(PPTextureType type, PPTexture *texture) const override;
+	int GetPipelineImageIndex() const override;
+	void SetPipelineImageIndex(int index) override;
+	void AdvancePipelineImageIndex() override;
+	void DrawImmediate() override;
 	PPGLTextureBackend *GetGLTexture(PPTexture *texture);
 	FShaderProgram *GetGLShader(PPShader *shader);
 
@@ -124,6 +128,8 @@ public:
 	void BindCurrentFB();
 	void BindNextFB();
 	void NextTexture();
+	int GetPipelineTextureIndex() const { return mCurrentPipelineTexture; }
+	void SetPipelineTextureIndex(int index) { mCurrentPipelineTexture = index % NumPipelineTextures; }
 
 	PPGLFrameBuffer GetCurrentFB() const { return mPipelineFB[mCurrentPipelineTexture]; }
 

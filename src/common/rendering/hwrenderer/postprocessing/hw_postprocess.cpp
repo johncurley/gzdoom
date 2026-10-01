@@ -28,6 +28,7 @@
 #include "texturemanager.h"
 
 #include "stats.h"
+#include "printf.h"
 
 Postprocess hw_postprocess;
 
@@ -42,6 +43,151 @@ ADD_STAT(gpu)
 {
 	keepGpuStatActive = true;
 	return gpuStatOutput;
+}
+
+void PPRenderState::BeginPostprocessGraphExecution()
+{
+	mPostprocessCommands.Clear();
+	mPostprocessGraph.Reset();
+	mPostprocessGraph.DeclareExternal("PipelineImage[0]");
+	mPostprocessGraph.DeclareExternal("PipelineImage[1]");
+	mPostprocessGraph.DeclareExternal("PaletteTexture");
+	mPostprocessGraph.DeclareExternal("Exposure.Camera");
+	mPostprocessGraph.DeclareExternal("SceneColor");
+	mPostprocessGraph.DeclareExternal("SceneDepthStencil");
+	mPostprocessGraph.DeclareExternal("SceneNormal");
+	mPostprocessGraph.DeclareExternal("SceneFog");
+	mPostprocessGraph.DeclareExternal("AO.LinearDepth");
+	mPostprocessGraph.DeclareExternal("AO.RandomTexture0");
+	mPostprocessGraph.DeclareExternal("AO.RandomTexture1");
+	mPostprocessGraph.DeclareExternal("AO.RandomTexture2");
+	mCurrentGroup = "";
+	mFinalPipelineImageIndex = GetPipelineImageIndex();
+	mRecordingPostprocessGraph = true;
+}
+
+bool PPRenderState::RecordGroup(const FString &name)
+{
+	if (!mRecordingPostprocessGraph)
+		return false;
+	mCurrentGroup = name;
+	return true;
+}
+
+bool PPRenderState::RecordPopGroup()
+{
+	if (!mRecordingPostprocessGraph)
+		return false;
+	mCurrentGroup = "";
+	return true;
+}
+
+void PPRenderState::Draw()
+{
+	if (!mRecordingPostprocessGraph)
+	{
+		DrawImmediate();
+		return;
+	}
+
+	PPDrawCommand command;
+	command.Shader = Shader;
+	command.Textures = Textures;
+	command.Uniforms = Uniforms;
+	command.Viewport = Viewport;
+	command.BlendMode = BlendMode;
+	command.Output = Output;
+	command.ShadowMapBuffers = ShadowMapBuffers;
+	command.PassName = PassName;
+	command.GroupName = mCurrentGroup;
+	command.PipelineImageIndex = GetPipelineImageIndex();
+
+	if (PassName)
+	{
+		TArray<const char *> reads;
+		bool resolvable = true;
+		for (const PPTextureInput &input : Textures)
+		{
+			const char *name = ResolveResourceName(input.Type, input.Texture);
+			if (!name)
+			{
+				resolvable = false;
+				break;
+			}
+			reads.Push(name);
+		}
+		const char *writeName = resolvable ? ResolveResourceName(Output.Type, Output.Texture) : nullptr;
+		if (writeName)
+		{
+			PassDesc desc;
+			desc.name = PassName;
+			desc.owner = "Postprocess";
+			desc.reads = reads;
+			desc.writes = { writeName };
+			if (ReadsDestination())
+				desc.reads.Push(writeName);
+			for (const char *name : reads)
+				desc.uses.Push({ name, FrameGraphAccess::Read, FrameGraphUsage::Sampled });
+			desc.uses.Push({ writeName, FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
+			command.GraphPassIndex = mPostprocessGraph.AddPass(desc);
+		}
+	}
+
+	mPostprocessCommands.Push(command);
+	if (Output.Type == PPTextureType::NextPipelineTexture)
+		AdvancePipelineImageIndex();
+	mFinalPipelineImageIndex = GetPipelineImageIndex();
+}
+
+void PPRenderState::RestoreDrawState(const PPDrawCommand &command)
+{
+	Shader = command.Shader;
+	Textures = command.Textures;
+	Uniforms = command.Uniforms;
+	Viewport = command.Viewport;
+	BlendMode = command.BlendMode;
+	Output = command.Output;
+	ShadowMapBuffers = command.ShadowMapBuffers;
+	PassName = command.PassName;
+}
+
+void PPRenderState::ExecutePostprocessGraph()
+{
+	if (!mRecordingPostprocessGraph)
+		return;
+	mRecordingPostprocessGraph = false;
+
+	FString report;
+	bool graphOK = mPostprocessGraph.Build(&report);
+	for (const PPDrawCommand &command : mPostprocessCommands)
+		if (command.GraphPassIndex < 0)
+			graphOK = false;
+	if (!graphOK)
+	{
+		Printf("Postprocess graph build failed; executing recorded draws in declaration order:\n%s\n", report.GetChars());
+	}
+
+	auto execute = [&](const PPDrawCommand &command)
+	{
+		RestoreDrawState(command);
+		SetPipelineImageIndex(command.PipelineImageIndex);
+		PushGroup(command.GroupName);
+		DrawImmediate();
+		PopGroup();
+	};
+	if (graphOK)
+	{
+		for (int passIndex : mPostprocessGraph.Order())
+			execute(mPostprocessCommands[passIndex]);
+	}
+	else
+	{
+		for (const PPDrawCommand &command : mPostprocessCommands)
+			execute(command);
+	}
+	SetPipelineImageIndex(mFinalPipelineImageIndex);
+	mPostprocessCommands.Clear();
+	mPostprocessGraph.Reset();
 }
 
 /////////////////////////////////////////////////////////////////////////////
@@ -1373,19 +1519,49 @@ void PPCustomShaderInstance::AddUniformField(size_t &offset, const FString &name
 
 void Postprocess::Pass1(PPRenderState* state, int fixedcm, int sceneWidth, int sceneHeight, bool skipBloom)
 {
-	exposure.Render(state, sceneWidth, sceneHeight);
+	if (r_framegraph_exposure)
+	{
+		state->BeginPostprocessGraphExecution();
+		exposure.Render(state, sceneWidth, sceneHeight);
+		state->ExecutePostprocessGraph();
+	}
+	else
+	{
+		exposure.Render(state, sceneWidth, sceneHeight);
+	}
 	customShaders.Run(state, "beforebloom");
 	if (!skipBloom)
 	{
-		bloom.RenderBloom(state, sceneWidth, sceneHeight, fixedcm);
+		if (r_framegraph_bloom)
+		{
+			state->BeginPostprocessGraphExecution();
+			bloom.RenderBloom(state, sceneWidth, sceneHeight, fixedcm);
+			state->ExecutePostprocessGraph();
+		}
+		else
+		{
+			bloom.RenderBloom(state, sceneWidth, sceneHeight, fixedcm);
+		}
 	}
 }
 
 void Postprocess::Pass2(PPRenderState* state, int fixedcm, float flash, int sceneWidth, int sceneHeight)
 {
+	if (!r_framegraph_pass2)
+	{
+		tonemap.Render(state);
+		colormap.Render(state, fixedcm, flash);
+		lens.Render(state);
+		fxaa.Render(state);
+		customShaders.Run(state, "scene");
+		return;
+	}
+
+	state->BeginPostprocessGraphExecution();
 	tonemap.Render(state);
 	colormap.Render(state, fixedcm, flash);
 	lens.Render(state);
 	fxaa.Render(state);
+	state->ExecutePostprocessGraph();
 	customShaders.Run(state, "scene");
 }

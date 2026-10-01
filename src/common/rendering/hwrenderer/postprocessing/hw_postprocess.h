@@ -1,6 +1,7 @@
 #pragma once
 
 #include "hwrenderer/data/shaderuniforms.h"
+#include "hwrenderer/frame/hw_framegraph.h"
 #include <memory>
 #include <map>
 #include "intrect.h"
@@ -87,6 +88,21 @@ public:
 	TArray<uint8_t> Data;
 };
 
+struct PPDrawCommand
+{
+	PPShader *Shader = nullptr;
+	TArray<PPTextureInput> Textures;
+	PPUniforms Uniforms;
+	PPViewport Viewport;
+	PPBlendMode BlendMode;
+	PPOutput Output;
+	bool ShadowMapBuffers = false;
+	const char *PassName = nullptr;
+	FString GroupName;
+	int PipelineImageIndex = 0;
+	int GraphPassIndex = -1;
+};
+
 class PPRenderState
 {
 public:
@@ -95,7 +111,15 @@ public:
 	virtual void PushGroup(const FString &name) = 0;
 	virtual void PopGroup() = 0;
 
-	virtual void Draw() = 0;
+	void Draw();
+
+	// Record immutable draw state and physical pipeline indices first, then
+	// execute the graph's order through the backend's normal draw path.
+	void BeginPostprocessGraphExecution();
+	void ExecutePostprocessGraph();
+	bool IsRecordingPostprocessGraph() const { return mRecordingPostprocessGraph; }
+	bool RecordGroup(const FString &name);
+	bool RecordPopGroup();
 
 	void Clear()
 	{
@@ -250,6 +274,21 @@ public:
 	PPOutput Output;
 	bool ShadowMapBuffers = false;
 	const char *PassName = nullptr;
+
+protected:
+	virtual const char *ResolveResourceName(PPTextureType type, PPTexture *texture) const = 0;
+	virtual int GetPipelineImageIndex() const = 0;
+	virtual void SetPipelineImageIndex(int index) = 0;
+	virtual void AdvancePipelineImageIndex() = 0;
+	virtual void DrawImmediate() = 0;
+	void RestoreDrawState(const PPDrawCommand &command);
+
+private:
+	bool mRecordingPostprocessGraph = false;
+	FString mCurrentGroup;
+	int mFinalPipelineImageIndex = 0;
+	TArray<PPDrawCommand> mPostprocessCommands;
+	FrameGraph mPostprocessGraph;
 };
 
 enum class PixelFormat

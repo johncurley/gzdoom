@@ -18,9 +18,12 @@ public:
 	void PushGroup(const FString &name) override;
 	void PopGroup() override;
 
-	void Draw() override;
-
 private:
+	const char *ResolveResourceName(PPTextureType type, PPTexture *texture) const override;
+	int GetPipelineImageIndex() const override;
+	void SetPipelineImageIndex(int index) override;
+	void AdvancePipelineImageIndex() override;
+	void DrawImmediate() override;
 	void RenderScreenQuad(VkPPRenderPassSetup *passSetup, VulkanDescriptorSet *descriptorSet, VulkanFramebuffer *framebuffer, int framebufferWidth, int framebufferHeight, int x, int y, int width, int height, const void *pushConstants, uint32_t pushConstantsSize, bool stencilTest);
 
 	VulkanRenderDevice* fb = nullptr;

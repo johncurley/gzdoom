@@ -241,6 +241,7 @@ bool VulkanRenderDevice::CompileNextShader()
 void VulkanRenderDevice::RenderTextureView(FCanvasTexture* tex, std::function<void(IntRect &)> renderFunc)
 {
 	auto BaseLayer = static_cast<VkHardwareTexture*>(tex->GetHardwareTexture(0, 0));
+	const char *resourceName = BaseLayer->GetFrameGraphResourceName();
 
 	VkTextureImage *image = BaseLayer->GetImage(tex, 0, 0);
 	VkTextureImage *depthStencil = BaseLayer->GetDepthStencil(tex);
@@ -253,12 +254,29 @@ void VulkanRenderDevice::RenderTextureView(FCanvasTexture* tex, std::function<vo
 
 	mRenderState->SetRenderTarget(image, depthStencil->View.get(), image->Image->width, image->Image->height, VK_FORMAT_R8G8B8A8_UNORM, VK_SAMPLE_COUNT_1_BIT);
 
+	PassDesc desc;
+	desc.name = tex->Canvas ? "offscreen.canvas" : "offscreen.camera";
+	desc.owner = "VulkanRenderDevice";
+	desc.keepAlive = true;
+	if (tex->Canvas)
+	{
+		// Canvas draws may leave untouched pixels from the previous update.
+		desc.reads = { resourceName };
+		Graph().DeclareExternal(resourceName);
+	}
+	desc.writes = { resourceName };
+	desc.uses.Push({ resourceName, FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
+	int graphPass = Graph().AddPass(desc);
+	Graph().BeginBackendPass(graphPass);
+	Graph().ObserveBackendUse(resourceName, FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
+
 	IntRect bounds;
 	bounds.left = bounds.top = 0;
 	bounds.width = min(tex->GetWidth(), image->Image->width);
 	bounds.height = min(tex->GetHeight(), image->Image->height);
 
 	renderFunc(bounds);
+	Graph().EndBackendPass();
 
 	mRenderState->EndRenderPass();
 
@@ -568,7 +586,23 @@ void VulkanRenderDevice::InitLightmap(int LMTextureSize, int LMTextureCount, TAr
 
 void VulkanRenderDevice::Draw2D()
 {
+	const char *targetName = GetTextureManager()->GetTextureResourceName(PPTextureType::CurrentPipelineTexture);
+	PassDesc desc;
+	desc.name = "ui.2d";
+	desc.owner = "VulkanRenderDevice";
+	desc.reads = { targetName };
+	desc.writes = { targetName, "PipelineDepthStencil" };
+	desc.uses.Push({ targetName, FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
+	desc.uses.Push({ "PipelineDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment });
+	Graph().DeclareExternal(targetName);
+	int graphPass = Graph().AddPass(desc);
+	Graph().BeginBackendPass(graphPass);
+	Resources().Touch(targetName, true);
+	Graph().ObserveBackendUse(targetName, FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
+	Resources().Touch("PipelineDepthStencil", true);
+	Graph().ObserveBackendUse("PipelineDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment);
 	::Draw2D(twod, *mRenderState);
+	Graph().EndBackendPass();
 }
 
 void VulkanRenderDevice::WaitForCommands(bool finish)

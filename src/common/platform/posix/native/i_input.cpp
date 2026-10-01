@@ -5,8 +5,13 @@
 #include "i_interface.h"
 #include "keydef.h"
 #include "d_eventbase.h"
+#include "bitmap.h"
+#include "textures.h"
+#include "gametexture.h"
 #include "native_display.h"
+#include <zwidget/core/image.h>
 #include <zwidget/window/window.h>
+#include <array>
 #include <cstdio>
 #include "engineerrors.h"
 #include "printf.h"
@@ -147,6 +152,16 @@ static void I_CheckNativeMouse()
 		else
 			I_SetMouseCapture();
 	}
+	else if (!GUICapture && NativeMouseCaptured == wantNative)
+	{
+		// Menu drag capture can call I_SetMouseCapture/I_ReleaseMouseCapture
+		// directly without changing NativeMouse. Reconcile that actual state
+		// after leaving the UI so gameplay capture cannot stay released.
+		if (wantNative)
+			I_ReleaseMouseCapture();
+		else
+			I_SetMouseCapture();
+	}
 }
 
 static void I_ReconcileMouseButtons()
@@ -215,13 +230,30 @@ bool I_SetCursor(FGameTexture* cursor)
 {
 	if (auto window = GetActiveZWidgetWindow())
 	{
-		// If cursor is null, we show the default arrow.
-		// If it's a game texture, the engine handles drawing it in the 2D pass,
-		// so we should ideally hide the hardware cursor.
-		if (cursor == nullptr)
+		if (!cursor || !cursor->isValid())
+		{
 			window->SetCursor(StandardCursor::arrow, nullptr);
-		else
-			window->ShowCursor(false);
+			return true;
+		}
+
+		FBitmap source = cursor->GetTexture()->GetBgraBitmap(nullptr);
+		if (source.GetWidth() <= 0 || source.GetHeight() <= 0 ||
+			source.GetWidth() > 32 || source.GetHeight() > 32)
+		{
+			window->SetCursor(StandardCursor::arrow, nullptr);
+			return false;
+		}
+
+		// Match the existing SDL cursor contract: a transparent 32x32 canvas,
+		// the texture at its top-left corner, and a (0, 0) hotspot.
+		std::array<uint8_t, 32 * 32 * 4> pixels = {};
+		FBitmap bitmap(pixels.data(), 32 * 4, 32, 32);
+		bitmap.Blit(0, 0, source);
+		auto image = Image::Create(32, 32, ImageFormat::B8G8R8A8, pixels.data());
+		std::vector<CustomCursorFrame> frames;
+		frames.emplace_back(std::move(image));
+		auto custom = CustomCursor::Create(std::move(frames), Point(0, 0));
+		window->SetCursor(StandardCursor::arrow, std::move(custom));
 		return true;
 	}
 	return false;

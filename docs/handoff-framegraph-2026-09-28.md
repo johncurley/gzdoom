@@ -2,14 +2,13 @@
 
 ## Current state
 
-The shared renderer has a resource registry and a CPU-side diagnostic
-`FrameGraph` in `src/common/rendering/hwrenderer/frame/`. It records real
-postprocess passes, pass resource uses, read-after-write dependencies, backend
-resource-use observations, and upload/read observations. It checks consistency
-of recorded uses and produces a deterministic topological order for reporting.
-GL, Vulkan, and Metal still execute their existing backend command paths in
-their existing order. The graph does not schedule or reorder GPU work, issue
-barriers, allocate resources, or cull passes.
+The shared renderer has a resource registry and a CPU-side `FrameGraph` in
+`src/common/rendering/hwrenderer/frame/`. It records real postprocess passes,
+pass resource uses, RAW/WAR/WAW dependencies, backend resource-use
+observations, and upload/read observations. Pass2 now records each draw's
+state and physical ping-pong index, then dispatches it in graph order through
+the existing backend draw path. The graph does not allocate resources or cull
+passes; each backend still handles its normal resource transitions.
 
 The Linux GL/Vulkan runtime and observer-cost tranche closed on 2026-09-24; its
 evidence is in [`handoff-linux-2026-09-24.md`](handoff-linux-2026-09-24.md).
@@ -43,10 +42,10 @@ do not yet have equivalent graph scopes. Continue auditing side-effecting and
 cross-frame passes and mark them keep-alive before treating any candidate as
 unused.
 
-Scene attachment preservation and blended postprocess outputs now also record
-logical reads of their prior contents. These feed the existing RAW dependency
-builder while backend-use observations continue to describe attachment binding
-as a write. The graph still does not model WAR/WAW hazards for scheduling.
+Scene attachment preservation and blended postprocess outputs record logical
+reads of their prior contents. RAW edges retain producer dependencies; WAR and
+WAW edges constrain ordering without propagating pass liveness. Backend-use
+observations continue to describe attachment binding as a write.
 
 ### Intel Metal live validation — 2026-09-29
 
@@ -75,199 +74,218 @@ five passes / six edges and no dead-pass candidates: `scene.target`,
 SSAO, bloom, exposure, tonemap, lens, and FXAA were absent as expected. The
 self-test passed, and resource validation emitted no stale-size diagnostics.
 
-### Intel Metal conditional validation — SSAO only — 2026-10-01
+### Pass2 graph execution — 2026-09-29
 
-On the Intel Iris Graphics 6000 machine, `cmake --build build --parallel 4`
-passed and `r_framegraph_selftest` reported `selftest: PASS`. A real DOOM2
-MAP06 session ran with `gl_ssao 3` and bloom, tonemap, lens, and FXAA disabled;
-`r_framegraph` and `r_resources` were issued after 240 rendered frames. The
-graph reported 10 passes / 17 edges, `Backbuffer` as the required output, and
-no dead-pass candidates. The chain included
-`scene.target -> scene.opaque -> ssao.lineardepth -> ssao.occlude ->
-ssao.blur.h -> ssao.blur.v -> ssao.combine -> scene.portal_translucent ->
-scene.resolve -> present`, with the expected attachment-preservation edges.
-`AO.LinearDepth` and `AO.Ambient0`/`AO.Ambient1` were touched for reads and
-writes and had the expected first/last-use intervals. `r_resources` reported
-19 resources / 45.6 MB with no stale-size diagnostics; only the unused screen
-and save shadow maps were untouched. This adds Intel Metal SSAO-only
-conditional coverage. It does not validate Linux GL/Vulkan, image parity, or
-Apple Silicon.
+`PPRenderState` now captures shader, textures, uniforms, viewport, blend
+state, debug group, and the physical pipeline-image index for each Pass2 draw.
+It builds the subgraph before executing those snapshots in `FrameGraph::Order()`.
+FXAA is represented by its two actual draws, even though both keep the `fxaa`
+label. Custom scene shaders remain after the scheduled chain. `r_framegraph_pass2`
+defaults on; when off, it calls the original immediate pass sequence directly.
+Graph replay calls the existing GL, Vulkan, or Metal draw function for every
+snapshot, so backend command recording and image transitions stay on those paths.
 
-### Intel Metal compute-bloom graph validation — 2026-10-01
+The graph builder now creates RAW, WAR, and WAW edges. RAW edges alone carry
+liveness; anti-dependencies only constrain order. The self-test includes an
+imported read followed by overwrite and rewrite, and passed in every capture.
+With current declaration-time versioning, the Pass2 dependency edges point
+forward, so the computed order matches the original sequence. This establishes
+graph-controlled execution and hazard coverage without claiming pass
+reordering or a performance change.
 
-The first forced compute-bloom capture ran on Intel Tier 1 hardware and exposed
-an observer gap: `mt_caps` confirmed Metal compute plus raster composite, while
-the graph reported `bloom.compute` and the exposure chain as dead. The compute
-pass omitted its `Exposure.Camera` read, and the final raster composite into
-`PipelineImage[0]` had no graph pass. These were false dead-pass candidates;
-the rendered route was active.
+The Linux `cmake --build build -j$(nproc)` gate passed. On the RX 550, MAP06
+captures compared graph execution against the original immediate path on GL and
+Vulkan. Effects-off, tonemap+lens+FXAA, and an active colormap flash produced
+identical decoded pixels in all six backend/mode comparisons. The effects-on
+Vulkan live graph had 9 passes / 20 edges, a rooted `Backbuffer`, no dead-pass
+candidates, and the expected two FXAA draws. The Khronos validation layer
+reported no errors. Live captures resized from 640x480 to 800x600 also produced
+identical decoded pixels between the immediate and graph paths on both backends.
 
-The graph observer now records `Exposure.Camera` as a compute input and records
-the final composite as a separate `bloom.composite` pass. On Tier 1 it reads
-`Bloom.Composite` and preserves/writes the current pipeline image as a color
-attachment. On the Tier 2 direct-composite path it reads `Bloom.A` and records
-the pipeline image as storage read/write. Backend command order is unchanged.
-The self-test now covers both graph shapes and has negative controls that omit
-the composite edge or exposure dependency.
+The standard Linux golden-image effect relations passed for baseline, tonemap,
+lens, FXAA, and colormap, covering the single-draw paths ending on the opposite
+ping-pong image and FXAA's two-draw return to the starting image. Both repeat
+runs produced stable pixels, but all five signatures differed slightly from
+the stored Linux baseline (mean luminance shifted by 0.02-0.05); no baseline was
+rewritten. The direct legacy-versus-graph pixel comparisons above passed. No
+Metal build or runtime was available in this Linux session, and Apple Silicon
+scheduling/performance policy remains open.
 
-After rebuilding, `r_framegraph_selftest` passed. A real DOOM2 MAP06 capture
-with `gl_bloom 1`, `mt_compute_bloom 1`, and `mt_compute_bloom_intel 1`
-reported 18 passes / 21 edges, `Backbuffer` as output, and no dead-pass
-candidates. `mt_caps` confirmed `Metal compute (MtBloomModule)` and
-`Tier 1 compute + raster composite`. The graph contains
-`exposure.combine -> bloom.compute -> bloom.composite -> present`, with
-`Bloom.Composite` live from the compute producer to the raster consumer.
-`r_resources` reported 36 resources / 55.3 MB, including `Bloom.Composite`
-read and written, with no stale-size diagnostics; only unused screen/save
-shadow maps were untouched. This is live Tier 1 coverage; Tier 2 was modeled
-in the CPU self-test but remains untested on hardware. No image-parity or
-performance claim is made.
+### Pass1 exposure and bloom graph execution — 2026-09-30
 
-### Intel Metal compute-AO graph validation — 2026-10-01
+Added `r_framegraph_exposure` and `r_framegraph_bloom` switches so Pass1 can
+record and execute each complete exposure or bloom chain through the same
+`PPRenderState` graph replay path. Each chain is built independently: exposure
+updates the persistent `Exposure.Camera`, then bloom reads it in the same frame.
+The immediate path remains available by setting the corresponding switch to
+zero. Pass2 and AO were not changed in this tranche.
 
-The first forced compute-AO capture confirmed that `MtAOModule` was active but
-reported `ssao.compute` as dead. Its graph pass omitted the later raster blend
-into `SceneColor`, and listed `AO.DepthPyramid` even with algorithm 0, which
-does not build that resource. The runtime observer now records the depth
-pyramid as its own producer only when its dispatch runs, reports only AO
-intermediates that were dispatched, and records the selected AO result flowing
-into a SceneColor-preserving raster composite. No Metal command order changed.
-The self-test covers the base algorithm without a pyramid, algorithm 2 with its
-pyramid producer, and a negative control that omits the composite.
+The mandatory Linux build passed with Vulkan enabled. On the RX 550, OpenGL ran
+DOOM2 MAP06 at 640x480 for 120 in-level frames with bloom enabled and Pass2
+graph execution disabled. `r_framegraph_selftest` passed. A live `r_framegraph`
+dump reported 36 passes / 72 edges, `Backbuffer` as the required output, no
+dead-pass candidates, and a connected scene → exposure → bloom → present
+chain. Exposure ran nine average reductions between extract and combine;
+bloom's extract, blur, downscale, upscale, and combine draws were present. The
+graph build emitted no fallback diagnostic.
 
-After rebuilding, `r_framegraph_selftest` passed. A real DOOM2 MAP06 capture
-forced `mt_compute_ao 1`, `mt_compute_ao_intel 1`, and
-`mt_compute_ao_intel_clamp 1` with algorithm 0 and the other postprocess
-effects disabled. `mt_caps` confirmed the Metal compute AO path on Intel. The
-graph reported 7 passes / 16 edges, `Backbuffer` as output, no dead-pass
-candidates, and no build errors. The retained chain includes
-`scene.opaque -> ssao.compute -> ssao.compute.composite ->
-scene.portal_translucent`; the composite reads the selected `AO.FullresTemp`
-and preserves/writes `SceneColor`. `AO.DepthPyramid` was absent, as expected
-for algorithm 0. `r_resources` reported 20 resources / 52.6 MB, with the
-selected full-resolution AO output touched for read and write, and no
-stale-size diagnostics. This validates the Intel algorithm-0 route. No
-image-parity or performance claim is made.
+Vulkan was then run with the Khronos validation layer. Its live graph reported
+37 passes / 73 edges, rooted at `Backbuffer`, including `scene.resolve` before
+exposure, `Exposure.Camera` feeding `bloom.extract`, and the bloom composite
+feeding present. The framegraph self-test passed, no replay fallback appeared,
+and the validation layer emitted no errors.
 
-### Intel Metal compute-AO algorithm variants — 2026-10-01
+The prediction was exact pixel identity between graph replay and the immediate
+path. Matched captures with exposure and bloom replay both enabled versus both
+disabled were byte-identical on both backends at 640x480 RGB. GL mean luminance
+was 17.491 in both arms; Vulkan was 17.553 in both. Each comparison had maximum
+channel delta 0 and 0 differing pixels. No baseline was changed. This validates
+output preservation on the tested GL and Vulkan routes, not Metal runtime
+behavior or performance.
 
-Extended the live compute-AO coverage to the two alternate algorithms using
-the same isolated-effects configuration (`mt_compute_ao 1`,
-`mt_compute_ao_intel 1`, `mt_compute_ao_intel_clamp 1`, `gl_ssao 3`; bloom,
-tonemap, lens, and FXAA disabled).
+### Ambient-occlusion graph execution — 2026-09-30
 
-Algorithm 2 was run on the recorded DOOM2 MAP01 route. The predicted graph
-shape was 8 passes / 18 edges: one depth-pyramid producer and its two new
-dependencies over algorithm 0. The observed graph matched exactly, with
-`ssao.depth-pyramid` writing `AO.DepthPyramid` and `ssao.compute` reading it;
-the compute result continued through `ssao.compute.composite` into
-`SceneColor`. `mt_caps` confirmed Intel Metal compute AO and algorithm 2.
-`r_resources` reported 21 resources / 55.6 MB, with `AO.DepthPyramid` at
-1280x1024 R16F touched for both write and read. There were no dead-pass
-candidates or stale-size diagnostics, and `r_framegraph_selftest` passed.
+Added `r_framegraph_ao` for the shared raster SSAO path. Each AO graph imports
+the scene attachments (`SceneColor`, `SceneDepthStencil`, `SceneNormal`,
+`SceneFog`), the possibly precomputed `AO.LinearDepth`, and the three persistent
+random inputs (`AO.RandomTexture0` through `AO.RandomTexture2`). A raster
+linear-depth draw inside the graph still creates its normal write dependency;
+the external declaration covers Vulkan's optional compute producer, which runs
+before the AO graph begins. Metal's native compute AO path bypasses this shared
+raster wrapper, as before.
 
-Algorithm 1 (AlchemyAO/SAO) was run on DOOM2 MAP06. It reported the expected
-7 passes / 16 edges, with no depth-pyramid pass, and retained the same compute
-result-to-scene-composite dependency as algorithm 0. `mt_caps` confirmed
-algorithm 1 on Intel Metal. `r_resources` reported 20 resources / 53.1 MB;
-there were no dead-pass candidates or stale-size diagnostics, and the graph
-self-test passed. These runs close Intel runtime graph coverage for algorithms
-0, 1, and 2. Linux GL/Vulkan validation and image parity remain open; no
-performance comparison was made.
+The Linux build passed with Vulkan enabled. On the RX 550, GL rendered MAP06
+with `gl_ssao 3`, graph replay on, and the other optional postprocess paths off.
+The live graph reported 9 passes / 27 edges, rooted at `Backbuffer`, with no
+dead-pass candidates. Its chain included `ssao.lineardepth` → `ssao.occlude` →
+horizontal/vertical blur → `ssao.combine`; the composite read and rewrote
+`SceneColor` before translucency. There was no postprocess graph fallback
+diagnostic.
 
-Also exercised the Intel default-policy branch on MAP06 with
-`mt_compute_ao 1` but `mt_compute_ao_intel 0`. `mt_caps` reported the expected
-reference postprocess SSAO fallback, and the graph returned to the 10 passes /
-17 edges shape from the earlier raster SSAO-only run. `r_resources` reported
-19 resources / 45.6 MB, with no dead-pass candidates or stale-size diagnostics;
-the graph self-test passed. This confirms the Intel opt-in gate selects the
-reference path even when compute AO is globally enabled.
+Vulkan ran the same scene with `gl_ssao 3`, `vk_compute_ssao 1`, and the Khronos
+validation layer. The live graph reported 10 passes / 28 edges, no dead-pass
+candidates, and `ssao.lineardepth.compute` → `ssao.occlude` → blur → combine.
+This confirms the imported `AO.LinearDepth` dependency from the compute pass
+before graph replay. The validation layer emitted no errors and there was no
+fallback diagnostic.
 
-### Intel Metal recorded-route diagnostics — 2026-10-01
+A second Vulkan route set `vk_compute_ssao 0` to exercise raster linear depth.
+Its live graph also reported 10 passes / 28 edges, with the raster
+`ssao.lineardepth` draw writing `AO.LinearDepth` before occlusion. The graph was
+rooted, had no dead-pass candidates or fallback diagnostic, and the Khronos
+validation layer emitted no errors.
 
-Added two opt-in diagnostics to investigate the previously reported long
-display interval. `mt_shader_report` prints native metallib load status, exact
-function-symbol lookup counts, and unique missing cache keys. While
-`vid_stalltrace` is enabled, a fixed 128-entry ring retains the pass names from
-recent Metal frames and prints the frames falling inside a slow loop interval.
-The ring uses fixed storage and is inactive when `vid_stalltrace` is off.
+For both backends, the prediction was exact pixel identity between graph replay
+and immediate execution. Same-route 640x480 captures were byte-identical:
+GL mean luminance 16.767, Vulkan compute-depth 16.833, and Vulkan raster-depth
+16.829 in both arms; each comparison had maximum channel delta 0 and 0 differing
+pixels. This validates the tested quality-3 routes, including both Vulkan
+linear-depth producers.
 
-Replayed `build/framegraphdemo.lmp` on Intel Metal with stock DOOM II MAP01,
-`METAL_CAPTURE_ENABLED` unset, and stderr captured. The map-entry interval was
-1319.69ms. Its framegraph sequence was one 10-pass frame at +155.54ms followed
-by 37 present-only updates. `display` accounted for 1228.98ms, of which
-1163.91ms was outside the named phases; `nextdrawable` accounted for only
-2.39ms across 38 calls. This excludes expensive scene/postprocess passes and
-`nextDrawable` as explanations for this particular interval, while leaving the
-display-side wait unidentified.
+Conditional-route checks then covered 4× multisampling on both backends. Vulkan
+disabled its compute-depth option at this sample count and used raster
+`ssao.lineardepth`; both GL and Vulkan reported 10 passes / 28 edges, rooted at
+`Backbuffer`, with no dead-pass candidates or fallback. Vulkan validation was
+clean. Graph-on/off captures were byte-identical at 640x480: GL mean luminance
+16.770 and Vulkan 16.832, with maximum delta 0 and 0 differing pixels.
 
-The initial native lookup report recorded 92 hits and nine misses across 101
-requests. These were raster postprocess shaders and caused nine `msl_tolib`
-calls totalling 4.05ms, with no `msl_translate` work. They did not explain the
-1.32s interval. The report counts the raster postprocess lookup path; the
-hand-written `mt_ao.metal` and `mt_bloom.metal` compute functions are separate
-fixed-name functions and were already in the native library.
+Both backends were also checked with `gl_ssao_debug 2`, which omits the blur
+draws. GL reported 7 passes / 22 edges and Vulkan 8 / 23; both graphs remained
+rooted at `Backbuffer`, with no dead-pass candidates or fallback. Vulkan
+validation was clean. The matching captures were byte-identical at 640x480:
+GL mean luminance 240.677 and Vulkan 240.560, with maximum delta 0 and 0
+differing pixels. Other quality tiers, Metal runtime, and performance remain
+open.
 
-### Postprocess MSL coverage closure — 2026-10-01
+### Offscreen and UI/HUD coverage — 2026-10-01
 
-The current MSL text for the misses was already present in the exact-keyed
-runtime cache. `tools/collect_metal_shaders.py` previously collected only fresh
-translations written to the cache's `generated` directory, so cached AO and
-postprocess stages were never promoted into source control. Added a targeted
-`--from-cache` mode that accepts exact keys printed by `mt_shader_report`.
-Promoted 17 current stages: nine first exposed by the SSAO route and eight
-additional exposure/bloom-extract/tonemap/lens/FXAA stages exposed by enabling
-all postprocess effects. This includes the new source hashes for `ssao.fp` and
-`lineardepth.fp`; the raster AO coverage gap was due to those stages having
-changed since collection. The hand-written compute AO shaders were already
-compiled from `mt_ao.metal`.
+Added producer scopes for `RenderTextureView()` on GL, Vulkan, and Metal.
+Canvas updates read and rewrite their named texture because 2D canvas drawing
+can preserve pixels outside the updated area; camera-texture updates write
+their target after the viewpoint setup clears it. Both are keep-alive passes.
+Sampled material reads observed during these callbacks now attach to the active
+`offscreen.*` pass. Added a `scene.hud_model` scope, a `ui.hud` consumer around
+the post-bloom HUD callback, and `ui.2d` scopes that record blended reads and
+writes of the current pipeline image plus the stencil clear.
 
-Fixed the build dependencies so changed/new PK3 files rebuild the archive, and
-a metallib-only update reruns the app-bundle copy step. The Make source list
-continues to omit bracketed asset names that Make treats as patterns; `zipdir`
-still packs those files by walking the source tree. CMake reports 109 generated
-stages after the additions.
+The self-test now exercises a preserved canvas update, a camera producer with
+a sampled world material, and a UI overlay that samples both textures before
+present. It checks the dependency edges, output reachability, no dead-pass
+candidates, and the UI depth/stencil backend observation. The updated
+`r_framegraph_selftest` passed.
 
-A fresh Intel Metal build linked the 109 stages and refreshed `gzdoom.pk3`.
-A real stock MAP01 replay with bloom, SSAO, tonemap, lens, and FXAA enabled
-reported 109 native lookups / 109 hits, zero symbol misses, and zero
-unavailable-library lookups. No `msl_tolib` or `msl_translate` event appeared.
-`r_framegraph` reported 47 passes / 56 edges, no dead-pass candidates, and
-`r_framegraph_selftest` passed. This closes the observed stock postprocess
-shader coverage. Mod-provided shader keys remain runtime-generated by design.
+Live RX 550 MAP06 runs with all tested effects enabled and `screenblocks 10`
+exercised HUD and 2D UI on both GL and Vulkan. GL reported 47 passes / 104
+edges; Vulkan reported 48 / 105, including its explicit resolve. Both graphs
+were rooted at `Backbuffer`, had no dead-pass candidates or graph-build
+failures, and showed the bloom → `ui.hud` → tonemap chain and `ui.2d` before
+present. Vulkan validation emitted no errors. MAP06 did not create a canvas or
+camera texture, so the offscreen producers have self-test coverage but still
+need a live fixture that exercises those routes. Metal code was updated but
+could not be compiled or run in this Linux configuration.
 
-The steady route remained around 28.4-28.6ms per frame, consistent with the
-earlier 28.55-28.71ms windows at the precision of this instrument. The snapshot
-observer therefore has no visible timing cost in this replay. This was a stock
-demo and did not reproduce the reported Ashes freeze. The user later reported
-that the gameplay freeze appears resolved after recent renderer, shader-coverage,
-and build changes. Close it as an active task; no controlled Ashes before/after
-capture isolates which change resolved it. The map-entry display wait recorded
-above is a separate event. Reopen the freeze investigation only if it returns.
+### Intel Metal compute-AO conditional coverage — 2026-10-01
+
+Before the subsequent graph-replay merge, Intel Metal captures exercised the
+native compute-AO routes with raster postprocess effects disabled. Algorithm 0
+reported 7 passes / 16 edges. Algorithm 1 (AlchemyAO/SAO) reported the same
+shape. Algorithm 2 matched the predicted 8 passes / 18 edges, including
+`ssao.depth-pyramid` writing `AO.DepthPyramid` before `ssao.compute` reads it.
+Each route continued through `ssao.compute.composite` into `SceneColor`, had no
+dead-pass candidates or stale-size diagnostics, and passed
+`r_framegraph_selftest`. Algorithm 2's `AO.DepthPyramid` was touched for both
+write and read.
+
+The Intel gate was also checked with `mt_compute_ao 1` and
+`mt_compute_ao_intel 0`: `mt_caps` confirmed the reference raster SSAO fallback
+and its graph reported 10 passes / 17 edges, with no dead-pass candidates or
+stale-size diagnostics. These are Intel observer/dispatch coverage results,
+not tests of the graph-driven execution added later in this handoff.
+
+### Intel Metal postprocess shader coverage — 2026-10-01
+
+The stock all-effects route initially found nine misses among 101 native raster
+postprocess shader lookups. The exact current-hash MSL was already in the
+runtime cache, but the collector only promoted fresh translations. Added
+`--from-cache` support to `tools/collect_metal_shaders.py` and bundled 17
+current-hash stages, including the updated `ssao.fp` and `lineardepth.fp`.
+The hand-written compute kernels in `mt_ao.metal` were already in
+`native_shaders.metallib`; the missing AO coverage was the shared raster path.
+
+After rebuilding the Intel app and PK3, CMake reported 109 pre-translated
+stages. The all-effects stock MAP01 replay reported 109 lookups / 109 hits,
+zero symbol misses, zero unavailable-library lookups, and no `msl_tolib` or
+`msl_translate` events. Its observer graph reported 47 passes / 56 edges, no
+dead-pass candidates, and a passing graph self-test. These measurements predate
+the graph-driven replay changes above.
+
+The user reports that the previously reported Ashes gameplay freeze appears
+resolved following recent renderer, shader-coverage, and build changes. There
+is no controlled Ashes before/after capture to isolate the cause. The roughly
+1.3-second stock-demo map-entry display interval recorded in `AGENTS.md` is a
+separate event; reopen the Ashes investigation only if the gameplay freeze
+returns.
 
 ## Remaining work, in order
 
-1. **Validate the completed CPU graph contract.** Intel Metal effects-on and
-   all-effects-off cases are now recorded above. Conditional paths remain open
-   on Metal; run representative live GL/Vulkan frames on Linux hardware.
-   Confirm retained side effects stay rooted, candidates are interpreted
-   correctly, and transient lifetimes match ping-pong uses and aliases. Keep
-   live rendering in backend order during this stage.
-2. **Move one bounded chain to graph-driven execution.** Start with the
-   `Pass2` chain identified in `docs/frame-analysis.md` §4. Specify RAW, WAR,
-   and WAW handling and per-backend synchronization before changing execution.
-   Compare captured output against the existing path and exercise resize,
-   enabled/disabled effects, and ping-pong direction.
-3. **Widen graph-driven execution in measured steps.** The diagnostic graph
-   now observes bloom/exposure and AO, but moving those chains to graph-driven
-   execution remains future work. Keep resource aliasing and pass culling
-   disabled until output roots, all relevant reads, writes, and lifetimes have
-   been proven on migrated paths.
-4. **Validate Metal policy on Apple Silicon.** CPU graph algorithms and
+1. **Continue validating the CPU graph contract.** Intel Metal and Linux
+   GL/Vulkan effects-on/off runs are recorded above. UI/HUD scopes are live on
+   all three backends; offscreen canvas/camera producers still need a live
+   fixture. Extend conditional-route coverage as fixtures and hardware permit.
+2. **Widen in measured steps.** Exposure, bloom, and quality-3 raster AO now
+   have live Linux graph-replay controls. AO quality-3 multisample and debug
+   routes are covered on GL and Vulkan; check the reference raster path on
+   Metal where available, then cover other quality tiers. Keep resource
+   aliasing and pass culling disabled until output roots, all relevant reads,
+   writes, and lifetimes have been proven on the migrated paths.
+3. **Validate Metal policy on Apple Silicon.** CPU graph algorithms and
    backend-neutral contracts can proceed on Linux. Metal scheduling,
    transient aliasing policy, and TBDR performance choices need M-series runtime
-   evidence. ARM64/AArch64 JIT work is also deferred until Apple Silicon is
-   available for runtime validation, as requested.
+   evidence. The Intel Metal compile and live correctness checks for the
+   offscreen/UI scopes are listed in
+   [`handoff-macos-2026-10-01.md`](handoff-macos-2026-10-01.md). ARM64/AArch64
+   JIT work is also deferred until Apple Silicon is available for runtime
+   validation, as requested.
 
 ## Open validation boundaries
 
@@ -285,9 +303,8 @@ Follow `CONTRIBUTING.md` for renderer changes: prove the control can detect the
 failure, capture real rendered frames, and report noise and coverage limits.
 The self-test covers an output-rooted chain, a dead-candidate negative control,
 missing-output detection, screenshot keep-alive, transient lifetime intervals,
-positive/negative attachment-preservation cases, Tier 1/Tier 2 compute-bloom
-composite topology with missing-edge controls, and compute-AO composite
-topology with algorithm-specific pyramid coverage. On Intel macOS,
+positive/negative attachment-preservation cases, graph hazards, offscreen/UI
+consumption, compute-bloom topology, and compute-AO pyramid selection. On Intel macOS,
 `cmake --build build --parallel 4` passed and a real Metal frame passed the
 self-test and output/liveness checks described above. The prior Linux build
 passed, but live GL/Vulkan output/lifetime validation remains open. Xvfb `+quit`
@@ -295,16 +312,11 @@ checks do not substitute for real rendered frames.
 
 ## Metal handoff check
 
-The Intel Metal effects-on run confirms sampled material resources for
-`scene.opaque` and `scene.portal_translucent`, a rooted `Backbuffer` present
-chain, and no graph build errors or dead-pass candidates. The all-effects-off
-run confirms only the five scene/present passes remain and are rooted. Material
-inputs without a prior graph writer remain expected imported inputs; names
-with a prior graph writer produce edges. Conditional paths remain open. These
-runs check the Metal hook and graph contract, not Apple Silicon/TBDR
-performance policy.
+Intel Metal effects-on/off, conditional AO, and UI/HUD runs are recorded above.
+The offscreen producer paths still lack a live fixture. Apple Silicon runtime
+and TBDR performance policy remain unvalidated.
 
-The latest Linux build includes GL/Vulkan and passed after the scene-material
-hook was added. It does not compile the Metal backend. Live output/lifetime and
-material-edge validation remains open on GL/Vulkan hardware. Offscreen-only
-scene traversals remain outside the new material-read scopes.
+The latest Linux build includes GL/Vulkan and passed after the UI/HUD scope
+changes. It does not compile the Metal backend. Offscreen-only scene traversals
+now have producer and material-read scopes, but still need live fixture
+validation on GL/Vulkan.

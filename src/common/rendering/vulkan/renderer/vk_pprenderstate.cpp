@@ -43,11 +43,15 @@ VkPPRenderState::VkPPRenderState(VulkanRenderDevice* fb) : fb(fb)
 
 void VkPPRenderState::PushGroup(const FString &name)
 {
+	if (RecordGroup(name))
+		return;
 	fb->GetCommands()->PushGroup(name);
 }
 
 void VkPPRenderState::PopGroup()
 {
+	if (RecordPopGroup())
+		return;
 	fb->GetCommands()->PopGroup();
 }
 
@@ -63,7 +67,28 @@ static const char *ResolvePPTextureName(VkTextureManager *textureManager, PPText
 	return textureManager->GetTextureResourceName(type);
 }
 
-void VkPPRenderState::Draw()
+const char *VkPPRenderState::ResolveResourceName(PPTextureType type, PPTexture *texture) const
+{
+	return ResolvePPTextureName(fb->GetTextureManager(), type, texture);
+}
+
+int VkPPRenderState::GetPipelineImageIndex() const
+{
+	return fb->GetPostprocess()->mCurrentPipelineImage;
+}
+
+void VkPPRenderState::SetPipelineImageIndex(int index)
+{
+	fb->GetPostprocess()->mCurrentPipelineImage = index % VkRenderBuffers::NumPipelineImages;
+}
+
+void VkPPRenderState::AdvancePipelineImageIndex()
+{
+	auto pp = fb->GetPostprocess();
+	pp->mCurrentPipelineImage = (pp->mCurrentPipelineImage + 1) % VkRenderBuffers::NumPipelineImages;
+}
+
+void VkPPRenderState::DrawImmediate()
 {
 	fb->GetRenderState()->EndRenderPass();
 

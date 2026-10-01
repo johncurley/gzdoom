@@ -157,14 +157,15 @@ void FrameGraph::ObserveSceneMaterialRead(const char *name)
 	if (!name)
 		return;
 
-	// Keep the existing upload-order observation for reads outside a scene
-	// scope too; only the dependency declaration below is scene-specific.
+	// Keep the upload-order observation for reads outside these graph scopes too.
 	ObserveResourceRead(name);
 	if (mActivePass < 0 || mActivePass >= (int)mPasses.Size())
 		return;
 
 	PassDesc &pass = mPasses[mActivePass];
-	if (!pass.name || strncmp(pass.name, "scene.", 6) != 0)
+	if (!pass.name || (strncmp(pass.name, "scene.", 6) != 0 &&
+		strncmp(pass.name, "offscreen.", 10) != 0 &&
+		strncmp(pass.name, "ui.", 3) != 0))
 		return;
 
 	const char *canonicalName = CanonicalName(name);
@@ -353,11 +354,23 @@ void FrameGraph::BuildEdges(FString *report)
 {
 	mEdges.Clear();
 
-	// name -> index of the pass that most recently wrote it, as of however
-	// far BuildEdges has walked mPasses so far. Linear list: frame pass
-	// counts are ~10-15, not worth a TMap for this.
+	// Track the last writer and readers since that write for each resource.
+	// These produce RAW, WAR, and WAW edges in declaration order. Frame pass
+	// counts are small, so linear lists keep the bookkeeping simple.
 	struct Writer { const char *name; int pass; };
 	TArray<Writer> lastWriter;
+	struct Reader { const char *name; int pass; };
+	TArray<Reader> readersSinceWrite;
+	auto addEdge = [&](int from, int to, const char *name, EdgeType type)
+	{
+		if (from < 0 || from == to)
+			return;
+		for (const Edge &edge : mEdges)
+			if (edge.from == from && edge.to == to && edge.type == type &&
+				NameEq(CanonicalName(edge.resource), CanonicalName(name)))
+				return;
+		mEdges.Push({ from, to, name, type });
+	};
 
 	for (int i = 0; i < (int)mPasses.Size(); i++)
 	{
@@ -378,6 +391,15 @@ void FrameGraph::BuildEdges(FString *report)
 					break;
 				}
 			}
+			bool alreadyReader = false;
+			for (const Reader &reader : readersSinceWrite)
+				if (NameEq(reader.name, canonicalName) && reader.pass == i)
+				{
+					alreadyReader = true;
+					break;
+				}
+			if (!alreadyReader)
+				readersSinceWrite.Push({ canonicalName, i });
 			if (writerIndex < 0)
 			{
 				bool external = false;
@@ -396,17 +418,28 @@ void FrameGraph::BuildEdges(FString *report)
 				}
 				continue;
 			}
-			mEdges.Push({ writerIndex, i, name });
+			addEdge(writerIndex, i, name, EdgeType::RAW);
 		}
 
 		for (const char *name : pass.writes)
 		{
 			const char *canonicalName = CanonicalName(name);
+			for (const Reader &reader : readersSinceWrite)
+				if (NameEq(reader.name, canonicalName))
+					addEdge(reader.pass, i, name, EdgeType::WAR);
+			for (unsigned int readerIndex = 0; readerIndex < readersSinceWrite.Size();)
+			{
+				if (NameEq(readersSinceWrite[readerIndex].name, canonicalName))
+					readersSinceWrite.Delete(readerIndex);
+				else
+					readerIndex++;
+			}
 			bool updated = false;
 			for (auto &w : lastWriter)
 			{
 				if (NameEq(w.name, canonicalName))
 				{
+					addEdge(w.pass, i, name, EdgeType::WAW);
 					w.pass = i;
 					updated = true;
 					break;
@@ -517,7 +550,7 @@ void FrameGraph::AnalyzeLiveness(FString *report)
 			continue;
 		live[passIndex] = 1;
 		for (const Edge &edge : mEdges)
-			if (edge.to == passIndex)
+			if (edge.type == EdgeType::RAW && edge.to == passIndex)
 				pending.Push(edge.from);
 	}
 
@@ -648,8 +681,10 @@ void FrameGraph::Dump(FString *out) const
 		out->AppendFormat("\n  edges:\n");
 		for (auto &e : mEdges)
 		{
-			out->AppendFormat("    %s --[%s]--> %s\n",
-				mPasses[e.from].name, e.resource, mPasses[e.to].name);
+			const char *type = e.type == EdgeType::RAW ? "RAW" :
+				e.type == EdgeType::WAR ? "WAR" : "WAW";
+			out->AppendFormat("    %s --[%s %s]--> %s\n",
+				mPasses[e.from].name, type, e.resource, mPasses[e.to].name);
 		}
 	}
 
@@ -673,8 +708,8 @@ void FrameGraph::Dump(FString *out) const
 
 // Self-test: reproduces the Pass2 chain from docs/frame-analysis.md 2
 // (tonemap -> colormap -> lens -> fxaa) against real ping-pong buffer names,
-// so the versioning model is checked against a known-correct chain before
-// anything real gets wired to it.
+// so the versioning and hazard model stays covered alongside the live Pass2
+// execution path.
 CCMD(r_framegraph_selftest)
 {
 	FrameGraph graph;
@@ -702,6 +737,31 @@ CCMD(r_framegraph_selftest)
 	bool orderMatchesDeclaration = true;
 	for (int i = 0; i < graph.PassCount(); i++)
 		orderMatchesDeclaration &= (graph.Order()[i] == i);
+
+	FrameGraph hazardGraph;
+	hazardGraph.DeclareExternal("Imported");
+	PassDesc importedRead;
+	importedRead.name = "imported-read";
+	importedRead.owner = "selftest";
+	importedRead.reads = { "Imported" };
+	importedRead.writes = { "Scratch" };
+	hazardGraph.AddPass(importedRead);
+	PassDesc overwrite;
+	overwrite.name = "overwrite";
+	overwrite.owner = "selftest";
+	overwrite.reads = { "Scratch" };
+	overwrite.writes = { "Imported" };
+	hazardGraph.AddPass(overwrite);
+	PassDesc rewrite;
+	rewrite.name = "rewrite";
+	rewrite.owner = "selftest";
+	rewrite.writes = { "Imported" };
+	hazardGraph.AddPass(rewrite);
+	FString hazardReport;
+	bool hazardsOK = hazardGraph.Build(&hazardReport) &&
+		hazardGraph.EdgeCount() == 3 && hazardGraph.Order().Size() == 3 &&
+		hazardGraph.Order()[0] == 0 && hazardGraph.Order()[1] == 1 &&
+		hazardGraph.Order()[2] == 2;
 
 	// Exercise the first backend-use contract independently of the live Vulkan
 	// path: declared uses must agree with the read/write roles, and the backend
@@ -920,6 +980,57 @@ CCMD(r_framegraph_selftest)
 	bool attachmentOK = attachmentGraph.Build(&attachmentReport) &&
 		attachmentGraph.DeadPassCandidates().Size() == 0;
 
+	// Offscreen texture updates happen before the main view, and may be read by
+	// either that view or a later 2D overlay. Ensure the shared sampled-texture
+	// hook attaches reads to offscreen and UI scopes, including a canvas target
+	// whose old pixels are preserved by the update.
+	FrameGraph offscreenGraph;
+	offscreenGraph.DeclareExternal("CanvasTexture");
+	PassDesc canvasUpdate;
+	canvasUpdate.name = "offscreen.canvas";
+	canvasUpdate.owner = "selftest";
+	canvasUpdate.reads = { "CanvasTexture" };
+	canvasUpdate.writes = { "CanvasTexture" };
+	canvasUpdate.keepAlive = true;
+	offscreenGraph.AddPass(canvasUpdate);
+	PassDesc cameraUpdate;
+	cameraUpdate.name = "offscreen.camera";
+	cameraUpdate.owner = "selftest";
+	cameraUpdate.writes = { "CameraTexture" };
+	int cameraPassIndex = offscreenGraph.AddPass(cameraUpdate);
+	offscreenGraph.BeginBackendPass(cameraPassIndex);
+	offscreenGraph.ObserveSceneMaterialRead("WorldMaterial");
+	offscreenGraph.EndBackendPass();
+	PassDesc overlay;
+	overlay.name = "ui.2d";
+	overlay.owner = "selftest";
+	overlay.reads = { "PipelineImage[0]" };
+	overlay.writes = { "PipelineImage[0]", "PipelineDepthStencil" };
+	overlay.uses.Push({ "PipelineDepthStencil", FrameGraphAccess::Write,
+		FrameGraphUsage::DepthStencilAttachment });
+	offscreenGraph.DeclareExternal("PipelineImage[0]");
+	int overlayPassIndex = offscreenGraph.AddPass(overlay);
+	offscreenGraph.BeginBackendPass(overlayPassIndex);
+	offscreenGraph.ObserveBackendUse("PipelineDepthStencil", FrameGraphAccess::Write,
+		FrameGraphUsage::DepthStencilAttachment);
+	offscreenGraph.ObserveSceneMaterialRead("CanvasTexture");
+	offscreenGraph.ObserveSceneMaterialRead("CameraTexture");
+	offscreenGraph.EndBackendPass();
+	PassDesc overlayPresent;
+	overlayPresent.name = "present";
+	overlayPresent.owner = "selftest";
+	overlayPresent.reads = { "PipelineImage[0]" };
+	overlayPresent.writes = { "Backbuffer" };
+	offscreenGraph.AddPass(overlayPresent);
+	offscreenGraph.DeclareOutput("Backbuffer");
+	FString offscreenReport;
+	bool offscreenOK = offscreenGraph.Build(&offscreenReport) &&
+		offscreenGraph.Pass(cameraPassIndex).reads.Size() == 1 &&
+		strcmp(offscreenGraph.Pass(cameraPassIndex).reads[0], "WorldMaterial") == 0 &&
+		offscreenGraph.Pass(overlayPassIndex).reads.Size() == 3 &&
+		offscreenGraph.EdgeCount() == 3 &&
+		offscreenGraph.DeadPassCandidates().Size() == 0;
+
 	// Negative control: omit the translucent attachment's implicit read and
 	// require the graph to flag the AO composite as dead again.
 	FrameGraph missingAttachmentReadGraph;
@@ -1129,17 +1240,22 @@ CCMD(r_framegraph_selftest)
 		aoComputeReportedDead |= strcmp(missingAOCompositeGraph.Pass(passIndex).name, "ssao.compute") == 0;
 	missingAOCompositeDetected = missingAOCompositeDetected && aoComputeReportedDead;
 
-	Printf(ok && orderMatchesDeclaration && useOK && aliasOK && customOK && badDetected &&
+	Printf(ok && orderMatchesDeclaration && hazardsOK && useOK && aliasOK && customOK && badDetected &&
 		uploadOK && badUploadDetected && livenessOK && missingOutputDetected && wipeOK &&
 		attachmentOK && missingAttachmentReadDetected && computeBloomLive &&
-		directComputeBloomLive &&
-		missingBloomCompositeDetected && missingBloomExposureDetected &&
+		directComputeBloomLive && missingBloomCompositeDetected && missingBloomExposureDetected &&
 		computeAOCompositeLive && mipAOCompositeLive && baseAOClaimsNoPyramid &&
-		missingAOCompositeDetected ?
+		missingAOCompositeDetected && offscreenOK ?
 		"selftest: PASS\n" : "selftest: FAIL\n");
+	if (!hazardsOK)
+		Printf("RAW/WAR/WAW selftest failed: edges=%d report=%s\n",
+			hazardGraph.EdgeCount(), hazardReport.GetChars());
+	if (!offscreenOK)
+		Printf("offscreen/UI texture-read selftest failed: edges=%d report=%s\n",
+			offscreenGraph.EdgeCount(), offscreenReport.GetChars());
 }
 
-// Real per-frame data: whatever GLPPRenderState::Draw()/VkPPRenderState::Draw()
+// Real per-frame data: whatever the backend postprocess DrawImmediate() paths
 // recorded via AddPass() since the last Graph().Reset() (once per frame, next to
 // Resources().BeginFrame()). Covers tonemap/colormap/lens/fxaa (always nameable,
 // via the special PPTextureType names) plus ssao/exposure/bloom/blur and the

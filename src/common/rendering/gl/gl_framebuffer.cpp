@@ -273,8 +273,26 @@ void OpenGLFrameBuffer::CopyScreenToBuffer(int width, int height, uint8_t* scr)
 
 void OpenGLFrameBuffer::RenderTextureView(FCanvasTexture* tex, std::function<void(IntRect &)> renderFunc)
 {
+	auto hwTexture = static_cast<FHardwareTexture*>(tex->GetHardwareTexture(0, 0));
+	const char *resourceName = hwTexture->GetFrameGraphResourceName();
 	GLRenderer->StartOffscreen();
 	GLRenderer->BindToFrameBuffer(tex);
+
+	PassDesc desc;
+	desc.name = tex->Canvas ? "offscreen.canvas" : "offscreen.camera";
+	desc.owner = "OpenGLFrameBuffer";
+	desc.keepAlive = true;
+	if (tex->Canvas)
+	{
+		// Canvas draws may leave untouched pixels from the previous update.
+		desc.reads = { resourceName };
+		screen->Graph().DeclareExternal(resourceName);
+	}
+	desc.writes = { resourceName };
+	desc.uses.Push({ resourceName, FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
+	int graphPass = screen->Graph().AddPass(desc);
+	screen->Graph().BeginBackendPass(graphPass);
+	screen->Graph().ObserveBackendUse(resourceName, FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
 
 	IntRect bounds;
 	bounds.left = bounds.top = 0;
@@ -282,6 +300,7 @@ void OpenGLFrameBuffer::RenderTextureView(FCanvasTexture* tex, std::function<voi
 	bounds.height = FHardwareTexture::GetTexDimension(tex->GetHeight());
 
 	renderFunc(bounds);
+	screen->Graph().EndBackendPass();
 	GLRenderer->EndOffscreen();
 
 	tex->SetUpdated(true);
@@ -666,8 +685,22 @@ void OpenGLFrameBuffer::Draw2D()
 {
 	if (GLRenderer != nullptr)
 	{
+		const char *targetName = GLRenderer->mBuffers->GetTextureResourceName(PPTextureType::CurrentPipelineTexture);
+		PassDesc desc;
+		desc.name = "ui.2d";
+		desc.owner = "OpenGLFrameBuffer";
+		desc.reads = { targetName };
+		desc.writes = { targetName, "PipelineDepthStencil" };
+		desc.uses.Push({ targetName, FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
+		desc.uses.Push({ "PipelineDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment });
+		screen->Graph().DeclareExternal(targetName);
+		int graphPass = screen->Graph().AddPass(desc);
+		screen->Graph().BeginBackendPass(graphPass);
 		GLRenderer->mBuffers->BindCurrentFB();
+		screen->Resources().Touch("PipelineDepthStencil", true);
+		screen->Graph().ObserveBackendUse("PipelineDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment);
 		::Draw2D(twod, gl_RenderState);
+		screen->Graph().EndBackendPass();
 	}
 }
 

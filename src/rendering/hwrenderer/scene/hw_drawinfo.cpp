@@ -929,6 +929,7 @@ void HWDrawInfo::EndDrawScene(sector_t * viewsector, FRenderState &state)
 	const bool renderHUDModel = IsHUDModelForPlayerAvailable(players[consoleplayer].camera->player);
 	if (renderHUDModel)
 	{
+		screen->BeginFrameGraphScenePass("scene.hud_model", false, true);
 		// [BB] The HUD model should be drawn over everything else already drawn.
 		state.Clear(CT_Depth);
 
@@ -946,6 +947,7 @@ void HWDrawInfo::EndDrawScene(sector_t * viewsector, FRenderState &state)
 		screen->mViewpoints->SetViewpoint(state, vp);
 
 		DrawPlayerSprites(true, state);
+		screen->EndFrameGraphScenePass();
 
 		// Restore original viewpoint
 		VPUniforms = oldVP;
