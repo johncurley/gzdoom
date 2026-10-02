@@ -1,6 +1,7 @@
-# GZDoom — native Metal / native POSIX fork
+# GZDoom-based engine with native Metal and POSIX backends
 
-A fork of [GZDoom](https://zdoom.org/) with two changes upstream does not have:
+This project builds on the GZDoom codebase and develops its own renderer,
+platform support, compatibility work, and user interface.
 
 - **A native Metal renderer for macOS.** A direct Metal 2 backend, not MoltenVK
   — no Vulkan translation layer in the way. Written to mirror the Vulkan
@@ -9,23 +10,25 @@ A fork of [GZDoom](https://zdoom.org/) with two changes upstream does not have:
   through ZWidget instead of SDL2, with the display libraries `dlopen`'d so one
   binary runs under either, or neither.
 
-Everything else is GZDoom: same ZScript VM, same playsim, same PK3 assets, same
-mods. If a mod runs on GZDoom it should run here, and upstream's
-[wiki](https://zdoom.org/wiki/) still applies for engine-level questions.
+**Mod compatibility is an active development goal.** We test real mods and
+implement compatibility feature by feature, based on demonstrated needs. We do
+not claim complete compatibility with GZDoom, UZDoom, or every feature they
+provide. A mod's declared engine or ZScript version is a useful signal, not a
+compatibility guarantee; supported behavior is established through testing.
 
-This is an **experimental, maintenance-mode fork** rather than an official
-GZDoom release. Targeted fixes, compatibility reports and hardware testing are
-welcome; there is no promise of active development or broad platform support.
+The project also has its own renderer and platform technology and its own UI
+design direction. Compatibility work does not require matching another port's
+feature set or presentation.
 
 ---
 
 ## Status
 
-**macOS / Metal** — playable and in daily use on the development machine. The
-renderer is checked against the OpenGL backend frame-by-frame; scene normals,
-fog, model normals and the palette tonemap all match the reference within a
-pixel value or two. One known residual: SSAO differs from OpenGL by ~0.4/255 in
-its contribution to the final frame, bounded and documented in `AGENTS.md`.
+**macOS / Metal** — playable and in daily use on the Intel development machine.
+Documented captures compare it with OpenGL; scene normals, fog, model normals,
+and palette tonemapping match within one or two channel values on the tested
+routes. One known residual is an SSAO contribution difference of about 0.4/255
+in the final frame; see the [Metal renderer guide](src/common/rendering/metal/README_METAL_RENDERER.md).
 
 **Linux** — native Wayland and X11 backends with desktop theme detection. The
 X11 raw-keyboard path has been interactively validated on the Linux test
@@ -37,8 +40,8 @@ hardware, not on every compositor or GPU.
 **BSD** — the native POSIX design is intended to cover BSD as well, but this
 fork does not currently claim BSD runtime verification.
 
-**Windows** — unchanged from upstream and covered by CI, but not yet run by the
-maintainer. Reports welcome.
+**Windows** — builds in CI, but is not runtime-tested by the maintainer.
+Reports welcome.
 
 **Apple Silicon — untested.** Development is on an Intel Mac (HD 6000, Metal
 2.0). Nothing here has ever run on an M-series part, and the compute AO and
@@ -55,10 +58,9 @@ features still need to be tied to a measured machine.
 The stock Metal shader stages are shipped as pre-translated MSL and compiled
 into the native metallib where supported by the build. Runtime translation is
 retained for custom and mod-provided shaders. The Metal backend still has
-hardware-specific limitations; see `AGENTS.md` before treating a result as
-portable.
+hardware-specific limitations; results apply to the tested hardware and routes.
 
-### Release support matrix
+### Platform validation status
 
 | Platform | Status |
 |---|---|
@@ -124,12 +126,14 @@ port. Run with no `-iwad` argument to get the launcher.
 
 ## Helping out
 
-**Testing is worth more than code here.** The renderer work is verified by
-comparing captures against the OpenGL backend, and that only proves things about
-hardware someone actually runs.
+**Reproducible testing is especially useful.** Renderer comparisons only prove
+behavior on hardware someone actually runs, and mod compatibility needs a
+specific package and gameplay route to establish which features work.
 
-The most valuable contribution right now is **anyone with an Apple Silicon Mac**
-running from a clean checkout:
+Two high-value contributions are **Apple Silicon runtime testing** and
+**reproducible mod compatibility reports**.
+
+For Apple Silicon, run from a clean checkout:
 
 ```bash
 python3 tools/matrix/run.py --update-baseline
@@ -140,7 +144,9 @@ The first records a golden-image baseline across the postprocess chain and
 refuses to record if any pass is broken; the second compares Metal against
 OpenGL and reports where they diverge. Both run windowed, use their own config
 file, and will not touch your settings. Either failing on M-series hardware is a
-real finding.
+real finding. For a mod report, include its name and version, exact package and
+sidecars, engine commit, launch command, and the startup/menu/gameplay route
+that failed or succeeded. Do not include copyrighted game data.
 
 Bug reports are welcome with the same caveat that applies to everything here: a
 report that says what you measured beats one that says what you think happened.
@@ -151,18 +157,18 @@ short reproduction for any crash or visual difference. Do not include
 copyrighted IWAD files or other game data in an issue or pull request.
 
 Targeted code contributions are welcome when the contributor can explain and
-verify the change. The project is in maintenance mode, so a small, measured
-fix is more useful than a broad renderer rewrite.
+verify the change. Small, measured changes and reproducible compatibility
+reports are especially useful.
 
 ---
 
 ## Documentation
 
 - `CONTRIBUTING.md` — how work is verified here. Read before submitting.
-- `AGENTS.md` — current state, open items, and the traps that have cost real
-  time.
-- `docs/history/agent-log.md` — historical log, 2026-06 onward. An archive,
-  kept because it records what was **disproved**, not a current task guide.
+- `docs/handoff-uzdoom-compatibility-2026-09-25.md` and
+  `docs/audits/audit-uzdoom-compatibility-2026-09-25.md` — current mod
+  compatibility evidence and limits.
+- `docs/handoff-framegraph-2026-09-28.md` — framegraph status and next work.
 - `docs/engine-modernization.md` — the durable roadmap.
 - `docs/gpu-capture-protocol.md` — GPU frame capture runbook.
 - `src/common/rendering/metal/README_METAL_RENDERER.md` and
@@ -170,10 +176,11 @@ fix is more useful than a broad renderer rewrite.
 
 ---
 
-## Relationship to upstream
+## Project relationship
 
-Based on GZDoom, and intended to stay that way — mods and the community are
-there. This fork is independent of UZDoom.
+This is an independently developed project based on GZDoom source code. It is
+not affiliated with or endorsed by the GZDoom or UZDoom projects. Its
+compatibility, renderer, platform, and UI priorities are set independently.
 
 `libraries/ZWidget` is a **git subtree** tracking a fork of
 [dpjudas/ZWidget](https://github.com/dpjudas/ZWidget). Fixes that are not
