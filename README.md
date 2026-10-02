@@ -28,7 +28,8 @@ feature set or presentation.
 Documented captures compare it with OpenGL; scene normals, fog, model normals,
 and palette tonemapping match within one or two channel values on the tested
 routes. One known residual is an SSAO contribution difference of about 0.4/255
-in the final frame; see the [Metal renderer guide](src/common/rendering/metal/README_METAL_RENDERER.md).
+in the final frame; see the
+[Metal renderer guide](src/common/rendering/metal/README_METAL_RENDERER.md).
 
 **Linux** — native Wayland and X11 backends with desktop theme detection. The
 X11 raw-keyboard path has been interactively validated on the Linux test
@@ -58,7 +59,8 @@ features still need to be tied to a measured machine.
 The stock Metal shader stages are shipped as pre-translated MSL and compiled
 into the native metallib where supported by the build. Runtime translation is
 retained for custom and mod-provided shaders. The Metal backend still has
-hardware-specific limitations; results apply to the tested hardware and routes.
+hardware-specific limitations; results apply to the tested hardware and
+routes.
 
 ### Platform validation status
 
@@ -151,10 +153,11 @@ that failed or succeeded. Do not include copyrighted game data.
 Bug reports are welcome with the same caveat that applies to everything here: a
 report that says what you measured beats one that says what you think happened.
 
-For a useful report, include the commit or release, Mac model, macOS version,
-GPU, selected backend, exact command, whether the matrix tools passed, and a
-short reproduction for any crash or visual difference. Do not include
-copyrighted IWAD files or other game data in an issue or pull request.
+For a renderer or platform report, include the commit or release, machine
+model, operating system version, GPU, selected backend, exact command, whether
+the relevant matrix tools passed, and a short reproduction for any crash or
+visual difference. Mod reports should include the package and route details
+listed above. Do not attach copyrighted game data to issues or pull requests.
 
 Targeted code contributions are welcome when the contributor can explain and
 verify the change. Small, measured changes and reproducible compatibility
@@ -188,7 +191,7 @@ specific to this fork are sent upstream.
 
 ## License
 
-GPL v3, as upstream. Copyright (c) 1998-2025 ZDoom + GZDoom teams and
+GPL v3. Copyright (c) 1998-2025 ZDoom + GZDoom teams and
 contributors; see the license files for individual contributor licenses. Doom
 source (c) 1997 id Software, Raven Software, and contributors.
 
