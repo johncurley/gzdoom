@@ -168,9 +168,6 @@ reports are especially useful.
 ## Documentation
 
 - `CONTRIBUTING.md` — how work is verified here. Read before submitting.
-- `docs/handoff-uzdoom-compatibility-2026-09-25.md` and
-  `docs/audits/audit-uzdoom-compatibility-2026-09-25.md` — current mod
-  compatibility evidence and limits.
 - `docs/handoff-framegraph-2026-09-28.md` — framegraph status and next work.
 - `docs/engine-modernization.md` — the durable roadmap.
 - `docs/gpu-capture-protocol.md` — GPU frame capture runbook.
