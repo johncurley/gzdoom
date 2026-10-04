@@ -56,6 +56,20 @@
 CVAR(Int, mt_submit_size, 3000, 0);
 EXTERN_CVAR(Bool, r_skipmats)
 EXTERN_CVAR(Bool, mt_debug)
+
+static int GetBatchDrawType(int dt) {
+  // These source primitive types are all converted to an indexed triangle
+  // list before they enter the pending batch.
+  switch (dt) {
+  case DT_Triangles:
+  case DT_TriangleFan:
+  case DT_TriangleStrip:
+    return DT_Triangles;
+  default:
+    return dt;
+  }
+}
+
 MtRenderState::MtRenderState(MetalRenderDevice *fb)
     : fb(fb), mStreamBufferWriter(fb), mMatrixBufferWriter(fb) {
   mStencilFunc = 2; // DF_Always (Index 2 in GZDoom)
@@ -96,7 +110,7 @@ void MtRenderState::Draw(int dt, int index, int count, bool apply) {
   if (apply || mNeedApply) {
     if (mPendingBatch.active) {
       // If state changed or primitive type changed, flush the batch
-      if (mPendingBatch.dt != dt || mNeedApply) {
+      if (mPendingBatch.dt != GetBatchDrawType(dt) || mNeedApply) {
         FlushBatch();
       }
     }
@@ -641,7 +655,7 @@ void MtRenderState::Apply(int dt) {
   // state changes.  Push constant and matrix/stream offset changes are handled as
   // sub-draw breaks inside UpdateSubDrawState() after the full Apply() run.
   if (mPendingBatch.active) {
-    if (mPendingBatch.dt != dt ||
+    if (mPendingBatch.dt != GetBatchDrawType(dt) ||
         mVertexBuffer != mPendingBatch.vertexBuffer ||
         mVertexOffsets[0] != mPendingBatch.vertexOffsets[0] ||
         mVertexOffsets[1] != mPendingBatch.vertexOffsets[1] ||
