@@ -243,8 +243,16 @@ Before implementation:
    the old-order control had seven pipeline mismatches/frame, versus zero
    with the correction. Linux's temporary GL probe now separates the
    candidate batch key from per-draw geometry ranges and uniform state.
-   Runtime Metal sub-draw reason distributions remain open for the Mac
-   validation pass. See
+   Metal's three-frame 64-bit reason accounting is now complete for this
+   Ashes view: corrected sub-draw boundaries numbered 319/315/322, with
+   stream-data index changes in 307/301/308 and overlapping lighting/fog
+   changes. The primitive control had no within-batch state boundaries.
+   The follow-up also exercised point/line draws, the real 256-sub-draw
+   limit, and small/full-capacity boundaries. An approved pre-write reservation
+   fixed an index-buffer overrun hazard found during review. Static DOOM2 MAP02
+   corrected/control captures matched exactly; Intel timings found no benefit
+   above their measurement floor. Other primitive/state combinations and
+   allocation-failure limits remain untested. See
    [`handoff-metal-batching-2026-10-05.md`](handoff-metal-batching-2026-10-05.md)
    and the Linux handoff.
 
@@ -267,7 +275,9 @@ stabilization change.
    cross-frame inputs is complete for the reviewed paths. The persistent
    `ShadowMap` boundary has positive, negative, and same-frame-producer
    self-test coverage. Intel Metal active/disabled shadow controls passed on
-   2026-10-05; a live retained read without a producer remains unestablished. See
+   2026-10-05. A later controlled producer omission established live retained
+   reads and a missing-external negative control; naturally occurring producer
+   omission remains unestablished. See
    [`handoff-macos-2026-10-04.md`](handoff-macos-2026-10-04.md).
 3. The bounded `scene.target`-before-`shadowmap` order experiment is complete
    on GL and Vulkan, with same-backend pixel-identical controls. Require a new
@@ -276,9 +286,13 @@ stabilization change.
    [`handoff-framegraph-2026-09-28.md`](handoff-framegraph-2026-09-28.md).
 4. Intel Metal wall-fan validation and initial aggregate batching counts
    completed on 2026-10-05, including the pipeline-order correction and a
-   positive failure control. Fine-grained runtime sub-draw reason distributions
-   and untested limit/primitive routes remain open; no uninstrumented timing
-   comparison was made. The matched 1280×720 Linux measurements, temporary
+   positive failure control. Fine-grained flush/sub-draw masks and per-field
+   distributions are recorded for three settled frames of the Ashes view;
+   additional static MAP02 and controlled limit/primitive/capacity routes were
+   validated afterward. Uninstrumented Intel timing comparisons found no
+   benefit above their measurement floor. Further primitive/state combinations,
+   allocation-failure limits, and Apple Silicon remain untested. The matched
+   1280×720 Linux measurements, temporary
    state probe, and sustained camera-consumer control are recorded in
    [`handoff-linux-2026-09-29.md`](handoff-linux-2026-09-29.md); the Metal
    source fix and Mac validation are in

@@ -183,3 +183,35 @@ uninstrumented-build evidence is in
 This completes the tested Intel camera, conditional-shadow, and wall-fan
 correctness tranche. Metal scene-clear ordering and Apple Silicon policy remain
 outside this validation; no performance improvement is claimed.
+
+## Live retained-shadow follow-up — 2026-10-05–06
+
+The user requested the remaining Intel follow-ups. A controlled live Metal
+fixture now establishes a no-producer retained `ShadowMap` read, beyond the
+CPU self-test. On the same Iris 6000 Mac, the frozen MAP06 PointLight fixture
+ran its normal producer for 200 rendered frames. A temporary diagnostic then
+omitted only `hw_postprocess.shadowmap.Update()` while retaining the texture,
+AABB tree, enabled scene sampling, and normal light-buffer update bookkeeping.
+This forces the retained-input boundary; it does not demonstrate a naturally
+occurring producer skip in the shipped main-view path.
+
+**Prediction:** the active route should retain its 9-pass / 19-edge graph and
+three producer-to-scene RAW edges. Producer omission should leave an 8-pass /
+16-edge graph, no shadow writer, and reads on `scene.target`, `scene.opaque`,
+and `scene.portal_translucent`. Removing the external declaration should
+produce three read-before-write errors. All three predictions passed.
+
+The active registry reported `ShadowMap` write/read; the retained route reported
+read only. Both positive routes reached `Backbuffer`, had no dead-pass
+candidates or graph errors, passed `r_framegraph_selftest`, and reported no
+stale sizes. The missing-external control reported each of the three predicted
+errors in `r_framegraph`. All three frozen captures matched exactly, confirming
+that the graph's declaration control detects the missing dependency without
+changing rendering. The producer-omission and declaration switches were removed
+and the Intel build passed afterward.
+
+Artifacts: `retained_{active,read,missing}.{log,png}` under
+`/private/tmp/gzdoom-metal-handoff-1005`, with the temporary launcher
+`/private/tmp/gzdoom_retained_capture.py`. The additional approved capacity
+correction and live batch-boundary controls are recorded in
+[`handoff-metal-batching-2026-10-05.md`](handoff-metal-batching-2026-10-05.md).

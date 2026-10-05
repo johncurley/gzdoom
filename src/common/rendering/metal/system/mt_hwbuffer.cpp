@@ -1,4 +1,5 @@
 #include "i_time.h"
+#include "i_system.h"
 #include <Metal/Metal.hpp>
 
 #include "hwrenderer/data/hw_renderstate.h"
@@ -468,6 +469,8 @@ void MtIndexBuffer::CreateBuffer(size_t size) {
     }
     if (i < count) {
         mBuffers[i] = fb->device->device->newBuffer(size, fb->mVersionManager.GetDynamicStorageMode());
+        if (!mBuffers[i])
+          I_FatalError("Metal: could not allocate index buffer of size %zu bytes.", size);
     }
   }
 

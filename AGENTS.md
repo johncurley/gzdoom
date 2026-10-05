@@ -506,7 +506,23 @@ it is unusual).
   exposed and corrected binding the next pipeline before flushing the pending
   batch: the old-order control had seven mismatches/frame and the correction
   had zero. Final uninstrumented captures matched the corrected diagnostic
-  image exactly. See `docs/handoff-metal-batching-2026-10-05.md`; no Metal
+  image exactly. The remote-requested fine-grained follow-up recorded 64-bit
+  flush/sub-draw masks and per-field counts over three settled Metal frames:
+  124 corrected versus 593 primitive-control flushes, with 319/315/322
+  corrected sub-draw boundaries dominated by stream-data index changes and
+  overlapping lighting/fog fields. Temporary instrumentation was removed;
+  final follow-up captures differed by at most one channel level, so exact
+  byte parity was not established for that run. The subsequent user-approved
+  capacity correction reserves indices before writing and grows backing storage
+  through the existing frame recycle ring. Live probes covered small and full
+  1,048,576-index boundaries, the 256-sub-draw limit, and point/line draws;
+  negative controls detected a would-be overrun and 17,010 dropped indices.
+  Static DOOM2 MAP02 corrected/control captures matched exactly. Intel timing
+  comparisons found no gain above the measured floor. A controlled shadow
+  producer omission also established real retained reads; removing its external
+  declaration produced the expected three graph errors. All probes were removed.
+  See
+  `docs/handoff-metal-batching-2026-10-05.md`; no Metal
   performance gain or sorting-default change is claimed.
   The initial 640×480 run used ignored `+win_w/+win_h` arguments; use
   `-width/-height` for the native POSIX startup size. See

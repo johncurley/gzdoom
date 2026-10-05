@@ -17,6 +17,15 @@ postprocess configuration. The observer on/off A/B found no measurable cost
 for that RX 550 MAP06 route. This is not an Apple Silicon or Metal performance
 result.
 
+The 2026-10-05 Intel continuation completed fine-grained Metal batch accounting,
+controlled sub-draw/primitive/capacity checks, and a live retained `ShadowMap`
+read with a missing-external negative control. The capacity review found and
+corrected an index-buffer overrun hazard with user approval. Uninstrumented
+timing found no benefit above the measurement floor. See
+[`handoff-metal-batching-2026-10-05.md`](handoff-metal-batching-2026-10-05.md)
+and [`handoff-macos-2026-10-04.md`](handoff-macos-2026-10-04.md). Apple Silicon
+runtime and performance policy remain separate open work.
+
 ## CPU graph diagnostics added
 
 The CPU graph now supports explicit required outputs, `keepAlive` pass roots,

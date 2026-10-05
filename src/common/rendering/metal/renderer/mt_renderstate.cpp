@@ -49,6 +49,7 @@
 #include "v_text.h"
 
 #include <chrono>
+#include <climits>
 
 #include <Metal/Metal.hpp>
 #include <QuartzCore/QuartzCore.hpp>
@@ -127,6 +128,34 @@ void MtRenderState::Draw(int dt, int index, int count, bool apply) {
   bool canBatch = (dt == DT_TriangleFan || dt == DT_Triangles || dt == DT_TriangleStrip);
 
   if (canBatch) {
+    // Reserve before writing. Flushing alone does not reclaim index storage:
+    // already encoded draws still reference the earlier ranges in this frame.
+    uint64_t requiredIndices = dt == DT_Triangles
+                                   ? uint64_t(count)
+                                   : uint64_t(max(count - 2, 0)) * 3;
+    auto batchIB = static_cast<MtIndexBuffer *>(
+        fb->GetBufferManager()->BatchIndexBuffer.get());
+    uint64_t capacity = batchIB->Size() / sizeof(uint32_t);
+    if (mBatchIndexOffset > capacity)
+      I_FatalError("Metal: batch index offset exceeds allocation.");
+    if (requiredIndices > UINT_MAX / sizeof(uint32_t))
+      I_FatalError("Metal: triangle draw exceeds batch index allocation limit.");
+    if (requiredIndices > capacity - mBatchIndexOffset) {
+      FlushBatch();
+      batchIB->Unlock();
+      // Growth creates new backing buffers and retires the old ones through
+      // the device's frame recycle ring; never overwrite queued index ranges.
+      uint64_t newCapacity = max(capacity * 2, requiredIndices);
+      newCapacity = min(newCapacity, uint64_t(UINT_MAX / sizeof(uint32_t)));
+      if (newCapacity <= capacity)
+        I_FatalError("Metal: cannot grow batch index allocation.");
+      mBatchIBPointer = static_cast<uint32_t *>(
+          batchIB->Lock(static_cast<unsigned int>(newCapacity * sizeof(uint32_t))));
+      if (!batchIB->GetBuffer() || !mBatchIBPointer)
+        I_FatalError("Metal: could not allocate batch index buffer.");
+      mBatchIndexOffset = 0;
+    }
+
     if (!mPendingBatch.active) {
       // For batching, we always convert to a triangle list
       mPendingBatch.dt = DT_Triangles;
@@ -186,10 +215,6 @@ void MtRenderState::Draw(int dt, int index, int count, bool apply) {
       mBatchIndexOffset += addedIndices;
       mPendingBatch.indexCount += addedIndices;
 
-      // If buffer is getting full, flush it
-      if (mBatchIndexOffset > 1000000) {
-        FlushBatch();
-      }
     }
   } else {
     // Non-batchable primitive, just draw immediately
@@ -400,7 +425,7 @@ void MtRenderState::FlushBatch() {
   mPendingBatch.active = false;
   mPendingBatch.indexCount = 0;
   mPendingBatch.subDrawCount = 0;
-  // Note: mBatchIndexOffset is only reset at BeginFrame or when the buffer fills.
+  // The offset is reset only at BeginFrame or after allocating fresh storage.
 }
 
 // Called at the end of Apply() to detect per-draw state changes (push constants,
@@ -1335,6 +1360,9 @@ void MtRenderState::BeginFrame() {
 
   mBatchIndexOffset = 0;
   mBatchIBPointer = (uint32_t *)fb->GetBufferManager()->BatchIndexBuffer->Lock(1024 * 1024 * sizeof(uint32_t));
+  if (!static_cast<MtIndexBuffer *>(fb->GetBufferManager()->BatchIndexBuffer.get())->GetBuffer() ||
+      !mBatchIBPointer)
+    I_FatalError("Metal: could not allocate batch index buffer.");
   mPendingBatch.active = false;
 
   mBias.mUnits = 0.0f;
