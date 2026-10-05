@@ -226,11 +226,13 @@ Before implementation:
    views on one machine and do not justify changing the default.
 2. Extend draw-state accounting to pipeline, sampler, and per-wall stream
    state on representative masked-wall, portal, camera-texture, and
-   compatibility-map views. The Linux follow-up reduced sampler calls and
-   material-key runs, while draw submissions stayed fixed and wall-stream
-   breaks fell only modestly. Program-pointer changes were counted, but a full
-   pipeline key was not. The camera producer was observed only on startup, so
-   sustained consumer coverage remains open; see the Linux handoff.
+   compatibility-map views. The 2026-10-05 Linux probe now records normalized
+   GL program/raster/target keys, material and effective sampler keys, buffer
+   bindings, geometry ranges, and render-state uniform changes. Across Ashes
+   MAP01, DOOM2 MAP02 compatibility mode, and the controlled MAP99 camera
+   consumer, each opaque list held one pipeline key and zero pipeline-key
+   transitions. Texture sorting cut adjacent batch-key runs while leaving the
+   distinct key set and draw count unchanged. See the Linux handoff.
 3. Count complete batch keys and sub-draw reasons in those views. The source
    audit found and corrected a Metal primitive-key mismatch that flushed each
    wall fan: the pending batch stores `DT_Triangles` after fan conversion, but
@@ -239,8 +241,12 @@ Before implementation:
    124 versus 593 flushes/frame and up to 78 fans sharing a batch. It also
    corrected binding the next pipeline before flushing pending triangles;
    the old-order control had seven pipeline mismatches/frame, versus zero
-   with the correction. See
-   [`handoff-metal-batching-2026-10-05.md`](handoff-metal-batching-2026-10-05.md).
+   with the correction. Linux's temporary GL probe now separates the
+   candidate batch key from per-draw geometry ranges and uniform state.
+   Runtime Metal sub-draw reason distributions remain open for the Mac
+   validation pass. See
+   [`handoff-metal-batching-2026-10-05.md`](handoff-metal-batching-2026-10-05.md)
+   and the Linux handoff.
 
 The likely long-term solution is a GPU `SurfaceData` table indexed by a
 per-vertex or per-primitive surface ID. Moving normals, light indices, fog,
@@ -252,9 +258,11 @@ stabilization change.
 ## Near-term order
 
 1. Camera target identities and clear/opaque/portal-translucent graph scopes
-   are implemented. GL and Vulkan live fixtures pass; rebuild and repeat the
-   camera fixture on Intel Metal, as recorded in
-   [`frame-graph-camera-resources.md`](frame-graph-camera-resources.md).
+   are implemented and live-validated on GL, Vulkan, and Intel Metal. Linux's
+   controlled fixture also confirms sustained camera-texture consumption on
+   both GL and Vulkan; see
+   [`handoff-linux-2026-09-29.md`](handoff-linux-2026-09-29.md) and
+   [`handoff-macos-2026-10-04.md`](handoff-macos-2026-10-04.md).
 2. The source audit of keep-alive roots, external side effects, and
    cross-frame inputs is complete for the reviewed paths. The persistent
    `ShadowMap` boundary has positive, negative, and same-frame-producer
@@ -266,14 +274,14 @@ stabilization change.
    candidate and a measurable benefit before another order change. Its Linux
    RX 550 A/B found no measurable frame-time benefit; see
    [`handoff-framegraph-2026-09-28.md`](handoff-framegraph-2026-09-28.md).
-4. Intel Metal wall-fan validation and its batch-key/sub-draw measurements
+4. Intel Metal wall-fan validation and initial aggregate batching counts
    completed on 2026-10-05, including the pipeline-order correction and a
-   positive failure control. Untested limit and primitive routes remain
-   explicit boundaries; no uninstrumented timing comparison was made. The
-   matched 1280×720 Linux
-   measurements, temporary state probe, camera fixture limitation, source fix,
-   and Mac validation steps are recorded in
-   [`handoff-linux-2026-09-29.md`](handoff-linux-2026-09-29.md) and
+   positive failure control. Fine-grained runtime sub-draw reason distributions
+   and untested limit/primitive routes remain open; no uninstrumented timing
+   comparison was made. The matched 1280×720 Linux measurements, temporary
+   state probe, and sustained camera-consumer control are recorded in
+   [`handoff-linux-2026-09-29.md`](handoff-linux-2026-09-29.md); the Metal
+   source fix and Mac validation are in
    [`handoff-macos-2026-10-04.md`](handoff-macos-2026-10-04.md). Do not change
    sort behavior or defaults based on the current Linux results alone.
 5. Revisit Metal/TBDR ordering policy and ARM64 JIT work when Apple Silicon is

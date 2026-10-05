@@ -216,8 +216,30 @@ one-time producer before the graph reset: GL reported 49 passes / 105 edges,
 and Vulkan reported 49 / 105 with `VK_LAYER_KHRONOS_validation` enabled. Both
 graphs contained an `offscreen.camera` pass writing the camera texture, reached
 `Backbuffer`, and had no dead-pass candidates. Later dumps omit that pass after
-the camera texture's initial update, so the early capture is required. This
-closes the Linux camera fixture gap for GL and Vulkan.
+the camera texture's initial update. This showed startup production only; it
+did not establish a sustained consumer path. That remained open until the
+controlled follow-up below.
+
+### Sustained camera-texture consumer — 2026-10-05
+
+A temporary MAP99 fixture now compares the same `SetCameraToTexture` actor
+with and without a visible `FGCAMERA` wall. The camera sits behind a blocking
+partition in a separate room, so its own view cannot sample its render target.
+After spawning the actor and waiting 30 tics, the consumer graph retained the
+three `offscreen.camera` phases and a RAW edge from the camera target's final
+portal/translucent write to `scene.opaque`. The matching no-consumer control
+contained no camera producer after the same wait.
+
+On the RX 550, GL reported 9 passes / 22 edges with the consumer and 6 / 13
+without it. Vulkan reported 10 / 23 with the consumer and 7 / 14 without it,
+under `VK_LAYER_KHRONOS_validation`. Each consumer run added exactly three
+camera phases and nine edges. The final camera-target pass wrote the same
+texture that `scene.opaque` read, with a RAW dependency between them. Both
+graphs reached `Backbuffer`, had no dead-pass candidates, and passed
+`r_framegraph_selftest`; reports had no graph diagnostics or stale-size
+messages, and the Vulkan validation logs had no errors. This closes sustained
+camera-texture consumer coverage on Linux GL and Vulkan. It makes no timing or
+pixel-parity claim.
 
 ## Indexed texture palette providers — 2026-10-02
 
@@ -581,6 +603,55 @@ on its startup update. It was absent from the second-frame and delayed
 captures, including with the camera texture assigned to a candidate consumer
 surface. That does not establish a sustained camera-texture consumer path, so
 there is no camera timing claim.
+
+### GL pipeline-key and sub-draw-state accounting — 2026-10-05
+
+A temporary, runtime-gated GL probe captured one live frame per arm at
+1280×720 on the RX 550 / Mesa 26.2.4. It covered Ashes MAP01 with its portal
+and masked walls, DOOM2 MAP02 under `-compatmode 3`, and the controlled MAP99
+camera-texture consumer with `vid_preferbackend 0`. Each view ran with
+`gl_sort_textures` off and on. These are state counts, not timing samples.
+
+GL has no single pipeline object, so the probe used a normalized pipeline key:
+active program, vertex-array layout, draw framebuffer, topology/pass and draw
+buffer count, plus fixed depth, stencil, blend, cull, scissor, clip, sample,
+polygon, and color-mask state. The fixed state baseline was read once, then
+updated at the render-state setters; the bound draw framebuffer was sampled at
+each draw to cover camera-target switches. Candidate batch keys combine that
+pipeline signature with material/translation/clamp, effective sampler mode,
+and vertex/index buffer bindings and offsets. Per-draw geometry ranges and
+render-state uniform values are counted separately as sub-draw state. The
+reported distinct keys are 64-bit signatures. Sampler-key changes mean a
+change in effective clamp/sampler selection, not raw `glBindSampler` calls;
+the earlier bind-call measurements remain in the preceding section. These
+temporary counters do not model GL driver PSO internals or measure timings.
+
+| View/list | Draws | Pipeline signatures off/on | Candidate batch signatures off/on | Batch-key transitions off→on | Sampler-key transitions off→on | Geometry-range changes | Uniform-state changes off→on |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Ashes MAP01 plain walls | 403 | 1 / 1 | 51 / 51 | 196→50 | 87→19 | 402 / 402 | 298→272 |
+| Ashes MAP01 plain flats | 288 | 1 / 1 | 29 / 29 | 206→28 | 0→0 | 287 / 287 | 221→139 |
+| Ashes MAP01 masked walls | 135 | 1 / 1 | 18 / 18 | 69→17 | 44→12 | 134 / 134 | 121→105 |
+| DOOM2 MAP02 plain walls | 63 | 1 / 1 | 12 / 12 | 42→11 | 20→7 | 62 / 62 | 45→47 |
+| DOOM2 MAP02 plain flats | 35 | 1 / 1 | 5 / 5 | 20→4 | 0→0 | 34 / 34 | 31→23 |
+| MAP99 camera consumer plain walls | 1 | 1 / 1 | 1 / 1 | 0→0 | 0→0 | 0 / 0 | 0→0 |
+| MAP99 camera consumer plain flats | 2 | 1 / 1 | 2 / 2 | 1→1 | 0→0 | 1 / 1 | 1→1 |
+
+Every measured list had one pipeline signature and no pipeline-key transition.
+Buffer-binding changes were zero in every row. Geometry ranges changed on
+nearly every draw, but did not alter the candidate batch key; they are draw
+payload, not pipeline or material incompatibilities. The Ashes portal subview
+also produced four plain-flat draws and one masked-wall draw, with one
+pipeline/batch signature in each small list. Sorting left the distinct
+candidate key sets and draw submissions unchanged while reducing adjacent
+material/sampler key runs. Uniform-state counts are single-frame observations;
+the compatibility MAP02 wall count rose by two with sorting, so the probe
+does not imply uniform-state changes always follow material sorting.
+
+The MAP99 probe saw only one plain wall and two flats, so it establishes the
+fixture's small draw-state footprint, not camera performance. The separate
+consumer graph check above remains the data-flow proof. The temporary source
+hooks were removed after capture; the full build was rerun without them. No
+timing claim or sort-default change follows from this accounting.
 
 ### Metal wall-fan batch correction — 2026-10-05
 

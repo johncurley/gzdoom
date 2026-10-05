@@ -37,6 +37,17 @@ versus 5.43 ms in Ashes MAP01 and 1.44 ms versus 1.32 ms in DOOM2 MAP02
 reordering only. They do not measure or validate this Metal batch fix, and do
 not justify changing the sorting default.
 
+The 2026-10-05 Linux follow-up also measured normalized GL state keys on live
+Ashes MAP01, compatibility-mode DOOM2 MAP02, and a controlled MAP99 camera
+consumer. Every measured opaque list had one GL pipeline signature and zero
+pipeline-key transitions. Sorting reduced adjacent candidate batch-key
+transitions (for example, Ashes plain walls 196→50 and plain flats 206→28)
+without changing the distinct candidate key set or draw count. Geometry ranges
+and uniform changes remained per-draw payload. These results narrow the
+cross-platform question but do not map GL keys onto Metal PSOs or predict Metal
+flush counts; full measurements and fixture details are in
+[`handoff-linux-2026-09-29.md`](handoff-linux-2026-09-29.md).
+
 ## Intel macOS validation
 
 Build the Intel Metal configuration with `HAVE_VULKAN=OFF`. Ensure the source
@@ -52,6 +63,15 @@ sub-draw counts, and flush reasons. Separate normalized-type checks,
 `mNeedApply`, every batch-key field, the 256-sub-draw limit, and index-buffer
 capacity. For sub-draws, distinguish full `PushConstants` changes from
 matrix/stream buffer identity or offset changes.
+
+For the next accounting pass, retain per-field counters and also record a
+64-bit reason mask for each flush and sub-draw boundary. This preserves cases
+where multiple fields change on the same draw without assigning an arbitrary
+single cause. Capture three settled live frames for the corrected route and,
+where practical, the existing primitive-mismatch control; report per-frame
+counts and the reason-mask histogram. Keep the pipeline-order failure control
+as a separate invariant check. The Linux GL results above are context only:
+the Mac report must use Metal's actual batch and sub-draw decisions.
 
 Acceptance: consecutive `DT_TriangleFan` wall calls with a stable batch key
 accumulate in the same pending batch; legitimate sub-draw state changes do not
