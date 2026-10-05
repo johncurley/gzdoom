@@ -548,6 +548,11 @@ double Joy_ApplyResponseCurveBezier(const CubicBezier &curve, double input)
 double Joy_ManageSingleAxis(double axisval, double deadzone, double threshold, const CubicBezier &curve, uint8_t *buttons)
 {
 	uint8_t butt;
+	if (deadzone >= 1.0)
+	{
+		if (buttons != NULL) *buttons = 0;
+		return 0.0;
+	}
 
 	// Cancel out deadzone.
 	if (fabs(axisval) < deadzone)
@@ -664,7 +669,9 @@ double Joy_ManageThumbstick(
 	}
 
 	double deadzone = (xy_lerp * deadzone_x) + ((1.0 - xy_lerp) * deadzone_y);
-	if (magnitude < deadzone)
+	// A full-scale dead zone intentionally suppresses the entire stick. Handle
+	// it here so the remapping below never divides by 1.0 - deadzone == 0.
+	if (deadzone >= 1.0 || magnitude < deadzone)
 	{
 		ret_x = 0;
 		ret_y = 0;

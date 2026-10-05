@@ -5,6 +5,7 @@
 #include "i_interface.h"
 #include "keydef.h"
 #include "d_eventbase.h"
+#include "m_haptics.h"
 #include "bitmap.h"
 #include "textures.h"
 #include "gametexture.h"
@@ -34,6 +35,8 @@ static void I_CheckGUICapture();
 static void I_CheckRawKeyboard();
 static void I_CheckNativeMouse();
 static void I_ReconcileMouseButtons();
+extern void I_PollJoystickDeviceChanges();
+extern void I_ProcessJoysticks();
 
 void I_GetEvent() {
 	if (event_processing_in_progress) {
@@ -80,7 +83,10 @@ void I_StartTic() {
 	I_CheckRawKeyboard();
 	I_CheckNativeMouse();
 	I_ReconcileMouseButtons();
+	I_PollJoystickDeviceChanges();
+	I_ProcessJoysticks();
 	I_GetEvent();
+	Joy_RumbleTick();
 }
 
 void I_StartFrame() {}
