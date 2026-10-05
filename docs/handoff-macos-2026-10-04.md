@@ -135,3 +135,51 @@ Record the Mac model/GPU, exact fixture and launch settings, whether the source
 patch was present, batch starts/flushes and reasons, source draws and indices
 per batch, sub-draw counts and reasons, visual comparison, build result, and
 any diagnostics. Remove all temporary counters before timing or handoff.
+
+## Intel completion record — 2026-10-05
+
+Source `8121da4449` contains the camera-scope and retained-ShadowMap changes,
+as well as the normalized wall-fan comparisons. The Intel Metal build passed
+with `HAVE_VULKAN=OFF`; the bundle's `gzdoom.pk3` was refreshed and compared
+equal to the generated archive. Native runs used the Iris Graphics 6000 /
+Core i5-5350U reference Mac, macOS 12.7.6, LaunchServices, and separate temporary
+configs. Each fixture passed the graph self-test, required `Backbuffer`, had
+no dead-pass candidates or graph/replay errors, and reported no stale sizes
+with `r_resource_validate 1`.
+
+**Camera prediction and result:** each camera update should record three
+phases using only that target's color and derived depth/stencil identity.
+The existing Ashes MAP09 fixture, `gl_precache 1`, effects/shadows off,
+and a first-level-frame dump reported 14 passes / 32 edges. The two targets
+were `Metal.Texture.1908` and `Metal.Texture.567`, each paired with its own
+`.DepthStencil`. Both had clear → opaque → portal/translucent attachment
+dependencies and a keep-alive terminal phase. No camera pass used main-view
+`Scene*` attachments. Target 567 recorded world-material reads in its opaque
+phase and sampled reads in its translucent phase. Target 1908 drew no sampled
+materials in this fixture. An earlier run without precaching recorded the
+phases but no camera material reads, so that run alone did not close sampled
+input coverage. The precached resource report was 16 resources / 42.1 MB;
+only the unused screen/save shadow maps were untouched.
+
+**Shadow prediction and result:** the active fixture should add one producer
+with RAW dependencies to scene consumers; disabling shadows should remove it.
+A temporary ZScript 4.14 event handler spawned a PointLight at the MAP06 player
+start, offset upward by 48 units, with RGB arguments 255/180/100 and intensity
+160. With `gl_lights 1`, `gl_light_shadowmap 1`, quality 256, effects off,
+and a 300-frame settled capture, the graph had 9 passes / 19 edges.
+`shadowmap` wrote `ShadowMap`; RAW edges reached `scene.target`,
+`scene.opaque`, and `scene.portal_translucent`, despite the external declaration.
+`ShadowMap` was touched for write and read. The disabled control had 8 passes /
+16 edges and no shadow producer. Both resource reports were 16 / 40.1 MB.
+The no-producer retained-read case remains a CPU self-test result; the disabled
+live control did not establish that read.
+
+**Batching:** the source audit found a pending-batch pipeline-order hazard,
+and the user approved flushing before binding the next pipeline/depth state.
+The native control measured seven pipeline mismatches per frame without the
+correction and zero with it. The detailed batch, sub-draw, image, and final
+uninstrumented-build evidence is in
+[`handoff-metal-batching-2026-10-05.md`](handoff-metal-batching-2026-10-05.md).
+This completes the tested Intel camera, conditional-shadow, and wall-fan
+correctness tranche. Metal scene-clear ordering and Apple Silicon policy remain
+outside this validation; no performance improvement is claimed.

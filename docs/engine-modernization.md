@@ -153,9 +153,9 @@ Live coverage includes GL/Vulkan main-view effects, AO qualities 1–3, debug an
 sample-count routes, HUD/2D UI, offscreen canvas/camera producers, the Vulkan
 indexed non-mip upload route, and shadow-map activation. Intel Metal coverage
 includes effects, compute-AO conditions, canvas/camera producers, raster-AO
-fallback, and 4× scene targets. The target-specific camera clear/opaque/
-portal-translucent scopes still need an Intel Metal rebuild and live fixture;
-higher Metal sample counts and Apple Silicon runtime behavior also remain open.
+fallback, and 4×/8× scene targets. Intel Metal target-specific camera
+clear/opaque/portal-translucent scopes and active/disabled shadow controls
+passed on 2026-10-05. Apple Silicon runtime behavior remains open.
 Linux allocated-sample AO routing closed on 2026-10-02; Linux quality-1/2
 replay parity closed on 2026-10-03.
 
@@ -168,8 +168,8 @@ normal layer configuration. See
 [`handoff-linux-2026-09-29.md`](handoff-linux-2026-09-29.md).
 
 Camera-target identities and clear/opaque/portal-translucent scopes are now
-recorded, with GL and Vulkan live fixtures; Intel Metal still needs a rebuild
-and fixture. The direct-use and cross-frame input audit found and fixed the
+recorded, with GL, Vulkan, and Intel Metal live fixtures. The direct-use and
+cross-frame input audit found and fixed the
 retained `ShadowMap` boundary; the remaining explicitly persistent inputs and
 scene-material fallbacks already have external declarations. The bounded
 `scene.target`-before-`shadowmap` ordering experiment is complete on GL and
@@ -235,9 +235,12 @@ Before implementation:
    audit found and corrected a Metal primitive-key mismatch that flushed each
    wall fan: the pending batch stores `DT_Triangles` after fan conversion, but
    the flush checks compared it with the original `DT_TriangleFan`. The helper
-   now normalizes both checks. The Linux build does not compile Metal; validate
-   the patch on Intel Metal and collect actual batch sizes and flush reasons
-   using [`handoff-macos-2026-10-04.md`](handoff-macos-2026-10-04.md).
+   now normalizes both checks. Intel Metal validation on 2026-10-05 measured
+   124 versus 593 flushes/frame and up to 78 fans sharing a batch. It also
+   corrected binding the next pipeline before flushing pending triangles;
+   the old-order control had seven pipeline mismatches/frame, versus zero
+   with the correction. See
+   [`handoff-metal-batching-2026-10-05.md`](handoff-metal-batching-2026-10-05.md).
 
 The likely long-term solution is a GPU `SurfaceData` table indexed by a
 per-vertex or per-primitive surface ID. Moving normals, light indices, fog,
@@ -255,17 +258,19 @@ stabilization change.
 2. The source audit of keep-alive roots, external side effects, and
    cross-frame inputs is complete for the reviewed paths. The persistent
    `ShadowMap` boundary has positive, negative, and same-frame-producer
-   self-test coverage. Rebuild and validate the conditional shadow-map route
-   on Intel Metal using
+   self-test coverage. Intel Metal active/disabled shadow controls passed on
+   2026-10-05; a live retained read without a producer remains unestablished. See
    [`handoff-macos-2026-10-04.md`](handoff-macos-2026-10-04.md).
 3. The bounded `scene.target`-before-`shadowmap` order experiment is complete
    on GL and Vulkan, with same-backend pixel-identical controls. Require a new
    candidate and a measurable benefit before another order change. Its Linux
    RX 550 A/B found no measurable frame-time benefit; see
    [`handoff-framegraph-2026-09-28.md`](handoff-framegraph-2026-09-28.md).
-4. Rebuild and validate the Metal wall-fan batch correction on Intel macOS,
-   capturing batch size, sub-draw count, and flush reasons in a masked/portal
-   view. Then complete the batch-key audit. The matched 1280×720 Linux
+4. Intel Metal wall-fan validation and its batch-key/sub-draw measurements
+   completed on 2026-10-05, including the pipeline-order correction and a
+   positive failure control. Untested limit and primitive routes remain
+   explicit boundaries; no uninstrumented timing comparison was made. The
+   matched 1280×720 Linux
    measurements, temporary state probe, camera fixture limitation, source fix,
    and Mac validation steps are recorded in
    [`handoff-linux-2026-09-29.md`](handoff-linux-2026-09-29.md) and

@@ -673,11 +673,6 @@ void MtRenderState::Apply(int dt) {
   if (!mPipelineBound)
     return;
 
-  // If pipeline key changed, it might also break the batch
-  if (mPendingBatch.active && mPipelineKey != mPendingBatch.pipelineKey) {
-    FlushBatch();
-  }
-
   ApplyScissor();
   ApplyCulling();
 
@@ -797,6 +792,11 @@ void MtRenderState::ApplyRenderPass(int dt) {
         fb->GetPipelineStateManager()->GetPipelineState(pipelineKey, mtVBuf);
     if (pipelineState && pipelineState->pipelineState) {
       if (mEncoder) {
+        // Pending triangles still require their previous pipeline and depth state.
+        // Emit them before binding the state for the next draw.
+        if (mPendingBatch.active && pipelineKey != mPendingBatch.pipelineKey) {
+          FlushBatch();
+        }
         mEncoder->setRenderPipelineState(pipelineState->pipelineState);
         mEncoder->setDepthStencilState(pipelineState->depthStencilState);
         mPipelineBound = true;

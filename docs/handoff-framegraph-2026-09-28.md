@@ -309,7 +309,9 @@ returns.
    indexed non-mip upload transition and the shadow-map conditional route are
    also covered live. Camera target identities and clear, opaque, and
    portal/translucent graph scopes are implemented; live GL/Vulkan results are
-   recorded below and Intel Metal rebuild/runtime validation remains open.
+   recorded below. Intel Metal's precached frame-1 camera fixture and active/
+   disabled shadow controls passed on 2026-10-05; details are in the macOS
+   handoff.
    Remaining coverage includes backend-specific conditional routes and the
    Apple Silicon runtime boundary. Linux results are recorded in
    [`handoff-linux-2026-09-29.md`](handoff-linux-2026-09-29.md).
@@ -486,8 +488,11 @@ attachments are excluded. The full contract and validation record are in
 The self-test and full Linux build pass. Live GL reports 52 passes / 114 edges;
 Vulkan reports 12 / 24 with validation enabled. Both camera fixtures show the
 target color/depth chain, material reads, output reachability, and no dead-pass
-candidates or graph diagnostics. Intel Metal still needs a macOS rebuild and
-camera fixture run. Apple Silicon/TBDR scheduling policy remains a separate
+candidates or graph diagnostics. Intel Metal's 2026-10-05 build and precached
+frame-1 fixture also passed (14 passes / 32 edges), with distinct target
+attachments and sampled reads in both camera scene phases. See
+[`handoff-macos-2026-10-04.md`](handoff-macos-2026-10-04.md).
+Apple Silicon/TBDR scheduling policy remains a separate
 hardware-gated question; this work only records existing operations and does
 not authorize scheduling across Metal attachment boundaries.
 
@@ -507,12 +512,16 @@ single RAW dependency and remains live. The mandatory Linux build and the
 self-test passed. The runtime used Xvfb with llvmpipe, so this validates the
 CPU graph contract rather than an accelerated dynamic-light frame. The earlier
 RX 550 dynamic-light fixture still covers the live producer/consumer route;
-Intel Metal conditional-route validation remains open.
+Intel Metal's 2026-10-05 active/disabled PointLight fixture passed: 9 passes /
+19 edges with a producer and RAW scene-consumer dependencies, versus 8 / 16
+without the producer. The live no-producer retained-read route was not
+established; the CPU self-test still covers it.
 
 This change only corrects graph input classification. It does not change
 rendering or command order. The related source audit and completed GL/Vulkan
-order experiment are recorded below; conditional Metal routes still need live
-validation.
+order experiment are recorded below. The conditional Intel Metal route is
+recorded in the macOS handoff; Metal scene-clear reordering is still outside
+that validation.
 
 The follow-up source review traced the direct `FrameGraphAccess::Read` sites
 and found no second retained input with the same gap in the reviewed paths.

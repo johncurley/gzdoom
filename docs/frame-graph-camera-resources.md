@@ -2,8 +2,8 @@
 
 Status: implemented for GL, Vulkan, and Metal source on 2026-10-03. The Linux
 build, graph self-test, and live GL/Vulkan camera fixtures pass. Intel Metal
-rebuild and live fixture validation remain open; Apple Silicon/TBDR policy is
-outside this change.
+rebuild and live fixture validation passed on 2026-10-05; Apple Silicon/TBDR
+policy is outside this change.
 
 ## Scope
 
@@ -116,10 +116,12 @@ target hardware.
 - Live Vulkan camera fixture: 12 passes / 24 edges with the same camera
   attachment chain and reachability. `VK_LAYER_KHRONOS_validation` reported no
   errors.
-- Intel Metal source has the same target-context and pass-scope changes, but
-  it has not been rebuilt or rerun on macOS. Repeat its existing camera
-  frame-1 fixture and verify the identities there; this does not claim Apple
-  Silicon or TBDR policy coverage.
+- Intel Metal's precached frame-1 fixture passed on 2026-10-05: 14 passes /
+  32 edges, two distinct camera color/depth identities, all three phases,
+  material reads in opaque and translucent phases, a rooted `Backbuffer`,
+  and no dead-pass or resource-validation errors. Details are in
+  [`handoff-macos-2026-10-04.md`](handoff-macos-2026-10-04.md).
+  This does not claim Apple Silicon or TBDR policy coverage.
 - No graph-on/off image or execution-order change is expected from recording
   these scopes. Any such difference is a regression to resolve before moving
   on to ordering experiments.

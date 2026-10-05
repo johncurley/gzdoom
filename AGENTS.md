@@ -464,9 +464,11 @@ it is unusual).
   on GL, Vulkan, and Intel Metal. Camera rendering now has separate
   `offscreen.camera.clear`, `.opaque`, and `.portal_translucent` graph scopes
   with per-target color and depth/stencil identities. GL and Vulkan live
-  fixtures pass; Intel Metal source is updated but awaits macOS rebuild and
-  fixture validation; `docs/handoff-macos-2026-10-04.md` now also carries the
-  2026-10-05 wall-fan batch fix and its Mac validation checklist. GL and Vulkan
+  fixtures pass; Intel Metal's 2026-10-05 precached frame-1 fixture also passed
+  (14 passes / 32 edges, two target color/depth identities, sampled camera
+  material reads). `docs/handoff-macos-2026-10-04.md` records this plus the
+  active/disabled Metal shadow fixture and native wall-fan validation. GL and
+  Vulkan
   now register indexed palette providers;
   the live `DTA_Indexed` canvas route and Vulkan non-mip upload/barrier are
   verified, including Vulkan palette-cache invalidation. See
@@ -489,17 +491,23 @@ it is unusual).
   see the current Linux handoff for pass counts and AO-on/off controls. The
   2026-10-04 cross-frame audit also declared the retained `ShadowMap` value as
   an external input in `r_framegraph`; its self-test covers missing-input
-  rejection and same-frame producer precedence. Intel Metal conditional-route
-  validation remains open. The matched 2026-10-05 Linux `gl_sort_textures`
+  rejection and same-frame producer precedence. Intel Metal's active/disabled
+  shadow controls passed on 2026-10-05; the live no-producer retained-read case
+  is still only covered by the CPU self-test. The matched 2026-10-05 Linux
+  `gl_sort_textures`
   follow-up found a 28.7% lower mean interval in the masked/portal Ashes MAP01
   view and 8.2% in the light DOOM2 MAP02 `-compatmode 3` view at 1280×720.
   Sampler calls and material-key runs fell, draw submissions stayed fixed, and
   wall-stream breaks fell only modestly. The camera producer was observed only
   during startup, so sustained consumer coverage remains open. A Metal batch
-  primitive-key mismatch was corrected in the Linux working tree by comparing
-  normalized triangle output types; the Linux build excludes Metal, so Intel
-  Metal rebuild/runtime validation is next. Record real batch sizes and
-  sub-draw/flush reasons before changing sort behavior or defaults.
+  primitive-key mismatch was corrected by comparing normalized triangle output
+  types. Intel native validation on 2026-10-05 measured 124 versus 593 batch
+  flushes/frame, up to 78 fans per batch, and per-draw sub-draw breaks. It also
+  exposed and corrected binding the next pipeline before flushing the pending
+  batch: the old-order control had seven mismatches/frame and the correction
+  had zero. Final uninstrumented captures matched the corrected diagnostic
+  image exactly. See `docs/handoff-metal-batching-2026-10-05.md`; no Metal
+  performance gain or sorting-default change is claimed.
   The initial 640×480 run used ignored `+win_w/+win_h` arguments; use
   `-width/-height` for the native POSIX startup size. See
   `docs/handoff-linux-2026-09-29.md`.
