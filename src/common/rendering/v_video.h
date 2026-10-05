@@ -153,6 +153,8 @@ public:
 	IShadowMap mShadowMap;
 	FrameResources mResources;					// frame graph resource registry (phase 1: record + report)
 	FrameGraph mFrameGraph;						// frame graph pass/dependency graph (phase 2: CPU-only, see hw_framegraph.h)
+	const char *mFrameGraphCameraColor = nullptr;
+	const char *mFrameGraphCameraDepthStencil = nullptr;
 
 	int mGameScreenWidth = 0;
 	int mGameScreenHeight = 0;
@@ -179,6 +181,21 @@ public:
 	}
 	FrameResources &Resources() { return mResources; }
 	FrameGraph &Graph() { return mFrameGraph; }
+	void BeginFrameGraphCameraTarget(const char *colorResource, bool hasDepthStencil)
+	{
+		mFrameGraphCameraColor = colorResource;
+		mFrameGraphCameraDepthStencil = hasDepthStencil
+			? mFrameGraph.MakeOwnedResourceName(colorResource, ".DepthStencil")
+			: nullptr;
+	}
+	void EndFrameGraphCameraTarget()
+	{
+		mFrameGraphCameraColor = nullptr;
+		mFrameGraphCameraDepthStencil = nullptr;
+	}
+	bool HasFrameGraphCameraTarget() const { return mFrameGraphCameraColor != nullptr; }
+	const char *FrameGraphCameraColor() const { return mFrameGraphCameraColor; }
+	const char *FrameGraphCameraDepthStencil() const { return mFrameGraphCameraDepthStencil; }
 	virtual void SetLevelMesh(hwrenderer::LevelMesh *mesh) { }
 	bool allowSSBO() const
 	{
@@ -284,9 +301,15 @@ public:
 	virtual void FirstEye() {}
 	virtual void NextEye(int eyecount) {}
 	virtual void SetSceneRenderTarget(bool useSSAO) {}
+	// Some backends can materialize a scene clear before auxiliary work such
+	// as shadow-map rendering. The default keeps deferred-clear backends on
+	// their existing ordering.
+	virtual bool CanFlushSceneClear() const { return false; }
+	virtual void FlushSceneClear() {}
 	// Framegraph-only scene boundaries. Backends that have not adopted scene
 	// observation yet keep the default no-op behavior.
-	virtual void BeginFrameGraphScenePass(const char *name, bool gbuffer, bool depthWrite) {}
+	virtual void BeginFrameGraphScenePass(const char *name, bool gbuffer, bool depthWrite,
+		bool keepAlive = false) {}
 	virtual void EndFrameGraphScenePass() {}
 	virtual void UpdateShadowMap() {}
 	virtual void WaitForCommands(bool finish) {}

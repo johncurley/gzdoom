@@ -441,9 +441,10 @@ it is unusual).
   record logical reads of their prior contents. Intel Metal passed live MAP06
   effects-on (52 passes / 65 edges) and all-effects-off (5 passes / 6 edges)
   checks with no dead-pass candidates or stale-size reports; its self-test
-  includes positive and negative attachment-preservation controls. Live
-  GL/Vulkan validation of these new attachment/blend dependencies remains open;
-  next steps are in `docs/handoff-linux-2026-09-29.md`. Intel Metal compute-AO
+  includes positive and negative attachment-preservation controls. The
+  2026-10-02 Linux follow-up validated attachment/blend dependencies live on
+  GL and Vulkan with effects on and off; see
+  `docs/handoff-linux-2026-09-29.md`. Intel Metal compute-AO
   graph coverage now includes algorithms 0, 1, and 2; see the current handoff
   for live results. The 2026-10-01 Mac follow-up also verified live canvas
   producer/consumer graph reads and byte-identical immediate/replay MAP06
@@ -459,16 +460,62 @@ it is unusual).
   and 64× requests falling back to 8×; retained captures used 300 frames after
   rejecting a 120-frame startup-screen capture. Apple Silicon behavior and
   performance remain open. See
-  `docs/handoff-macos-2026-10-01.md`. Other offscreen-only scene traversals are
-  not yet represented. Vulkan indexed
-  non-mip upload validation remains open pending a confirmed draw route. Apple
+  `docs/handoff-macos-2026-10-01.md`. Canvas and camera producers are now live
+  on GL, Vulkan, and Intel Metal. Camera rendering now has separate
+  `offscreen.camera.clear`, `.opaque`, and `.portal_translucent` graph scopes
+  with per-target color and depth/stencil identities. GL and Vulkan live
+  fixtures pass; Intel Metal source is updated but awaits macOS rebuild and
+  fixture validation; `docs/handoff-macos-2026-10-04.md` now also carries the
+  2026-10-05 wall-fan batch fix and its Mac validation checklist. GL and Vulkan
+  now register indexed palette providers;
+  the live `DTA_Indexed` canvas route and Vulkan non-mip upload/barrier are
+  verified, including Vulkan palette-cache invalidation. See
+  `docs/handoff-linux-2026-09-29.md`. A temporary dynamic-light fixture also
+  activated the shadow-map producer on GL and Vulkan; its graph dependencies
+  and resource touches are live-validated. A Vulkan CPU-cost probe measured the
+  indexed upload below 0.4 ms total; async Vulkan upload is not justified by
+  that path. The matched MAP06→MAP07 profile measured `CreateTexBuffer` at
+  19.2 ms inclusive (10.8 ms in source access, not decoder-only) and the
+  471-upload `CreateTexture` stages at 34.0 ms with no explicit validation
+  layer override versus 123.2 ms with Khronos validation forced. No async or
+  mipmap change is justified without a user-visible hitch in the normal layer
+  configuration. See `docs/handoff-linux-2026-09-29.md`. Do not move
+  `FTexture` access or `GetBgraBitmap()` off-thread by assumption.
   Silicon is still required for Metal/TBDR performance policy; ARM64 JIT work
   is deferred until that hardware is available. The cold MAP08 capture still
   misses strict byte-repeatability and is not a parity result.
-- **Linux validation record:** `docs/handoff-linux-2026-09-24.md` — includes
-  the completed GL/Vulkan runtime and observer-cost results, plus its remaining
-  indexed-image coverage boundary. The focused 2026-09-29 handoff asks Linux
-  to validate the newer attachment-preservation graph changes on both backends.
+  Linux GL/Vulkan raster AO qualities 1/2 now also have live direct/replay image
+  parity, and the Vulkan raster/compute linear-depth alternatives are covered;
+  see the current Linux handoff for pass counts and AO-on/off controls. The
+  2026-10-04 cross-frame audit also declared the retained `ShadowMap` value as
+  an external input in `r_framegraph`; its self-test covers missing-input
+  rejection and same-frame producer precedence. Intel Metal conditional-route
+  validation remains open. The matched 2026-10-05 Linux `gl_sort_textures`
+  follow-up found a 28.7% lower mean interval in the masked/portal Ashes MAP01
+  view and 8.2% in the light DOOM2 MAP02 `-compatmode 3` view at 1280×720.
+  Sampler calls and material-key runs fell, draw submissions stayed fixed, and
+  wall-stream breaks fell only modestly. The camera producer was observed only
+  during startup, so sustained consumer coverage remains open. A Metal batch
+  primitive-key mismatch was corrected in the Linux working tree by comparing
+  normalized triangle output types; the Linux build excludes Metal, so Intel
+  Metal rebuild/runtime validation is next. Record real batch sizes and
+  sub-draw/flush reasons before changing sort behavior or defaults.
+  The initial 640×480 run used ignored `+win_w/+win_h` arguments; use
+  `-width/-height` for the native POSIX startup size. See
+  `docs/handoff-linux-2026-09-29.md`.
+- **Linux validation record:** `docs/handoff-linux-2026-09-29.md` — includes
+  the completed GL/Vulkan runtime, attachment-preservation validation, indexed
+  image and offscreen fixtures, shadow-map conditional route, and upload-cost
+  results. The scene-clear-before-shadow ordering experiment is now closed on
+  GL and Vulkan with exact same-backend pixel parity against each old-order
+  control. Metal keeps its prior order until a deferred-clear flush is
+  validated there. The 2026-10-04 RX 550 A/B found no measurable frame-time
+  benefit on either Linux backend; details are in
+  `docs/handoff-framegraph-2026-09-28.md`. Cold Vulkan transition profiling
+  remains a follow-up. The
+  Linux `gl_sort_textures` now has a matched masked/portal and compatibility
+  view study; count full batch keys and sub-draw reasons before another
+  batching change (Linux handoff, 2026-10-05 section).
 - **Previous handoff:** `docs/handoff-macos-2026-09-23.md` — the detailed Intel
   Metal session record, including upload observations, source-pixel snapshot
   parity, observer/sorting measurements, and the remaining capture-repeatability
@@ -562,11 +609,10 @@ must not be re-run. This is what came out of that session and the two since,
 roughly in order of value. Everything below is either an unverified fix, an
 unmeasured assumption, or a tool gap; none of it is speculative work.
 
-**New Linux follow-up from the 2026-10-02 Mac tranche:** validate the shared
-raster-AO shader selection against each backend's allocated scene sample count
-on GL and Vulkan at 1×/4×, including the existing debug-mode-2 control. Prior
-Linux 4× captures predate the new allocated-count plumbing. Full commands and
-acceptance checks are recorded in
+The shared raster-AO allocated-sample follow-up is closed on Linux: GL and
+Vulkan passed live 1×/4× and debug-mode-2 routing checks on 2026-10-02. GL and
+Vulkan quality-1/2 direct-versus-replay coverage, including Vulkan raster and
+compute linear-depth branches, closed on 2026-10-03. Results are recorded in
 [`docs/handoff-linux-2026-09-29.md`](docs/handoff-linux-2026-09-29.md).
 
 An outside audit of this subsystem was run on 2026-08-12 against

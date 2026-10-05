@@ -25,7 +25,10 @@
 #include "vk_pptexture.h"
 #include "vk_renderbuffers.h"
 #include "vulkan/renderer/vk_postprocess.h"
+#include "hwrenderer/frame/hw_framegraph.h"
+#include "hw_material.h"
 #include "hw_cvars.h"
+#include "palettecontainer.h"
 
 VkTextureManager::VkTextureManager(VulkanRenderDevice* fb) : fb(fb)
 {
@@ -57,6 +60,45 @@ void VkTextureManager::BeginFrame()
 		Shadowmap.Reset(fb);
 		CreateShadowmap();
 	}
+}
+
+IHardwareTexture *VkTextureManager::GetPaletteTexture(int translation, bool highlight)
+{
+	uint64_t key = (static_cast<uint64_t>(static_cast<uint32_t>(translation)) << 1) |
+		(highlight ? 1 : 0);
+	auto found = PaletteTextures.find(key);
+	if (found != PaletteTextures.end())
+		return found->second.get();
+
+	FRemapTable *remap = GPalette.GetTranslation(GetTranslationType(translation),
+		GetTranslationIndex(translation));
+	const PalEntry *palette = remap ? remap->Palette : GPalette.BaseColors;
+	PalEntry colors[256];
+	for (int i = 0; i < 256; ++i)
+	{
+		colors[i] = palette[i];
+		if (highlight)
+		{
+			colors[i].r = (colors[i].r + 255) / 2;
+			colors[i].g = (colors[i].g + 255) / 2;
+			colors[i].b = (colors[i].b + 255) / 2;
+		}
+	}
+
+	auto texture = std::make_unique<VkHardwareTexture>(fb, 4);
+	texture->CreateTexture(reinterpret_cast<unsigned char*>(colors), 256, 1, 0, false,
+		"Vulkan indexed palette");
+	fb->Graph().RecordUpload({ texture->GetFrameGraphResourceName(),
+		"Vulkan indexed palette", FrameGraphPreparation::RenderThread,
+		true, true, true });
+	auto result = texture.get();
+	PaletteTextures.emplace(key, std::move(texture));
+	return result;
+}
+
+void VkTextureManager::ClearPaletteTextures()
+{
+	PaletteTextures.clear();
 }
 
 void VkTextureManager::AddTexture(VkHardwareTexture* texture)

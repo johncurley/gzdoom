@@ -58,6 +58,8 @@
 #include "v_draw.h"
 #include "printf.h"
 #include "gl_hwtexture.h"
+#include "hw_material.h"
+#include "palettecontainer.h"
 
 #include "flatvertices.h"
 #include "hw_cvars.h"
@@ -186,6 +188,10 @@ void OpenGLFrameBuffer::InitializeState()
 	mBones = new BoneBuffer(screen->mPipelineNbr);
 	GLRenderer = new FGLRenderer(this);
 	GLRenderer->Initialize(GetWidth(), GetHeight());
+	FMaterial::SetLayerCallback([](int layer, int translation) -> IHardwareTexture* {
+		auto framebuffer = static_cast<OpenGLFrameBuffer*>(screen);
+		return framebuffer->GetPaletteTexture(translation, layer == 2);
+	});
 	static_cast<GLDataBuffer*>(mLights->GetBuffer())->BindBase();
 	static_cast<GLDataBuffer*>(mBones->GetBuffer())->BindBase();
 
@@ -279,20 +285,24 @@ void OpenGLFrameBuffer::RenderTextureView(FCanvasTexture* tex, std::function<voi
 	GLRenderer->BindToFrameBuffer(tex);
 
 	PassDesc desc;
-	desc.name = tex->Canvas ? "offscreen.canvas" : "offscreen.camera";
 	desc.owner = "OpenGLFrameBuffer";
-	desc.keepAlive = true;
 	if (tex->Canvas)
 	{
+		desc.name = "offscreen.canvas";
+		desc.keepAlive = true;
 		// Canvas draws may leave untouched pixels from the previous update.
 		desc.reads = { resourceName };
 		screen->Graph().DeclareExternal(resourceName);
+		desc.writes = { resourceName };
+		desc.uses.Push({ resourceName, FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
+		int graphPass = screen->Graph().AddPass(desc);
+		screen->Graph().BeginBackendPass(graphPass);
+		screen->Graph().ObserveBackendUse(resourceName, FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
 	}
-	desc.writes = { resourceName };
-	desc.uses.Push({ resourceName, FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
-	int graphPass = screen->Graph().AddPass(desc);
-	screen->Graph().BeginBackendPass(graphPass);
-	screen->Graph().ObserveBackendUse(resourceName, FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
+	else
+	{
+		screen->BeginFrameGraphCameraTarget(resourceName, true);
+	}
 
 	IntRect bounds;
 	bounds.left = bounds.top = 0;
@@ -300,7 +310,10 @@ void OpenGLFrameBuffer::RenderTextureView(FCanvasTexture* tex, std::function<voi
 	bounds.height = FHardwareTexture::GetTexDimension(tex->GetHeight());
 
 	renderFunc(bounds);
-	screen->Graph().EndBackendPass();
+	if (tex->Canvas)
+		screen->Graph().EndBackendPass();
+	else
+		screen->EndFrameGraphCameraTarget();
 	GLRenderer->EndOffscreen();
 
 	tex->SetUpdated(true);
@@ -393,6 +406,40 @@ IHardwareTexture *OpenGLFrameBuffer::CreateHardwareTexture(int numchannels)
 	return new FHardwareTexture(numchannels);
 }
 
+IHardwareTexture *OpenGLFrameBuffer::GetPaletteTexture(int translation, bool highlight)
+{
+	uint64_t key = (static_cast<uint64_t>(static_cast<uint32_t>(translation)) << 1) |
+		(highlight ? 1 : 0);
+	auto found = mPaletteTextures.find(key);
+	if (found != mPaletteTextures.end())
+		return found->second.get();
+
+	FRemapTable *remap = GPalette.GetTranslation(GetTranslationType(translation),
+		GetTranslationIndex(translation));
+	const PalEntry *palette = remap ? remap->Palette : GPalette.BaseColors;
+	PalEntry colors[256];
+	for (int i = 0; i < 256; ++i)
+	{
+		colors[i] = palette[i];
+		if (highlight)
+		{
+			colors[i].r = (colors[i].r + 255) / 2;
+			colors[i].g = (colors[i].g + 255) / 2;
+			colors[i].b = (colors[i].b + 255) / 2;
+		}
+	}
+
+	auto texture = std::make_unique<FHardwareTexture>(4);
+	texture->CreateTexture(reinterpret_cast<unsigned char*>(colors), 256, 1, 0, false,
+		"GL indexed palette");
+	screen->Graph().RecordUpload({ texture->GetFrameGraphResourceName(),
+		"OpenGL indexed palette", FrameGraphPreparation::RenderThread,
+		true, true, true });
+	auto result = texture.get();
+	mPaletteTextures.emplace(key, std::move(texture));
+	return result;
+}
+
 void OpenGLFrameBuffer::PrecacheMaterial(FMaterial *mat, int translation)
 {
 	if (mat->Source()->GetUseType() == ETextureType::SWCanvas) return;
@@ -469,6 +516,11 @@ void OpenGLFrameBuffer::SetViewportRects(IntRect *bounds)
 
 void OpenGLFrameBuffer::UpdatePalette()
 {
+	if (!mPaletteTextures.empty())
+	{
+		gl_RenderState.ClearLastMaterial();
+		mPaletteTextures.clear();
+	}
 	if (GLRenderer)
 		GLRenderer->ClearTonemapPalette();
 }
@@ -506,34 +558,6 @@ void OpenGLFrameBuffer::SetSceneRenderTarget(bool useSSAO)
 		screen->Graph().DeclareAlias("PipelineImage[0]", "SceneColor");
 
 	buffers->BindSceneFB(useSSAO);
-
-	PassDesc desc;
-	desc.name = "scene.target";
-	desc.owner = "OpenGLFrameBuffer";
-	desc.writes = { "SceneColor", "SceneDepthStencil" };
-	desc.uses.Push({ "SceneColor", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
-	desc.uses.Push({ "SceneDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment });
-	if (useSSAO)
-	{
-		desc.writes.Push("SceneFog");
-		desc.writes.Push("SceneNormal");
-		desc.uses.Push({ "SceneFog", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
-		desc.uses.Push({ "SceneNormal", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
-	}
-	int graphPass = screen->Graph().AddPass(desc);
-	screen->Graph().BeginBackendPass(graphPass);
-	screen->Resources().Touch("SceneColor", true);
-	screen->Graph().ObserveBackendUse("SceneColor", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
-	screen->Resources().Touch("SceneDepthStencil", true);
-	screen->Graph().ObserveBackendUse("SceneDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment);
-	if (useSSAO)
-	{
-		screen->Resources().Touch("SceneFog", true);
-		screen->Graph().ObserveBackendUse("SceneFog", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
-		screen->Resources().Touch("SceneNormal", true);
-		screen->Graph().ObserveBackendUse("SceneNormal", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
-	}
-	screen->Graph().EndBackendPass();
 }
 
 void OpenGLFrameBuffer::UpdateShadowMap()
@@ -704,22 +728,30 @@ void OpenGLFrameBuffer::Draw2D()
 	}
 }
 
-void OpenGLFrameBuffer::BeginFrameGraphScenePass(const char *name, bool gbuffer, bool depthWrite)
+void OpenGLFrameBuffer::BeginFrameGraphScenePass(const char *name, bool gbuffer,
+	bool depthWrite, bool keepAlive)
 {
+	const bool cameraTarget = screen->HasFrameGraphCameraTarget();
+	const char *sceneColor = cameraTarget ? screen->FrameGraphCameraColor() : "SceneColor";
+	const char *sceneDepth = cameraTarget ? screen->FrameGraphCameraDepthStencil() : "SceneDepthStencil";
+	gbuffer = gbuffer && !cameraTarget;
+	depthWrite = depthWrite && sceneDepth != nullptr;
+
 	PassDesc sceneDesc;
 	sceneDesc.name = name;
 	sceneDesc.owner = "OpenGLFrameBuffer";
+	sceneDesc.keepAlive = keepAlive;
 	// Scene draws load the previous attachment contents for blending and depth
 	// testing. Record that logical dependency separately from the output bind,
 	// which remains an attachment write in the backend-use observer.
-	sceneDesc.reads.Push("SceneColor");
-	sceneDesc.writes = { "SceneColor" };
-	sceneDesc.uses.Push({ "SceneColor", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
+	sceneDesc.reads.Push(sceneColor);
+	sceneDesc.writes.Push(sceneColor);
+	sceneDesc.uses.Push({ sceneColor, FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
 	if (depthWrite)
 	{
-		sceneDesc.reads.Push("SceneDepthStencil");
-		sceneDesc.writes.Push("SceneDepthStencil");
-		sceneDesc.uses.Push({ "SceneDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment });
+		sceneDesc.reads.Push(sceneDepth);
+		sceneDesc.writes.Push(sceneDepth);
+		sceneDesc.uses.Push({ sceneDepth, FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment });
 	}
 	if (gbuffer)
 	{
@@ -737,14 +769,20 @@ void OpenGLFrameBuffer::BeginFrameGraphScenePass(const char *name, bool gbuffer,
 	}
 	int scenePass = screen->Graph().AddPass(sceneDesc);
 	screen->Graph().BeginBackendPass(scenePass);
-	screen->Resources().Touch("SceneColor", false);
-	screen->Resources().Touch("SceneColor", true);
-	screen->Graph().ObserveBackendUse("SceneColor", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
+	if (!cameraTarget)
+	{
+		screen->Resources().Touch(sceneColor, false);
+		screen->Resources().Touch(sceneColor, true);
+	}
+	screen->Graph().ObserveBackendUse(sceneColor, FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
 	if (depthWrite)
 	{
-		screen->Resources().Touch("SceneDepthStencil", false);
-		screen->Resources().Touch("SceneDepthStencil", true);
-		screen->Graph().ObserveBackendUse("SceneDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment);
+		if (!cameraTarget)
+		{
+			screen->Resources().Touch(sceneDepth, false);
+			screen->Resources().Touch(sceneDepth, true);
+		}
+		screen->Graph().ObserveBackendUse(sceneDepth, FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment);
 	}
 	if (gbuffer)
 	{

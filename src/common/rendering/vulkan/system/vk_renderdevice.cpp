@@ -36,6 +36,7 @@
 #include "hw_clock.h"
 #include "hw_vrmodes.h"
 #include "hw_cvars.h"
+#include "hw_material.h"
 #include "hw_skydome.h"
 #include "hwrenderer/data/hw_viewpointbuffer.h"
 #include "flatvertices.h"
@@ -182,6 +183,10 @@ void VulkanRenderDevice::InitializeState()
 
 	mSamplerManager.reset(new VkSamplerManager(this));
 	mTextureManager.reset(new VkTextureManager(this));
+	FMaterial::SetLayerCallback([](int layer, int translation) -> IHardwareTexture* {
+		auto framebuffer = static_cast<VulkanRenderDevice*>(screen);
+		return framebuffer->GetTextureManager()->GetPaletteTexture(translation, layer == 2);
+	});
 	mFramebufferManager.reset(new VkFramebufferManager(this));
 	mBufferManager.reset(new VkBufferManager(this));
 	mBufferManager->Init();
@@ -255,20 +260,24 @@ void VulkanRenderDevice::RenderTextureView(FCanvasTexture* tex, std::function<vo
 	mRenderState->SetRenderTarget(image, depthStencil->View.get(), image->Image->width, image->Image->height, VK_FORMAT_R8G8B8A8_UNORM, VK_SAMPLE_COUNT_1_BIT);
 
 	PassDesc desc;
-	desc.name = tex->Canvas ? "offscreen.canvas" : "offscreen.camera";
 	desc.owner = "VulkanRenderDevice";
-	desc.keepAlive = true;
 	if (tex->Canvas)
 	{
+		desc.name = "offscreen.canvas";
+		desc.keepAlive = true;
 		// Canvas draws may leave untouched pixels from the previous update.
 		desc.reads = { resourceName };
 		Graph().DeclareExternal(resourceName);
+		desc.writes = { resourceName };
+		desc.uses.Push({ resourceName, FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
+		int graphPass = Graph().AddPass(desc);
+		Graph().BeginBackendPass(graphPass);
+		Graph().ObserveBackendUse(resourceName, FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
 	}
-	desc.writes = { resourceName };
-	desc.uses.Push({ resourceName, FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
-	int graphPass = Graph().AddPass(desc);
-	Graph().BeginBackendPass(graphPass);
-	Graph().ObserveBackendUse(resourceName, FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
+	else
+	{
+		BeginFrameGraphCameraTarget(resourceName, depthStencil != nullptr);
+	}
 
 	IntRect bounds;
 	bounds.left = bounds.top = 0;
@@ -276,7 +285,10 @@ void VulkanRenderDevice::RenderTextureView(FCanvasTexture* tex, std::function<vo
 	bounds.height = min(tex->GetHeight(), image->Image->height);
 
 	renderFunc(bounds);
-	Graph().EndBackendPass();
+	if (tex->Canvas)
+		Graph().EndBackendPass();
+	else
+		EndFrameGraphCameraTarget();
 
 	mRenderState->EndRenderPass();
 
@@ -289,22 +301,30 @@ void VulkanRenderDevice::RenderTextureView(FCanvasTexture* tex, std::function<vo
 	tex->SetUpdated(true);
 }
 
-void VulkanRenderDevice::BeginFrameGraphScenePass(const char *name, bool gbuffer, bool depthWrite)
+void VulkanRenderDevice::BeginFrameGraphScenePass(const char *name, bool gbuffer,
+	bool depthWrite, bool keepAlive)
 {
+	const bool cameraTarget = HasFrameGraphCameraTarget();
+	const char *sceneColor = cameraTarget ? FrameGraphCameraColor() : "SceneColor";
+	const char *sceneDepth = cameraTarget ? FrameGraphCameraDepthStencil() : "SceneDepthStencil";
+	gbuffer = gbuffer && !cameraTarget;
+	depthWrite = depthWrite && sceneDepth != nullptr;
+
 	PassDesc sceneDesc;
 	sceneDesc.name = name;
 	sceneDesc.owner = "VulkanRenderDevice";
+	sceneDesc.keepAlive = keepAlive;
 	// Scene draws load the previous attachment contents for blending and depth
 	// testing. Record that logical dependency separately from the output bind,
 	// which remains an attachment write in the backend-use observer.
-	sceneDesc.reads.Push("SceneColor");
-	sceneDesc.writes = { "SceneColor" };
-	sceneDesc.uses.Push({ "SceneColor", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
+	sceneDesc.reads.Push(sceneColor);
+	sceneDesc.writes.Push(sceneColor);
+	sceneDesc.uses.Push({ sceneColor, FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
 	if (depthWrite)
 	{
-		sceneDesc.reads.Push("SceneDepthStencil");
-		sceneDesc.writes.Push("SceneDepthStencil");
-		sceneDesc.uses.Push({ "SceneDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment });
+		sceneDesc.reads.Push(sceneDepth);
+		sceneDesc.writes.Push(sceneDepth);
+		sceneDesc.uses.Push({ sceneDepth, FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment });
 	}
 	if (gbuffer)
 	{
@@ -322,14 +342,20 @@ void VulkanRenderDevice::BeginFrameGraphScenePass(const char *name, bool gbuffer
 	}
 	int scenePass = Graph().AddPass(sceneDesc);
 	Graph().BeginBackendPass(scenePass);
-	Resources().Touch("SceneColor", false);
-	Resources().Touch("SceneColor", true);
-	Graph().ObserveBackendUse("SceneColor", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
+	if (!cameraTarget)
+	{
+		Resources().Touch(sceneColor, false);
+		Resources().Touch(sceneColor, true);
+	}
+	Graph().ObserveBackendUse(sceneColor, FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
 	if (depthWrite)
 	{
-		Resources().Touch("SceneDepthStencil", false);
-		Resources().Touch("SceneDepthStencil", true);
-		Graph().ObserveBackendUse("SceneDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment);
+		if (!cameraTarget)
+		{
+			Resources().Touch(sceneDepth, false);
+			Resources().Touch(sceneDepth, true);
+		}
+		Graph().ObserveBackendUse(sceneDepth, FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment);
 	}
 	if (gbuffer)
 	{
@@ -433,6 +459,12 @@ void VulkanRenderDevice::BlurScene(float amount)
 
 void VulkanRenderDevice::UpdatePalette()
 {
+	if (mTextureManager && mTextureManager->HasPaletteTextures())
+	{
+		mCommands->WaitForCommands(true);
+		mDescriptorSetManager->ResetHWTextureSets();
+		mTextureManager->ClearPaletteTextures();
+	}
 	if (mPostprocess)
 		mPostprocess->ClearTonemapPalette();
 }
@@ -687,34 +719,11 @@ void VulkanRenderDevice::AmbientOccludeScene(float m5, const HWViewpointUniforms
 void VulkanRenderDevice::SetSceneRenderTarget(bool useSSAO)
 {
 	mRenderState->SetRenderTarget(&GetBuffers()->SceneColor, GetBuffers()->SceneDepthStencil.View.get(), GetBuffers()->GetWidth(), GetBuffers()->GetHeight(), VK_FORMAT_R16G16B16A16_SFLOAT, GetBuffers()->GetSceneSamples());
+}
 
-	PassDesc desc;
-	desc.name = "scene.target";
-	desc.owner = "VulkanRenderDevice";
-	desc.writes = { "SceneColor", "SceneDepthStencil" };
-	desc.uses.Push({ "SceneColor", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
-	desc.uses.Push({ "SceneDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment });
-	if (useSSAO)
-	{
-		desc.writes.Push("SceneFog");
-		desc.writes.Push("SceneNormal");
-		desc.uses.Push({ "SceneFog", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
-		desc.uses.Push({ "SceneNormal", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
-	}
-	int graphPass = Graph().AddPass(desc);
-	Graph().BeginBackendPass(graphPass);
-	Resources().Touch("SceneColor", true);
-	Graph().ObserveBackendUse("SceneColor", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
-	Resources().Touch("SceneDepthStencil", true);
-	Graph().ObserveBackendUse("SceneDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment);
-	if (useSSAO)
-	{
-		Resources().Touch("SceneFog", true);
-		Graph().ObserveBackendUse("SceneFog", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
-		Resources().Touch("SceneNormal", true);
-		Graph().ObserveBackendUse("SceneNormal", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
-	}
-	Graph().EndBackendPass();
+void VulkanRenderDevice::FlushSceneClear()
+{
+	mRenderState->FlushClear();
 }
 
 bool VulkanRenderDevice::RaytracingEnabled()

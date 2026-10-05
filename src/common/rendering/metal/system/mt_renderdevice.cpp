@@ -1082,23 +1082,33 @@ void MetalRenderDevice::SetSceneRenderTarget(bool useSSAO) {
   Graph().EndBackendPass();
 }
 void MetalRenderDevice::BeginFrameGraphScenePass(const char *name, bool gbuffer,
-                                                 bool depthWrite) {
+                                                 bool depthWrite,
+                                                 bool keepAlive) {
   auto *buffers = GetBuffers();
   if (!buffers)
     return;
 
-  const char *sceneColor = buffers->ResName(MtRenderBuffers::RES_SceneColor);
-  const bool multisampleScene = buffers->GetSceneSamples() > 1;
+  const bool cameraTarget = HasFrameGraphCameraTarget();
+  const char *sceneColor = cameraTarget
+                               ? FrameGraphCameraColor()
+                               : buffers->ResName(MtRenderBuffers::RES_SceneColor);
+  const bool multisampleScene =
+      !cameraTarget && buffers->GetSceneSamples() > 1;
   const char *sceneColorResolve =
       buffers->ResName(MtRenderBuffers::RES_SceneColorResolve);
-  const char *sceneDepth = buffers->ResName(MtRenderBuffers::RES_SceneDepth);
+  const char *sceneDepth = cameraTarget
+                               ? FrameGraphCameraDepthStencil()
+                               : buffers->ResName(MtRenderBuffers::RES_SceneDepth);
   const char *sceneFog = buffers->ResName(MtRenderBuffers::RES_SceneFog);
   const char *sceneNormal = buffers->ResName(MtRenderBuffers::RES_SceneNormal);
   const char *shadowMap = buffers->ShadowMapResourceName();
+  gbuffer = gbuffer && !cameraTarget;
+  depthWrite = depthWrite && sceneDepth != nullptr;
 
   PassDesc desc;
   desc.name = name;
   desc.owner = "MetalRenderDevice";
+  desc.keepAlive = keepAlive;
   // Scene draws load the previous attachment contents for blending and depth
   // testing. Record that logical dependency separately from the output bind,
   // which remains an attachment write in the backend-use observer.
@@ -1135,8 +1145,10 @@ void MetalRenderDevice::BeginFrameGraphScenePass(const char *name, bool gbuffer,
 
   int scenePass = Graph().AddPass(desc);
   Graph().BeginBackendPass(scenePass);
-  Resources().Touch(sceneColor, false);
-  Resources().Touch(sceneColor, true);
+  if (!cameraTarget) {
+    Resources().Touch(sceneColor, false);
+    Resources().Touch(sceneColor, true);
+  }
   Graph().ObserveBackendUse(sceneColor, FrameGraphAccess::Write,
                             FrameGraphUsage::ColorAttachment);
   if (multisampleScene) {
@@ -1145,8 +1157,10 @@ void MetalRenderDevice::BeginFrameGraphScenePass(const char *name, bool gbuffer,
                               FrameGraphUsage::ColorAttachment);
   }
   if (depthWrite) {
-    Resources().Touch(sceneDepth, false);
-    Resources().Touch(sceneDepth, true);
+    if (!cameraTarget) {
+      Resources().Touch(sceneDepth, false);
+      Resources().Touch(sceneDepth, true);
+    }
     Graph().ObserveBackendUse(sceneDepth, FrameGraphAccess::Write,
                               FrameGraphUsage::DepthStencilAttachment);
   }
@@ -1251,21 +1265,23 @@ void MetalRenderDevice::RenderTextureView(
       image->GetWidth(), image->GetHeight(), image->GetFormat(), 1);
 
   PassDesc desc;
-  desc.name = tex->Canvas ? "offscreen.canvas" : "offscreen.camera";
   desc.owner = "MetalRenderDevice";
-  desc.keepAlive = true;
   if (tex->Canvas) {
+    desc.name = "offscreen.canvas";
+    desc.keepAlive = true;
     // Canvas draws may leave untouched pixels from the previous update.
     desc.reads = {resourceName};
     Graph().DeclareExternal(resourceName);
+    desc.writes = {resourceName};
+    desc.uses.Push({resourceName, FrameGraphAccess::Write,
+                    FrameGraphUsage::ColorAttachment});
+    int graphPass = Graph().AddPass(desc);
+    Graph().BeginBackendPass(graphPass);
+    Graph().ObserveBackendUse(resourceName, FrameGraphAccess::Write,
+                              FrameGraphUsage::ColorAttachment);
+  } else {
+    BeginFrameGraphCameraTarget(resourceName, depthStencil != nullptr);
   }
-  desc.writes = {resourceName};
-  desc.uses.Push({resourceName, FrameGraphAccess::Write,
-                  FrameGraphUsage::ColorAttachment});
-  int graphPass = Graph().AddPass(desc);
-  Graph().BeginBackendPass(graphPass);
-  Graph().ObserveBackendUse(resourceName, FrameGraphAccess::Write,
-                            FrameGraphUsage::ColorAttachment);
   IntRect bounds;
   bounds.left = bounds.top = 0;
   bounds.width = min(tex->GetWidth(), image->GetWidth());
@@ -1274,7 +1290,10 @@ void MetalRenderDevice::RenderTextureView(
   mMtRenderState->SetInRenderTextureView(true);
   renderFunc(bounds);
   mMtRenderState->SetInRenderTextureView(false);
-  Graph().EndBackendPass();
+  if (tex->Canvas)
+    Graph().EndBackendPass();
+  else
+    EndFrameGraphCameraTarget();
 
   mMtRenderState->EndRenderPass();
   mMtRenderState->SetRenderTarget(oldTarget.Image, oldTarget.DepthStencil,

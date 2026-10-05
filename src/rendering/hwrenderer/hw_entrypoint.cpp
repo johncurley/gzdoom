@@ -110,13 +110,15 @@ sector_t* RenderViewpoint(FRenderViewpoint& mainvp, AActor* camera, IntRect* bou
 
 	R_SetupFrame(mainvp, r_viewwindow, camera);
 
-	if (mainview && toscreen && !(camera->Level->flags3 & LEVEL3_NOSHADOWMAP) && camera->Level->HasDynamicLights && gl_light_shadowmap && screen->allowSSBO() && (screen->hwcaps & RFL_SHADER_STORAGE_BUFFER))
+	const bool updateShadowMap = mainview && toscreen && !(camera->Level->flags3 & LEVEL3_NOSHADOWMAP) && camera->Level->HasDynamicLights && gl_light_shadowmap && screen->allowSSBO() && (screen->hwcaps & RFL_SHADER_STORAGE_BUFFER);
+	if (updateShadowMap)
 	{
 		screen->SetAABBTree(camera->Level->aabbTree);
 		screen->mShadowMap.SetCollectLights([=] {
 			CollectLights(camera->Level);
 		});
-		screen->UpdateShadowMap();
+		if (!screen->CanFlushSceneClear())
+			screen->UpdateShadowMap();
 	}
 	else
 	{
@@ -152,6 +154,19 @@ sector_t* RenderViewpoint(FRenderViewpoint& mainvp, AActor* camera, IntRect* bou
 		auto di = HWDrawInfo::StartDrawInfo(mainvp.ViewLevel, nullptr, mainvp, nullptr);
 		auto& vp = di->Viewpoint;
 
+		if (updateShadowMap && eye_ix == 0 && screen->CanFlushSceneClear())
+		{
+			di->Clear3DViewport(RenderState, mainview);
+			screen->FlushSceneClear();
+			screen->UpdateShadowMap();
+			// Shadow rendering can change the active target and viewport. Restore
+			// the scene target here; Set3DViewport reapplies the scene state next.
+			screen->SetSceneRenderTarget(gl_ssao != 0);
+		}
+		else
+		{
+			di->Clear3DViewport(RenderState, mainview);
+		}
 		di->Set3DViewport(RenderState);
 		di->SetViewArea();
 		auto cm = di->SetFullbrightFlags(mainview ? vp.camera->player : nullptr);

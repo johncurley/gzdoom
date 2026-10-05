@@ -24,9 +24,13 @@
     ],
     "savegame": "save01.zds"
   },
-  "_platform_note": "The keys above are the macOS reference values, kept as the defaults so nothing about that machine changes. `launch_<platform>` and `crossbackend_launch_<platform>` are merged over them by sys.platform, which is how the same configs.json drives the Linux box: different binary path (no .app bundle) and a different mod directory. The screenshot directory used to be a third such key; it is not any more, because run.py pins `screenshot_dir` as a CVAR to one path on every platform. Do not reintroduce a `screenshots` override -- run.py no longer reads it, so it would be silently ignored.",
+  "_platform_note": "The keys above are the macOS reference values, kept as the defaults so nothing about that machine changes. `launch_<platform>` and `crossbackend_launch_<platform>` are merged over them by sys.platform, which is how the same configs.json drives the Linux box: different binary path (no .app bundle), a different mod directory, and native startup arguments for the window size. The native POSIX backend reads -width/-height before opening its window; inherited +win_w/+win_h cvars do not size that window. The screenshot directory used to be a platform key; it is not any more, because run.py pins `screenshot_dir` as a CVAR to one path on every platform. Do not reintroduce a `screenshots` override -- run.py no longer reads it, so it would be silently ignored.",
   "launch_linux": {
     "binary": "build/gzdoom",
+    "startup_args": [
+      "-width", "800",
+      "-height", "600"
+    ],
     "files": [
       "~/.config/gzdoom/Ashes2063Enriched2_23.pk3"
     ]

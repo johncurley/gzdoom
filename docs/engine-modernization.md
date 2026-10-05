@@ -70,6 +70,26 @@ workloads. SPU-13 support is deferred while that project remains experimental.
 ## Track C: Simulation modernization
 
 - Profile and optimize VM dispatch, allocations, and native/script transitions.
+  - Begin after the active renderer milestones and their validation gates are
+    closed. Start with attribution, not a presumption that ZScript is the
+    bottleneck.
+    Use a repeatable gameplay route and read `stat think` alongside GPU timing
+    to distinguish simulation cost from renderer cost. `profilethinkers -t 20`
+    ranks thinker classes by total time; `acsprofile` reports ACS instruction
+    counts, not CPU time.
+  - Capture optimized builds with symbols in a sampling profiler before adding
+    per-function timers. Use Linux `perf`, macOS Instruments Time Profiler, or
+    Windows Performance Recorder/Analyzer to find hot stacks across native
+    code, the ZScript VM/JIT, ACS, allocation/GC, and render submission. Record
+    the route, mod set, settings, warm-up, sample window, and repeated results;
+    do not assume `demo1.lmp` is available.
+  - If sampling attributes material time to script execution, add focused
+    per-function CPU time and call-count instrumentation, then profile VM
+    dispatch, allocations, and native/script transitions separately. Keep the
+    instrumentation bounded and compare it against an uninstrumented control.
+  - Preserve the serial, ordered simulation contract. Only consider async
+    execution for isolated pure workloads after defining their deterministic
+    inputs and result handoff.
   - The ZScript JIT (`src/common/scripting/jit/`) is written entirely against
     asmjit's `X86Gp`/`X86Xmm` types with no ARM/AArch64 codepath or
     architecture guard found on audit (2026-07-10). Apple Silicon and any
@@ -85,36 +105,82 @@ workloads. SPU-13 support is deferred while that project remains experimental.
 - Do not transparently parallelize existing `Tick()` calls: scripts can observe
   ordered mutations, thinker insertion, destruction, list ordering, and RNG.
 
-## Track D: Per-operating-system optimization (future)
+## Track D: Platform optimization and parity
 
-Once the compute-shader postprocess conversion (Track A) covers the
-significant passes, and after the ARM64 JIT gap above can be validated on
-Apple Silicon, the next horizon is per-OS/per-architecture optimization work
-rather than per-rendering-backend work: e.g. the ARM64 JIT backend, and any
-platform-specific paths worth adding for Linux and Windows once the macOS
-Metal path is mature. Not yet broken into concrete steps — revisit once
-Tracks A/C above are further along.
+Intel Metal remains an active target while Apple Silicon is unavailable.
+Continue correctness work and measured Intel GPU tuning on the hardware that is
+available. Apple Silicon gates claims about TBDR scheduling, memory aliasing,
+and ARM64 runtime performance; it does not gate Intel Metal work.
 
-## Current milestone: frame graph foundations
+Keep Linux and Windows in the active platform loop alongside Metal. Shared
+OpenGL/Vulkan changes need Windows builds and runtime checks, and each native
+controller backend needs its own input and haptics validation. A build on one
+OS does not establish runtime parity on another. The next Windows step is a
+Visual Studio build and a recorded OpenGL/Vulkan runtime baseline, followed by
+controller checks when hardware is available.
 
-The resource registry, diagnostic pass graph, backend-use observations, and
-upload observations are implemented across Metal, OpenGL, and Vulkan. Linux
-GL/Vulkan runtime checks and observer-cost measurements closed on 2026-09-24;
-see [`handoff-linux-2026-09-24.md`](handoff-linux-2026-09-24.md). The graph
-does not yet drive execution. Scene material reads now attach to active
-main-view scene passes across GL, Vulkan, and Metal; offscreen-only scene
-traversals remain outside those scopes.
+Controller capability is backend- and device-dependent: Linux evdev exposes
+force feedback only when the event node is writable and advertises rumble;
+the macOS Cocoa GameController path includes haptics for supported devices on
+macOS 11+, while the older IOKit path reports none; Windows XInput has rumble,
+while DirectInput reports none. Record the actual backend, OS, controller,
+connection type, and tested capabilities for each result.
 
-The CPU graph now declares required outputs, retains explicitly marked
-side-effect passes, reports dead-pass candidates, and reports within-frame
-lifetimes for transient registry resources. These remain diagnostic, and the
-output/lifetime reports plus the new material-read edges still need live
-validation on GL/Vulkan frames. Complete that validation before moving a
-bounded postprocess chain to graph-driven execution. Backend barriers and
-scheduling follow that proof.
-Transient aliasing and pass culling depend on complete, validated outputs,
-reads, and lifetimes. Metal/TBDR policy remains gated on Apple Silicon
-hardware.
+Haiku is a later portability target. Start with a platform/API audit and a
+small build probe after the current Linux and Windows baselines are established;
+coordinate contribution form with Haiku and GZDoom maintainers before proposing
+upstream changes. Revisit this work as the platform APIs and maintainers' needs
+become concrete.
+
+## Current milestone: frame graph coverage and bounded replay
+
+The resource registry, diagnostic pass graph, backend-use and upload
+observations are implemented across Metal, OpenGL, and Vulkan. The CPU graph
+tracks required outputs, keep-alive passes, dead-pass candidates, transient
+lifetimes, sampled material reads, and attachment-preservation dependencies.
+See [`handoff-framegraph-2026-09-28.md`](handoff-framegraph-2026-09-28.md) for
+the current evidence and [`handoff-linux-2026-09-29.md`](handoff-linux-2026-09-29.md)
+for Linux follow-ups.
+
+Graph replay now covers bounded Pass2 work, exposure, bloom, and the shared
+raster AO path. GL/Vulkan graph-on versus immediate captures were byte-identical
+for the tested routes; Intel Metal replay also matched its immediate capture.
+The computed order still matches the authored draw order because current
+dependencies point forward. This is graph-controlled replay, not a pass-sorting
+policy or a performance claim.
+
+Live coverage includes GL/Vulkan main-view effects, AO qualities 1–3, debug and
+sample-count routes, HUD/2D UI, offscreen canvas/camera producers, the Vulkan
+indexed non-mip upload route, and shadow-map activation. Intel Metal coverage
+includes effects, compute-AO conditions, canvas/camera producers, raster-AO
+fallback, and 4× scene targets. The target-specific camera clear/opaque/
+portal-translucent scopes still need an Intel Metal rebuild and live fixture;
+higher Metal sample counts and Apple Silicon runtime behavior also remain open.
+Linux allocated-sample AO routing closed on 2026-10-02; Linux quality-1/2
+replay parity closed on 2026-10-03.
+
+The matched Linux Vulkan MAP06→MAP07 upload profile closed on 2026-10-05.
+`CreateTexture` accumulated about 34 ms across the transition with no explicit
+validation-layer override, versus 123 ms with Khronos validation forced; the
+100 ms stall trace reported no map-transition loop above threshold. No async
+upload or mipmap change is justified without a user-visible hitch in the
+normal layer configuration. See
+[`handoff-linux-2026-09-29.md`](handoff-linux-2026-09-29.md).
+
+Camera-target identities and clear/opaque/portal-translucent scopes are now
+recorded, with GL and Vulkan live fixtures; Intel Metal still needs a rebuild
+and fixture. The direct-use and cross-frame input audit found and fixed the
+retained `ShadowMap` boundary; the remaining explicitly persistent inputs and
+scene-material fallbacks already have external declarations. The bounded
+`scene.target`-before-`shadowmap` ordering experiment is complete on GL and
+Vulkan with same-backend pixel-identical controls. Any further ordering change
+needs a new candidate, a stable baseline, image equivalence, and a measurable
+benefit. The 2026-10-04 RX 550 A/B found no measurable frame-time benefit on
+either backend; results are recorded in
+[`handoff-framegraph-2026-09-28.md`](handoff-framegraph-2026-09-28.md). Do not
+enable culling or transient aliasing until output reachability, resource reads,
+lifetimes, and keep-alive roots are complete and validated.
+Metal/TBDR policy remains gated on Apple Silicon hardware.
 
 ## Deferred milestone: compute postprocess
 
@@ -151,10 +217,27 @@ resulting sub-draw.
 
 Before implementation:
 
-1. Compare `gl_sort_textures 0` and `1` in identical stable views.
-2. Instrument batch-break and sub-draw reasons.
-3. Count unique textures, complete batch keys, and per-wall stream states.
-4. Check masked walls, portals, camera textures, and compatibility maps.
+1. Compare `gl_sort_textures 0` and `1` in identical stable views. The
+   matched 2026-10-05 Linux RX 550 follow-up found a 28.7% lower mean interval
+   in Ashes MAP01 and an 8.2% lower interval in DOOM2 MAP02 under
+   `-compatmode 3`, both at 1280×720. The busy view contains masked walls and a
+   portal; the compatibility spawn view did not expose a masked surface. See
+   [`handoff-linux-2026-09-29.md`](handoff-linux-2026-09-29.md). These are two
+   views on one machine and do not justify changing the default.
+2. Extend draw-state accounting to pipeline, sampler, and per-wall stream
+   state on representative masked-wall, portal, camera-texture, and
+   compatibility-map views. The Linux follow-up reduced sampler calls and
+   material-key runs, while draw submissions stayed fixed and wall-stream
+   breaks fell only modestly. Program-pointer changes were counted, but a full
+   pipeline key was not. The camera producer was observed only on startup, so
+   sustained consumer coverage remains open; see the Linux handoff.
+3. Count complete batch keys and sub-draw reasons in those views. The source
+   audit found and corrected a Metal primitive-key mismatch that flushed each
+   wall fan: the pending batch stores `DT_Triangles` after fan conversion, but
+   the flush checks compared it with the original `DT_TriangleFan`. The helper
+   now normalizes both checks. The Linux build does not compile Metal; validate
+   the patch on Intel Metal and collect actual batch sizes and flush reasons
+   using [`handoff-macos-2026-10-04.md`](handoff-macos-2026-10-04.md).
 
 The likely long-term solution is a GPU `SurfaceData` table indexed by a
 per-vertex or per-primitive surface ID. Moving normals, light indices, fog,
@@ -165,18 +248,37 @@ stabilization change.
 
 ## Near-term order
 
-1. Validate scene-material edges, output reachability, dead-pass candidates,
-   and transient lifetimes on GL and Vulkan with real rendered frames; include
-   the available Metal run as an additional backend check.
-2. Audit keep-alive roots for external side effects and cross-frame resources.
-3. Migrate the bounded `Pass2` chain to graph-driven execution and implement
-   the required backend hazards and synchronization.
-4. Extend execution incrementally to bloom/exposure, then AO; keep transient
-   aliasing and culling behind validated lifetimes and outputs.
-5. Revisit Metal execution policy and ARM64 JIT work when Apple Silicon is
-   available for runtime validation.
-6. Prototype compute light-list construction.
-7. Start the standalone deterministic visibility CPU reference.
+1. Camera target identities and clear/opaque/portal-translucent graph scopes
+   are implemented. GL and Vulkan live fixtures pass; rebuild and repeat the
+   camera fixture on Intel Metal, as recorded in
+   [`frame-graph-camera-resources.md`](frame-graph-camera-resources.md).
+2. The source audit of keep-alive roots, external side effects, and
+   cross-frame inputs is complete for the reviewed paths. The persistent
+   `ShadowMap` boundary has positive, negative, and same-frame-producer
+   self-test coverage. Rebuild and validate the conditional shadow-map route
+   on Intel Metal using
+   [`handoff-macos-2026-10-04.md`](handoff-macos-2026-10-04.md).
+3. The bounded `scene.target`-before-`shadowmap` order experiment is complete
+   on GL and Vulkan, with same-backend pixel-identical controls. Require a new
+   candidate and a measurable benefit before another order change. Its Linux
+   RX 550 A/B found no measurable frame-time benefit; see
+   [`handoff-framegraph-2026-09-28.md`](handoff-framegraph-2026-09-28.md).
+4. Rebuild and validate the Metal wall-fan batch correction on Intel macOS,
+   capturing batch size, sub-draw count, and flush reasons in a masked/portal
+   view. Then complete the batch-key audit. The matched 1280×720 Linux
+   measurements, temporary state probe, camera fixture limitation, source fix,
+   and Mac validation steps are recorded in
+   [`handoff-linux-2026-09-29.md`](handoff-linux-2026-09-29.md) and
+   [`handoff-macos-2026-10-04.md`](handoff-macos-2026-10-04.md). Do not change
+   sort behavior or defaults based on the current Linux results alone.
+5. Revisit Metal/TBDR ordering policy and ARM64 JIT work when Apple Silicon is
+   available for runtime validation; keep Intel Metal correctness and measured
+   tuning active in the meantime.
+6. Establish the Windows Visual Studio build and OpenGL/Vulkan runtime baseline,
+   then validate XInput/DirectInput input and haptics independently from Linux
+   and macOS.
+7. Prototype compute light-list construction.
+8. Start the standalone deterministic visibility CPU reference.
 
 ## Follow-on (not started): public developer wiki
 

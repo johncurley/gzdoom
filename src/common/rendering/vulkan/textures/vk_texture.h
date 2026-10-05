@@ -3,7 +3,9 @@
 
 #include <zvulkan/vulkanobjects.h>
 #include "vulkan/textures/vk_imagetransition.h"
+#include "hw_ihwtexture.h"
 #include <list>
+#include <unordered_map>
 
 class VulkanRenderDevice;
 class VkHardwareTexture;
@@ -24,6 +26,9 @@ public:
 	void BeginFrame();
 
 	void SetLightmap(int LMTextureSize, int LMTextureCount, const TArray<uint16_t>& LMTextureData);
+	IHardwareTexture *GetPaletteTexture(int translation, bool highlight);
+	bool HasPaletteTextures() const { return !PaletteTextures.empty(); }
+	void ClearPaletteTextures();
 
 	VkTextureImage* GetTexture(const PPTextureType& type, PPTexture* tex);
 	VkFormat GetTextureFormat(PPTexture* texture);
@@ -58,6 +63,7 @@ private:
 
 	std::list<VkHardwareTexture*> Textures;
 	std::list<VkPPTexture*> PPTextures;
+	std::unordered_map<uint64_t, std::unique_ptr<VkHardwareTexture>> PaletteTextures;
 
 	std::unique_ptr<VulkanImage> NullTexture;
 	std::unique_ptr<VulkanImageView> NullTextureView;

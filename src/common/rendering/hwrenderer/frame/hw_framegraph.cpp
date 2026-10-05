@@ -73,6 +73,7 @@ void FrameGraph::Reset()
 	mBackendObserved.Clear();
 	mObservedUses.Clear();
 	mOwnedSceneReadNames.Clear();
+	mOwnedResourceNames.Clear();
 	mResourceReads.Clear();
 	mActivePass = -1;
 }
@@ -82,6 +83,15 @@ int FrameGraph::AddPass(const PassDesc &desc)
 	int index = (int)mPasses.Push(desc);
 	mBackendObserved.Push(0);
 	return index;
+}
+
+const char *FrameGraph::MakeOwnedResourceName(const char *base, const char *suffix)
+{
+	if (!base || !suffix)
+		return nullptr;
+	int index = mOwnedResourceNames.Reserve(1);
+	mOwnedResourceNames[index].AppendFormat("%s%s", base, suffix);
+	return mOwnedResourceNames[index].GetChars();
 }
 
 void FrameGraph::DeclareExternal(const char *name)
@@ -763,6 +773,60 @@ CCMD(r_framegraph_selftest)
 		hazardGraph.Order()[0] == 0 && hazardGraph.Order()[1] == 1 &&
 		hazardGraph.Order()[2] == 2;
 
+	// A persistent shadow map can be read in a frame that does not rebuild it.
+	// Declaring the retained value external must permit that read, while a
+	// same-frame producer must still supply the read through a RAW edge. The
+	// runtime command adds external declarations after frame pass recording.
+	FrameGraph retainedShadowMapGraph;
+	PassDesc retainedShadowRead;
+	retainedShadowRead.name = "scene.opaque";
+	retainedShadowRead.owner = "selftest";
+	retainedShadowRead.reads.Push("ShadowMap");
+	retainedShadowRead.writes.Push("Backbuffer");
+	retainedShadowMapGraph.AddPass(retainedShadowRead);
+	retainedShadowMapGraph.DeclareOutput("Backbuffer");
+	retainedShadowMapGraph.DeclareExternal("ShadowMap");
+	FString retainedShadowMapReport;
+	bool retainedShadowMapOK = retainedShadowMapGraph.Build(&retainedShadowMapReport) &&
+		retainedShadowMapGraph.EdgeCount() == 0 &&
+		retainedShadowMapGraph.DeadPassCandidates().Size() == 0;
+
+	FrameGraph missingShadowMapExternalGraph;
+	PassDesc missingShadowExternalRead;
+	missingShadowExternalRead.name = "scene.opaque";
+	missingShadowExternalRead.owner = "selftest";
+	missingShadowExternalRead.reads.Push("ShadowMap");
+	missingShadowExternalRead.writes.Push("Backbuffer");
+	missingShadowMapExternalGraph.AddPass(missingShadowExternalRead);
+	missingShadowMapExternalGraph.DeclareOutput("Backbuffer");
+	FString missingShadowMapExternalReport;
+	bool missingShadowMapExternalDetected =
+		!missingShadowMapExternalGraph.Build(&missingShadowMapExternalReport) &&
+		strstr(missingShadowMapExternalReport.GetChars(),
+			"reads 'ShadowMap' before any pass writes it and it isn't declared external") != nullptr;
+
+	FrameGraph producedShadowMapGraph;
+	PassDesc shadowMapProducer;
+	shadowMapProducer.name = "shadowmap";
+	shadowMapProducer.owner = "selftest";
+	shadowMapProducer.writes.Push("ShadowMap");
+	producedShadowMapGraph.AddPass(shadowMapProducer);
+	PassDesc producedShadowRead;
+	producedShadowRead.name = "scene.opaque";
+	producedShadowRead.owner = "selftest";
+	producedShadowRead.reads.Push("ShadowMap");
+	producedShadowRead.writes.Push("Backbuffer");
+	producedShadowMapGraph.AddPass(producedShadowRead);
+	producedShadowMapGraph.DeclareOutput("Backbuffer");
+	producedShadowMapGraph.DeclareExternal("ShadowMap");
+	FString producedShadowMapReport;
+	bool producedShadowMapOK = producedShadowMapGraph.Build(&producedShadowMapReport) &&
+		producedShadowMapGraph.EdgeCount() == 1 &&
+		producedShadowMapGraph.Order().Size() == 2 &&
+		producedShadowMapGraph.Order()[0] == 0 &&
+		producedShadowMapGraph.Order()[1] == 1 &&
+		producedShadowMapGraph.DeadPassCandidates().Size() == 0;
+
 	// Exercise the first backend-use contract independently of the live Vulkan
 	// path: declared uses must agree with the read/write roles, and the backend
 	// observation hooks must match them exactly.
@@ -1014,9 +1078,9 @@ CCMD(r_framegraph_selftest)
 		multisampleResolveGraph.DeadPassCandidates().Size() == 0;
 
 	// Offscreen texture updates happen before the main view, and may be read by
-	// either that view or a later 2D overlay. Ensure the shared sampled-texture
-	// hook attaches reads to offscreen and UI scopes, including a canvas target
-	// whose old pixels are preserved by the update.
+	// either that view or a later 2D overlay. Ensure canvas preservation remains
+	// intact, camera clear/scene phases chain through both attachments, and
+	// sampled-texture reads attach to the consuming offscreen/UI scope.
 	FrameGraph offscreenGraph;
 	offscreenGraph.DeclareExternal("CanvasTexture");
 	PassDesc canvasUpdate;
@@ -1026,13 +1090,63 @@ CCMD(r_framegraph_selftest)
 	canvasUpdate.writes = { "CanvasTexture" };
 	canvasUpdate.keepAlive = true;
 	offscreenGraph.AddPass(canvasUpdate);
-	PassDesc cameraUpdate;
-	cameraUpdate.name = "offscreen.camera";
-	cameraUpdate.owner = "selftest";
-	cameraUpdate.writes = { "CameraTexture" };
-	int cameraPassIndex = offscreenGraph.AddPass(cameraUpdate);
-	offscreenGraph.BeginBackendPass(cameraPassIndex);
+	const char *cameraDepth = offscreenGraph.MakeOwnedResourceName(
+		"CameraTexture", ".DepthStencil");
+	const char *otherCameraDepth = offscreenGraph.MakeOwnedResourceName(
+		"OtherCameraTexture", ".DepthStencil");
+	bool cameraDepthNamesStable =
+		strcmp(cameraDepth, "CameraTexture.DepthStencil") == 0 &&
+		strcmp(otherCameraDepth, "OtherCameraTexture.DepthStencil") == 0 &&
+		strcmp(cameraDepth, otherCameraDepth) != 0;
+	PassDesc cameraClear;
+	cameraClear.name = "offscreen.camera.clear";
+	cameraClear.owner = "selftest";
+	cameraClear.writes = { "CameraTexture", cameraDepth };
+	cameraClear.uses.Push({ "CameraTexture", FrameGraphAccess::Write,
+		FrameGraphUsage::ColorAttachment });
+	cameraClear.uses.Push({ cameraDepth, FrameGraphAccess::Write,
+		FrameGraphUsage::DepthStencilAttachment });
+	int cameraClearIndex = offscreenGraph.AddPass(cameraClear);
+	offscreenGraph.BeginBackendPass(cameraClearIndex);
+	offscreenGraph.ObserveBackendUse("CameraTexture", FrameGraphAccess::Write,
+		FrameGraphUsage::ColorAttachment);
+	offscreenGraph.ObserveBackendUse(cameraDepth, FrameGraphAccess::Write,
+		FrameGraphUsage::DepthStencilAttachment);
+	offscreenGraph.EndBackendPass();
+	PassDesc cameraOpaque;
+	cameraOpaque.name = "offscreen.camera.opaque";
+	cameraOpaque.owner = "selftest";
+	cameraOpaque.reads = { "CameraTexture", cameraDepth };
+	cameraOpaque.writes = { "CameraTexture", cameraDepth };
+	cameraOpaque.uses.Push({ "CameraTexture", FrameGraphAccess::Write,
+		FrameGraphUsage::ColorAttachment });
+	cameraOpaque.uses.Push({ cameraDepth, FrameGraphAccess::Write,
+		FrameGraphUsage::DepthStencilAttachment });
+	int cameraOpaqueIndex = offscreenGraph.AddPass(cameraOpaque);
+	offscreenGraph.BeginBackendPass(cameraOpaqueIndex);
+	offscreenGraph.ObserveBackendUse("CameraTexture", FrameGraphAccess::Write,
+		FrameGraphUsage::ColorAttachment);
+	offscreenGraph.ObserveBackendUse(cameraDepth, FrameGraphAccess::Write,
+		FrameGraphUsage::DepthStencilAttachment);
 	offscreenGraph.ObserveSceneMaterialRead("WorldMaterial");
+	offscreenGraph.EndBackendPass();
+	PassDesc cameraPortalTranslucent;
+	cameraPortalTranslucent.name = "offscreen.camera.portal_translucent";
+	cameraPortalTranslucent.owner = "selftest";
+	cameraPortalTranslucent.reads = { "CameraTexture", cameraDepth };
+	cameraPortalTranslucent.writes = { "CameraTexture", cameraDepth };
+	cameraPortalTranslucent.uses.Push({ "CameraTexture", FrameGraphAccess::Write,
+		FrameGraphUsage::ColorAttachment });
+	cameraPortalTranslucent.uses.Push({ cameraDepth, FrameGraphAccess::Write,
+		FrameGraphUsage::DepthStencilAttachment });
+	cameraPortalTranslucent.keepAlive = true;
+	int cameraPortalIndex = offscreenGraph.AddPass(cameraPortalTranslucent);
+	offscreenGraph.BeginBackendPass(cameraPortalIndex);
+	offscreenGraph.ObserveBackendUse("CameraTexture", FrameGraphAccess::Write,
+		FrameGraphUsage::ColorAttachment);
+	offscreenGraph.ObserveBackendUse(cameraDepth, FrameGraphAccess::Write,
+		FrameGraphUsage::DepthStencilAttachment);
+	offscreenGraph.ObserveSceneMaterialRead("PortalMaterial");
 	offscreenGraph.EndBackendPass();
 	PassDesc overlay;
 	overlay.name = "ui.2d";
@@ -1058,10 +1172,22 @@ CCMD(r_framegraph_selftest)
 	offscreenGraph.DeclareOutput("Backbuffer");
 	FString offscreenReport;
 	bool offscreenOK = offscreenGraph.Build(&offscreenReport) &&
-		offscreenGraph.Pass(cameraPassIndex).reads.Size() == 1 &&
-		strcmp(offscreenGraph.Pass(cameraPassIndex).reads[0], "WorldMaterial") == 0 &&
+		cameraDepthNamesStable &&
+		offscreenGraph.Pass(cameraClearIndex).writes.Size() == 2 &&
+		strcmp(offscreenGraph.Pass(cameraClearIndex).writes[0], "CameraTexture") == 0 &&
+		strcmp(offscreenGraph.Pass(cameraClearIndex).writes[1], cameraDepth) == 0 &&
+		offscreenGraph.Pass(cameraOpaqueIndex).writes.Size() == 2 &&
+		strcmp(offscreenGraph.Pass(cameraOpaqueIndex).writes[0], "CameraTexture") == 0 &&
+		strcmp(offscreenGraph.Pass(cameraOpaqueIndex).writes[1], cameraDepth) == 0 &&
+		offscreenGraph.Pass(cameraOpaqueIndex).reads.Size() == 3 &&
+		strcmp(offscreenGraph.Pass(cameraOpaqueIndex).reads[2], "WorldMaterial") == 0 &&
+		offscreenGraph.Pass(cameraPortalIndex).writes.Size() == 2 &&
+		strcmp(offscreenGraph.Pass(cameraPortalIndex).writes[0], "CameraTexture") == 0 &&
+		strcmp(offscreenGraph.Pass(cameraPortalIndex).writes[1], cameraDepth) == 0 &&
+		offscreenGraph.Pass(cameraPortalIndex).reads.Size() == 3 &&
+		strcmp(offscreenGraph.Pass(cameraPortalIndex).reads[2], "PortalMaterial") == 0 &&
 		offscreenGraph.Pass(overlayPassIndex).reads.Size() == 3 &&
-		offscreenGraph.EdgeCount() == 3 &&
+		offscreenGraph.EdgeCount() >= 6 &&
 		offscreenGraph.DeadPassCandidates().Size() == 0;
 
 	// Negative control: omit the translucent attachment's implicit read and
@@ -1273,7 +1399,9 @@ CCMD(r_framegraph_selftest)
 		aoComputeReportedDead |= strcmp(missingAOCompositeGraph.Pass(passIndex).name, "ssao.compute") == 0;
 	missingAOCompositeDetected = missingAOCompositeDetected && aoComputeReportedDead;
 
-	Printf(ok && orderMatchesDeclaration && hazardsOK && useOK && aliasOK && customOK && badDetected &&
+	Printf(ok && orderMatchesDeclaration && hazardsOK && retainedShadowMapOK &&
+		missingShadowMapExternalDetected &&
+		producedShadowMapOK && useOK && aliasOK && customOK && badDetected &&
 		uploadOK && badUploadDetected && livenessOK && missingOutputDetected && wipeOK &&
 		attachmentOK && missingAttachmentReadDetected && multisampleResolveOK &&
 		computeBloomLive &&
@@ -1284,6 +1412,15 @@ CCMD(r_framegraph_selftest)
 	if (!hazardsOK)
 		Printf("RAW/WAR/WAW selftest failed: edges=%d report=%s\n",
 			hazardGraph.EdgeCount(), hazardReport.GetChars());
+	if (!retainedShadowMapOK)
+		Printf("retained ShadowMap input selftest failed: edges=%d report=%s\n",
+			retainedShadowMapGraph.EdgeCount(), retainedShadowMapReport.GetChars());
+	if (!missingShadowMapExternalDetected)
+		Printf("missing ShadowMap external negative control failed: report=%s\n",
+			missingShadowMapExternalReport.GetChars());
+	if (!producedShadowMapOK)
+		Printf("same-frame ShadowMap producer selftest failed: edges=%d report=%s\n",
+			producedShadowMapGraph.EdgeCount(), producedShadowMapReport.GetChars());
 	if (!offscreenOK)
 		Printf("offscreen/UI texture-read selftest failed: edges=%d report=%s\n",
 			offscreenGraph.EdgeCount(), offscreenReport.GetChars());
@@ -1321,6 +1458,7 @@ CCMD(r_framegraph)
 	graph.DeclareExternal("EyeTexture[1]");
 	graph.DeclareExternal("PaletteTexture");
 	graph.DeclareExternal("Exposure.Camera"); // persistent value read by blended adaptation
+	graph.DeclareExternal("ShadowMap"); // reused when no shadow producer runs this frame
 	graph.DeclareExternal("Backbuffer"); // prior contents may be consumed by a blended present
 	graph.DeclareExternal("AO.RandomTexture0");
 	graph.DeclareExternal("AO.RandomTexture1");

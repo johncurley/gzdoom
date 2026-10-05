@@ -255,6 +255,7 @@ public:
 	void RenderPortal(HWPortal *p, FRenderState &state, bool usestencil);
 	void EndDrawScene(sector_t * viewsector, FRenderState &state);
 	void DrawEndScene2D(sector_t * viewsector, FRenderState &state);
+	void Clear3DViewport(FRenderState &state, bool graphSceneTarget);
 	void Set3DViewport(FRenderState &state);
 	void ProcessScene(bool toscreen);
 

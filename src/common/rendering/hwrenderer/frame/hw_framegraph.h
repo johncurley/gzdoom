@@ -139,6 +139,11 @@ public:
 	// reporting. Imported and persistent resources must not be declared transient.
 	void DeclareTransient(const char *name);
 
+	// Makes a derived name stable until Reset(). Pass descriptions retain name
+	// pointers, so callback-local strings are not safe when multiple targets are
+	// recorded in one frame.
+	const char *MakeOwnedResourceName(const char *base, const char *suffix);
+
 	// Declares two names as the same physical resource for dependency
 	// validation. This is needed for backend layouts that expose one object
 	// under multiple stable names, such as GL's non-MSAA SceneColor /
@@ -221,6 +226,7 @@ private:
 	TArray<ObservedUse> mObservedUses;
 	TArray<UploadObservation> mUploads;
 	TArray<FString> mOwnedSceneReadNames;
+	TArray<FString> mOwnedResourceNames;
 	TMap<FString, uint64_t> mResourceReads;
 	uint64_t mObservationSequence = 0;
 	int mActivePass = -1;

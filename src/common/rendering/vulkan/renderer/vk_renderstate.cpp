@@ -138,6 +138,18 @@ void VkRenderState::Clear(int targets)
 	EndRenderPass();
 }
 
+void VkRenderState::FlushClear()
+{
+	if (mClearTargets == 0 || !mRenderTarget.Image)
+		return;
+
+	// A render pass with no draws consumes the pending clear through its
+	// attachment load operations. Keep it on the normal draw command stream.
+	mCommandBuffer = fb->GetCommands()->GetDrawCommands();
+	BeginRenderPass(mCommandBuffer);
+	EndRenderPass();
+}
+
 void VkRenderState::EnableStencil(bool on)
 {
 	mStencilTest = on;

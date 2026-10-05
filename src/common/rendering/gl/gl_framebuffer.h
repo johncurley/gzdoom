@@ -5,6 +5,7 @@
 #include "m_png.h"
 
 #include <memory>
+#include <unordered_map>
 
 namespace OpenGLRenderer
 {
@@ -34,7 +35,10 @@ public:
 	void FirstEye() override;
 	void NextEye(int eyecount) override;
 	void SetSceneRenderTarget(bool useSSAO) override;
-	void BeginFrameGraphScenePass(const char *name, bool gbuffer, bool depthWrite) override;
+	bool CanFlushSceneClear() const override { return true; }
+	void FlushSceneClear() override {}
+	void BeginFrameGraphScenePass(const char *name, bool gbuffer, bool depthWrite,
+		bool keepAlive) override;
 	void EndFrameGraphScenePass() override;
 	void UpdateShadowMap() override;
 	void WaitForCommands(bool finish) override;
@@ -47,6 +51,7 @@ public:
 	const char* DeviceName() const override;
 	void SetTextureFilterMode() override;
 	IHardwareTexture *CreateHardwareTexture(int numchannels) override;
+	IHardwareTexture *GetPaletteTexture(int translation, bool highlight);
 	void PrecacheMaterial(FMaterial *mat, int translation) override;
 	void BeginFrame() override;
 	void SetViewportRects(IntRect *bounds) override;
@@ -90,6 +95,7 @@ private:
 	TArray<uint8_t> mScreenshotPixels;
 	int mScreenshotWidth = 0;
 	int mScreenshotHeight = 0;
+	std::unordered_map<uint64_t, std::unique_ptr<FHardwareTexture>> mPaletteTextures;
 };
 
 }

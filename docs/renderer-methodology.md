@@ -90,6 +90,9 @@ never exercises what a renderer does badly while the camera moves. This is why
 4. **Discard the first launch after any configuration change.** It runs cold
    shader/PSO compilation, and `win_w`/`win_h` apply *after* the window is sized,
    so the first capture can come back at the wrong resolution entirely.
+   The native POSIX backend does not use those window cvars for initial sizing;
+   pass `-width W -height H` as startup arguments there. `tools/matrix/configs.json`
+   pins 800×600 this way for Linux while preserving the macOS setup.
 5. **Two launches per arm, byte-identical, before comparing arms.** If an arm
    cannot reproduce itself, its differences from another arm are noise wearing a
    finding's clothes.

@@ -1001,14 +1001,75 @@ void HWDrawInfo::DrawEndScene2D(sector_t * viewsector, FRenderState &state)
 //
 //-----------------------------------------------------------------------------
 
-void HWDrawInfo::Set3DViewport(FRenderState &state)
+void HWDrawInfo::Clear3DViewport(FRenderState &state, bool graphSceneTarget)
 {
 	// Always clear all buffers with scissor test disabled.
 	// This is faster on newer hardware because it allows the GPU to skip
 	// reading from slower memory where the full buffers are stored.
 	state.SetScissor(0, 0, -1, -1);
-	state.Clear(CT_Color | CT_Depth | CT_Stencil);
+	if (graphSceneTarget)
+	{
+		const bool gbuffer = state.GetPassType() == GBUFFER_PASS;
+		PassDesc desc;
+		desc.name = "scene.target";
+		desc.owner = "HWDrawInfo::Clear3DViewport";
+		desc.writes = { "SceneColor", "SceneDepthStencil" };
+		desc.uses.Push({ "SceneColor", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
+		desc.uses.Push({ "SceneDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment });
+		if (gbuffer)
+		{
+			desc.writes.Push("SceneFog");
+			desc.writes.Push("SceneNormal");
+			desc.uses.Push({ "SceneFog", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
+			desc.uses.Push({ "SceneNormal", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
+		}
+		const int graphPass = screen->Graph().AddPass(desc);
+		screen->Graph().BeginBackendPass(graphPass);
+		screen->Resources().Touch("SceneColor", true);
+		screen->Graph().ObserveBackendUse("SceneColor", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
+		screen->Resources().Touch("SceneDepthStencil", true);
+		screen->Graph().ObserveBackendUse("SceneDepthStencil", FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment);
+		if (gbuffer)
+		{
+			screen->Resources().Touch("SceneFog", true);
+			screen->Graph().ObserveBackendUse("SceneFog", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
+			screen->Resources().Touch("SceneNormal", true);
+			screen->Graph().ObserveBackendUse("SceneNormal", FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
+		}
+		state.Clear(CT_Color | CT_Depth | CT_Stencil);
+		screen->Graph().EndBackendPass();
+	}
+	else if (screen->HasFrameGraphCameraTarget())
+	{
+		const char *color = screen->FrameGraphCameraColor();
+		const char *depthStencil = screen->FrameGraphCameraDepthStencil();
+		PassDesc desc;
+		desc.name = "offscreen.camera.clear";
+		desc.owner = "HWDrawInfo::Clear3DViewport";
+		desc.writes.Push(color);
+		desc.uses.Push({ color, FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment });
+		if (depthStencil)
+		{
+			desc.writes.Push(depthStencil);
+			desc.uses.Push({ depthStencil, FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment });
+		}
+		const int graphPass = screen->Graph().AddPass(desc);
+		screen->Graph().BeginBackendPass(graphPass);
+		screen->Graph().ObserveBackendUse(color, FrameGraphAccess::Write, FrameGraphUsage::ColorAttachment);
+		if (depthStencil)
+			screen->Graph().ObserveBackendUse(depthStencil, FrameGraphAccess::Write, FrameGraphUsage::DepthStencilAttachment);
+		state.Clear(CT_Color | CT_Depth | CT_Stencil);
+		screen->Graph().EndBackendPass();
+	}
+	else
+	{
+		state.Clear(CT_Color | CT_Depth | CT_Stencil);
+	}
+}
 
+
+void HWDrawInfo::Set3DViewport(FRenderState &state)
+{
 	const auto &bounds = screen->mSceneViewport;
 	state.SetViewport(bounds.left, bounds.top, bounds.width, bounds.height);
 	state.SetScissor(bounds.left, bounds.top, bounds.width, bounds.height);
@@ -1065,16 +1126,18 @@ void HWDrawInfo::DrawScene(int drawmode)
 	}
 	auto& RenderState = *screen->RenderState();
 	const bool graphScene = drawmode == DM_MAINVIEW;
-	const bool sceneHasGBuffer = RenderState.GetPassType() == GBUFFER_PASS;
+	const bool graphOffscreenCamera = drawmode == DM_OFFSCREEN && screen->HasFrameGraphCameraTarget();
+	const bool graphScenePasses = graphScene || graphOffscreenCamera;
+	const bool sceneHasGBuffer = graphScene && RenderState.GetPassType() == GBUFFER_PASS;
 
 	RenderState.SetDepthMask(true);
-	if (graphScene)
-		screen->BeginFrameGraphScenePass("scene.opaque", sceneHasGBuffer, true);
+	if (graphScenePasses)
+		screen->BeginFrameGraphScenePass(graphScene ? "scene.opaque" : "offscreen.camera.opaque", sceneHasGBuffer, true);
 	if (!gl_no_skyclear) portalState.RenderFirstSkyPortal(recursion, this, RenderState);
 
 	RenderScene(RenderState);
 
-	if (graphScene)
+	if (graphScenePasses)
 		screen->EndFrameGraphScenePass();
 
 	if (applySSAO && RenderState.GetPassType() == GBUFFER_PASS)
@@ -1089,13 +1152,14 @@ void HWDrawInfo::DrawScene(int drawmode)
 
 	// Handle all portals after rendering the opaque objects but before
 	// doing all translucent stuff
-	if (graphScene)
-		screen->BeginFrameGraphScenePass("scene.portal_translucent", false, true);
+	if (graphScenePasses)
+		screen->BeginFrameGraphScenePass(graphScene ? "scene.portal_translucent" : "offscreen.camera.portal_translucent",
+			false, true, graphOffscreenCamera);
 	recursion++;
 	portalState.EndFrame(this, RenderState);
 	recursion--;
 	RenderTranslucent(RenderState);
-	if (graphScene)
+	if (graphScenePasses)
 		screen->EndFrameGraphScenePass();
 }
 

@@ -194,8 +194,9 @@ draws. GL reported 7 passes / 22 edges and Vulkan 8 / 23; both graphs remained
 rooted at `Backbuffer`, with no dead-pass candidates or fallback. Vulkan
 validation was clean. The matching captures were byte-identical at 640x480:
 GL mean luminance 240.677 and Vulkan 240.560, with maximum delta 0 and 0
-differing pixels. Other quality tiers, Metal runtime, and performance remain
-open.
+differing pixels. Other quality tiers were open at the time; GL/Vulkan q1/q2
+parity is recorded in the 2026-10-03 section below. Metal runtime and
+performance remain open.
 
 ### Offscreen and UI/HUD coverage — 2026-10-01
 
@@ -303,13 +304,21 @@ returns.
 
 1. **Continue validating the CPU graph contract.** Intel Metal and Linux
    GL/Vulkan effects-on/off runs are recorded above. UI/HUD scopes are live on
-   all three backends, and the canvas producer/consumer is live on Intel Metal.
-   Camera-texture producers now have a live Intel Metal fixture; Linux still
-   needs a live camera fixture.
+   all three backends, and canvas producer/consumer and camera-texture
+   producers now have live fixtures on GL, Vulkan, and Intel Metal. Vulkan's
+   indexed non-mip upload transition and the shadow-map conditional route are
+   also covered live. Camera target identities and clear, opaque, and
+   portal/translucent graph scopes are implemented; live GL/Vulkan results are
+   recorded below and Intel Metal rebuild/runtime validation remains open.
+   Remaining coverage includes backend-specific conditional routes and the
+   Apple Silicon runtime boundary. Linux results are recorded in
+   [`handoff-linux-2026-09-29.md`](handoff-linux-2026-09-29.md).
    Extend conditional-route coverage as fixtures and hardware permit.
-2. **Widen in measured steps.** Exposure, bloom, and quality-3 raster AO now
-   have live Linux graph-replay controls. AO quality-3 multisample and debug
-   routes are covered on GL and Vulkan. Intel Metal's reference raster fallback
+2. **Widen in measured steps.** Exposure, bloom, and raster AO qualities 1–3
+   now have live Linux graph-replay controls. AO quality-1/2 single-sample
+   routes and Vulkan compute/raster linear-depth branches now have matched
+   direct/replay captures. Quality-3 multisample and debug routes are also
+   covered on GL and Vulkan. Intel Metal's reference raster fallback
    now has live single-sample quality-1/2 parity with debug mode 0, plus
    quality-3 debug-mode 1–10 coverage across the recorded runs. Intel Metal
    now has live 4× scene rendering, resolve-resource tracking, and raster-AO
@@ -331,9 +340,6 @@ returns.
 
 ## Open validation boundaries
 
-- The Vulkan indexed non-mip sampled-image transition from transfer to shader
-  read was not dynamically exercised. Keep it open until a confirmed active
-  `DTF_Indexed` draw route reaches that path; details are in the Linux handoff.
 - The cold MAP08 capture still misses strict byte-repeatability. It is not a
   closed parity result; the 2026-09-24 Linux handoff records the capture limits.
 - Apple Silicon has not run the renderer. Maintain correctness-first Metal
@@ -349,19 +355,172 @@ positive/negative attachment-preservation cases, graph hazards, offscreen/UI
 consumption, compute-bloom topology, and compute-AO pyramid selection. On Intel
 macOS, `cmake --build build --parallel 4` passed and a real Metal frame passed the
 self-test and output/liveness checks described above. The prior Linux build
-passed, but live GL/Vulkan output/lifetime validation remains open. Xvfb `+quit`
-checks do not substitute for real rendered frames.
+passed. Live GL/Vulkan attachment-preservation output/lifetime validation then
+closed on 2026-10-02; see the Linux handoff. Xvfb `+quit` checks do not
+substitute for real rendered frames.
+
+## Linux attachment-preservation validation — 2026-10-02
+
+Real MAP06 effects-on and effects-off frames validated the logical reads for
+preserved scene attachments and blended postprocess outputs on GL and Vulkan.
+Both effects-on graphs reached `Backbuffer` and retained the
+`scene.opaque` → `ssao.combine` → `scene.portal_translucent` SceneColor chain,
+plus the blended `Exposure.Camera` and `PipelineImage[0]` dependencies. Effects
+off removed the optional effects while retaining scene attachment ordering.
+The self-test passed in every run; there were no dead-pass candidates,
+stale-size diagnostics, or Vulkan validation errors. Full pass counts and run
+conditions are recorded in [`handoff-linux-2026-09-29.md`](handoff-linux-2026-09-29.md).
+
+This validates the dependency contract for the tested routes. The captured
+shadow-map graph exposed a candidate ordering freedom: `shadowmap` and
+`scene.target` write separate resources, and both precede `scene.opaque`. The
+follow-up section below records the completed backend-specific order experiment.
+Keep aliasing and culling disabled until all relevant routes are represented
+and validated.
+
+## Scene clear and shadow-map ordering — 2026-10-02
+
+The approved order experiment now clears the main scene attachments before the
+shadow-map update on GL and Vulkan. The graph records `scene.target` at the
+actual clear operation, followed by `shadowmap`; both remain inputs to
+`scene.opaque`. The render target is rebound and scene viewport/depth state is
+reapplied after shadow rendering, since the shadow path changes backend state.
+Vulkan consumes the deferred clear through a clear-only render pass on the
+existing draw command stream. Metal reports that it cannot flush its deferred
+clear, so it retains its original operation order.
+
+The mandatory Linux build passed. Live MAP06 runs with the shadow fixture,
+SSAO/bloom/tonemap/lens/FXAA enabled, and `r_resource_validate 1` passed the
+framegraph self-test on GL and Vulkan. Both graphs placed `scene.target` before
+`shadowmap`, reported no dead-pass candidates or stale-size diagnostics, and
+Vulkan validation reported no errors. The GL reordered capture was pixel
+identical in the analysis region to its saved old-order capture
+(0 differing pixels over threshold 2). For Vulkan, a same-build old-order
+control was made by temporarily disabling clear flushing; that image was also
+pixel identical to the reordered capture. The earlier Vulkan screenshot was
+not a matched control: it showed a different MAP06 view state, so it was not
+used to claim parity. GL and Vulkan reordered captures differed by a mean
+0.126 channel values, with 0.106% of analysis pixels over threshold 2.
+
+This is a fixed, backend-guarded order change, not graph-scheduled scene
+execution. Metal order and Metal clear-flush behavior remain unchanged. Keep
+aliasing and pass culling disabled.
+
+## Scene-clear ordering performance check — 2026-10-04
+
+Measured the old `shadowmap -> scene.target` order against the current
+`scene.target -> shadowmap` order on the RX 550 at 1280×720. Each measured
+launch used MAP06, a temporary PointLight to activate the shadow-map pass,
+shadow quality 256, SSAO quality 3, bloom, tonemap, lens, and FXAA enabled,
+with vsync and frame caps disabled. The interleaved sequence was old/new/old/new
+on each backend. Each launch recorded two 5-second `vid_frametrace` windows;
+an initial GL and Vulkan warm-up was excluded. The trace measures Update to
+Update intervals and includes present wait.
+
+| Backend | Order | First-window averages (ms) | Second-window averages (ms) | Combined mean (ms) |
+|---|---|---:|---:|---:|
+| GL | old | 5.83, 5.78 | 5.09, 5.01 | 5.43 |
+| GL | clear first | 5.91, 5.68 | 5.08, 5.01 | 5.42 |
+| Vulkan | old | 5.99, 6.05 | 5.39, 5.39 | 5.71 |
+| Vulkan | clear first | 5.99, 5.92 | 5.46, 5.36 | 5.68 |
+
+These differences are below the run-to-run movement: GL's second-window
+averages settled near 5.0 ms in both arms, while Vulkan's did so near 5.4 ms.
+This A/B shows no measurable frame-time benefit from changing the order on
+either backend. It does not justify further order changes without a separately
+measurable candidate.
+
+Image controls used the same effects and fixture. The two old-order GL images
+and the second clear-first image agreed exactly or within one channel level.
+The first clear-first image was the sole outlier: 127 of 589,824 analysis
+pixels exceeded threshold 2 (0.0215%), with max channel delta 52. This capture
+set therefore does not strengthen strict pixel-parity evidence; the earlier
+matched parity run remains the correctness result. Vulkan's first old/new pair
+was exactly identical; the second pair differed by at most one channel level
+and had no pixels over threshold 2. Both backend graphs recorded the requested
+order, passed the framegraph self-test, and reported no dead-pass candidates.
+The temporary A/B cvar and screenshots were removed from the source tree; logs
+and captures remain under `/tmp/gzdoom_clearorder` for this session.
 
 ## Metal handoff check
 
 Intel Metal effects-on/off, conditional AO fallback, all single-sample raster
 AO debug branches, and UI/HUD runs are recorded above. The canvas
 producer/consumer has a live fixture; the camera texture producer also has a
-live frame-1 fixture. Linux still needs live offscreen fixture validation on
-GL/Vulkan. Apple Silicon runtime and TBDR performance policy remain
-unvalidated.
+live frame-1 fixture. Linux GL/Vulkan also have live canvas and camera producer
+fixtures, including sampled camera-material reads. Camera target clear,
+opaque, and portal/translucent scopes are now covered on GL/Vulkan; the Intel
+Metal source implementation needs its rebuild and live fixture recorded below
+before that backend is closed. Apple Silicon runtime and TBDR performance
+policy remain unvalidated.
 
-The latest Linux build includes GL/Vulkan and passed after the UI/HUD scope
-changes. It does not compile the Metal backend. Offscreen-only scene traversals
-now have producer and material-read scopes, but still need live fixture
-validation on GL/Vulkan.
+The latest Linux build includes GL/Vulkan and passed after the camera-target
+scope changes. It does not compile the Metal backend. Offscreen camera/canvas
+producer and material-read scopes have live GL/Vulkan fixture coverage,
+including camera attachment subpasses. A temporary dynamic-light fixture now
+activates the shadow-map producer on GL and Vulkan; its route is recorded in
+the Linux handoff.
+
+## Linux shared raster AO quality 1/2 — 2026-10-03
+
+GL and Vulkan quality-1/2 raster AO routes now have live direct-versus-replay
+parity on MAP06 at single sample. Both AO qualities change pixels against the
+same-backend AO-off controls; a repeated GL quality-1 capture matched exactly
+in the viewport analysis region.
+Vulkan was also checked with both raster and compute linear-depth production.
+All graphs remained rooted at `Backbuffer`, retained the five expected AO
+passes, and had no dead-pass, fallback, stale-size, or Vulkan validation
+diagnostics. Detailed pass counts and image differences are in
+[`handoff-linux-2026-09-29.md`](handoff-linux-2026-09-29.md).
+
+## Camera target attachment scopes — 2026-10-03
+
+Camera `RenderTextureView()` now scopes the active target color and a derived
+depth/stencil identity through the callback on GL, Vulkan, and Metal source.
+The aggregate camera producer was replaced by clear, opaque, and
+portal/translucent graph scopes, with attachment-preservation reads in the two
+scene phases and the terminal phase marked keep-alive. Main-view `Scene*`
+attachments are excluded. The full contract and validation record are in
+[`frame-graph-camera-resources.md`](frame-graph-camera-resources.md).
+
+The self-test and full Linux build pass. Live GL reports 52 passes / 114 edges;
+Vulkan reports 12 / 24 with validation enabled. Both camera fixtures show the
+target color/depth chain, material reads, output reachability, and no dead-pass
+candidates or graph diagnostics. Intel Metal still needs a macOS rebuild and
+camera fixture run. Apple Silicon/TBDR scheduling policy remains a separate
+hardware-gated question; this work only records existing operations and does
+not authorize scheduling across Metal attachment boundaries.
+
+## ShadowMap retained-resource boundary — 2026-10-04
+
+The keep-alive and cross-frame audit found that scene passes can read
+`ShadowMap` when its level AABB tree is attached even if this frame does not
+run the conditional shadow producer. The existing texture then supplies the
+retained value. `r_framegraph` now declares `ShadowMap` as an external input;
+`BuildEdges()` still binds a read to an earlier same-frame writer first, so an
+active shadow update retains its RAW edge.
+
+`r_framegraph_selftest` covers all three cases: a retained input without a
+current-frame producer succeeds, omitting the external declaration fails with
+the expected read-before-write diagnostic, and a same-frame producer keeps a
+single RAW dependency and remains live. The mandatory Linux build and the
+self-test passed. The runtime used Xvfb with llvmpipe, so this validates the
+CPU graph contract rather than an accelerated dynamic-light frame. The earlier
+RX 550 dynamic-light fixture still covers the live producer/consumer route;
+Intel Metal conditional-route validation remains open.
+
+This change only corrects graph input classification. It does not change
+rendering or command order. The related source audit and completed GL/Vulkan
+order experiment are recorded below; conditional Metal routes still need live
+validation.
+
+The follow-up source review traced the direct `FrameGraphAccess::Read` sites
+and found no second retained input with the same gap in the reviewed paths.
+`Exposure.Camera`, eye textures, `PaletteTexture`, AO noise textures,
+`Backbuffer`, and route-specific `Present.Dither` reads have external-input
+declarations. Partial canvas updates declare their previous contents external;
+scene-material reads are declared external by `ObserveSceneMaterialRead()` when
+there is no earlier producer in the current graph. Wipe captures are rooted by
+their keep-alive passes, and wipe texture reads use the scene/UI material-read
+observer. This closes the source audit for the reviewed Linux routes; the
+conditional Metal routes still need live validation on Intel Metal.

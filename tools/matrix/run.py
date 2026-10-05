@@ -143,8 +143,9 @@ def platform_launch(spec, base="launch"):
 
     The macOS values stay the defaults so nothing about that machine changes;
     a platform block overrides only the keys that genuinely differ (binary
-    path, mod directory). The screenshot directory used to be one of these and
-    is not any more -- the launch pins it as a CVAR, see SHOTS.
+    path, mod directory, native startup arguments). The screenshot directory
+    used to be one of these and is not any more -- the launch pins it as a
+    CVAR, see SHOTS.
     """
     L = dict(spec.get(base, {}))
     L.update(spec.get(f"{base}_{PLATFORM_KEY}", {}))
@@ -279,8 +280,9 @@ def launch(cfg, spec, verbose, scene=None):
     # more than one IWAD is installed and the -iwad name fails to resolve, and
     # the failure mode is the harness hanging until its timeout with no output
     # that says why.
-    argv = [binary, "-nolauncher", "-iwad", L["iwad"], "-config", CONFIG,
-            "+screenshot_dir", SHOTS]
+    argv = [binary, "-nolauncher", "-iwad", L["iwad"], "-config", CONFIG]
+    argv += L.get("startup_args", [])
+    argv += ["+screenshot_dir", SHOTS]
     for f in L.get("files", []) + cfg.get("extra_files", []):
         argv += ["-file", os.path.expanduser(f)]
     # A scene is reached either by loading a savegame or by warping to a map.
