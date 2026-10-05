@@ -1,4 +1,4 @@
-# macOS handoff — Metal offscreen, UI, and AO framegraph coverage — 2026-10-02
+# macOS handoff — Metal offscreen, UI, and AO framegraph coverage — 2026-10-05
 
 ## Purpose
 
@@ -205,6 +205,58 @@ bundle through LaunchServices (`open -W -n -a ...`); the temporary capture
 launcher collected GZDoom's own logfile because `open` does not forward the
 app's stdout to its caller.
 
+## Intel Metal 8× scene targets and request fallback — 2026-10-05
+
+**Prediction:** an 8× request should allocate the highest supported sample
+count, retain the scene-color resolve dependency, and produce identical
+immediate/replay images. Repeated captures and runtime 1×↔8× changes should
+match their steady-state routes. A request above the device's supported counts
+should fall back without changing the image; compute AO requested with MSAA
+should continue to select raster AO.
+
+The clean `main` checkout at `09d90efed6` passed
+`cmake --build build --parallel 4` with `HAVE_VULKAN=OFF`. The generated
+`gzdoom.pk3` was copied beside the app executable and compared equal. Runs used
+LaunchServices, a dedicated temporary config, stock DOOM2 MAP06,
+`screenblocks 12`, quality-3 raster AO/debug 0, and bloom/tonemap/lens/FXAA
+disabled. `mt_caps` confirmed requested 8 / allocated 8. Requesting 64 also
+allocated 8, establishing this device's highest supported power-of-two count
+through the existing allocator. No renderer code changed.
+
+The retained set used 300 rendered level frames and an actual 800×572 viewport.
+Two interleaved captures each of 1× immediate, 8× immediate, and 8× replay
+were byte-identical within each route; 8× immediate/replay also matched exactly
+(maximum channel delta 0, zero differing pixels). The 8× graph reported
+12 passes / 35 edges, with `SceneColor.Resolve` feeding `scene.resolve`; 1×
+reported 12 / 32 and no resolve resource. Every retained graph had
+`Backbuffer` as its output, no dead-pass candidates, a passing self-test,
+and no postprocess replay fallback diagnostic. Runtime 1×→8× matched steady
+8×, and 8×→1× matched steady 1×. Requesting compute AO at 8× selected the
+multisample raster fallback and matched steady raster 8×. Requesting 64× also
+matched it.
+
+Separate final replay captures explicitly enabled `r_resource_validate 1` and
+matched the retained 8× and 1× images. Validation emitted no stale-size
+diagnostics. The registry reported 20 resources / 72.9 MB at 8× and
+19 resources / 19.2 MB at 1×; only the unused screen/save shadow maps were
+untouched. The resolve entry disappeared at 1× as expected.
+
+The same-size 1× versus 8× positive control differed by maximum channel delta
+16, mean delta 0.8398, and 32,371 pixels above delta 2 (7.074%); the harness
+reported zero hot pixels. Thus the zero-noise parity measurements can detect
+the sample-count change. The retained 8× image was also inspected directly.
+
+**Rejected captures:** the initial 120-frame set included a 1× startup-screen
+image (2 passes / 1 edge, only UI and present), despite logging MAP06 and
+requested 1 / allocated 1. Another 1× warm-up differed from later settled
+captures. Those images do not establish scene parity and were excluded. The
+300-frame rerun explicitly required scene and AO passes and repeated each
+steady-state route before comparison. The first cold 8× image also had different
+dimensions and was excluded. Temporary scripts, logs, and captures live under
+`/private/tmp/gzdoom-metal-msaa-high` and `/private/tmp/gzdoom_metal_high_samples*`.
+This closes the tested Intel 8× route and above-limit request fallback;
+Apple Silicon correctness and performance remain open.
+
 ## Validation checklist
 
 1. **Complete.** Built the current tree with the Intel Metal configuration:
@@ -239,8 +291,8 @@ app's stdout to its caller.
 7. **Complete.** Single-sample raster AO debug modes 0–10 passed the recorded
    graph and pixel-repeat checks. Intel Metal 4× scene rendering and AO fallback
    passed resolve-graph, replay-repeatability, runtime-toggle, and same-size 1×
-   versus 4× checks. Apple Silicon and higher supported sample counts remain
-   open.
+   versus 4× checks. The 2026-10-05 continuation also passed Intel 8× replay,
+   runtime toggles, and above-limit request fallback. Apple Silicon remains open.
 
 ## Acceptance record
 

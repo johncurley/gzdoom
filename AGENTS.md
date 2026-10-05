@@ -454,8 +454,11 @@ it is unusual).
   The mode-4 graph correctly reports the bypassed AO producer passes as dead.
   Intel Metal now has live 4× scene-target and raster-AO fallback coverage:
   multisample SceneColor resolves through a declared `SceneColor.Resolve`
-  resource, with repeatable captures and runtime 1×↔4× toggles. Higher sample
-  counts and Apple Silicon behavior/performance remain open. See
+  resource, with repeatable captures and runtime 1×↔4× toggles. The 2026-10-05
+  Intel continuation verified 8× immediate/replay parity, runtime 1×↔8× toggles,
+  and 64× requests falling back to 8×; retained captures used 300 frames after
+  rejecting a 120-frame startup-screen capture. Apple Silicon behavior and
+  performance remain open. See
   `docs/handoff-macos-2026-10-01.md`. Other offscreen-only scene traversals are
   not yet represented. Vulkan indexed
   non-mip upload validation remains open pending a confirmed draw route. Apple

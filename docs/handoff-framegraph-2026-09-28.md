@@ -314,9 +314,12 @@ returns.
    quality-3 debug-mode 1–10 coverage across the recorded runs. Intel Metal
    now has live 4× scene rendering, resolve-resource tracking, and raster-AO
    fallback coverage with repeatable captures and runtime sample-count toggles;
-   higher sample counts and Apple Silicon remain open. Keep resource aliasing
-   and pass culling disabled until output roots, all relevant reads, writes,
-   and lifetimes have been proven on the migrated paths.
+   the 2026-10-05 Intel follow-up also verified 8× replay parity, runtime
+   1×↔8× toggles, and a 64× request falling back to 8×. Its retained captures
+   used 300 frames after rejecting a 120-frame startup-screen capture. See the
+   macOS handoff for the controls. Apple Silicon remains open. Keep resource
+   aliasing and pass culling disabled until output roots, all relevant reads,
+   writes, and lifetimes have been proven on the migrated paths.
 3. **Validate Metal policy on Apple Silicon.** CPU graph algorithms and
    backend-neutral contracts can proceed on Linux. Metal scheduling,
    transient aliasing policy, and TBDR performance choices need M-series runtime
