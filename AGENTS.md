@@ -53,6 +53,9 @@ it is unusual).
   2026-08). An archive, not a guide. Its value is that it records what was
   **disproved**. Grep it before chasing anything in the Metal renderer.
 - **Durable roadmap:** `docs/engine-modernization.md`
+- **macOS performance handoff:** `docs/handoff-macos-2026-11-11.md` — current
+  resource-preparation baseline, regression commands, remaining post-load spike
+  and Apple Silicon qualification. Older Metal handoffs retain their historical scope.
 - **Metal field guide:** `.github/copilot-instructions.md` and
   `src/common/rendering/metal/README_METAL_RENDERER.md`
 - **Frame analysis:** `docs/frame-analysis.md` — what the passes and resources

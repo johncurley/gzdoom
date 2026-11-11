@@ -302,6 +302,10 @@ Metal upload batching. The five Intel Metal controls pass; see the
 [qualification record](audits/resource-preparation-regressions-2026-11-11.md).
 A portable save-load runner retains hashes and uses three interleaved
 repetitions per arm. Native Linux/Windows and Apple Silicon runs remain open.
+The [macOS performance handoff](handoff-macos-2026-11-11.md) records the
+published baseline, exact input identities, reproduction commands and next
+post-load attribution task; it distinguishes default-zero retention in the
+load benchmark from the native suite's explicit 2 MiB control.
 
 
 1. Validate existing timer meanings and a common frame/tick/profiler timeline;
