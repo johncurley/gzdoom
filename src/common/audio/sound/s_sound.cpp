@@ -58,6 +58,8 @@ CVAR(Bool, snd_pitched, false, CVAR_ARCHIVE)
 CVAR(Int, snd_retainedcache, 0, 0)
 // Precache overlaps one eligible decode with the next owner-thread load.
 CVAR(Bool, snd_precache_async, true, 0)
+// Experimental cold random-group lookahead. Keep off until measured.
+CVAR(Bool, snd_asyncsiblings, false, 0)
 EXTERN_CVAR(Bool, snd_precache_audit)
 
 int SoundEnabled()
@@ -276,6 +278,51 @@ void SoundEngine::PrepareSound(FSoundID sound, unsigned pcmCapacity)
 		auto data = ReadSound(sfx.lumpnum);
 		if (data.Size() <= unsigned(INT_MAX))
 			GSnd->PrepareSound(id.index(), sfx.lumpnum, data.Data(), int(data.Size()), sfx.LoopStart, sfx.LoopEnd, pcmCapacity);
+	}
+}
+
+void SoundEngine::PrepareSoundSibling(FSoundID original, int selectedLump)
+{
+	constexpr unsigned capacity = 1024 * 1024, maxEncoded = 128 * 1024;
+	if (!snd_asyncsiblings || selectedLump < 0 || !isValidSoundId(original) ||
+		S_sfx[original.index()].link == sfxinfo_t::NO_LINK || !GSnd ||
+		!GSnd->CanQueuePreparedSound(capacity, maxEncoded)) return;
+
+	// Read-only graph walk: no ResolveSound/PickReplacement or game callbacks.
+	// Do not publish a sibling buffer before its normal demand load.
+	TArray<FSoundID> pending, visited;
+	pending.Push(original);
+	while (pending.Size() && visited.Size() < 64)
+	{
+		FSoundID id;
+		pending.Pop(id);
+		if (!isValidSoundId(id) || visited.Contains(id)) continue;
+		visited.Push(id);
+		const auto &sfx = S_sfx[id.index()];
+		if (sfx.bRandomHeader)
+		{
+			if (unsigned(sfx.link.index()) < S_rnd.Size())
+			{
+				const auto &choices = S_rnd[sfx.link.index()].Choices;
+				for (unsigned i = choices.Size(); i && pending.Size() < 64; --i)
+					pending.Push(choices[i - 1]);
+			}
+			continue;
+		}
+		if (isValidSoundId(sfx.link)) { pending.Push(sfx.link); continue; }
+		if (sfx.data.isValid() || sfx.bLoadRAW || sfx.bExternal ||
+			sfx.lumpnum < 0 || sfx.lumpnum == sfx_empty || sfx.lumpnum == selectedLump)
+			continue;
+		if (!GSnd->CanQueuePreparedSound(capacity, maxEncoded, id.index())) return;
+		TArray<uint8_t> data;
+		const bool read = TryReadSound(sfx.lumpnum, maxEncoded, data);
+		const bool queued = read && data.Size() >= 35 && data.Size() <= maxEncoded &&
+			GSnd->PrepareSound(id.index(), sfx.lumpnum,
+			data.Data(), int(data.Size()), sfx.LoopStart, sfx.LoopEnd, capacity);
+		if (snd_precache_audit)
+			Printf("snd-sibling-prefetch selected=%d candidate=%d read=%d queued=%d\n",
+				selectedLump, sfx.lumpnum, int(read), int(queued));
+		return; // At most one bounded acquisition/admission attempt per miss.
 	}
 }
 
@@ -691,6 +738,10 @@ FSoundChan *SoundEngine::StartSound(int type, const void *source,
 		return NULL;
 	}
 
+	if (snd_precache_audit)
+		Printf("snd-choice group=%d selected=%d\n", org_id.index(), sound_id.index());
+	// Prepare only after the original RNG has selected this request.
+	if (!sfx->data.isValid()) PrepareSoundSibling(org_id, sfx->lumpnum);
 	// Make sure the sound is loaded.
 	sfx = LoadSound(sfx);
 

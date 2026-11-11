@@ -38,6 +38,7 @@ public:
 	virtual void SetMusicVolume(float volume);
 	virtual SoundHandle LoadSound(uint8_t *sfxdata, int length, int def_loop_start, int def_loop_end);
 	bool CanPrepareSound() const override;
+	bool CanQueuePreparedSound(unsigned pcmCapacity, size_t maxEncodedBytes, int key = -1) override;
 	bool PrepareSound(int key, int lump, const uint8_t *data, int length, int loopstart, int loopend, unsigned pcmCapacity = 8 * 1024 * 1024) override;
 	SoundHandle LoadPreparedSound(int key, int lump, int loopstart, int loopend) override;
 	void WaitForSoundPreparation(int key) override;

@@ -315,6 +315,20 @@ decrease by about 10/6 ms for first/warm workloads, with explicit spread limits.
 Sound-precache discovery remains the larger follow-up; no VM threading is
 implied by these measurements.
 
+The [bounded random-sound sibling trial](audits/sound-sibling-preparation-2026-11-12.md)
+adds optional lookahead after the normal resolver chooses a cold sound. It
+shares the existing worker budget and never waits or publishes a sibling early.
+`snd_asyncsiblings` remains default off. Its corrected native oracle controls
+the actual C `rand()` stream through an external test-only macOS shim; the
+separate `RandSound` method is not the ordinary resolver. Initial failed tests
+and this correction are preserved. Matched backend correctness and final-code
+timing qualification pass on Intel macOS: the first resumed-window median
+falls 5.72 ms (103.71 to 97.99 ms), with 2–3 additional worker hits and zero
+late/failure results. The audit retains the spread and failed validation
+history. Warm ranges overlap; no gameplay determinism or broad performance
+claim follows from the controlled fixture alone.
+
+
 
 1. Validate existing timer meanings and a common frame/tick/profiler timeline;
    repair only the instruments needed for the next experiment.

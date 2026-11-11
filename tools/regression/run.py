@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import platform
 import re
@@ -86,6 +87,24 @@ def image_pixels(path):
     return (width, height, channels, data)
 
 
+def validate_paired_rng(log):
+    require("snd-siblings-rng-stream draws=8/8 equal=1" in log,
+            "actual C RNG draw count/state changed or shim not active")
+    require("snd-siblings-rng-selftest: PASS comparisons=8 failures=0 negative=1 restored=1" in log,
+            "paired sound RNG state/choice test failed")
+    paired = re.findall(r"snd-siblings-rng-begin mode=([01])\n(.*?)snd-siblings-rng-end mode=\1", log, re.S)
+    require(len(paired) == 2 and [mode for mode, _ in paired] == ["0", "1"],
+            "missing paired sound RNG boundaries")
+    def outputs(segment):
+        return (re.findall(r"^snd-choice .*?$", segment, re.M),
+                re.findall(r"^snd-cache-buffer .*?$", segment, re.M))
+    reference_choices, reference_pcm = outputs(paired[0][1])
+    actual_choices, actual_pcm = outputs(paired[1][1])
+    require(len(reference_choices) == 8 and reference_choices == actual_choices and
+            len(reference_pcm) == 2 and reference_pcm == actual_pcm,
+            "paired sound choice/PCM/loop order changed")
+
+
 def run_case(args, root, fixture, stage, name):
     directory = root / name
     directory.mkdir()
@@ -133,9 +152,18 @@ def run_case(args, root, fixture, stage, name):
         command += ["+mt_batch_texture_uploads", "0"]
     if name in ("defaults", "defaults-repeat"):
         command += ["+snd_preparation_selftest", "reg.a", "reg.b"]
+        command += ["+snd_siblings_selftest", "reg.random", "reg.b", "reg.c",
+                    "reg.corrupt", "reg.huge", "reg.long"]
+        command += ["+snd_siblings_rng_selftest", "reg.random", "reg.b", "reg.c"]
     (directory / "argv.json").write_text(json.dumps(command, indent=2))
+    environment = os.environ.copy()
+    if name in ("defaults", "defaults-repeat") and args.rng_shim:
+        environment["DYLD_INSERT_LIBRARIES"] = str(args.rng_shim)
+    (directory / "rng-shim.json").write_text(json.dumps({
+        "inserted": environment.get("DYLD_INSERT_LIBRARIES", "")}, indent=2))
     with (directory / "stdio.log").open("w") as output:
-        process = subprocess.Popen(command, cwd=directory, stdout=output, stderr=subprocess.STDOUT)
+        process = subprocess.Popen(command, cwd=directory, env=environment,
+                                   stdout=output, stderr=subprocess.STDOUT)
         try:
             require(process.wait(timeout=args.timeout) == 0, "engine failed: " + name)
         finally:
@@ -157,6 +185,17 @@ def run_case(args, root, fixture, stage, name):
         else:
             require("snd-preparation-selftest: PASS comparisons=6 failures=0 negative=6" in log,
                     "native audio self-test failed")
+            require("snd-siblings-selftest: PASS comparisons=2 failures=0 negative=1" in log,
+                    "sibling admission/bounds/corrupt-input test failed")
+            pairs = re.findall(r"snd-siblings-compare-begin\n(.*?)snd-siblings-compare-end", log, re.S)
+            require(len(pairs) == 2, "missing sibling PCM/loop comparisons")
+            for pair in pairs:
+                buffers = [line for line in pair.splitlines() if line.startswith("snd-cache-buffer ")]
+                require(len(buffers) == 2 and buffers[0] == buffers[1], "sibling PCM/loop metadata changed")
+
+    if name in ("defaults", "defaults-repeat") and "snd-preparation-selftest: SKIP" not in log:
+        validate_paired_rng(log)
+
     axes = re.search(r"input-axes-selftest: PASS comparisons=(\d+) failures=0 negative=(\d+)", log)
     require(axes is not None and int(axes[1]) > 0 and axes[1] == axes[2],
             "native axis input equivalence/negative controls failed")
@@ -197,6 +236,71 @@ def run_case(args, root, fixture, stage, name):
     return result, pixels
 
 
+def run_cold_siblings(args, root, fixture, stage, index, enabled):
+    directory = root / ("cold-%d-mode%d" % (index, enabled))
+    (directory / "saves").mkdir(parents=True)
+    config = directory / "engine.ini"
+    config.write_text("[GlobalSettings]\nvid_preferbackend=%d\n"
+                      "vid_fullscreen=false\nvid_vsync=false\n"
+                      "vid_activeinbackground=true\ni_pauseinbackground=false\n"
+                      "vid_lowerinbackground=false\ni_soundinbackground=true\n"
+                      "snd_musicvolume=0\n" % BACKENDS[args.backend])
+    command = [str(args.binary), "-config", str(config), "-savedir", str(directory / "saves"),
+               "-iwad", str(args.iwad), "-file", str(stage), str(fixture),
+               "-noautoload", "-noautoexec", "-rngseed", "19831111", "-window",
+               "+map", "REGSTART", "+vid_preferbackend", str(BACKENDS[args.backend]),
+               "+cl_capfps", "1", "+con_notifylines", "0", "+con_notifytime", "0",
+               "+snd_precache_async", "0", "+snd_asyncprepare", "1",
+               "+snd_asyncsiblings", str(enabled), "+snd_retainedcache", "0",
+               "+snd_precache_audit", "1", "+snd_sfxvolume", "0.05",
+               "+logfile", str(directory / "engine.log"),
+               "+execafter", "30", "echo SIBLING_SEQUENCE_BEGIN",
+               "+execafter", "125", "echo SIBLING_SEQUENCE_END",
+               "+execafter", "150", "map REGSTART",
+               "+execafter", "175", "snd_prepare_stats",
+               "+execafter", "185", "snd_reset", "+execafter", "210", "quit"]
+    for frame in range(35, 106, 10):
+        command += ["+execafter", str(frame), "playsound reg.random"]
+    (directory / "argv.json").write_text(json.dumps(command, indent=2))
+    with (directory / "stdio.log").open("w") as output:
+        process = subprocess.Popen(command, cwd=directory, stdout=output, stderr=subprocess.STDOUT)
+        try:
+            require(process.wait(timeout=args.timeout) == 0, "cold sibling engine failed")
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+    log = (directory / "engine.log").read_text(errors="replace")
+    confirm_backend(log, args.backend)
+    require(log.count("\nSIBLING_SEQUENCE_BEGIN\n") == 1 and
+            log.count("\nSIBLING_SEQUENCE_END\n") == 1, "missing cold sound boundaries")
+    segment = log.split("\nSIBLING_SEQUENCE_BEGIN\n")[1].split("\nSIBLING_SEQUENCE_END\n")[0]
+    choices = re.findall(r"^snd-choice group=(\d+) selected=(\d+)$", segment, re.M)
+    require(len(choices) == 8 and len({row[0] for row in choices}) == 1 and
+            len({row[1] for row in choices}) == 2, "random variant sequence was not exercised")
+    buffers = re.findall(r"^snd-cache-buffer .*$", segment, re.M)
+    require(len(buffers) == 2, "unexpected cold sound publication count")
+    preparation = records(log, "snd_prepare:")
+    validate_preparation(preparation)
+    endpoint = preparation[-1]
+    if endpoint["enabled"]:
+        require(endpoint.get("hits", 0) > 0 if enabled else endpoint.get("hits", 0) == 0,
+                "cold sibling worker did not follow its control setting")
+        require(endpoint.get("notready", 0) == 0 and endpoint.get("failed", 0) == 0 and
+                endpoint.get("jobs", 0) == 0 and endpoint.get("reserved", 0) == 0,
+                "cold sibling fallback/cleanup failed")
+    else:
+        require(args.allow_audio_skip, "cold sibling worker unavailable")
+    result = {"mode": enabled, "choices": choices, "buffers": buffers, "preparation": preparation}
+    (directory / "result.json").write_text(json.dumps(result, indent=2))
+    print(directory.name + ": random sequence, PCM and cleanup passed", flush=True)
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
@@ -214,6 +318,14 @@ def main():
         args.output.mkdir(parents=True, exist_ok=False)
     root = args.output or Path(tempfile.mkdtemp(prefix="gzdoom-regression-"))
     print("Artifacts: " + str(root), flush=True)
+    args.rng_shim = None
+    if sys.platform == "darwin":
+        args.rng_shim = root / "rand-shim.dylib"
+        subprocess.run(["xcrun", "clang", "-std=c11", "-dynamiclib", "-Wall", "-Wextra", "-Werror",
+                        str(Path(__file__).with_name("rand_shim.c")), "-o", str(args.rng_shim)], check=True)
+        checks = subprocess.check_output([sys.executable, str(Path(__file__).with_name("check_rand_shim.py")),
+                                          str(args.rng_shim)], text=True)
+        (root / "shim-controls.json").write_text(checks)
     fixture, stage = make_fixture(root / "fixtures")
     manifest = {"platform": platform.platform(), "python": sys.version,
                 "backend": args.backend, "binary": str(args.binary),
@@ -223,7 +335,8 @@ def main():
                 "git_status": subprocess.check_output(["git", "status", "--short"], cwd=ROOT, text=True)}
     manifest["packages"] = {path.name: sha256(path) for path in args.binary.parent.glob("*.pk3")}
     manifest["runner_sources"] = {name: sha256(Path(__file__).with_name(name))
-                                  for name in ("run.py", "fixtures.py")}
+                                  for name in ("run.py", "fixtures.py", "rand_shim.c", "check_rand_shim.py")}
+    manifest["rng_shim_sha256"] = sha256(args.rng_shim) if args.rng_shim else None
     (root / "manifest.json").write_text(json.dumps(manifest, indent=2))
     results, reference = [], None
     for name in CASES:
@@ -236,6 +349,13 @@ def main():
             require(result["cache_passes"][:2] == audit,
                     "PCM/order/loop metadata/resident payload changed: " + name)
         results.append(result)
+    cold = [run_cold_siblings(args, root, fixture, stage, i + 1, enabled)
+            for i, enabled in enumerate((0, 1, 1, 0))]
+    # Startup seed does not establish equal live client RNG state across fresh
+    # processes. Exact choice/order invariance is checked by the paired native
+    # oracle; these independent runs check real readiness and the PCM set.
+    require(all(sorted(row["buffers"]) == sorted(cold[0]["buffers"]) for row in cold),
+            "cold playback PCM/loop set changed")
     corrupted = bytearray(reference[3])
     corrupted[len(corrupted) // 2] ^= 1
     require(bytes(corrupted) != reference[3], "pixel negative control failed")
@@ -246,9 +366,9 @@ def main():
     enabled = results[1]["retention"][-1]["last-pass-bytes"]
     require(enabled == 12000, "retention positive control did not retain the played tone")
     summary = {"status": "PASS", "audio_worker": "SKIP" if any(row["audio_selftest_skipped"] for row in results) else "tested",
-               "one_byte_negative_control": True, "results": results}
+               "one_byte_negative_control": True, "results": results, "cold_siblings": cold}
     (root / "summary.json").write_text(json.dumps(summary, indent=2))
-    print("PASS: five native controls; exact pixels and ordered PCM/metadata; lifecycle budgets.", flush=True)
+    print("PASS: five resource controls and four cold sound controls; exact pixels/PCM, random choices and lifecycle budgets.", flush=True)
 
 
 if __name__ == "__main__":

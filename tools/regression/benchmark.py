@@ -13,7 +13,8 @@ import tempfile
 from fixtures import room
 from run import BACKENDS, ROOT, confirm_backend, require, sha256, validate_preparation, records
 
-CONTROLS = {"sound-precache": "snd_precache_async", "png": "mt_async_png",
+CONTROLS = {"sound-precache": "snd_precache_async", "sound-siblings": "snd_asyncsiblings",
+            "png": "mt_async_png",
             "texture-batching": "mt_batch_texture_uploads"}
 MARKERS = ("REG_FIRST", "REG_WARM", "REG_FINISH")
 
@@ -102,8 +103,10 @@ def main():
                     "+" + CONTROLS[args.control], str(enabled),
                     "+logfile", str(directory / "engine.log"),
                     "+execafter", "35", "vid_frametrace 1"]
-        if args.control == "sound-precache":
+        if args.control in ("sound-precache", "sound-siblings"):
             command += ["+snd_asyncprepare", "1"]
+        if args.control == "sound-siblings":
+            command += ["+snd_precache_async", "1", "+snd_retainedcache", "0"]
         for frame, marker, action in ((105, "REG_FIRST", "load start.zds"),
                                        (220, "REG_WARM", "load start.zds"),
                                        (335, "REG_FINISH", "quit")):

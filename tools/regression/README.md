@@ -50,6 +50,29 @@ Audio bytes are hashed only with the opt-in
 snd_precache_audit diagnostic, which defaults off and must remain off for
 performance measurements.
 
+The experimental `snd_asyncsiblings` lookahead defaults off. Two default-mode
+cases additionally run `snd_siblings_selftest` for admission, duplicate/full
+queues, loop metadata, exclusions, cycles, corrupt archive reads, encoded size
+and PCM overflow. Four fresh off/on/on/off cases then exercise actual cold
+random-group playback with retention/precache lookahead disabled. Each enabled
+case must consume a prepared sibling without late/failure results or leaked
+jobs/reservations. These readiness runs use the unmodified system RNG; their
+choice lists are retained, but equal startup seeds do not establish identical
+live C RNG state across processes.
+
+On macOS the runner compiles `rand_shim.c` into its artifact directory and
+injects it only into the two cases containing `snd_siblings_rng_selftest`.
+It is never linked into the engine. The shim forwards to libc outside an
+explicit diagnostic scope; inside that scope it supplies a thread-local test
+stream with snapshot/restore and draw counts. The paired oracle starts both
+arms with the same cold fixture buffers and stream, requires eight identical
+choices, eight draws per arm, matching final stream state and exact ordered
+PCM/loop publications. One extra real `rand()` call must be detected. The
+separate `RandSound` generator is also restored/checked. This tests consumption
+and output invariance against controlled inputs, not libc's RNG algorithm or
+gameplay replay determinism. No RNG reseeding occurs in normal gameplay.
+Missing interposition is a failure. Non-macOS audio qualification remains open.
+
 Metal debug upload counters prove that the same fixture uploads use fewer
 command buffers with batching enabled. Debugging is on only during this
 correctness test, so its duration is not a performance result.
@@ -76,12 +99,15 @@ python3 -u tools/regression/benchmark.py \
   --prediction "15 first-visit worker hits, peak <=64 MiB, median gap decreases 50 ms"
 ~~~
 
-Repeat --file in the exact load order. Controls are sound-precache, png
+Repeat --file in the exact load order. Controls are sound-precache, sound-siblings, png
 and texture-batching (the latter two require Metal). Interleaved order is
 disabled/enabled/enabled/disabled/disabled/enabled, three repetitions per arm.
 Missing/duplicate markers, an unexpected map, absent frame timing windows,
 worker budget violations, backend fallback, timeout or failed engine exit fail
-the run. For sound precache, enabled runs must consume worker results.
+the run. For sound precache, enabled runs must consume worker results. The sibling
+control holds precache enabled and retention at zero in both arms; useful
+hits, readiness and timing distributions still require workload-specific
+interpretation. No RNG shim is loaded by this benchmark.
 Archives/settings remain caller-owned; every run copies the save and config.
 
 The reported gap is the maximum start-to-start Update interval from

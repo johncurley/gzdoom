@@ -97,6 +97,7 @@ public:
 	virtual SoundHandle LoadSound(uint8_t *sfxdata, int length, int def_loop_start, int def_loop_end) = 0;
 	// Optional owner-thread preparation API; existing cache/load calls stay synchronous.
 	virtual bool CanPrepareSound() const { return false; }
+	virtual bool CanQueuePreparedSound(unsigned pcmCapacity, size_t maxEncodedBytes, int key = -1) { return false; }
 	virtual bool PrepareSound(int key, int lump, const uint8_t *data, int length, int loopstart, int loopend, unsigned pcmCapacity = 8 * 1024 * 1024) { return false; }
 	virtual SoundHandle LoadPreparedSound(int key, int lump, int loopstart, int loopend) { return {}; }
 	virtual void WaitForSoundPreparation(int key) {} // owner-only precache barrier

@@ -4,10 +4,11 @@ import struct
 import tempfile
 import unittest
 import zipfile
+import zlib
 
 from fixtures import make_fixture, make_png
 from benchmark import timing_windows
-from run import cache_passes, confirm_backend, records, validate_preparation, image_pixels
+from run import cache_passes, confirm_backend, records, validate_preparation, image_pixels, validate_paired_rng
 
 
 class RegressionTools(unittest.TestCase):
@@ -26,8 +27,11 @@ class RegressionTools(unittest.TestCase):
             self.assertEqual(a.read_bytes(), b.read_bytes())
             self.assertEqual(stage_a.read_bytes(), stage_b.read_bytes())
             with zipfile.ZipFile(a) as archive:
-                self.assertEqual(len(archive.namelist()), 13)
+                self.assertEqual(len(archive.namelist()), 15)
                 self.assertIn(b"reg.long", archive.read("SNDINFO"))
+                with self.assertRaises((zipfile.BadZipFile, zlib.error)):
+                    archive.read("sounds/REGCORR.ogg")
+                self.assertGreater(len(archive.read("sounds/REGHUGE.ogg")), 128 * 1024)
                 data = archive.read("maps/REGTEST.wad")
                 self.assertEqual(struct.unpack_from("<4s", data)[0], b"PWAD")
 
@@ -59,6 +63,22 @@ class RegressionTools(unittest.TestCase):
                         valid + "REG_FIRST\n", valid.replace("max= 20.5", "max= n/a")):
             with self.assertRaises(RuntimeError):
                 timing_windows(invalid)
+
+    def test_paired_rng_rejects_choices_pcm_and_draw_count(self):
+        choices = "".join("snd-choice group=2 selected=%d\n" % (3 + i % 2) for i in range(8))
+        pcm = "snd-cache-buffer hash=a bytes=12 start=0 end=6\n" + "snd-cache-buffer hash=b bytes=12 start=0 end=6\n"
+        first = "snd-siblings-rng-begin mode=0\n" + choices + pcm + "snd-siblings-rng-end mode=0\n"
+        second = "snd-siblings-rng-begin mode=1\n" + choices + pcm + "snd-siblings-rng-end mode=1\n"
+        status = ("snd-siblings-rng-stream draws=8/8 equal=1\n"
+                  "snd-siblings-rng-selftest: PASS comparisons=8 failures=0 negative=1 restored=1\n")
+        validate_paired_rng(first + second + status)
+        for invalid in (first + second.replace("selected=3", "selected=4", 1) + status,
+                        first + second.replace("hash=a", "hash=c") + status,
+                        first + second + status.replace("draws=8/8", "draws=8/9"),
+                        first + second + status.replace("restored=1", "restored=0"),
+                        first + status):
+            with self.assertRaises(RuntimeError):
+                validate_paired_rng(invalid)
 
     def test_pixel_negative_control(self):
         encoded, expected = make_png(320, 200, 3)

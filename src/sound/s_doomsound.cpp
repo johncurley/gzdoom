@@ -38,6 +38,10 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <climits>
+#ifdef __APPLE__
+#include <dlfcn.h>
+#endif
 
 #ifdef _WIN32
 #include <io.h>
@@ -73,6 +77,7 @@
 // EXTERNAL DATA DEFINITIONS -------------------------------------------------
 
 EXTERN_CVAR(Bool, haptics_do_action);
+EXTERN_CVAR(Bool, snd_asyncsiblings);
 
 // PUBLIC DATA DEFINITIONS -------------------------------------------------
 
@@ -87,6 +92,7 @@ class DoomSoundEngine : public SoundEngine
 	void CalcPosVel(int type, const void* source, const float pt[3], int channum, int chanflags, FSoundID soundid, FVector3* pos, FVector3* vel, FSoundChan *) override;
 	bool ValidatePosVel(int sourcetype, const void* source, const FVector3& pos, const FVector3& vel);
 	TArray<uint8_t> ReadSound(int lumpnum);
+	bool TryReadSound(int lumpnum, unsigned maxBytes, TArray<uint8_t> &data) override;
 	FSoundID PickReplacement(FSoundID refid);
 	FSoundID ResolveSound(const void *ent, int type, FSoundID soundid, float &attenuation) override;
 	void CacheSound(sfxinfo_t* sfx) override;
@@ -108,6 +114,8 @@ public:
 	DoomSoundEngine() = default;
 	void NoiseDebug(void);
 	void PrintSoundList();
+	void TestSoundSiblings(FCommandLine &argv);
+	void TestSoundSiblingRNG(FCommandLine &argv);
 };
 
 //==========================================================================
@@ -1198,6 +1206,169 @@ bool DoomSoundEngine::ValidatePosVel(int sourcetype, const void* source, const F
 // 
 //==========================================================================
 
+bool DoomSoundEngine::TryReadSound(int lumpnum, unsigned maxBytes, TArray<uint8_t> &data)
+{
+	if (lumpnum < 0 || lumpnum >= fileSystem.GetNumEntries()) return false;
+	try
+	{
+		const auto size = fileSystem.FileLength(lumpnum);
+		if (size < 35 || size > maxBytes) return false;
+		auto reader = fileSystem.OpenFileReader(lumpnum);
+		if (!reader.isOpen() || reader.GetLength() != size) return false;
+		data.Resize(unsigned(size));
+		if (reader.Read(data.Data(), data.Size()) == size) return true;
+	}
+	catch (const FileSys::FileSystemException &) {}
+	data.Clear();
+	return false;
+}
+
+// Explicit fixture diagnostic; it never selects an RNG result or changes
+// loaded sound-table buffers. Only unused fixture definitions may be supplied.
+void DoomSoundEngine::TestSoundSiblings(FCommandLine &argv)
+{
+	if (!GSnd || !GSnd->CanPrepareSound())
+	{
+		Printf("snd-siblings-selftest: SKIP (worker unavailable)\n");
+		return;
+	}
+	auto group = FindSound(argv[1]), selected = FindSound(argv[2]), candidate = FindSound(argv[3]);
+	auto header = GetSfx(group), a = GetSfx(selected);
+	auto b = GetWritableSfx(candidate);
+	if (!header || !a || !b || !header->bRandomHeader || a->data.isValid() ||
+		b->data.isValid() || a->lumpnum == b->lumpnum ||
+		!GSnd->CanQueuePreparedSound(1024 * 1024, 128 * 1024, candidate.index()) ||
+		!GSnd->CanQueuePreparedSound(1024 * 1024, 128 * 1024, selected.index()))
+	{
+		Printf("snd-siblings-selftest: FAIL (requires unused two-choice fixture)\n");
+		return;
+	}
+	auto list = ResolveRandomSound(GetWritableSfx(group));
+	if (list->Choices.Size() != 2 || !list->Choices.Contains(selected) ||
+		!list->Choices.Contains(candidate))
+	{
+		Printf("snd-siblings-selftest: FAIL (fixture choices)\n");
+		return;
+	}
+	unsigned comparisons = 0, failures = 0, negative = 0;
+	{
+		struct Restore
+		{
+			sfxinfo_t *entry;
+			sfxinfo_t saved;
+			bool enabled;
+			FSoundID candidate, selected;
+			TArray<int> keys;
+			~Restore()
+			{
+				for (auto key : keys) GSnd->CancelSoundPreparation(key);
+				GSnd->CancelSoundPreparation(candidate.index());
+				GSnd->CancelSoundPreparation(selected.index());
+				*entry = saved;
+				snd_asyncsiblings = enabled;
+			}
+		} restore{b, *b, bool(snd_asyncsiblings), candidate, selected};
+		snd_asyncsiblings = true;
+		TArray<uint8_t> encoded;
+		if (!TryReadSound(b->lumpnum, 128 * 1024, encoded)) ++failures;
+		else
+		{
+			for (int loop : {-1, 3})
+			{
+				b->LoopStart = loop;
+				b->LoopEnd = loop < 0 ? -1 : 100;
+				PrepareSoundSibling(group, a->lumpnum);
+				if (b->data.isValid() || a->data.isValid()) ++failures;
+				if (GSnd->CanQueuePreparedSound(1024 * 1024, 128 * 1024, candidate.index())) ++failures;
+				GSnd->WaitForSoundPreparation(candidate.index());
+				Printf("snd-siblings-compare-begin\n");
+				auto prepared = GSnd->LoadPreparedSound(candidate.index(), b->lumpnum, b->LoopStart, b->LoopEnd);
+				auto serial = GSnd->LoadSound(encoded.Data(), encoded.Size(), b->LoopStart, b->LoopEnd);
+				Printf("snd-siblings-compare-end\n");
+				if (!prepared.isValid() || !serial.isValid() ||
+					GSnd->GetSoundBufferBytes(prepared) != GSnd->GetSoundBufferBytes(serial) ||
+					GSnd->GetSampleLength(prepared) != GSnd->GetSampleLength(serial) ||
+					GSnd->GetMSLength(prepared) != GSnd->GetMSLength(serial)) ++failures;
+				else ++comparisons;
+				GSnd->UnloadSound(prepared);
+				GSnd->UnloadSound(serial);
+			}
+			// Fill only free slots with test keys, then prove admission closes.
+			auto &keys = restore.keys;
+			while (keys.Size() < 4 && GSnd->CanQueuePreparedSound(1024 * 1024, 128 * 1024))
+			{
+				int key = INT_MAX - 1000 - keys.Size();
+				if (!GSnd->PrepareSound(key, b->lumpnum, encoded.Data(), encoded.Size(), -1, -1, 1024 * 1024))
+				{ ++failures; break; }
+				keys.Push(key);
+			}
+			if (GSnd->CanQueuePreparedSound(1024 * 1024, 128 * 1024)) ++failures;
+			PrepareSoundSibling(group, a->lumpnum);
+			auto unexpected = GSnd->LoadPreparedSound(candidate.index(), b->lumpnum, b->LoopStart, b->LoopEnd);
+			if (unexpected.isValid()) { ++failures; GSnd->UnloadSound(unexpected); }
+			for (auto key : keys)
+			{
+				GSnd->WaitForSoundPreparation(key);
+				GSnd->CancelSoundPreparation(key);
+			}
+		}
+		for (int excluded = 0; excluded < 5; ++excluded)
+		{
+			*b = restore.saved;
+			if (excluded == 0) b->lumpnum = a->lumpnum;
+			if (excluded == 1) b->bLoadRAW = true;
+			if (excluded == 2) b->bExternal = true;
+			if (excluded == 3) b->bTentative = true;
+			if (excluded == 4) b->link = group; // Cycle must terminate without RNG.
+			PrepareSoundSibling(group, a->lumpnum);
+			for (auto id : {candidate, selected})
+				if (!GSnd->CanQueuePreparedSound(1024 * 1024, 128 * 1024, id.index()))
+				{
+					++failures;
+					GSnd->WaitForSoundPreparation(id.index());
+					auto wrong = GSnd->LoadPreparedSound(id.index(), GetSfx(id)->lumpnum, -1, -1);
+					if (wrong.isValid()) GSnd->UnloadSound(wrong);
+				}
+		}
+		for (int arg = 4; arg < 7; ++arg)
+		{
+			auto invalidId = FindSound(argv[arg]);
+			auto invalid = GetSfx(invalidId);
+			if (!isValidSoundId(invalidId) || !invalid) { ++failures; continue; }
+			*b = restore.saved;
+			b->lumpnum = invalid->lumpnum;
+			if (arg == 4)
+			{
+				bool rejected = false;
+				try { auto bytes = ReadSound(b->lumpnum); }
+				catch (const FileSys::FileSystemException &) { rejected = true; }
+				if (!rejected) ++failures;
+				else ++negative; // The unguarded corrupt archive read really fails.
+			}
+			PrepareSoundSibling(group, a->lumpnum);
+			GSnd->WaitForSoundPreparation(candidate.index());
+			auto result = GSnd->LoadPreparedSound(candidate.index(), b->lumpnum, -1, -1);
+			if (result.isValid()) { ++failures; GSnd->UnloadSound(result); }
+			if (b->data.isValid() || a->data.isValid()) ++failures;
+		}
+		if (GSnd->CanQueuePreparedSound(0, 128 * 1024) ||
+			GSnd->CanQueuePreparedSound(1024 * 1024, 8 * 1024 * 1024 + 1)) ++failures;
+	}
+	Printf("snd-siblings-selftest: %s comparisons=%u failures=%u negative=%u\n",
+		comparisons == 2 && !failures && negative == 1 ? "PASS" : "FAIL",
+		comparisons, failures, negative);
+}
+
+CCMD(snd_siblings_selftest)
+{
+	if (argv.argc() != 7)
+	{
+		Printf("Usage: snd_siblings_selftest <group> <selected> <candidate> <corrupt> <oversize> <long>\n");
+		return;
+	}
+	static_cast<DoomSoundEngine *>(soundEngine)->TestSoundSiblings(argv);
+}
+
 TArray<uint8_t> DoomSoundEngine::ReadSound(int lumpnum)
 {
 	auto wlump = fileSystem.OpenFileReader(lumpnum);
@@ -1225,6 +1396,152 @@ FSoundID DoomSoundEngine::PickReplacement(FSoundID refid)
 		refid = list->Choices[pr_randsound(list->Choices.Size())];
 	}
 	return refid;
+}
+
+// Fixture-only oracle: same real requests, same captured RNG and cold buffers.
+// The external regression shim scopes the actual C rand() stream to this thread.
+// The separately named RandSound generator is also checked, never re-registered.
+void DoomSoundEngine::TestSoundSiblingRNG(FCommandLine &argv)
+{
+	if (!GSnd || !GSnd->CanPrepareSound())
+	{
+		Printf("snd-siblings-rng-selftest: SKIP (worker unavailable)\n");
+		return;
+	}
+	auto group = FindSound(argv[1]), first = FindSound(argv[2]), second = FindSound(argv[3]);
+	auto header = GetWritableSfx(group), a = GetWritableSfx(first), b = GetWritableSfx(second);
+	if (!isValidSoundId(group) || !isValidSoundId(first) || !isValidSoundId(second) ||
+		!header->bRandomHeader || a->data.isValid() || b->data.isValid() ||
+		a->link != sfxinfo_t::NO_LINK || b->link != sfxinfo_t::NO_LINK || a->lumpnum == b->lumpnum ||
+		!GSnd->CanQueuePreparedSound(1024 * 1024, 128 * 1024, first.index()) ||
+		!GSnd->CanQueuePreparedSound(1024 * 1024, 128 * 1024, second.index()))
+	{
+		Printf("snd-siblings-rng-selftest: FAIL (requires unused fixture)\n");
+		return;
+	}
+	auto list = ResolveRandomSound(header);
+	if (list->Choices.Size() != 2 || !list->Choices.Contains(first) || !list->Choices.Contains(second))
+	{
+		Printf("snd-siblings-rng-selftest: FAIL (fixture choices)\n");
+		return;
+	}
+	for (auto channel = GetChannels(); channel; channel = channel->NextChan)
+		if (channel->OrgID == group || channel->SoundID == first || channel->SoundID == second)
+		{
+			Printf("snd-siblings-rng-selftest: FAIL (fixture channels active)\n");
+			return;
+		}
+#ifdef __APPLE__
+	using Control = int (*)(unsigned, uint64_t *, uint64_t *);
+	auto control = reinterpret_cast<Control>(dlsym(RTLD_DEFAULT, "gzdoom_test_rng"));
+#else
+	using Control = int (*)(unsigned, uint64_t *, uint64_t *);
+	Control control = nullptr;
+#endif
+	uint64_t initialState = 0, initialDraws = 0;
+	if (!control || !control(0, &initialState, &initialDraws))
+	{
+		Printf("snd-siblings-rng-selftest: FAIL (requires regression-only RNG shim)\n");
+		return;
+	}
+	struct ScopedRNG
+	{
+		Control control;
+		~ScopedRNG() { uint64_t state, count; control(3, &state, &count); }
+	} scope{control};
+	struct Snapshot : SFMTObj
+	{
+		explicit Snapshot(const SFMTObj &other) : SFMTObj(other) {}
+		bool Matches(const Snapshot &other) const
+		{
+			return idx == other.idx && memcmp(sfmt.u, other.sfmt.u, sizeof(sfmt.u)) == 0;
+		}
+	};
+	const Snapshot original(pr_randsound);
+	unsigned comparisons = 0, failures = 0, negative = 0;
+	{
+		struct Restore
+		{
+			DoomSoundEngine &engine;
+			FSoundID group, first, second;
+			sfxinfo_t a, b;
+			Snapshot random;
+			bool enabled;
+			void Clear()
+			{
+				engine.StopSound(SOURCE_None, nullptr, -1, group);
+				for (auto id : {first, second})
+				{
+					GSnd->WaitForSoundPreparation(id.index());
+					engine.UnloadSound(id.index());
+				}
+				*engine.GetWritableSfx(first) = a;
+				*engine.GetWritableSfx(second) = b;
+			}
+			~Restore()
+			{
+				Clear();
+				static_cast<SFMTObj &>(pr_randsound) = random;
+				snd_asyncsiblings = enabled;
+			}
+		} restore{*this, group, first, second, *a, *b, original, bool(snd_asyncsiblings)};
+		int choices[2][8] = {};
+		Snapshot after[2] = {original, original};
+		uint64_t states[2] = {}, counts[2] = {};
+		for (int mode = 0; mode < 2; ++mode)
+		{
+			restore.Clear();
+			static_cast<SFMTObj &>(pr_randsound) = original;
+			if (!control(2, &initialState, &initialDraws)) ++failures;
+			snd_asyncsiblings = mode != 0;
+			Printf("snd-siblings-rng-begin mode=%d\n", mode);
+			for (int i = 0; i < 8; ++i)
+			{
+				auto channel = StartSound(SOURCE_None, nullptr, nullptr, CHAN_AUTO, CHANF_UI,
+					group, 0.05f, 0.0f, nullptr, 1.0f);
+				if (!channel) { ++failures; continue; }
+				choices[mode][i] = channel->SoundID.index();
+				StopChannel(channel);
+				// Diagnostic-only barrier: readiness is measured separately in
+				// frame-scheduled runs. Gameplay never waits on this lookahead.
+				GSnd->WaitForSoundPreparation(first.index());
+				GSnd->WaitForSoundPreparation(second.index());
+			}
+			Printf("snd-siblings-rng-end mode=%d\n", mode);
+			after[mode] = Snapshot(pr_randsound);
+			if (!control(1, &states[mode], &counts[mode])) ++failures;
+		}
+		for (int i = 0; i < 8; ++i)
+			if (choices[0][i] == choices[1][i] &&
+				(choices[0][i] == first.index() || choices[0][i] == second.index())) ++comparisons;
+			else ++failures;
+		if (!after[0].Matches(after[1])) ++failures;
+		if (states[0] != states[1] || counts[0] != 8 || counts[1] != 8) ++failures;
+		// A real extra C RNG draw must be observable even if it selects the
+		// same variant modulo two. Restore the diagnostic stream afterwards.
+		(void)rand();
+		uint64_t wrongState = 0, wrongCount = 0;
+		if (!control(1, &wrongState, &wrongCount) || wrongCount != counts[1] + 1 ||
+			wrongState == states[1]) ++failures;
+		else ++negative;
+		if (!control(2, &states[1], &counts[1])) ++failures;
+		Printf("snd-siblings-rng-stream draws=%llu/%llu equal=%d\n",
+			(unsigned long long)counts[0], (unsigned long long)counts[1], int(states[0] == states[1]));
+	}
+	const bool restored = original.Matches(Snapshot(pr_randsound));
+	Printf("snd-siblings-rng-selftest: %s comparisons=%u failures=%u negative=%u restored=%d\n",
+		comparisons == 8 && !failures && negative == 1 && restored ? "PASS" : "FAIL",
+		comparisons, failures, negative, int(restored));
+}
+
+CCMD(snd_siblings_rng_selftest)
+{
+	if (argv.argc() != 4)
+	{
+		Printf("Usage: snd_siblings_rng_selftest <group> <first> <second>\n");
+		return;
+	}
+	static_cast<DoomSoundEngine *>(soundEngine)->TestSoundSiblingRNG(argv);
 }
 
 //==========================================================================

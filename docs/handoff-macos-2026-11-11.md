@@ -201,3 +201,34 @@ speedup measurement. Retention remains default zero. Next investigate generic
 sound discovery/retention coverage, preserving decoder/OpenAL ownership and
 simulation ordering. Physical controller and native Linux/Windows validation
 of the shared input path remain open.
+
+
+## Optional random-sound sibling lookahead — 2026-11-12
+
+Continue with the [sibling trial audit](audits/sound-sibling-preparation-2026-11-12.md)
+and expanded `tools/regression/README.md`. `snd_asyncsiblings` defaults off;
+`snd_asyncprepare` and `snd_precache_async` retain their existing defaults.
+One unselected eligible sibling can use the existing decode pool after normal
+sound selection. Bounds are one acquisition attempt, 128 KiB encoded payload,
+1 MiB PCM extent, 64 graph nodes and the unchanged four-job/64 MiB pool.
+Resource acquisition and OpenAL publication stay on the owner thread.
+
+Do not change the normal sound RNG to satisfy tests. Ordinary random groups
+reach the base class's C `rand()`, not the separately named derived
+`RandSound` method. The paired diagnostic requires the external macOS RNG
+shim built by the regression runner, checks eight choices/draws plus ordered
+PCM outputs, and detects an extra draw. Independent cold readiness runs and
+Blackwater timings do not load the shim. Failed earlier validation artifacts
+are retained in the audit. Wider gameplay, Apple Silicon and Linux/Windows
+qualification remain open before considering default enablement.
+
+Intel Metal and OpenGL each pass all five resource modes and four cold playback
+controls, including corrected paired RNG and ordered PCM/loop checks. Six final
+Metal Blackwater save-load runs measure a first resumed maximum median of
+103.71 ms off versus 97.99 ms on; first useful worker hits rise from 15 to
+17–18, with zero late/failure results and unchanged 55,982,791-byte peak.
+Warm ranges overlap. The disabled first-window range is 103.58–118.93 ms,
+enabled 96.76–98.25 ms; retain that spread when assessing the 5.72 ms median
+effect. This is a window maximum around loading, not a combat replay result.
+Next qualify `snd_asyncsiblings 1` in the original doorway and active-combat
+workloads and a long session before considering a default change.

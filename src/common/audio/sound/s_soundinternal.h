@@ -235,8 +235,10 @@ private:
 	// Checks if a copy of this sound is already playing.
 	bool CheckSingular(FSoundID sound_id);
 	virtual TArray<uint8_t> ReadSound(int lumpnum) = 0;
+	virtual bool TryReadSound(int lumpnum, unsigned maxBytes, TArray<uint8_t> &data) { return false; }
 
 protected:
+	void PrepareSoundSibling(FSoundID original, int selectedLump);
 	virtual bool CheckSoundLimit(sfxinfo_t* sfx, const FVector3& pos, int near_limit, float limit_range, int sourcetype, const void* actor, int channel, float attenuation);
 	virtual FSoundID ResolveSound(const void *ent, int srctype, FSoundID soundid, float &attenuation);
 

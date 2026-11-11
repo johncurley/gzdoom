@@ -95,7 +95,8 @@ def make_fixture(directory):
                    "reg.long", "reg.bad", "reg.wave"]
     sndinfo = ("reg.a REGA\nreg.b REGB\nreg.c REGC\nreg.d REGD\n"
                "$alias reg.alias reg.a\n$random reg.random { reg.b reg.c }\n"
-               "reg.long REGLONG\nreg.bad REGBAD\nreg.wave REGWAVE\n")
+               "reg.long REGLONG\nreg.bad REGBAD\nreg.wave REGWAVE\n"
+               "reg.corrupt REGCORR\nreg.huge REGHUGE\n")
     mapinfo = ('map REGTEST "Regression room"\n{\nPrecacheSounds = ' +
                ", ".join('"%s"' % name for name in sound_names) + "\n}\n")
     wav = io.BytesIO()
@@ -111,11 +112,13 @@ def make_fixture(directory):
         "textures/REGPAL.png": make_paletted_png(),
         "sounds/REGA.ogg": (TONE_DIR / "tone.ogg").read_bytes(),
         "sounds/REGB.ogg": (TONE_DIR / "tone-alt.ogg").read_bytes(),
-        "sounds/REGC.ogg": (TONE_DIR / "tone-alt.ogg").read_bytes(),
+        "sounds/REGC.ogg": (TONE_DIR / "tone.ogg").read_bytes(),
         "sounds/REGD.ogg": (TONE_DIR / "tone.ogg").read_bytes(),
         "sounds/REGLONG.ogg": (TONE_DIR / "tone-long.ogg").read_bytes(),
         "sounds/REGBAD.ogg": b"OggS\0\2" + bytes(20) + b"\1\7\1vorbis",
         "sounds/REGWAVE.wav": wav.getvalue(),
+        "sounds/REGCORR.ogg": b"OggS" + bytes(60),
+        "sounds/REGHUGE.ogg": b"OggS" + bytes(128 * 1024 - 3),
         "SNDINFO": sndinfo.encode(),
         "MAPINFO": mapinfo.encode(),
     }
@@ -124,4 +127,12 @@ def make_fixture(directory):
             info = zipfile.ZipInfo(name, (2020, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
             archive.writestr(info, data)
+    # Deliberately corrupt one unused sound's raw-deflate block. Its directory
+    # remains valid, so the advisory-reader test exercises a real read failure.
+    with zipfile.ZipFile(fixture) as archive:
+        offset = archive.getinfo("sounds/REGCORR.ogg").header_offset
+    payload = bytearray(fixture.read_bytes())
+    name_size, extra_size = struct.unpack_from("<HH", payload, offset + 26)
+    payload[offset + 30 + name_size + extra_size] = 7  # reserved deflate BTYPE
+    fixture.write_bytes(payload)
     return fixture, stage

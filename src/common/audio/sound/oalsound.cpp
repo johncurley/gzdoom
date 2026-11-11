@@ -1467,6 +1467,21 @@ bool OpenALSoundRenderer::CanPrepareSound() const
 #endif
 }
 
+bool OpenALSoundRenderer::CanQueuePreparedSound(unsigned pcmCapacity, size_t maxEncodedBytes, int key)
+{
+	if (!CanPrepareSound() || key < -1 || !pcmCapacity || pcmCapacity > FSoundPreparationState::PCMCapacity ||
+		maxEncodedBytes < 35 || maxEncodedBytes > 8 * 1024 * 1024) return false;
+	if (!Preparations) return true;
+	auto &state = *Preparations;
+	assert(state.Owner == std::this_thread::get_id());
+	state.Collect();
+	std::lock_guard<std::mutex> guard(state.Lock);
+	for (auto job : state.Jobs)
+		if (key >= 0 && job->Key == key && !job->Cancelled) return false;
+	return state.Jobs.Size() < 4 &&
+		maxEncodedBytes + 2 * size_t(pcmCapacity) <= state.Budget - state.Reserved;
+}
+
 bool OpenALSoundRenderer::PrepareSound(int key, int lump, const uint8_t *data, int length, int loopstart, int loopend, unsigned pcmCapacity)
 {
 	if (!CanPrepareSound() || !data || key < 0 || length < 35 || length > 8 * 1024 * 1024 ||
