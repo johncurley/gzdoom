@@ -110,7 +110,7 @@ def run_case(args, root, fixture, stage, name):
                "+snd_retainedcache", "0" if name == "no-retention" else "2048",
                "+logfile", str(directory / "engine.log"),
                "+r_texture_snapshot_selftest", "REGRGB", "REGRGBA", "REGPAL",
-               "+r_framegraph_selftest",
+               "+r_framegraph_selftest", "+input_axes_selftest",
                "+execafter", "35", "map REGTEST",
                "+execafter", "55", "playsound reg.a",
                "+execafter", "90", "pause",
@@ -157,6 +157,9 @@ def run_case(args, root, fixture, stage, name):
         else:
             require("snd-preparation-selftest: PASS comparisons=6 failures=0 negative=6" in log,
                     "native audio self-test failed")
+    axes = re.search(r"input-axes-selftest: PASS comparisons=(\d+) failures=0 negative=(\d+)", log)
+    require(axes is not None and int(axes[1]) > 0 and axes[1] == axes[2],
+            "native axis input equivalence/negative controls failed")
     passes = cache_passes(log)
     retention = records(log, "snd_retention:")
     preparation = records(log, "snd_prepare:")

@@ -177,3 +177,27 @@ No native deterministic Blackwater demo is established. User-confirmed smooth
 doorway/combat runs, load timing, generated fixtures and Instruments attribution
 are distinct evidence. Preserve legacy simulation/VM semantics; choose the
 next change for smooth gameplay from measured critical-path cost.
+
+
+## Post-load continuation — 2026-11-12
+
+The [post-load/input audit](audits/postload-input-axes-2026-11-12.md) now
+reattributes the baseline on matching CPU/scheduler/filesystem timelines:
+six resumed intervals are predominantly running, with 43–61 ms of sampled
+OpenAL loading and a separate 8–15 ms in repeated axis binding scans. Most
+file-call time is below 0.4 ms; one first resume includes a longer file read.
+Tick catch-up is measured, not inferred from the enclosing playsim label.
+
+A direct per-axis binding lookup removes the full-table scans without a
+cache or new worker. Its legacy-oracle input test passes 1,984 comparisons.
+Matching candidate traces have zero axis lookup samples. Three unprofiled
+runs per arm show roughly 10 ms lower median first resumed maxima and 6 ms
+lower warm maxima; retain the audit's ranges and small-sample limits.
+
+Temporary global precache hints also remove deferred decoded-buffer
+publications in nine load windows; disabled controls reproduce 9–10 each.
+Those hints preload the staging map and are not an engine fix or a cold-load
+speedup measurement. Retention remains default zero. Next investigate generic
+sound discovery/retention coverage, preserving decoder/OpenAL ownership and
+simulation ordering. Physical controller and native Linux/Windows validation
+of the shared input path remain open.

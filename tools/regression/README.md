@@ -42,7 +42,11 @@ checks real serial versus worker decodes, loop metadata, exact-capacity EOF,
 too-small output failure, zero-capacity rejection, owner publication,
 cancellation, reservation cleanup and shutdown with queued jobs. It creates
 no changes to actor ordering or VM execution. Sound reset is also exercised
-during the map sequence. Audio bytes are hashed only with the opt-in
+during the map sequence. The input_axes_selftest command compares the actual
+axis mapping against the original full-key-list oracle across 1,984 generated
+cases, checking digital fields and deliberately corrupted analog output.
+It restores bindings on exit; it does not test physical controller polling.
+Audio bytes are hashed only with the opt-in
 snd_precache_audit diagnostic, which defaults off and must remain off for
 performance measurements.
 

@@ -306,6 +306,14 @@ The [macOS performance handoff](handoff-macos-2026-11-11.md) records the
 published baseline, exact input identities, reproduction commands and next
 post-load attribution task; it distinguishes default-zero retention in the
 load benchmark from the native suite's explicit 2 MiB control.
+The [post-load continuation](audits/postload-input-axes-2026-11-12.md) confirms
+CPU-heavy resumed intervals with cumulative sound loading, and identifies
+8–15 ms in repeated joystick binding scans. Direct per-axis lookup removes
+those scans; 1,984 native legacy-oracle comparisons pass and matching traces
+have zero axis input samples. Interleaved unprofiled resumed-window medians
+decrease by about 10/6 ms for first/warm workloads, with explicit spread limits.
+Sound-precache discovery remains the larger follow-up; no VM threading is
+implied by these measurements.
 
 
 1. Validate existing timer meanings and a common frame/tick/profiler timeline;

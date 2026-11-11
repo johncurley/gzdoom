@@ -272,43 +272,121 @@ bool FButtonStatus::ReleaseKey (int keynum)
 
 void FButtonStatus::AddAxes (FString &btn_name, float joyaxes[NUM_AXIS_CODES])
 {
-	int i;
-
 	bIsAxis = false;
 	Axis = 0.0f;
 
-	char cmd_name[16];
-	strcpy(&cmd_name[1], btn_name.GetChars());
-
-	cmd_name[0] = '+';
-	TArray<int> positive_keys = Bindings.GetKeysForCommand(cmd_name);
-
-	cmd_name[0] = '-';
-	TArray<int> negative_keys = Bindings.GetKeysForCommand(cmd_name);
-
-	for (i = 0; i < NUM_AXIS_CODES; i++)
+	for (int i = 0; i < NUM_AXIS_CODES; i++)
 	{
-		float axis_value = joyaxes[i];
-
-		if (axis_value > 0.0)
+		const float axis_value = joyaxes[i];
+		if (axis_value > 0.0f)
 		{
-			int key_code = KeyAxisMapping[i];
+			// Only the binding of this axis can affect its contribution.
+			// Keep live bindings and accumulation order; avoid scanning all
+			// keys and allocating two command-key lists for every button.
+			const char *binding = Bindings.GetBind(KeyAxisMapping[i]);
+			if (!binding || (binding[0] != '+' && binding[0] != '-') ||
+				stricmp(binding + 1, btn_name.GetChars()) != 0)
+				continue;
 
-			if (positive_keys.Contains(key_code))
-			{
+			if (binding[0] == '+')
 				Axis += axis_value;
-				bIsAxis = true;
-			}
-
-			if (negative_keys.Contains(key_code))
-			{
+			else
 				Axis -= axis_value;
-				bIsAxis = true;
-			}
+			bIsAxis = true;
 		}
 	}
 
 	Axis = clamp<float>(Axis, 0.0f, 1.0f);
+}
+
+// Independent legacy membership oracle for the explicit native diagnostic.
+static void ReferenceButtonAxes(FButtonStatus &button, FString &name,
+	float axes[NUM_AXIS_CODES])
+{
+	button.bIsAxis = false;
+	button.Axis = 0.0f;
+	const auto positive = Bindings.GetKeysForCommand(FStringf("+%s", name.GetChars()).GetChars());
+	const auto negative = Bindings.GetKeysForCommand(FStringf("-%s", name.GetChars()).GetChars());
+	for (int i = 0; i < NUM_AXIS_CODES; ++i)
+	{
+		if (!(axes[i] > 0.0f)) continue;
+		if (positive.Contains(KeyAxisMapping[i]))
+		{
+			button.Axis += axes[i];
+			button.bIsAxis = true;
+		}
+		if (negative.Contains(KeyAxisMapping[i]))
+		{
+			button.Axis -= axes[i];
+			button.bIsAxis = true;
+		}
+	}
+	button.Axis = clamp<float>(button.Axis, 0.0f, 1.0f);
+}
+
+CCMD(input_axes_selftest)
+{
+	// The diagnostic never changes the live digital button state. Restore
+	// every binding on all exits, including exception unwinding.
+	unsigned comparisons = 0, failures = 0, negative = 0;
+	{
+		struct RestoreBindings
+		{
+			FKeyBindings Saved = Bindings;
+			~RestoreBindings() { Bindings = Saved; }
+		} restore;
+		const char *commands[] = {"", "+forward", "-forward", "+FoRwArD",
+			"+attack", "-attack", "+forward; echo ignored", " +forward", "+forward "};
+		const char *names[] = {"forward", "attack", "altattack", "unbound"};
+		uint32_t seed = 0x19831111;
+		for (int bank = 0; bank < 16; ++bank)
+		{
+			Bindings.UnbindAll();
+			for (int key = 0; key < NUM_KEYS; ++key)
+			{
+				seed = seed * 1664525u + 1013904223u;
+				Bindings.SetBind(key, commands[(seed >> 16) % countof(commands)]);
+			}
+			for (int pattern = 0; pattern < NUM_AXIS_CODES + 5; ++pattern)
+			{
+				float axes[NUM_AXIS_CODES] = {};
+				if (pattern < NUM_AXIS_CODES)
+					axes[pattern] = 1.0f;
+				else if (pattern != NUM_AXIS_CODES)
+					for (int i = 0; i < NUM_AXIS_CODES; ++i)
+						axes[i] = pattern == NUM_AXIS_CODES + 1 ? -1.0f :
+							pattern == NUM_AXIS_CODES + 2 ? 1.0f :
+							pattern == NUM_AXIS_CODES + 3 ? 0.25f :
+							(i & 1) ? 0.75f : -0.5f;
+				for (auto name : names)
+				{
+					FString command(name);
+					FButtonStatus original = {};
+					original.Keys[0] = 42;
+					original.bDown = original.bWentDown = original.bReleaseLock = true;
+					original.bIsAxis = true;
+					original.Axis = 0.75f;
+					auto expected = original, actual = original;
+					ReferenceButtonAxes(expected, command, axes);
+					actual.AddAxes(command, axes);
+					const bool same = actual.Axis == expected.Axis &&
+						actual.bIsAxis == expected.bIsAxis &&
+						actual.bDown == original.bDown &&
+						actual.bWentDown == original.bWentDown &&
+						actual.bWentUp == original.bWentUp &&
+						actual.bReleaseLock == original.bReleaseLock &&
+						memcmp(actual.Keys, original.Keys, sizeof(actual.Keys)) == 0;
+					++comparisons;
+					failures += !same;
+					actual.Axis = expected.Axis == 0.5f ? 0.25f : 0.5f;
+					negative += actual.Axis != expected.Axis;
+				}
+			}
+		}
+	}
+	Printf("input-axes-selftest: %s comparisons=%u failures=%u negative=%u\n",
+		comparisons && !failures && negative == comparisons ? "PASS" : "FAIL",
+		comparisons, failures, negative);
 }
 
 //=============================================================================
