@@ -1,6 +1,6 @@
 # Audio sibling preparation trial — 2026-11-12
 
-Status: **Default enabled by maintainer approval — gameplay qualification in progress.**
+Status: **Default enabled — scoped Intel Metal gameplay checks pass; broader acceptance remains open.**
 `snd_asyncsiblings` now defaults true, with a disabled console control.
 The qualification history below used default false; its earlier dispositions
 are superseded by the approved default change recorded at the end. No normal
@@ -276,3 +276,82 @@ cache/reset and leak checks continue to pass. Artifacts:
 The manual doorway session is staged under
 `/private/tmp/gzdoom-sibling-gameplay-20261112`; loading paused is not a route
 pass. Operator readiness and observations are required before reporting one.
+
+## First enabled-default doorway gameplay check
+
+The maintainer confirmed repeated mall-doorway crossings, smooth gameplay and
+normal sound in the roughly 40-second Intel Metal check. This is a scoped
+manual pass. Nineteen complete two-second FrameTrace windows contain 1,340
+reported intervals: zero over 100 ms, maximum 56.93 ms, at the existing 35 fps
+cap. The final partial window is unavailable. Worker hits increase by 12,
+with no added not-ready results, failures or waits; those hits include existing
+preparations and are not all attributable to sibling lookahead. Peak reservation
+is 55,861,213 bytes, with one ready job retaining 2,114,027 bytes at the end.
+No disabled-fix comparison was taken in this run; do not infer an incremental
+speedup solely from this acceptance check. Combat, death/reload and long-session
+acceptance remain pending.
+
+Evidence: `/private/tmp/gzdoom-sibling-doorway-2rmc_cbl`, including
+`doorway-summary.json`, operator observation, launch manifest and original logs.
+
+## Enabled-default combat candidate — mixed death/reload workload
+
+The operator reported dying. Logs independently show a second MAP09 load inside
+the timed section; one 623.83 ms interval occurs in the reload-adjacent timing
+window. Preserve it. This is not a clean combat-only pass and the unprofiled
+window cannot identify the exclusive cause of that interval. Before the logged
+reload, complete timing windows have no intervals over 100 ms and a maximum
+45.22 ms; that reporting boundary is not an exact death timestamp. Audio counters
+add no not-ready results, failures or waits. Operator fighting/audio observations
+and the reload sequence are pending. Game ended automatically paused.
+Evidence: `/private/tmp/gzdoom-sibling-combat-lbtj1v6r`, including original logs,
+`combat-summary.json` and the host-observed death report (not engine event time).
+
+The operator subsequently confirmed fighting was smooth with normal sound and
+that the map reloaded after death. This supports scoped combat/audio acceptance;
+it does not convert the mixed run into a pure combat benchmark or eliminate
+the retained reload interval. Sustained play, a longer soak and any targeted
+reload attribution remain pending.
+
+## Three-minute enabled-default sustained gameplay capture
+
+The current paused session was resumed for 6,300 scheduled frames at cap35.
+It completed and automatically paused. Eighty-nine complete two-second timing
+windows contain 6,284 reported intervals, zero over 100 ms and maximum 53.64 ms.
+No map loads appear inside this section. Worker counters add 13 queued jobs
+and 14 hits (including previously ready work), with zero added not-ready
+results, failures, cancellations or waits. Peak reservation remains 55,909,711
+bytes below 67,108,864 bytes; two ready jobs retain 4,232,316 bytes at the end.
+Those counters alone do not establish a leak or complete worker teardown.
+
+The operator confirmed varied situations, normal sound, no perceived frame lag,
+and no deaths or menu use. This sustained run is a scoped gameplay/audio pass.
+This is acceptance evidence for one enabled-default run with two-second window
+and cap35 limits, not a disabled-fix performance comparison or a long-session
+soak. The terminal partial timing window is unavailable. Keep the earlier
+623.83 ms death/reload interval in its separate mixed-workload record.
+Evidence: `/private/tmp/gzdoom-sibling-combat-lbtj1v6r/sustained-summary.json`,
+`sustained-plan.json`, route script and original engine/stdio logs.
+
+## Current gameplay disposition
+
+| Workload | Operator observation | Recorded intervals | Maximum | >100 ms |
+| --- | --- | ---: | ---: | ---: |
+| Repeated mall doorway crossings | Smooth, sound normal | 1,340 | 56.93 ms | 0 |
+| Combat followed by death/reload | Fighting smooth, sound normal; reload confirmed | 2,655 | 623.83 ms | 1 |
+| Three minutes of varied sustained play | No perceived frame lag, normal sound, no deaths/menus | 6,284 | 53.64 ms | 0 |
+
+All are Intel Metal with cap35 and complete two-second timing windows only.
+These acceptance checks have no matched disabled-fix arm; do not claim the
+entire observed smoothness is an incremental sibling-lookahead speedup.
+Audio preparation late/failure/wait counters do not increase in any section.
+The two gameplay maxima below 100 ms do not imply all frames fit the 28.6 ms
+cap35 budget, and the terminal partial windows are unavailable. The 623.83 ms
+reload interval remains a separate attribution candidate, not a discarded
+outlier or a demonstrated audio failure.
+
+Keep the approved enabled default and its disabled control. Next acceptance
+work is a longer varied-play soak, live sound-reset/reload checks and matched
+GL gameplay; Apple Silicon/Linux/Windows runtime qualification remains open.
+Profile the reload interval separately before selecting another optimization.
+No new engine change is justified solely by the successful manual runs.

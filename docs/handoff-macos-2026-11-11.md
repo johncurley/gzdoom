@@ -231,5 +231,13 @@ Metal Blackwater save-load runs measure a first resumed maximum median of
 Warm ranges overlap. The disabled first-window range is 103.58–118.93 ms,
 enabled 96.76–98.25 ms; retain that spread when assessing the 5.72 ms median
 effect. This is a window maximum around loading, not a combat replay result.
-Next qualify the enabled default in the original doorway and active-combat
-workloads and a long session; use `snd_asyncsiblings 0` for matched controls.
+Enabled-default Intel Metal manual acceptance now passes scoped doorway,
+combat/audio observations and three minutes of varied sustained play. Doorway:
+1,340 intervals, max 56.93 ms, zero >100 ms; sustained play: 6,284 intervals,
+max 53.64 ms, zero >100 ms, operator confirms normal sound and no deaths/menu
+use or perceived frame lag. All use cap35 and complete timing windows; these
+are acceptance runs without disabled-fix comparisons. The mixed combat/death/
+reload run retains one 623.83 ms reload-adjacent interval. Audio counters add
+no late/failure results or waits in any section. See the audit for evidence.
+Next: longer soak, live sound reset/reload, matched GL gameplay and separate
+reload attribution. Use `snd_asyncsiblings 0` for matched controls.

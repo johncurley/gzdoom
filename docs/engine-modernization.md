@@ -329,6 +329,14 @@ falls 5.72 ms (103.71 to 97.99 ms), with 2–3 additional worker hits and zero
 late/failure results. The audit retains the spread and failed validation
 history. Warm ranges overlap; no gameplay determinism or broad performance
 claim follows from the controlled fixture alone.
+Enabled-default Intel Metal manual checks now confirm smooth doorway crossings
+and fighting with normal sound. Three further minutes of varied play record
+6,284 intervals, maximum 53.64 ms and zero >100 ms at cap35; the operator
+confirms no perceived frame lag, deaths or menu use. A separate mixed death/
+reload run retains one 623.83 ms interval requiring attribution. These scoped
+acceptance runs do not establish an incremental speedup without disabled-fix
+controls; longer soak and wider backend/platform gameplay remain open.
+
 
 
 
