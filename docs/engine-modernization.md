@@ -318,7 +318,9 @@ implied by these measurements.
 The [bounded random-sound sibling trial](audits/sound-sibling-preparation-2026-11-12.md)
 adds optional lookahead after the normal resolver chooses a cold sound. It
 shares the existing worker budget and never waits or publishes a sibling early.
-`snd_asyncsiblings` remains default off. Its corrected native oracle controls
+`snd_asyncsiblings` defaults on following explicit maintainer approval on
+2026-11-12; `snd_asyncsiblings 0` retains the disabled control. Wider gameplay
+and platform acceptance remains pending. Its corrected native oracle controls
 the actual C `rand()` stream through an external test-only macOS shim; the
 separate `RandSound` method is not the ordinary resolver. Initial failed tests
 and this correction are preserved. Matched backend correctness and final-code

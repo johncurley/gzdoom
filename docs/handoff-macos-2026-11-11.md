@@ -206,7 +206,8 @@ of the shared input path remain open.
 ## Optional random-sound sibling lookahead — 2026-11-12
 
 Continue with the [sibling trial audit](audits/sound-sibling-preparation-2026-11-12.md)
-and expanded `tools/regression/README.md`. `snd_asyncsiblings` defaults off;
+and expanded `tools/regression/README.md`. Following explicit maintainer
+approval on 2026-11-12, `snd_asyncsiblings` defaults on;
 `snd_asyncprepare` and `snd_precache_async` retain their existing defaults.
 One unselected eligible sibling can use the existing decode pool after normal
 sound selection. Bounds are one acquisition attempt, 128 KiB encoded payload,
@@ -220,7 +221,7 @@ shim built by the regression runner, checks eight choices/draws plus ordered
 PCM outputs, and detects an extra draw. Independent cold readiness runs and
 Blackwater timings do not load the shim. Failed earlier validation artifacts
 are retained in the audit. Wider gameplay, Apple Silicon and Linux/Windows
-qualification remain open before considering default enablement.
+qualification remain open despite the approved default enablement.
 
 Intel Metal and OpenGL each pass all five resource modes and four cold playback
 controls, including corrected paired RNG and ordered PCM/loop checks. Six final
@@ -230,5 +231,5 @@ Metal Blackwater save-load runs measure a first resumed maximum median of
 Warm ranges overlap. The disabled first-window range is 103.58–118.93 ms,
 enabled 96.76–98.25 ms; retain that spread when assessing the 5.72 ms median
 effect. This is a window maximum around loading, not a combat replay result.
-Next qualify `snd_asyncsiblings 1` in the original doorway and active-combat
-workloads and a long session before considering a default change.
+Next qualify the enabled default in the original doorway and active-combat
+workloads and a long session; use `snd_asyncsiblings 0` for matched controls.

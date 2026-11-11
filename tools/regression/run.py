@@ -145,7 +145,7 @@ def run_case(args, root, fixture, stage, name):
                     "+execafter", "105", "mt_png_precache_stats",
                     "+execafter", "106", "mt_debug 0"]
     if name == "serial":
-        command += ["+snd_asyncprepare", "0", "+snd_precache_async", "0"]
+        command += ["+snd_asyncprepare", "0", "+snd_precache_async", "0", "+snd_asyncsiblings", "0"]
         if args.backend == "metal":
             command += ["+mt_async_png", "0", "+mt_batch_texture_uploads", "0"]
     elif name == "single-upload" and args.backend == "metal":
@@ -155,6 +155,7 @@ def run_case(args, root, fixture, stage, name):
         command += ["+snd_siblings_selftest", "reg.random", "reg.b", "reg.c",
                     "reg.corrupt", "reg.huge", "reg.long"]
         command += ["+snd_siblings_rng_selftest", "reg.random", "reg.b", "reg.c"]
+    command += ["+snd_asyncsiblings"]
     (directory / "argv.json").write_text(json.dumps(command, indent=2))
     environment = os.environ.copy()
     if name in ("defaults", "defaults-repeat") and args.rng_shim:
@@ -176,6 +177,9 @@ def run_case(args, root, fixture, stage, name):
                     process.wait()
     log = (directory / "engine.log").read_text(errors="replace")
     confirm_backend(log, args.backend)
+    expected_siblings = "false" if name == "serial" else "true"
+    require('"snd_asyncsiblings" is "%s" (default: "true")' % expected_siblings in log,
+            "sibling shipping default or serial control changed")
     require("REGTEST -" in log and log.count("REGSTART -") >= 2, "map sequence incomplete")
     require("snapshot self-test: PASS" in log and "selftest: PASS" in log,
             "native texture/graph test failed")

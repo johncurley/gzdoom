@@ -1,8 +1,10 @@
 # Audio sibling preparation trial — 2026-11-12
 
-Status: **Experimental, default off — Intel macOS correctness and bounded timing gates pass.** The feature
-remains opt-in: snd_asyncsiblings defaults false. No production RNG change,
-mod override or default enablement is approved or applied.
+Status: **Default enabled by maintainer approval — gameplay qualification in progress.**
+`snd_asyncsiblings` now defaults true, with a disabled console control.
+The qualification history below used default false; its earlier dispositions
+are superseded by the approved default change recorded at the end. No normal
+RNG selection or mod definition has been changed.
 
 ## Bounded candidate
 
@@ -248,3 +250,29 @@ Final build/oracle logs and captures are retained in the trial's `final-checks`
 directory along with the final executable hash. A preliminary matrix selfcheck
 used the local default mod scene and failed IWAD discovery; it did not qualify
 a frame. The explicit DOOM2 scene checks above supersede that launch attempt.
+
+## Maintainer-approved default change — 2026-11-12
+
+After reviewing the scoped results, the maintainer explicitly requested
+`snd_asyncsiblings` on by default and to begin gameplay checks. The CVAR now
+defaults true, remains non-archived and can be disabled with
+`snd_asyncsiblings 0`. Earlier default-off dispositions above describe the
+qualification tranche; this approved policy change supersedes them without
+claiming that long-session or wider-platform qualification has completed.
+Existing backend preparation gates, budgets, serial fallback and resource/
+OpenAL ownership remain unchanged. Prediction for the first manual gameplay
+check: no >100 ms frame interval in the observed doorway crossing, no audible
+missing/cut-off/incorrectly looping effects. A failure requires attribution;
+a pass only qualifies the observed run, not every mod or workload.
+
+Enabled-default verification: mandatory build and 8 Python regression tests
+PASS. A fresh Intel Metal run passes all five resource modes and four cold
+playback controls. The harness queries the CVAR without setting it in enabled
+modes and confirms `"snd_asyncsiblings" is "true" (default: "true")`; the serial
+control reports false with the same compiled default. Paired RNG/PCM, bounds,
+cache/reset and leak checks continue to pass. Artifacts:
+`/private/tmp/gzdoom-sibling-default-metal`, with build log at
+`/private/tmp/gzdoom-sibling-default-build.log`.
+The manual doorway session is staged under
+`/private/tmp/gzdoom-sibling-gameplay-20261112`; loading paused is not a route
+pass. Operator readiness and observations are required before reporting one.

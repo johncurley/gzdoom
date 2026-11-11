@@ -50,7 +50,9 @@ Audio bytes are hashed only with the opt-in
 snd_precache_audit diagnostic, which defaults off and must remain off for
 performance measurements.
 
-The experimental `snd_asyncsiblings` lookahead defaults off. Two default-mode
+The bounded `snd_asyncsiblings` lookahead defaults on following explicit
+maintainer approval on 2026-11-12. `snd_asyncsiblings 0` retains the disabled
+control; wider gameplay/platform acceptance is still pending. Two default-mode
 cases additionally run `snd_siblings_selftest` for admission, duplicate/full
 queues, loop metadata, exclusions, cycles, corrupt archive reads, encoded size
 and PCM overflow. Four fresh off/on/on/off cases then exercise actual cold

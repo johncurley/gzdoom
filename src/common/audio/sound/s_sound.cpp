@@ -58,8 +58,8 @@ CVAR(Bool, snd_pitched, false, CVAR_ARCHIVE)
 CVAR(Int, snd_retainedcache, 0, 0)
 // Precache overlaps one eligible decode with the next owner-thread load.
 CVAR(Bool, snd_precache_async, true, 0)
-// Experimental cold random-group lookahead. Keep off until measured.
-CVAR(Bool, snd_asyncsiblings, false, 0)
+// Bounded cold random-group lookahead; retain a serial control for qualification.
+CVAR(Bool, snd_asyncsiblings, true, 0)
 EXTERN_CVAR(Bool, snd_precache_audit)
 
 int SoundEnabled()
