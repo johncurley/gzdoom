@@ -567,6 +567,9 @@ static void UpdatePlayerClass(int i)
 //
 //==========================================================================
 
+static void G_DoLoadLevel(const FString &nextmapname, int position, bool autosave, bool newGame,
+	std::unique_ptr<MapData> map);
+
 void G_InitNew (const char *mapname, bool bTitleLevel)
 {
 	bool wantFast;
@@ -616,9 +619,17 @@ void G_InitNew (const char *mapname, bool bTitleLevel)
 	setsizeneeded = true;
 
 	// [RH] If this map doesn't exist, bomb out
-	if (!P_CheckMapData(mapname))
+	std::unique_ptr<MapData> map(P_OpenMapData(mapname, true));
+	if (!map)
 	{
 		I_Error ("Could not find map %s\n", mapname);
+	}
+
+	// Carry the validated archive reader into setup for compressed savegame maps.
+	if (!savegamerestore || map->lumpnum < 0 ||
+		!(fileSystem.GetFileFlags(map->lumpnum) & FileSys::RESFF_COMPRESSED))
+	{
+		map.reset();
 	}
 
 	wantFast = !!G_SkillProperty(SKILLP_FastMonsters);
@@ -675,7 +686,7 @@ void G_InitNew (const char *mapname, bool bTitleLevel)
 	
 	if (!savegamerestore)
 		startpos = laststartpos = 0;
-	G_DoLoadLevel (mapname, startpos, false, !savegamerestore);
+	G_DoLoadLevel(mapname, startpos, false, !savegamerestore, std::move(map));
 
 	if (!savegamerestore && (gameinfo.gametype == GAME_Strife || (SBarInfoScript[SCRIPT_CUSTOM] != nullptr && SBarInfoScript[SCRIPT_CUSTOM]->GetGameType() == GAME_Strife)))
 	{
@@ -1356,7 +1367,8 @@ void DAutosaver::Tick ()
 
 extern gamestate_t 	wipegamestate; 
  
-void G_DoLoadLevel(const FString &nextmapname, int position, bool autosave, bool newGame)
+static void G_DoLoadLevel(const FString &nextmapname, int position, bool autosave, bool newGame,
+	std::unique_ptr<MapData> map)
 {
 	gamestate_t oldgs = gamestate;
 
@@ -1366,7 +1378,7 @@ void G_DoLoadLevel(const FString &nextmapname, int position, bool autosave, bool
 	VLoopPhase loadPhase("levelload");
 
 	// Here the new level needs to be allocated.
-	primaryLevel->DoLoadLevel(nextmapname, position, autosave, newGame);
+	primaryLevel->DoLoadLevel(nextmapname, position, autosave, newGame, std::move(map));
 
 	// Reset the global state for the new level.
 	if (wipegamestate == GS_LEVEL)
@@ -1399,7 +1411,13 @@ void G_DoLoadLevel(const FString &nextmapname, int position, bool autosave, bool
 	I_UpdateWindowTitle();
 }
 
-void FLevelLocals::DoLoadLevel(const FString &nextmapname, int position, bool autosave, bool newGame)
+void G_DoLoadLevel(const FString &nextmapname, int position, bool autosave, bool newGame)
+{
+	G_DoLoadLevel(nextmapname, position, autosave, newGame, {});
+}
+
+void FLevelLocals::DoLoadLevel(const FString &nextmapname, int position, bool autosave, bool newGame,
+	std::unique_ptr<MapData> map)
 {
 	MapName = nextmapname;
 	unsigned int i;
@@ -1474,7 +1492,7 @@ void FLevelLocals::DoLoadLevel(const FString &nextmapname, int position, bool au
 		staticEventManager.NewGame();
 	}
 
-	P_SetupLevel (this, position, newGame);
+	P_SetupLevel(this, position, newGame, std::move(map));
 
 
 

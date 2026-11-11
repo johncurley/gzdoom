@@ -435,6 +435,23 @@ private:
 // why reporting cannot happen inside Update().
 void V_LoopTraceBoundary();
 
+// Optional native Instruments intervals (macOS, all rendering backends).
+// IDs are profiler-local, not simulation identities. Tick means a G_Ticker
+// invocation; Update markers are separate from loop/submit/present boundaries.
+enum class VProfileScopeType { Loop, Tick };
+class VProfileScope
+{
+public:
+	explicit VProfileScope(VProfileScopeType type, int tic);
+	~VProfileScope();
+	VProfileScope(const VProfileScope &) = delete;
+	VProfileScope &operator=(const VProfileScope &) = delete;
+
+private:
+	VProfileScopeType mType;
+	uint64_t mSignpostId = 0;
+};
+
 // This is the screen updated by I_FinishUpdate.
 extern DFrameBuffer *screen;
 

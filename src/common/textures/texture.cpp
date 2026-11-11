@@ -426,7 +426,7 @@ FTextureBuffer FTexture::CreateTexBuffer(int translation, int flags)
 
 }
 
-bool FTexture::CreatePixelSnapshot(int translation, int flags,
+bool FTexture::InitPixelSnapshot(int translation, int flags,
 	FTexturePixelSnapshot &snapshot)
 {
 	if (flags & CTF_CheckOnly)
@@ -450,6 +450,14 @@ bool FTexture::CreatePixelSnapshot(int translation, int flags,
 		snapshot.imageId = GetImage()->GetId();
 	snapshot.upscaleMode = gl_texture_hqresizemode;
 	snapshot.upscaleMultiplier = gl_texture_hqresizemult;
+	return true;
+}
+
+bool FTexture::CreatePixelSnapshot(int translation, int flags,
+	FTexturePixelSnapshot &snapshot)
+{
+	if (!InitPixelSnapshot(translation, flags, snapshot))
+		return false;
 
 	if (snapshot.indexed)
 	{
@@ -707,6 +715,20 @@ static bool PixelSnapshotBuffersMatch(const FTextureBuffer &reference,
 	return true;
 }
 
+static bool PngSnapshotsMatch(const FTexturePixelResult &a, const FTexturePixelResult &b)
+{
+	return a.width == b.width && a.height == b.height && a.bytesPerPixel == b.bytesPerPixel &&
+		a.indexed == b.indexed && a.pixels == b.pixels && a.masked == b.masked &&
+		a.hasMasking == b.hasMasking && a.hasTranslucency == b.hasTranslucency &&
+		a.translucency == b.translucency && a.hasAreas == b.hasAreas &&
+		a.areaCount == b.areaCount && a.areas.size() == b.areas.size() &&
+		std::equal(a.areas.begin(), a.areas.end(), b.areas.begin(),
+			[](const FloatRect &x, const FloatRect &y) {
+				return x.left == y.left && x.top == y.top &&
+					x.width == y.width && x.height == y.height;
+			});
+}
+
 class FTexturePixelSnapshotSelfTestState
 {
 	FTexture &texture;
@@ -757,6 +779,8 @@ CCMD(r_texture_snapshot_selftest)
 		return;
 	}
 	int comparisons = 0;
+	int pngComparisons = 0;
+	bool badPngRejected = false;
 	int failures = 0;
 	bool negativeControlPassed = false;
 
@@ -798,6 +822,34 @@ CCMD(r_texture_snapshot_selftest)
 					continue;
 				}
 
+				if (auto image = dynamic_cast<FImageTexture *>(texture))
+				{
+					FTexturePixelSnapshot encoded;
+					std::vector<uint8_t> idat;
+					int channels = 0;
+					if (image->ReadPngSnapshot(translation, flags, 16 * 1024 * 1024,
+						encoded, idat, channels))
+					{
+						FTexturePixelResult png;
+						if (FImageTexture::DecodePngSnapshot(idat, channels, encoded) &&
+							FTexture::ProcessPixelSnapshot(encoded, png) &&
+							encoded.pixels == source.pixels && PngSnapshotsMatch(png, processed))
+							++pngComparisons;
+						else
+						{
+							Printf("snapshot self-test: %s flags=0x%x: PNG snapshot mismatch\n",
+								argv[arg], flags);
+							++failures;
+						}
+						if (!badPngRejected)
+						{
+							idat[0] = 0; // Invalid zlib compression method.
+							badPngRejected = !FImageTexture::DecodePngSnapshot(idat, channels, encoded);
+							if (!badPngRejected) ++failures;
+						}
+					}
+				}
+
 				FTextureBuffer reference = texture->CreateTexBuffer(translation, flags);
 				const size_t bytesPerPixel = (flags & CTF_Indexed) ? 1 : 4;
 				const size_t byteCount = (size_t)reference.mWidth * reference.mHeight * bytesPerPixel;
@@ -827,6 +879,9 @@ CCMD(r_texture_snapshot_selftest)
 		}
 	}
 
+	if (pngComparisons)
+		Printf("snapshot self-test: %d exact PNG comparisons, invalid stream %s\n",
+			pngComparisons, badPngRejected ? "rejected" : "accepted");
 	bool passed = comparisons > 0 && failures == 0 && negativeControlPassed;
 	Printf("snapshot self-test: %s (%d exact comparisons incl. Ice remap, "
 		"%d failures, one-byte negative control %s)\n", passed ? "PASS" : "FAIL",

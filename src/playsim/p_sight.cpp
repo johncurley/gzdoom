@@ -846,11 +846,13 @@ int P_CheckSight (AActor *t1, AActor *t2, int flags)
 
 	if (t1 == nullptr || t2 == nullptr)
 	{
+		SightCycles.Unclock();
 		return false;
 	}
 
 	if ((t2->flags8 & MF8_MVISBLOCKED) && !(flags & SF_IGNOREVISIBILITY))
 	{
+		SightCycles.Unclock();
 		return false;
 	}
 

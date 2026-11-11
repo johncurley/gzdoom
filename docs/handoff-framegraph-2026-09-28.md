@@ -542,3 +542,124 @@ there is no earlier producer in the current graph. Wipe captures are rooted by
 their keep-alive passes, and wipe texture reads use the scene/UI material-read
 observer. This closes the source audit for the reviewed Linux routes; the
 conditional Metal routes still need live validation on Intel Metal.
+
+## Texture uploads on Linux and Windows
+
+Metal now defaults to grouping up to 64 completed uploads in one blit
+command buffer. On Intel Metal, the Ashes Blackwater MAP09 first visit
+uploaded 1,965 textures in the burst frame with 40 extra command buffers
+instead of 1,966. The six-run median longest Update interval fell from
+2.73 s to 2.37 s. The rendered fixture matched exactly, and both fixture
+textures were ready on first bind. The `mt_batch_texture_uploads 0` control
+uses one upload per buffer. [Metal measurements and verification](audits/metal-texture-upload-batching-2026-11-11.md)
+
+- **Vulkan.** `GetTransferCommands()` already accumulates copies, barriers
+  and mip generation before graphics-queue submission. Staging resources
+  stay in the fence-retired transfer delete list. The staging path triggers
+  a wait above 64 MiB of retained uploads. On the matched first-visit
+  workload, measure source preparation, staging bytes, transfer submissions
+  and fence waits to determine which stage contributes to the load gap.
+  Keep the earlier RX 550 MAP06→MAP07 profile as a separate reference. Its
+  roughly 34 ms upload total was measured without forcing validation layers.
+- **OpenGL.** The hardware texture path prepares pixels via
+  `CreateTexBuffer()` and uploads through `glTexImage2D` or
+  `glTexSubImage2D` on the context owner. Measure decode, upload calls, and
+  driver wait time separately. If source preparation dominates, the shared
+  PNG decoder can serve a bounded worker path with detached data and
+  owner-thread texture publication.
+- **Platform checks.** On Linux use the native GPU and the usual Vulkan
+  layer configuration for timings. On Windows start with a Visual Studio
+  build and native GL and Vulkan runs on the same machine. On each platform,
+  match the map/save, asset load order, resolution, cap and cache condition.
+  Record first-visit and warm reload Update gaps separately. Use matched
+  image captures and the framegraph self-test to check upload visibility
+  before first use. Capture Vulkan validation diagnostics in a separate
+  correctness run.
+
+The default change and the timing result cover Intel Metal. Linux and Windows
+GL/Vulkan transition measurements for the Blackwater workload are pending.
+
+### Matched macOS Blackwater timing — 2026-11-11
+
+The Intel laptop ran three fresh processes per backend in Metal, GL, GL,
+Metal, Metal, GL order. Each started on the same staging map, loaded a copy
+of the Blackwater MAP09 save once, then reloaded it twice. Both backends used
+1024 × 768, a 35 fps cap, audio preparation enabled, 2 MiB sound retention,
+and the same background-activity policy. The Metal launches used the
+default PNG worker and upload batching. The OS file cache warmed normally.
+
+The values are the longest Update-to-Update interval in each load window.
+Warm medians and ranges use six reloads per backend across the three
+processes.
+
+| macOS backend | First-visit median (range) | Warm reload median (range) |
+| --- | ---: | ---: |
+| Metal | 2,342 ms (2,333–2,369) | 503 ms (481–528) |
+| OpenGL | 2,259 ms (2,243–2,283) | 493 ms (484–497) |
+
+Metal met the predicted first-visit median below 2.6 s and warm median
+between 0.4 and 0.7 s. OpenGL's median first visit was 83 ms shorter in this
+fixture. Warm ranges overlap. A later 111–120 ms Update interval followed
+each first visit across both backends. Logs, launch arguments, input
+hashes and results are in `/private/tmp/gzdoom-blackwater-backend-timing-jjzp8cjx`.
+This build has Vulkan disabled. Native Linux and Windows timing remains
+pending.
+
+### Locating the Metal/GL first-visit difference
+
+Two diagnostic launches per backend enabled the existing loop-phase trace.
+The median phase readings were as follows.
+
+| Phase | Intel Metal | macOS OpenGL |
+| --- | ---: | ---: |
+| Precache, including textures and sound | 1,362 ms | 1,564 ms |
+| BeginFrame | 413 ms | 3 ms |
+| First-view rendering | 18 ms | 145 ms |
+| Full enclosing loop, including the wipe | 3,670 ms | 3,683 ms |
+
+Metal's texture preparation is queued during precache and its completed
+uploads drain at `BeginFrame`. OpenGL prepares and uploads through its
+existing precache and first-use texture paths. Metal's measured CPU upload
+peak was 165–167 ms inside the broader frame-start work. Its
+`nextdrawable` phase accumulated 2.45–3.00 ms in the enclosing loop.
+Texture creation and the remaining frame-start operations need finer
+attribution before assigning their individual costs.
+
+The full enclosing loop was similar in these diagnostics while the largest
+Update interval was 2,318–2,319 ms for Metal and 2,240–2,253 ms for GL.
+Backend placement of Update boundaries affects that long-frame comparison.
+These traced runs provide phase attribution. The earlier untraced six-run
+comparison supplies the reported first-visit medians. The existing trace
+contains nested timers, including precache inside levelload and playsim.
+Use the phase values individually and retain the enclosing-loop elapsed
+measurement. The trace's unaccounted remainder includes double-counted
+nested work.
+
+Artifacts are in `/private/tmp/gzdoom-blackwater-phase-timing-q2ckuymt`.
+
+The [current Metal frame-start profile](audits/metal-frame-start-attribution-2026-11-11.md)
+now attributes 161–183 ms of sampled main-thread time to the texture-creation
+call and 96–108 ms to staging copies. Warm controls remove that burst.
+Level sound precaching remains the largest sampled preparation stage at
+841–894 ms. The separate resumed interval also includes synchronous sound
+loading and 35 simulation ticks.
+
+The [bounded sound precache follow-up](audits/sound-precache-worker-2026-11-11.md)
+records a 58 ms lower median first-visit gap across six Intel Metal runs.
+It preserves owner-thread OpenAL publication and required-cache completion.
+Sound preparation and precache overlap now default on through the existing
+macOS worker gate. The console controls retain explicit serial comparisons.
+The macOS OpenGL pair also consumed the same 15 prepared sounds. Native
+Linux and Windows audio qualification remains pending.
+
+
+### Durable resource controls — 2026-11-11
+
+[tools/regression](../tools/regression/README.md) replaces temporary-only
+acceptance scripts with generated fixtures, native audio/texture/graph
+self-tests, serial controls, a default repeat and an interleaved save-load
+benchmark. Intel Metal has live exact-pixel/PCM/lifecycle and upload-counter
+coverage; platform and workload limits remain explicit in the
+[audit](audits/resource-preparation-regressions-2026-11-11.md). Diagnostics
+default off for performance runs. Preserve these controls before extending
+the worker or batching surface.

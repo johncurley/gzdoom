@@ -84,6 +84,7 @@ protected:
   void ApplyRenderPass(int dt);
   void ApplyStencilRef();
   void ApplyDepthBias();
+  void ApplyDepthClip();
   void ApplyScissor();
   void ApplyViewport();
   void ApplyStreamData();
@@ -103,6 +104,8 @@ protected:
   float mGlossiness = 0.0f;
   float mSpecularLevel = 0.0f;
   bool mDepthClamp = true;
+  bool mDepthClipKnown = false;
+  bool mAppliedDepthClamp = true;
   MTL::RenderCommandEncoder *mEncoder = nullptr;
   MtPipelineKey mPipelineKey = {};
   int mClearTargets = 0;

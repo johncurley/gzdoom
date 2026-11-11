@@ -3,6 +3,7 @@
 
 #include "sc_man.h"
 #include "m_fixed.h"
+#include <cstring>
 
 class UDMFParserBase
 {
@@ -14,6 +15,7 @@ protected:
 	bool BadCoordinates = false;
 
 	void Skip();
+	FName ResolveKey(const char *text);
 	FName ParseKey(bool checkblock = false, bool *isblock = NULL);
 	int CheckInt(FName key);
 	double CheckFloat(FName key);
@@ -38,6 +40,17 @@ protected:
 		}
 	}
 
+private:
+	struct KeyHashTraits
+	{
+		hash_t Hash(const char *text) { return (hash_t)SuperFastHash(text, strlen(text)); }
+		int Compare(const char *left, const char *right) { return strcmp(left, right); }
+	};
+	// Copy scanner strings before caching. Character storage survives TArray
+	// growth; destroy the lookup map before its owning names. Exact spellings
+	// are cached; FName remains the authority for case-insensitive identity.
+	TArray<FString> KeyNames;
+	TMap<const char *, FName, KeyHashTraits> KeyCache;
 };
 
 #define BLOCK_ID (ENamedName)-1

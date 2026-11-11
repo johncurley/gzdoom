@@ -69,6 +69,256 @@ workloads. SPU-13 support is deferred while that project remains experimental.
 
 ## Track C: Simulation modernization
 
+Performance acceptance prioritizes smooth gameplay: reproducible long-frame
+frequency/severity and doorway/area-entry/level-transition pacing. Average FPS
+is secondary. Isolated CPU or API-command savings support implementation choices
+but do not, by themselves, qualify a smoothness improvement.
+
+The [engine performance and dependency audit](audits/engine-performance-dependencies-2026-11-08.md)
+records current source boundaries, profiler limitations, and the matched-workload
+capture contract. Blackwater MAP09 now supplies a manual saved route and one
+complete Metal CPU capture; qualified matched hotspot rankings remain pending.
+The [profiling tools](../tools/profiling/README.md) now summarize existing
+Instruments exports and document the CPU/wait, actor-count, and render-workload
+measurements. The first Blackwater capture supplies candidates, not a qualified
+GL/Metal baseline or a threading implementation target.
+
+The [instrumentation audit and implementation order](audits/engine-instrumentation-2026-11-09.md)
+defines the active sequence for this tranche:
+
+First increment completed: sight-query early-return timer accounting repaired
+with a live failing control/passing candidate, and VM history relabeled as
+display samples. The next completed increment adds
+[native macOS timeline markers](audits/engine-profile-markers-2026-11-09.md),
+default-off and live-qualified on Intel Metal/GL with a known-delay control.
+Combined CPU samples and scheduler states are readable on one timeline. Those
+marker controls alone do not establish Blackwater attribution or observer cost.
+The [corrected full-retention Blackwater repeat](audits/blackwater-marked-frame-2026-11-09.md)
+now aligns a 261.5 ms long frame with synchronous lightning sound preparation,
+repeating the earlier event signature. Resolved sound/cache attribution is next;
+matched GL/Metal baselines and observer-overhead qualification remain open.
+
+The [scene-material observer follow-up](audits/framegraph-observer-cost-2026-11-09.md)
+retains the graph and adds a cache of completed material observations within
+each backend-pass scope, preserving per-binding upload accounting. An isolated
+repeated-binding control measures about 94% less observer CPU time with identical
+graph reports; a within-process Blackwater check has identical pixels and graph
+dumps. Whole-frame timing was too variable to qualify a gameplay speedup.
+
+The [audio worker boundary qualification](audits/audio-worker-boundary-2026-11-09.md)
+measures exclusive decoder handoff with the installed ZMusic library. Blackwater
+thunder PCM/metadata match between serial and worker reads, with about 98% less
+owner CPU during isolated decoding. Decoder construction remains serialized
+because of initialization/open-state dependencies. The
+[first engine integration](audits/audio-worker-integration-2026-11-09.md) adds
+a bounded Vorbis worker, owner-allocated PCM, ready publication and
+cancellation/reset handling. Repeated Blackwater controls show ready hits
+replacing first-use thunder loads; sanitizer core tests and live loop/sample
+metadata checks pass. Synchronous cold-miss fallback is retained. Matched doorway
+pacing and long-session acceptance were pending in the initial qualification.
+The later scoped doorway checks and current sound defaults are recorded below.
+
+The [post-integration metrics](audits/blackwater-audio-metrics-2026-11-09.md)
+now demonstrate stationary weather hitch reduction across three runs per mode:
+seven >100 ms intervals disabled, zero enabled; separate CPU captures confirm
+thunder decode removal from the main-thread event path. Material-observation
+allocation/hash/read-tracking remains a substantial recurring CPU candidate.
+Doorway-route and uncapped throughput qualification remain open; inclusive CPU
+sample shares are not frame-time savings or a threading mandate.
+
+The [resource-read lookup follow-up](audits/resource-read-lookup-2026-11-10.md)
+removes temporary FString allocation on lookup hits while retaining owned,
+case-sensitive resource names and every per-binding upload observation. An
+allocation control measures 67–69% less isolated lookup CPU time, with identical
+Blackwater graph reports and pixels on Intel Metal/GL. Final build, graph tests
+and baseline/SSAO cross-backend checks pass. A fresh stationary CPU capture
+shows resource-read observation at 2.2% of main-thread sample weight (previously
+8.6%); this is supporting attribution, not a whole-frame speedup claim. The
+separate material-cache string lookup and movement/AABB work remain candidates;
+doorway-route and uncapped qualification are still open.
+
+The [material-cache lookup follow-up](audits/material-cache-lookup-2026-11-10.md)
+also removes temporary strings on repeated material-cache hits, with owned
+pass-scoped keys and the same alias/pass/reset invalidation points. An isolated
+allocation control measures 54–55% less material-observer CPU time; graph reports
+and Blackwater pixels match on Intel Metal/GL. Final build, graph tests and
+baseline/SSAO comparisons pass. A fresh CPU capture places material observation
+at 7.1% of main-thread sample weight (previously 11.9%), alongside thinker and
+movement work; different focus and uncontrolled inputs limit that comparison.
+Retain dependency validation and bounded postprocess replay. Further string
+identity work or movement-query optimization requires separate measurement;
+the graph does not provide a frozen world snapshot for concurrent scene traversal.
+
+The [graph caller follow-up](audits/graph-caller-lookups-2026-11-10.md) identifies
+Metal material binding as the measured caller and combines upload-read ordering
+and scoped material completion in one owned resource entry. Warm bindings now
+perform one lookup instead of two; a restored duplicate-lookup control measures
+43–47% less isolated CPU work, with matching graph reports and pixels. Build,
+graph tests and baseline/SSAO comparisons pass. The fresh material-observer
+sample share is 5.4% (previously 7.1%); focus/input limitations prevent a whole-frame
+speedup claim. First-observation comparisons remain. The next rendering CPU
+investigation is render-state/material/pass/stream application and its shared
+hwrenderer callers, alongside movement/blockmap queries. Advanced graph scheduling,
+culling and memory reuse still require separate correctness and GPU/memory
+measurements; the graph already controls bounded postprocess replay.
+
+The [render-state count follow-up](audits/render-state-counts-2026-11-10.md)
+shows pipeline/matrix deduplication already working and frequent actual material
+key changes. A bounded Metal-only encoder-local depth-clip cache removes 99.4%
+of repeated commands in the paused Blackwater fixture, with matching images and
+graph reports and passing value/invalidation controls. The isolated command-loop
+saving is small in normal-frame terms; no hitch or FPS improvement is claimed.
+Unprofiled transition pacing is the next acceptance priority. Further rendering
+work should examine material preparation and existing opaque ordering before
+introducing worker jobs with explicit input ownership and ordered merge points.
+
+The [current-build doorway check](audits/blackwater-doorway-current-2026-11-10.md)
+now passes three fresh-process Metal runs: 4,027 retained intervals over about
+115 seconds, zero intervals above 100 ms, and all three manual doorway crossings
+confirmed smooth by the user. This closes the scoped MAP09 doorway check with
+cap35 and audio preparation explicitly enabled; it does not qualify cold caches,
+other backends, uncapped play, long sessions or level transitions, or attribute
+the result to an individual optimization. Heavy-gameplay and level-transition
+smoothness are the next workloads; no profiler capture is needed for an absent
+long-frame event. Sound preparation now defaults on through the macOS worker
+gate, as recorded in the precache follow-up below.
+
+The [combat/reload follow-up](audits/blackwater-combat-reload-2026-11-10.md)
+records smooth fighting reported by the user, but rejects the mixed
+combat/death/menu take as a steady-combat baseline. A confirmed normal
+death/reload CPU capture attributes an 863 ms Update gap primarily to level
+reconstruction, UDMF parsing, decompression and preparation. A separate 101 ms
+post-load gap contains 29 ticks plus synchronous actor-triggered sound loading;
+it is not one expensive actor tick or established thunder work.
+
+The [bounded key-cache follow-up](audits/udmf-key-cache-2026-11-10.md), verified
+through 2026-11-11, caches repeated property-key FNames within each UDMF/USDF
+parser with strict entry/length limits. Real MAP09 controls resolve 99.956% of
+keys from the cache and reduce parser-body wall time by 32.5–35% (roughly
+55–61 ms in this stage). Reference-identity checks, a failing fault control,
+static UDMF pixel comparisons and final build/regression checks pass. This is
+owner-thread algorithmic work. The
+[matched warm reload measurement](audits/blackwater-reload-end-to-end-2026-11-11.md)
+now qualifies 65–72 ms less request-to-completed-resumed-loop latency
+(3.3–3.7%) across three Metal processes, with all per-process gains exceeding
+repeated-run variation. Median per-reload maximum Update gap falls from 570 to
+510 ms; substantial pauses remain. The resumed iteration itself shows no
+consistent gain. The sound follow-up below resolves the repeated asset identities;
+remaining resource/load work and a survivable combat/normal level-exit fixture
+are still open. Tick ordering
+and the renderer baseline remain unchanged; cold/GL/long-session qualification
+is still open.
+
+The [post-load sound attribution](audits/postload-sound-attribution-2026-11-11.md)
+identifies nine short first-use sounds per resumed batch: flesh impacts,
+monster activity, Geiger clicks and rain. Six reloads show 38–41 ms of
+decode/buffer work and less than 1 ms of OpenAL upload. The prediction of a
+single >=10 ms decode is rejected; the cost is cumulative. A temporary existing
+PrecacheSounds declaration preserves all ten possible variants (1.43 MiB PCM)
+across reloads and eliminates the synchronous loads in six control reloads.
+This is functional evidence, not an end-to-end speedup or a shipped engine fix.
+Three ready thunder jobs already reserve about 51 MiB of the 64 MiB worker
+budget, preventing simple admission of another fixed-size job. Next specify
+bounded owner-side retention/invalidation and measure it; cold preparation and
+wider worker admission remain separate. No Blackwater names, diagnostic hooks,
+VM concurrency or tick-policy changes are added to production code.
+
+The [bounded retention implementation](audits/sound-retention-2026-11-11.md)
+now adds opt-in `snd_retainedcache` (KiB, default zero) and diagnostic statistics.
+It keeps most-recently played eligible canonical buffers at existing precache
+maintenance, within an extra payload budget and 128-entry history. Active and
+explicitly marked buffers retain their existing protection. Explicit unload,
+definition/device reset and metadata mismatch invalidate history. A user-approved
+guard excludes raw/explicit-loop and conflicting definitions; native GL/Metal
+negative controls reproduce the wrong-loop alias without it and correct actual
+OpenAL loop points with it. Active-loop pressure/reset checks and policy sanitizer
+tests pass. In three guarded warm Metal comparisons, 2 MiB reduces first resumed
+loop medians from roughly 82 to 38 ms and complete reload intervals by 35–56 ms,
+each beyond within-arm spread. Extra selected payload stays at or below 1.30 MiB;
+7–9 resumed misses become 1–3. Core/loading-gap improvement is unqualified.
+Keep default off pending broader gameplay, cold/long-session and cross-platform
+acceptance; 2 MiB is a measured fixture setting, not a universal budget. Wider
+worker preparation, resource loading and hwrenderer profiling remain separate.
+
+The [current warm reload profile](audits/blackwater-current-load-profile-2026-11-11.md)
+records three 522–559 ms Update gaps, with 432–475 ms of main-thread sample
+weight under `G_DoLoadGame`. UDMF parsing accounts for 116–132 ms. Validation
+and setup reopen the same compressed MAP09 WAD and together account for 45–50 ms
+of sample weight. Check the ownership and validation order for reusing the
+opened map, then compare repeated unprofiled reloads. The
+[validated-map handoff](audits/validated-map-reuse-2026-11-11.md) now reuses
+the compressed map reader during savegame loading. The warm Metal comparison
+recorded one open per reload and 22–40 ms shorter median longest Update gaps
+across three processes. For the renderer, collect
+BSP, clipping, setup and worker-wait counters on a moving gameplay route.
+
+The [first MAP09 visit capture](audits/blackwater-first-visit-textures-2026-11-11.md)
+measured 2.74–2.88 s Update gaps in fresh Metal processes. Main-thread texture
+snapshots account for 489–494 ms of sample weight, including 356–369 ms in PNG
+inflate and unfilter work. The subsequent upload burst accounts for 603–611 ms.
+Test owned PNG decoding on a bounded worker during the intervening sound
+precache, with ready-at-first-use counts and pixel parity. Measure the upload
+burst alongside the full first-visit gap.
+
+The [standalone PNG decode test](audits/png-worker-decode-prototype-2026-11-11.md)
+matches the serial IDAT output on 192 Blackwater RGB/RGBA fixtures. Two
+workers reduce median decode time from about 83 to 51 ms with job storage
+below 16 MiB. The [Metal integration](audits/metal-png-precache-2026-11-11.md)
+keeps that work behind `mt_async_png`. On the first Blackwater MAP09 visit,
+the enabled median Update gap was 29 ms shorter across three runs per
+setting. All 92 accepted jobs per enabled visit uploaded, and all four
+observed first binds used worker-prepared textures. The worker defaults on
+for Metal. Set `mt_async_png 0` to run the synchronous decode control.
+
+[Metal upload batching](audits/metal-texture-upload-batching-2026-11-11.md)
+reduces the extra command buffers in the Blackwater first-visit burst from
+1,966 to 40 with the same 1,965 texture uploads. Across six interleaved Intel
+Metal runs, the median longest Update gap fell from 2.73 to 2.37 s. The
+batching path now defaults on for Metal. Set `mt_batch_texture_uploads 0`
+for the single-upload control. A separate post-load hitch remains visible
+in the timing windows.
+The [current frame-start profile](audits/metal-frame-start-attribution-2026-11-11.md)
+locates 161–183 ms of main-thread sample weight at Metal texture creation,
+96–108 ms in staging row copies, and 8 ms in completion cleanup. Level sound
+precaching still accounts for 841–894 ms in the first-visit gap. A later
+97–117 ms resumed interval includes 35 ticks and 37–48 ms under synchronous
+sound loading. The [bounded sound precache worker](audits/sound-precache-worker-2026-11-11.md)
+now overlaps an eligible direct sound decode with an owner-thread cache
+operation. Native PCM, loop/publication order, and resident payload controls
+match. Across six Intel Metal runs the median first-visit gap falls by
+58 ms, with 15 worker hits per enabled visit and a peak reservation below
+54 MiB in the existing 64 MiB pool. This missed the 100 ms prediction.
+Both `snd_precache_async` and `snd_asyncprepare` now default on, with the
+worker enabled through its existing macOS platform gate. The console
+switches retain the serial controls. Broader random-group coverage,
+long-session acceptance and native Linux/Windows decoder qualification
+remain open.
+
+
+Durable [resource regression controls](../tools/regression/README.md) now
+cover exact audio output/order/loops, bounded preparation failure and
+cancellation, PNG worker/fallback pixels, retention, sound reset and live
+Metal upload batching. The five Intel Metal controls pass; see the
+[qualification record](audits/resource-preparation-regressions-2026-11-11.md).
+A portable save-load runner retains hashes and uses three interleaved
+repetitions per arm. Native Linux/Windows and Apple Silicon runs remain open.
+
+
+1. Validate existing timer meanings and a common frame/tick/profiler timeline;
+   repair only the instruments needed for the next experiment.
+2. Qualify and repeat the gameplay, area-entry and level-transition workloads
+   on GL/Metal, separating CPU execution from waits and observer overhead.
+3. Optimize one demonstrated critical-path cost with a disabled-fix control.
+   Sound preparation and scene-material bookkeeping are current candidates.
+4. Improve serial algorithms/data access and ownership where measurements warrant.
+5. Introduce bounded asynchronous computations only after lifetime, observation
+   order, deterministic results and measured net benefit are established.
+
+Hold speculative new rendering optimization campaigns and generic concurrent
+actor ticks during baseline qualification; preserve renderer correctness/parity
+work. Actor count must be related separately to thinker time, visible geometry,
+sprites, lighting and material work before choosing an actor optimization.
+
 - Profile and optimize VM dispatch, allocations, and native/script transitions.
   - Begin after the active renderer milestones and their validation gates are
     closed. Start with attribution, not a presumption that ZScript is the
@@ -117,7 +367,9 @@ OpenGL/Vulkan changes need Windows builds and runtime checks, and each native
 controller backend needs its own input and haptics validation. A build on one
 OS does not establish runtime parity on another. The next Windows step is a
 Visual Studio build and a recorded OpenGL/Vulkan runtime baseline, followed by
-controller checks when hardware is available.
+controller checks when hardware is available. Use the
+[Linux and Windows texture upload handover](handoff-framegraph-2026-09-28.md#texture-uploads-on-linux-and-windows)
+for the transition baseline and backend-specific measurements.
 
 Controller capability is backend- and device-dependent: Linux evdev exposes
 force feedback only when the event node is writable and advertises rumble;

@@ -102,6 +102,48 @@ static bool WriteIDAT (FileWriter *file, const uint8_t *data, int len);
 static void UnfilterRow (int width, uint8_t *dest, uint8_t *stream, uint8_t *prev, int bpp);
 static void UnpackPixels (int width, int bytesPerRow, int bitdepth, const uint8_t *rowin, uint8_t *rowout, bool grayscale);
 
+size_t M_PNGSnapshotBytes(size_t fileBytes, int width, int height, int channels)
+{
+	const size_t rowBytes = size_t(width) * channels;
+	// Include the owner-side file reader, IDAT capacity, filter scratch,
+	// decoded RGB(A), BGRA snapshot and worst-case expanded upload result.
+	return 2 * fileBytes + sizeof(tinfl_decompressor) + 4096 +
+		rowBytes * (2 * height + 1) + height +
+		size_t(width) * height * 4 + size_t(width + 2) * (height + 3) * 4;
+}
+
+bool M_DecodePNGSnapshot(const std::vector<uint8_t> &idat, int channels,
+	int width, int height, std::vector<uint8_t> &pixels)
+{
+	if (idat.empty() || (channels != 3 && channels != 4) ||
+		width <= 0 || height <= 0 || width > 2048 || height > 2048)
+		return false;
+
+	const int rowBytes = width * channels;
+	std::vector<uint8_t> filtered(size_t(rowBytes + 1) * height);
+	tinfl_decompressor inflater;
+	tinfl_init(&inflater);
+	size_t inputSize = idat.size(), outputSize = filtered.size();
+	const auto status = tinfl_decompress(&inflater, idat.data(), &inputSize,
+		filtered.data(), filtered.data(), &outputSize,
+		TINFL_FLAG_PARSE_ZLIB_HEADER | TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
+	if (status != TINFL_STATUS_DONE || inputSize != idat.size() ||
+		outputSize != filtered.size())
+		return false;
+
+	pixels.resize(size_t(rowBytes) * height);
+	std::vector<uint8_t> firstRow(rowBytes);
+	for (int y = 0; y < height; ++y)
+	{
+		auto row = filtered.data() + size_t(y) * (rowBytes + 1);
+		if (*row > 4)
+			return false;
+		auto out = pixels.data() + size_t(y) * rowBytes;
+		UnfilterRow(rowBytes, out, row, y ? out - rowBytes : firstRow.data(), channels);
+	}
+	return true;
+}
+
 // EXTERNAL DATA DECLARATIONS ----------------------------------------------
 
 // PUBLIC DATA DEFINITIONS -------------------------------------------------

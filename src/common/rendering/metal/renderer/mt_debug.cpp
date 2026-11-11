@@ -26,6 +26,7 @@
 #include "metal/renderer/mt_renderbuffers.h"
 #include "metal/system/mt_commandbuffer.h"
 #include "metal/textures/mt_texture.h"
+#include "metal/textures/mt_textureloader.h"
 #include "metal/system/mt_renderdevice.h"
 #include "metal/system/mt_version.h"
 #include "printf.h"
@@ -655,6 +656,14 @@ MtMetricStats MtDebugManager::GetFrameTimeStats() const {
   }
   stats.average = total / (float)mFrameTimeHistory.size();
   return stats;
+}
+
+CCMD(mt_png_precache_stats)
+{
+  if (auto fb = GetActiveMetalRenderDevice()) {
+    if (auto manager = fb->GetTextureManager())
+      manager->GetTextureLoader()->PrintPngStats();
+  }
 }
 
 CCMD(mt_metrics)

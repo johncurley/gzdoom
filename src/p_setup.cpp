@@ -417,7 +417,7 @@ void P_FreeLevelData (bool fullgc)
 //
 //===========================================================================
 
-void P_SetupLevel(FLevelLocals *Level, int position, bool newGame)
+void P_SetupLevel(FLevelLocals *Level, int position, bool newGame, std::unique_ptr<MapData> map)
 {
 	unsigned int i;
 
@@ -464,8 +464,11 @@ void P_SetupLevel(FLevelLocals *Level, int position, bool newGame)
 	// Free all level data from the previous map
 	P_FreeLevelData();
 
-	MapData *map = P_OpenMapData(Level->MapName.GetChars(), true);
-	if (map == nullptr)
+	if (!map)
+	{
+		map.reset(P_OpenMapData(Level->MapName.GetChars(), true));
+	}
+	if (!map)
 	{
 		I_Error("Unable to open map '%s'\n", Level->MapName.GetChars());
 	}
@@ -485,8 +488,8 @@ void P_SetupLevel(FLevelLocals *Level, int position, bool newGame)
 	}
 
 	MapLoader loader(Level);
-	loader.LoadLevel(map, Level->MapName.GetChars(), position);
-	delete map;
+	loader.LoadLevel(map.get(), Level->MapName.GetChars(), position);
+	map.reset();
 
 	// if deathmatch, randomly spawn the active players
 	if (deathmatch)

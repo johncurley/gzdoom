@@ -25,6 +25,8 @@
 
 
 class OpenALSoundStream;
+struct FSoundDecodeJob;
+struct FSoundPreparationState;
 
 class OpenALSoundRenderer : public SoundRenderer
 {
@@ -35,8 +37,15 @@ public:
 	virtual void SetSfxVolume(float volume);
 	virtual void SetMusicVolume(float volume);
 	virtual SoundHandle LoadSound(uint8_t *sfxdata, int length, int def_loop_start, int def_loop_end);
+	bool CanPrepareSound() const override;
+	bool PrepareSound(int key, int lump, const uint8_t *data, int length, int loopstart, int loopend, unsigned pcmCapacity = 8 * 1024 * 1024) override;
+	SoundHandle LoadPreparedSound(int key, int lump, int loopstart, int loopend) override;
+	void WaitForSoundPreparation(int key) override;
+	void CancelSoundPreparation(int key) override;
+	void PrintPreparationStats() override;
 	virtual SoundHandle LoadSoundRaw(uint8_t *sfxdata, int length, int frequency, int channels, int bits, int loopstart, int loopend = -1);
 	virtual void UnloadSound(SoundHandle sfx);
+	unsigned int GetSoundBufferBytes(SoundHandle sfx) override;
 	virtual unsigned int GetMSLength(SoundHandle sfx);
 	virtual unsigned int GetSampleLength(SoundHandle sfx);
 	virtual float GetOutputRate();
@@ -85,6 +94,8 @@ public:
 	virtual FString GatherStats();
 
 private:
+	FSoundPreparationState *Preparations = nullptr;
+	SoundHandle BufferDecodedSound(FSoundDecodeJob &job);
     struct {
         bool EXT_EFX;
         bool EXT_disconnect;

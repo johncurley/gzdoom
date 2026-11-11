@@ -34,9 +34,15 @@
 */
 
 #include <stdio.h>
+#include <vector>
 #include "zstring.h"
 #include "files.h"
 #include "palentry.h"
+
+// Worker decode of an owned, contiguous IDAT stream for an 8-bit RGB(A) image.
+size_t M_PNGSnapshotBytes(size_t fileBytes, int width, int height, int channels);
+bool M_DecodePNGSnapshot(const std::vector<uint8_t> &idat, int channels,
+	int width, int height, std::vector<uint8_t> &pixels);
 
 // Screenshot buffer image data types
 enum ESSType

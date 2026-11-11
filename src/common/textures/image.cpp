@@ -190,6 +190,12 @@ int FImageSource::CopyTranslatedPixels(FBitmap *bmp, const PalEntry *remap, int 
 //
 //==========================================================================
 
+bool FImageSource::HasSharedPrecacheBitmap() const
+{
+	auto info = precacheInfo.CheckKey(ImageID);
+	return info && info->first != 1;
+}
+
 FBitmap FImageSource::GetCachedBitmap(const PalEntry *remap, int conversion, int *ptrans, int frame)
 {
 	FBitmap ret;

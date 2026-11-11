@@ -249,6 +249,7 @@ protected:
 	bool bHdr = false; 				// only canvas textures for now.
 	int8_t bTranslucent = -1;
 	int8_t areacount = 0;			// this is capped at 4 sections.
+	bool InitPixelSnapshot(int translation, int flags, FTexturePixelSnapshot &snapshot);
 
 
 public:
@@ -427,6 +428,10 @@ public:
 		SetFromImage();
 	}
 	void SetNoRemap0() { bNoRemap0 = true; }
+	size_t ReadPngSnapshot(int translation, int flags, size_t available,
+		FTexturePixelSnapshot &snapshot, std::vector<uint8_t> &idat, int &channels);
+	static bool DecodePngSnapshot(const std::vector<uint8_t> &idat, int channels,
+		FTexturePixelSnapshot &snapshot);
 
 	FImageSource* GetImage() const override { return mImage; }
 	FBitmap GetBgraBitmap(const PalEntry* p, int* trans) override;

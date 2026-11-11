@@ -1,19 +1,23 @@
 #include "mt_textureloader.h"
-#include "filesystem.h"
-#include "image.h"
-#include "hw_material.h"
-#include "textures.h"
+#include "c_cvars.h"
+#include "printf.h"
+
+CVAR(Bool, mt_async_png, true, 0)
+static constexpr size_t PngBudget = 16 * 1024 * 1024;
 
 MtTextureLoader::MtTextureLoader(MetalRenderDevice *fb)
     : fb(fb) {
   // Create a background queue for texture processing
   mTextureQueue = dispatch_queue_create("com.gzdoom.metal.textureloader",
                                         DISPATCH_QUEUE_CONCURRENT);
+  mPngQueue = dispatch_queue_create("com.gzdoom.metal.pngdecode",
+                                    DISPATCH_QUEUE_SERIAL);
   mLoadGroup = dispatch_group_create();
 }
 
 MtTextureLoader::~MtTextureLoader() {
   Shutdown();
+  dispatch_release(mPngQueue);
   if (mTextureQueue) {
     dispatch_release(mTextureQueue);
   }
@@ -23,13 +27,27 @@ MtTextureLoader::~MtTextureLoader() {
 }
 
 uint32_t MtTextureLoader::QueueTextureLoad(FTexture *tex, int translation,
-                                          int flags) {
+                                          int flags, bool &queuedPng) {
+  queuedPng = false;
   if (!tex) return 0;
 
+  flags |= CTF_ProcessData;
   TextureLoadTask initialTask;
-  if (!tex->CreatePixelSnapshot(translation, flags | CTF_ProcessData,
-                                initialTask.sourcePixels))
+  if (mt_async_png) {
+    if (auto image = dynamic_cast<FImageTexture *>(tex)) {
+      initialTask.pngBytes = image->ReadPngSnapshot(
+          translation, flags, PngBudget - mPngBytes, initialTask.sourcePixels,
+          initialTask.pngIDAT, initialTask.pngChannels);
+    }
+  }
+  queuedPng = initialTask.pngBytes != 0;
+  if (queuedPng) {
+    mPngBytes += initialTask.pngBytes;
+    mPngPeakBytes = std::max(mPngPeakBytes, mPngBytes);
+    ++mPngQueued;
+  } else if (!tex->CreatePixelSnapshot(translation, flags, initialTask.sourcePixels)) {
     return 0;
+  }
 
   uint32_t taskId = mNextTaskId++;
   mPendingCount++;
@@ -39,7 +57,7 @@ uint32_t MtTextureLoader::QueueTextureLoad(FTexture *tex, int translation,
 
   // The source pixels are now owned by this task. The worker never needs the
   // FTexture object or its image/cache state.
-  dispatch_group_async(mLoadGroup, mTextureQueue, ^{
+  dispatch_group_async(mLoadGroup, queuedPng ? mPngQueue : mTextureQueue, ^{
     ProcessTextureTask(*task);
 
     // Do not dispatch completion to the main queue: the Cocoa entry point
@@ -53,18 +71,24 @@ uint32_t MtTextureLoader::QueueTextureLoad(FTexture *tex, int translation,
   return taskId;
 }
 
-bool MtTextureLoader::TryGetCompletedTask(uint32_t taskId,
-                                         TextureLoadTask &outTask) {
-  std::lock_guard<std::mutex> lock(mCompletedMutex);
-  for (size_t i = 0; i < mCompletedTasks.size(); ++i) {
-    if (mCompletedTasks[i].taskId == taskId) {
-      outTask = std::move(mCompletedTasks[i]);
-      mCompletedTasks.erase(mCompletedTasks.begin() + i);
-      mPendingCount--;
-      return true;
-    }
-  }
-  return false;
+void MtTextureLoader::ReleaseCompletedTasks(std::vector<TextureLoadTask> &tasks) {
+  size_t released = 0;
+  for (const auto &task : tasks)
+    released += task.pngBytes;
+  tasks.clear();
+  mPngBytes -= released;
+}
+
+void MtTextureLoader::RecordPngCompletion(bool uploaded) {
+  mPngUploaded += uploaded;
+  mPngFailed += !uploaded;
+}
+
+void MtTextureLoader::PrintPngStats() const {
+  Printf("Metal PNG precache: queued=%u uploaded=%u failed=%u first-use-ready=%u "
+         "first-use-fallback=%u reserved=%zu peak=%zu budget=%zu bytes\n",
+         mPngQueued, mPngUploaded, mPngFailed, mPngReady, mPngFirstUseFallback,
+         mPngBytes, mPngPeakBytes, PngBudget);
 }
 
 std::vector<TextureLoadTask> MtTextureLoader::GetCompletedTasks() {
@@ -101,6 +125,13 @@ size_t MtTextureLoader::GetCompletedCount() const {
 void MtTextureLoader::ProcessTextureTask(TextureLoadTask &task) {
   // CPU-intensive conversion runs on GCD, using only task-owned values. Any
   // FTexture metadata and ImageArena work is returned to the render thread.
-  task.completed = FTexture::ProcessPixelSnapshot(task.sourcePixels, task.result);
+  auto &snapshot = task.sourcePixels;
+  if (task.pngBytes) {
+    const bool decoded = FImageTexture::DecodePngSnapshot(
+        task.pngIDAT, task.pngChannels, snapshot);
+    task.pngIDAT = std::vector<uint8_t>();
+    if (!decoded) return;
+  }
+  task.completed = FTexture::ProcessPixelSnapshot(snapshot, task.result);
   task.sourcePixels = {};
 }

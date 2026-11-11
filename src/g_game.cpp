@@ -1199,6 +1199,7 @@ static void D_CheckCutsceneAdvance()
 //
 void G_Ticker ()
 {
+	VProfileScope profileTick(VProfileScopeType::Tick, gametic);
 	gamestate_t	oldgamestate;
 
 	// do player reborns if needed

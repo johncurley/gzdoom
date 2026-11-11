@@ -28,6 +28,8 @@
 #ifndef __P_SETUP__
 #define __P_SETUP__
 
+#include <memory>
+
 #include "fs_filesystem.h"
 #include "doomdata.h"
 #include "r_defs.h"
@@ -140,7 +142,7 @@ public:
 MapData * P_OpenMapData(const char * mapname, bool justcheck);
 bool P_CheckMapData(const char * mapname);
 
-void P_SetupLevel (FLevelLocals *Level, int position, bool newGame);
+void P_SetupLevel(FLevelLocals *Level, int position, bool newGame, std::unique_ptr<MapData> map);
 void P_LoadLightmap(MapData *map);
 
 void P_FreeLevelData(bool fullgc = true);

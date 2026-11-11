@@ -34,6 +34,7 @@
 
 #include <functional>
 #include <chrono>
+#include <climits>
 
 #include "c_cvars.h"
 
@@ -43,6 +44,7 @@
 #include "i_module.h"
 #include "cmdlib.h"
 #include "m_fixed.h"
+#include "filesystem.h"
 
 
 const char *GetSampleTypeName(SampleType type);
@@ -56,6 +58,10 @@ CUSTOM_CVAR(Int, snd_channels, 128, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)	// number 
 {
 	if (self < 64) self = 64;
 }
+// Owner-opened Vorbis decoders, worker reads, owner publication. Platform gate below.
+CVAR(Bool, snd_asyncprepare, true, 0)
+CVAR(Bool, snd_precache_audit, false, 0)
+
 CVAR(Bool, snd_waterreverb, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG) 
 CVAR (String, snd_aldevice, "Default", CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 CVAR (Bool, snd_efx, true, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
@@ -873,8 +879,351 @@ OpenALSoundRenderer::OpenALSoundRenderer()
 #undef LOAD_DEV_FUNC
 #undef LOAD_FUNC
 
+// Decoder creation/close and all TArray allocation belong to the owner thread.
+struct FSoundDecodeJob
+{
+	TArray<uint8_t> Encoded, PCM;
+	SoundDecoder *Decoder = nullptr;
+	ChannelConfig Channels = ChannelConfig_Mono;
+	SampleType Type = SampleType_Int16;
+	int Rate = 0, Key = -1, Lump = -1, DefaultStart = -1, DefaultEnd = -1;
+	uint32_t LoopStart = 0, LoopEnd = ~0u;
+	zmusic_bool StartAsSamples = false, EndAsSamples = false;
+	unsigned Bytes = 0;
+	uint64_t Generation = 0;
+	bool Running = false, Done = false, Cancelled = false, Success = false;
+	const std::thread::id Owner = std::this_thread::get_id();
+	void Close()
+	{
+		assert(Owner == std::this_thread::get_id());
+		SoundDecoder_Close(Decoder);
+		Decoder = nullptr;
+	}
+	~FSoundDecodeJob() { Close(); }
+};
+
+static bool OpenSoundDecoder(FSoundDecodeJob &job, const uint8_t *data, int length, int loopstart, int loopend)
+{
+	if (!data || length <= 0) return false;
+	job.DefaultStart = loopstart;
+	job.DefaultEnd = loopend;
+	if (loopstart < 0)
+		FindLoopTags(data, length, &job.LoopStart, &job.StartAsSamples, &job.LoopEnd, &job.EndAsSamples);
+	else
+	{
+		job.LoopStart = loopstart;
+		job.LoopEnd = loopend;
+		job.StartAsSamples = job.EndAsSamples = true;
+	}
+	job.Decoder = CreateDecoder(data, length, true);
+	if (!job.Decoder) return false;
+	SoundDecoder_GetInfo(job.Decoder, &job.Rate, &job.Channels, &job.Type);
+	if (GetFormat(job.Type, job.Channels) == AL_NONE)
+	{
+		Printf("Unsupported audio format: %s, %s\n", GetChannelConfigName(job.Channels), GetSampleTypeName(job.Type));
+		return false;
+	}
+	return job.Rate > 0;
+}
+
+// Serial decoder used by normal loading and the worker comparison test.
+static bool DecodeSound(FSoundDecodeJob &job)
+{
+	unsigned total = 0;
+	job.PCM.Resize(32768);
+	for (;;)
+	{
+		size_t got = SoundDecoder_Read(job.Decoder, job.PCM.Data() + total, job.PCM.Size() - total);
+		if (got > job.PCM.Size() - total || got > unsigned(INT_MAX) - total) return false;
+		if (!got) break;
+		total += (unsigned)got;
+		if (total == unsigned(INT_MAX)) return false;
+		unsigned next = total > unsigned(INT_MAX) / 2 ? unsigned(INT_MAX) : total * 2;
+		job.PCM.Resize(next);
+	}
+	job.Bytes = total;
+	job.PCM.Resize(total);
+	return total != 0;
+}
+
+// Allocation-free worker operation. The owner prepared the full output extent.
+// An extra frame distinguishes exact-capacity EOF from a truncated result.
+static bool DecodeFixedSound(FSoundDecodeJob &job)
+{
+	unsigned total = 0;
+	while (total < job.PCM.Size())
+	{
+		size_t available = job.PCM.Size() - total;
+		size_t got = SoundDecoder_Read(job.Decoder, job.PCM.Data() + total, available);
+		if (got > available) return false;
+		if (!got) { job.Bytes = total; return total != 0; }
+		total += (unsigned)got;
+	}
+	uint8_t extra[8]; // largest supported sample frame: stereo Float32
+	size_t frame = SampleTypeSize(job.Type) * ChannelCount(job.Channels);
+	if (SoundDecoder_Read(job.Decoder, extra, frame) != 0) return false;
+	job.Bytes = total;
+	return total != 0;
+}
+
+struct FSoundPreparationState
+{
+	static constexpr unsigned PCMCapacity = 8 * 1024 * 1024;
+	static constexpr size_t Budget = 64 * 1024 * 1024;
+	const std::thread::id Owner = std::this_thread::get_id();
+	std::mutex Lock;
+	std::condition_variable Wake;
+	TArray<FSoundDecodeJob *> Jobs;
+	size_t Reserved = 0, PeakReserved = 0;
+	uint64_t Generation = 0, Queued = 0, Hits = 0, NotReady = 0, Failed = 0, Rejected = 0, Cancelled = 0, Waits = 0;
+	bool Quit = false;
+	std::thread Thread;
+
+	FSoundPreparationState() : Thread(&FSoundPreparationState::Run, this) {}
+	~FSoundPreparationState()
+	{
+		assert(Owner == std::this_thread::get_id());
+		{ std::lock_guard<std::mutex> guard(Lock); Quit = true; }
+		Wake.notify_all();
+		Thread.join();
+		for (auto job : Jobs) delete job;
+	}
+	void Run()
+	{
+		std::unique_lock<std::mutex> guard(Lock);
+		while (!Quit)
+		{
+			FSoundDecodeJob *next = nullptr;
+			for (auto job : Jobs)
+				if (!job->Cancelled && !job->Done) { next = job; break; }
+			if (!next) { Wake.wait(guard); continue; }
+			next->Running = true;
+			guard.unlock();
+			try { next->Success = DecodeFixedSound(*next); }
+			catch (...) { next->Success = false; }
+			guard.lock();
+			next->Running = false;
+			next->Done = true;
+			Wake.notify_all();
+		}
+	}
+	void Wait(int key)
+	{
+		assert(Owner == std::this_thread::get_id());
+		std::unique_lock<std::mutex> lock(Lock);
+		for (auto job : Jobs)
+		{
+			if (job->Key != key || job->Cancelled || job->Generation != Generation) continue;
+			if (!job->Done) ++Waits;
+			Wake.wait(lock, [&] { return job->Done || job->Cancelled || Quit; });
+			break;
+		}
+	}
+	// Caller holds Lock. No worker can retain an unstarted or completed job.
+	void Remove(unsigned index)
+	{
+		Reserved -= Jobs[index]->Encoded.Size() + 2 * size_t(Jobs[index]->PCM.Size());
+		delete Jobs[index];
+		Jobs.Delete(index);
+	}
+	void Collect()
+	{
+		assert(Owner == std::this_thread::get_id());
+		std::lock_guard<std::mutex> guard(Lock);
+		for (unsigned i = 0; i < Jobs.Size();)
+		{
+			auto job = Jobs[i];
+			if (!job->Running && (job->Cancelled || (job->Done && !job->Success)))
+			{
+				if (!job->Cancelled) ++Failed;
+				Remove(i);
+			}
+			else ++i;
+		}
+	}
+	void Cancel(int key)
+	{
+		assert(Owner == std::this_thread::get_id());
+		{
+			std::lock_guard<std::mutex> guard(Lock);
+			if (key < 0) ++Generation;
+			for (auto job : Jobs)
+				if ((key < 0 || job->Key == key) && !job->Cancelled)
+				{ job->Cancelled = true; ++Cancelled; }
+		}
+		Collect();
+	}
+};
+
+// Explicit diagnostic using private jobs, so active game buffers stay owned by
+// the normal cache. Decoder setup, waiting, cancellation and reads use the
+// production operations above.
+static FSoundDecodeJob *QueueSoundTest(FSoundPreparationState &state,
+	const TArray<uint8_t> &encoded, int start, int end, unsigned capacity)
+{
+	auto job = new FSoundDecodeJob;
+	job->Encoded = encoded;
+	job->Key = 1;
+	job->Generation = state.Generation;
+	if (!OpenSoundDecoder(*job, job->Encoded.Data(), job->Encoded.Size(), start, end))
+	{
+		delete job;
+		return nullptr;
+	}
+	job->PCM.Resize(capacity);
+	{
+		std::lock_guard<std::mutex> lock(state.Lock);
+		state.Jobs.Push(job);
+		state.Reserved += encoded.Size() + 2 * size_t(capacity);
+		state.PeakReserved = std::max(state.PeakReserved, state.Reserved);
+	}
+	state.Wake.notify_one();
+	return job;
+}
+
+static bool SoundTestResultsMatch(const FSoundDecodeJob &a, const FSoundDecodeJob &b)
+{
+	return a.Bytes == b.Bytes && a.Rate == b.Rate && a.Type == b.Type &&
+		a.Channels == b.Channels && a.LoopStart == b.LoopStart && a.LoopEnd == b.LoopEnd &&
+		a.StartAsSamples == b.StartAsSamples && a.EndAsSamples == b.EndAsSamples &&
+		memcmp(a.PCM.Data(), b.PCM.Data(), a.Bytes) == 0;
+}
+
+CCMD(snd_preparation_selftest)
+{
+	if (argv.argc() < 2 || argv.argc() > 9)
+	{
+		Printf("Usage: snd_preparation_selftest <sound> [sound ...] (up to eight)\n");
+		return;
+	}
+	if (!GSnd || !GSnd->CanPrepareSound())
+	{
+		Printf("snd-preparation-selftest: SKIP (worker unavailable or disabled)\n");
+		return;
+	}
+
+	unsigned comparisons = 0, failures = 0, negativeControls = 0;
+	for (int arg = 1; arg < argv.argc(); ++arg)
+	{
+		auto id = soundEngine->FindSound(argv[arg]);
+		auto sfx = soundEngine->GetSfx(id);
+		if (id.index() <= 0 || !sfx || sfx->lumpnum < 0 ||
+			fileSystem.FileLength(sfx->lumpnum) > 8 * 1024 * 1024)
+		{
+			Printf("snd-preparation-selftest: invalid fixture %s\n", argv[arg]);
+			++failures;
+			continue;
+		}
+		auto reader = fileSystem.OpenFileReader(sfx->lumpnum);
+		TArray<uint8_t> encoded(reader.GetLength(), true);
+		encoded.Resize(reader.Read(encoded.Data(), encoded.Size()));
+		const int loops[][2] = {{-1, -1}, {3, 100}, {INT_MAX, INT_MAX}};
+		for (const auto &loop : loops)
+		{
+			FSoundDecodeJob serial;
+			if (!OpenSoundDecoder(serial, encoded.Data(), encoded.Size(), loop[0], loop[1]) ||
+				!DecodeSound(serial) || serial.Bytes <= 16 ||
+				serial.Bytes > FSoundPreparationState::PCMCapacity)
+			{
+				Printf("snd-preparation-selftest: unsupported fixture %s\n", argv[arg]);
+				++failures;
+				continue;
+			}
+			serial.Close();
+			FSoundPreparationState state;
+			auto job = QueueSoundTest(state, encoded, loop[0], loop[1], serial.Bytes);
+			if (!job) { ++failures; continue; }
+			state.Wait(1);
+			if (job->Success && SoundTestResultsMatch(serial, *job))
+			{
+				++comparisons;
+				serial.PCM[0] ^= 1;
+				negativeControls += !SoundTestResultsMatch(serial, *job);
+				serial.PCM[0] ^= 1;
+			}
+			else ++failures;
+			state.Cancel(-1);
+			if (state.Reserved || state.Jobs.Size()) ++failures;
+
+			// Too-small output must fail, and owner collection must release it.
+			const unsigned frame = SampleTypeSize(serial.Type) * ChannelCount(serial.Channels);
+			job = QueueSoundTest(state, encoded, loop[0], loop[1], serial.Bytes - frame);
+			if (!job) { ++failures; continue; }
+			state.Wait(1);
+			if (job->Success) ++failures;
+			state.Collect();
+			if (state.Reserved || state.Jobs.Size()) ++failures;
+
+			// Cancellation can race with completion. Never retain the job pointer.
+			if (!QueueSoundTest(state, encoded, loop[0], loop[1], serial.Bytes)) ++failures;
+			const auto generation = state.Generation;
+			state.Cancel(-1);
+			{
+				std::unique_lock<std::mutex> lock(state.Lock);
+				if (!state.Wake.wait_for(lock, std::chrono::seconds(10), [&] {
+					for (auto entry : state.Jobs)
+						if (entry->Running) return false;
+					return true;
+				})) ++failures;
+			}
+			state.Collect();
+			if (state.Reserved || state.Jobs.Size() || state.Generation != generation + 1 ||
+				state.PeakReserved > state.Budget) ++failures;
+
+			// Exercise admission, owner publication and fallback on the live backend.
+			const int key = INT_MAX - arg;
+			if (GSnd->PrepareSound(key, sfx->lumpnum, encoded.Data(), encoded.Size(),
+				loop[0], loop[1], 0)) ++failures;
+			if (GSnd->PrepareSound(key, sfx->lumpnum, encoded.Data(), encoded.Size(),
+				loop[0], loop[1], serial.Bytes))
+			{
+				GSnd->WaitForSoundPreparation(key);
+				auto buffer = GSnd->LoadPreparedSound(key, sfx->lumpnum, loop[0], loop[1]);
+				if (!buffer.isValid() || GSnd->GetSoundBufferBytes(buffer) != serial.Bytes) ++failures;
+				if (buffer.isValid())
+				{
+					ALint rate = 0;
+					alGetBufferi(GET_PTRID(buffer.data), AL_FREQUENCY, &rate);
+					if (rate != serial.Rate || getALError() != AL_NO_ERROR) ++failures;
+					if (alIsExtensionPresent("AL_SOFT_loop_points"))
+					{
+						const uint32_t samples = serial.Bytes / frame;
+						uint32_t start = serial.StartAsSamples ? serial.LoopStart :
+							Scale(serial.LoopStart, serial.Rate, 1000);
+						uint32_t end = serial.LoopEnd;
+						if (!serial.EndAsSamples && end != ~0u)
+							end = Scale(end, serial.Rate, 1000);
+						if (start > samples) start = 0;
+						if (end > samples) end = samples;
+						ALint actual[2] = {};
+						alGetBufferiv(GET_PTRID(buffer.data), AL_LOOP_POINTS_SOFT, actual);
+						if (uint32_t(actual[0]) != start || uint32_t(actual[1]) != end ||
+							getALError() != AL_NO_ERROR) ++failures;
+					}
+					GSnd->UnloadSound(buffer);
+				}
+			}
+			else ++failures;
+			GSnd->CancelSoundPreparation(key);
+
+			// Destruction joins queued work and closes both decoders on the owner.
+			{
+				FSoundPreparationState stopping;
+				if (!QueueSoundTest(stopping, encoded, loop[0], loop[1], serial.Bytes) ||
+					!QueueSoundTest(stopping, encoded, loop[0], loop[1], serial.Bytes))
+					++failures;
+			}
+		}
+	}
+	const bool passed = comparisons && !failures && comparisons == negativeControls;
+	Printf("snd-preparation-selftest: %s comparisons=%u failures=%u negative=%u\n",
+		passed ? "PASS" : "FAIL", comparisons, failures, negativeControls);
+}
+
 OpenALSoundRenderer::~OpenALSoundRenderer()
 {
+	delete Preparations;
+	Preparations = nullptr;
 	if(!Device)
 		return;
 
@@ -990,6 +1339,14 @@ void OpenALSoundRenderer::SetMusicVolume(float volume)
 		Streams[i]->UpdateVolume();
 }
 
+unsigned int OpenALSoundRenderer::GetSoundBufferBytes(SoundHandle sfx)
+{
+	if (!sfx.data || !alIsBuffer(GET_PTRID(sfx.data))) return 0;
+	ALint bytes = 0;
+	alGetBufferi(GET_PTRID(sfx.data), AL_SIZE, &bytes);
+	return getALError() == AL_NO_ERROR && bytes > 0 ? unsigned(bytes) : 0;
+}
+
 unsigned int OpenALSoundRenderer::GetMSLength(SoundHandle sfx)
 {
 	if(sfx.data)
@@ -1101,62 +1458,140 @@ SoundHandle OpenALSoundRenderer::LoadSoundRaw(uint8_t *sfxdata, int length, int 
 	return retval;
 }
 
+bool OpenALSoundRenderer::CanPrepareSound() const
+{
+#ifdef __APPLE__
+	return snd_asyncprepare && Device != nullptr;
+#else
+	return false; // Other platforms/decoder builds await handoff qualification.
+#endif
+}
+
+bool OpenALSoundRenderer::PrepareSound(int key, int lump, const uint8_t *data, int length, int loopstart, int loopend, unsigned pcmCapacity)
+{
+	if (!CanPrepareSound() || !data || key < 0 || length < 35 || length > 8 * 1024 * 1024 ||
+		!pcmCapacity || pcmCapacity > FSoundPreparationState::PCMCapacity ||
+		memcmp(data, "OggS", 4) != 0 || !(data[5] & 2)) return false;
+	unsigned body = 27u + data[26];
+	if (!data[26] || body + 7 > (unsigned)length || data[body] != 1 || memcmp(data + body + 1, "vorbis", 6)) return false;
+	if (!Preparations)
+	{
+		try { Preparations = new FSoundPreparationState; }
+		catch (...) { return false; }
+	}
+	auto &state = *Preparations;
+	assert(state.Owner == std::this_thread::get_id());
+	state.Collect();
+	{
+		std::lock_guard<std::mutex> guard(state.Lock);
+		for (auto job : state.Jobs)
+			if (!job->Cancelled && job->Key == key && job->Lump == lump &&
+				job->DefaultStart == loopstart && job->DefaultEnd == loopend) return true;
+		if (state.Jobs.Size() >= 4 || size_t(length) + 2 * size_t(pcmCapacity) > state.Budget - state.Reserved)
+		{ ++state.Rejected; return false; }
+	}
+	auto job = new FSoundDecodeJob;
+	try
+	{
+		job->Key = key;
+		job->Lump = lump;
+		job->Generation = state.Generation;
+		job->Encoded.Resize(length);
+		memcpy(job->Encoded.Data(), data, length);
+		if (!OpenSoundDecoder(*job, job->Encoded.Data(), length, loopstart, loopend))
+		{ delete job; ++state.Failed; return false; }
+		// Allocation and GC accounting happen here, never in Run()/DecodeFixedSound.
+		job->PCM.Resize(pcmCapacity);
+		{
+			std::lock_guard<std::mutex> guard(state.Lock);
+			state.Jobs.Push(job);
+			state.Reserved += length + 2 * size_t(job->PCM.Size());
+			state.PeakReserved = std::max(state.PeakReserved, state.Reserved);
+			++state.Queued;
+		}
+	}
+	catch (...) { delete job; throw; }
+	state.Wake.notify_one();
+	return true;
+}
+
+SoundHandle OpenALSoundRenderer::LoadPreparedSound(int key, int lump, int loopstart, int loopend)
+{
+	if (!Preparations) return {};
+	auto &state = *Preparations;
+	assert(state.Owner == std::this_thread::get_id());
+	if (!CanPrepareSound()) { state.Cancel(-1); return {}; }
+	FSoundDecodeJob *ready = nullptr;
+	{
+		std::lock_guard<std::mutex> guard(state.Lock);
+		for (unsigned i = 0; i < state.Jobs.Size(); ++i)
+		{
+			auto job = state.Jobs[i];
+			if (job->Key != key || job->Cancelled) continue;
+			if (job->Generation != state.Generation || job->Lump != lump ||
+				job->DefaultStart != loopstart || job->DefaultEnd != loopend)
+			{ job->Cancelled = true; ++state.Cancelled; continue; }
+			if (!job->Done)
+			{ job->Cancelled = true; ++state.Cancelled; ++state.NotReady; break; }
+			if (!job->Success) break;
+			ready = job;
+			state.Reserved -= job->Encoded.Size() + 2 * size_t(job->PCM.Size());
+			state.Jobs.Delete(i);
+			break;
+		}
+	}
+	state.Collect();
+	if (!ready) return {};
+	ready->Close();
+	SoundHandle handle = BufferDecodedSound(*ready);
+	delete ready;
+	if (handle.isValid()) ++state.Hits;
+	else ++state.Failed;
+	return handle;
+}
+
+void OpenALSoundRenderer::WaitForSoundPreparation(int key)
+{
+	if (!Preparations || !CanPrepareSound()) return;
+	auto &state = *Preparations;
+	state.Wait(key);
+}
+
+void OpenALSoundRenderer::CancelSoundPreparation(int key)
+{
+	if (Preparations) Preparations->Cancel(key);
+}
+
+void OpenALSoundRenderer::PrintPreparationStats()
+{
+	if (!Preparations) { Printf("snd_prepare: enabled=%d queued=0 hits=0 (no worker)\n", int(CanPrepareSound())); return; }
+	auto &s = *Preparations;
+	s.Collect();
+	std::lock_guard<std::mutex> guard(s.Lock);
+	unsigned running = 0, ready = 0;
+	for (auto job : s.Jobs) { running += job->Running; ready += job->Done && job->Success && !job->Cancelled; }
+	Printf("snd_prepare: enabled=%d queued=%llu hits=%llu notready=%llu failed=%llu rejected=%llu cancelled=%llu jobs=%u running=%u ready=%u reserved=%zu generation=%llu peak=%zu budget=%zu waits=%llu\n",
+		int(CanPrepareSound()), (unsigned long long)s.Queued, (unsigned long long)s.Hits,
+		(unsigned long long)s.NotReady, (unsigned long long)s.Failed, (unsigned long long)s.Rejected,
+		(unsigned long long)s.Cancelled, s.Jobs.Size(), running, ready, s.Reserved, (unsigned long long)s.Generation, s.PeakReserved, s.Budget, (unsigned long long)s.Waits);
+}
+
 SoundHandle OpenALSoundRenderer::LoadSound(uint8_t *sfxdata, int length, int def_loop_start, int def_loop_end)
 {
+	FSoundDecodeJob job;
+	if (!OpenSoundDecoder(job, sfxdata, length, def_loop_start, def_loop_end)) return {};
+	if (!DecodeSound(job)) return {};
+	job.Close();
+	return BufferDecodedSound(job);
+}
+
+SoundHandle OpenALSoundRenderer::BufferDecodedSound(FSoundDecodeJob &job)
+{
 	SoundHandle retval = { NULL };
-	uint32_t loop_start = 0, loop_end = ~0u;
-	zmusic_bool startass = false, endass = false;
-
-	if (def_loop_start < 0)
-	{
-		FindLoopTags(sfxdata, length, &loop_start, &startass, &loop_end, &endass);
-	}
-	else
-	{
-		loop_start = def_loop_start;
-		loop_end = def_loop_end;
-		startass = endass = true;
-	}
-	auto decoder = CreateDecoder(sfxdata, length, true);
-	if (!decoder)
-		return retval;
-
-	ChannelConfig chans;
-	SampleType type;
-	int srate;
-	SoundDecoder_GetInfo(decoder, &srate, &chans, &type);
-
-	ALenum format = GetFormat(type, chans);
-	if (format == AL_NONE)
-	{
-		SoundDecoder_Close(decoder);
-		Printf("Unsupported audio format: %s, %s\n", GetChannelConfigName(chans),
-			GetSampleTypeName(type));
-		return retval;
-	}
-	int samplesize = SampleTypeSize(type) * ChannelCount(chans);
-
-	TArray<uint8_t> data;
-	unsigned total = 0;
-	unsigned got;
-
-	data.resize(total + 32768);
-	while ((got = (unsigned)SoundDecoder_Read(decoder, (char*)&data[total], data.size() - total)) > 0)
-	{
-		total += got;
-		data.resize(total * 2);
-	}
-	data.resize(total);
-	if (total == 0)
-	{
-		return retval;
-	}
-	SoundDecoder_Close(decoder);
-
 	ALenum err;
 	ALuint buffer = 0;
 	alGenBuffers(1, &buffer);
-	alBufferData(buffer, format, &data[0], (ALsizei)data.size(), srate);
+	alBufferData(buffer, GetFormat(job.Type, job.Channels), job.PCM.Data(), (ALsizei)job.Bytes, job.Rate);
 	if((err=getALError()) != AL_NO_ERROR)
 	{
 		Printf("Failed to buffer data: %s\n", alGetString(err));
@@ -1165,20 +1600,32 @@ SoundHandle OpenALSoundRenderer::LoadSound(uint8_t *sfxdata, int length, int def
 		return retval;
 	}
 
-	if (!startass) loop_start = Scale(loop_start, srate, 1000);
-	if (!endass && loop_end != ~0u) loop_end = Scale(loop_end, srate, 1000);
-	const uint32_t samples = (uint32_t)data.size() / samplesize;
-	if (loop_start > samples) loop_start = 0;
-	if (loop_end > samples) loop_end = samples;
+	if (!job.StartAsSamples) job.LoopStart = Scale(job.LoopStart, job.Rate, 1000);
+	if (!job.EndAsSamples && job.LoopEnd != ~0u) job.LoopEnd = Scale(job.LoopEnd, job.Rate, 1000);
+	const uint32_t samples = (uint32_t)job.Bytes / (SampleTypeSize(job.Type) * ChannelCount(job.Channels));
+	if (job.LoopStart > samples) job.LoopStart = 0;
+	if (job.LoopEnd > samples) job.LoopEnd = samples;
 
-	if ((loop_start > 0 || loop_end > 0) && loop_end > loop_start && AL.SOFT_loop_points)
+	if ((job.LoopStart > 0 || job.LoopEnd > 0) && job.LoopEnd > job.LoopStart && AL.SOFT_loop_points)
 	{
-		ALint loops[2] = { static_cast<ALint>(loop_start), static_cast<ALint>(loop_end) };
+		ALint loops[2] = { static_cast<ALint>(job.LoopStart), static_cast<ALint>(job.LoopEnd) };
 		DPrintf(DMSG_NOTIFY, "Setting loop points %d -> %d\n", loops[0], loops[1]);
 		alBufferiv(buffer, AL_LOOP_POINTS_SOFT, loops);
 		// no console messages here, please!
 	}
 
+	if (snd_precache_audit)
+	{
+		uint64_t hash = 14695981039346656037ull;
+		for (unsigned i = 0; i < job.Bytes; ++i)
+		{
+			hash ^= job.PCM[i];
+			hash *= 1099511628211ull;
+		}
+		Printf("snd-cache-buffer hash=%016llx bytes=%u rate=%d type=%d channels=%d start=%u end=%u\n",
+			(unsigned long long)hash, job.Bytes, job.Rate, int(job.Type), int(job.Channels),
+			job.LoopStart, job.LoopEnd);
+	}
 	retval.data = MAKE_PTRID(buffer);
 	return retval;
 }
@@ -1810,6 +2257,11 @@ void OpenALSoundRenderer::UpdateListener(SoundListener *listener)
 
 void OpenALSoundRenderer::UpdateSounds()
 {
+	if (Preparations)
+	{
+		if (!CanPrepareSound()) Preparations->Cancel(-1);
+		else Preparations->Collect();
+	}
 	alProcessUpdatesSOFT();
 
 	if(ALC.EXT_disconnect)

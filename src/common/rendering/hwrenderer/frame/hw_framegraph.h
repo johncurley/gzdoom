@@ -40,6 +40,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstring>
 #include "tarray.h"
 #include "zstring.h"
 
@@ -185,6 +186,14 @@ public:
 	void Dump(FString *out) const;
 
 private:
+	// Borrow lookup keys; stored keys point into the corresponding owned names.
+	// Match FString's case-sensitive content hash/comparison without allocating
+	// a temporary FString for every repeated texture binding.
+	struct ResourceReadHashTraits
+	{
+		hash_t Hash(const char *key) { return (hash_t)SuperFastHash(key, strlen(key)); }
+		int Compare(const char *left, const char *right) { return strcmp(left, right); }
+	};
 	enum class EdgeType : uint8_t { RAW, WAR, WAW };
 	struct Edge
 	{
@@ -227,11 +236,22 @@ private:
 	TArray<UploadObservation> mUploads;
 	TArray<FString> mOwnedSceneReadNames;
 	TArray<FString> mOwnedResourceNames;
-	TMap<FString, uint64_t> mResourceReads;
+	TArray<FString> mOwnedResourceReadNames;
+	struct ResourceReadObservation
+	{
+		uint64_t sequence = 0;
+		uint64_t materialScope = 0;
+	};
+	// One lookup updates upload ordering and finds the completed observation
+	// for this backend-pass/alias scope. Stored names remain owned until Reset.
+	TMap<const char *, ResourceReadObservation, ResourceReadHashTraits> mResourceReads;
+	uint64_t mMaterialReadScope = 0;
 	uint64_t mObservationSequence = 0;
 	int mActivePass = -1;
 
 	const char *CanonicalName(const char *name) const;
+	ResourceReadObservation *ObserveResourceReadEntry(const char *name);
+	void AdvanceMaterialReadScope();
 	void AnalyzeLiveness(FString *report);
 	void AnalyzeLifetimes();
 	void BuildEdges(FString *report);

@@ -54,8 +54,8 @@ void FrameGraph::Reset()
 	// records now that the frame in which that read happened is ending.
 	for (unsigned int i = 0; i < mUploads.Size();)
 	{
-		const uint64_t *readSequence = mResourceReads.CheckKey(mUploads[i].resource);
-		if (readSequence && *readSequence > mUploads[i].sequence)
+		const auto *read = mResourceReads.CheckKey(mUploads[i].resource.GetChars());
+		if (read && read->sequence > mUploads[i].sequence)
 			mUploads.Delete(i);
 		else
 			++i;
@@ -75,6 +75,8 @@ void FrameGraph::Reset()
 	mOwnedSceneReadNames.Clear();
 	mOwnedResourceNames.Clear();
 	mResourceReads.Clear();
+	mOwnedResourceReadNames.Clear();
+	mMaterialReadScope = 0;
 	mActivePass = -1;
 }
 
@@ -132,6 +134,8 @@ void FrameGraph::DeclareAlias(const char *name, const char *canonical)
 		if (NameEq(alias.name, name) && NameEq(alias.canonical, canonical))
 			return;
 	mAliases.Push({ name, canonical });
+	// A newly declared alias can change the canonical identity of a prior read.
+	AdvanceMaterialReadScope();
 }
 
 void FrameGraph::RecordUpload(const FrameGraphUploadDesc &desc)
@@ -153,13 +157,40 @@ void FrameGraph::ObserveResourceRead(const char *name)
 {
 	if (!name)
 		return;
+	ObserveResourceReadEntry(name);
+}
 
+// The returned entry is used only within the calling observation. No
+// resource-map insertion may occur before its material scope is recorded.
+FrameGraph::ResourceReadObservation *FrameGraph::ObserveResourceReadEntry(const char *name)
+{
 	uint64_t sequence = ++mObservationSequence;
-	uint64_t *lastSequence = mResourceReads.CheckKey(FString(name));
-	if (lastSequence)
-		*lastSequence = sequence;
+	auto *read = mResourceReads.CheckKey(name);
+	if (read)
+		read->sequence = sequence;
 	else
-		mResourceReads.Insert(FString(name), sequence);
+	{
+		// FString character storage survives relocation of the owning TArray.
+		unsigned int index = mOwnedResourceReadNames.Push(FString(name));
+		ResourceReadObservation observation;
+		observation.sequence = sequence;
+		read = &mResourceReads.Insert(mOwnedResourceReadNames[index].GetChars(), observation);
+	}
+	return read;
+}
+
+void FrameGraph::AdvanceMaterialReadScope()
+{
+	// Zero means no completed material observation. Handle generation wrap
+	// without allowing a stale completion to match the new scope.
+	if (++mMaterialReadScope == 0)
+	{
+		decltype(mResourceReads)::Iterator it(mResourceReads);
+		decltype(mResourceReads)::Pair *entry;
+		while (it.NextPair(entry))
+			entry->Value.materialScope = 0;
+		mMaterialReadScope = 1;
+	}
 }
 
 void FrameGraph::ObserveSceneMaterialRead(const char *name)
@@ -168,8 +199,10 @@ void FrameGraph::ObserveSceneMaterialRead(const char *name)
 		return;
 
 	// Keep the upload-order observation for reads outside these graph scopes too.
-	ObserveResourceRead(name);
+	auto *read = ObserveResourceReadEntry(name);
 	if (mActivePass < 0 || mActivePass >= (int)mPasses.Size())
+		return;
+	if (read->materialScope == mMaterialReadScope)
 		return;
 
 	PassDesc &pass = mPasses[mActivePass];
@@ -235,6 +268,7 @@ void FrameGraph::ObserveSceneMaterialRead(const char *name)
 	if (!alreadyObserved)
 		mObservedUses.Push({ mActivePass, { graphName, FrameGraphAccess::Read, FrameGraphUsage::Sampled } });
 	mBackendObserved[mActivePass] = 1;
+	read->materialScope = mMaterialReadScope;
 }
 
 const char *FrameGraph::CanonicalName(const char *name) const
@@ -259,6 +293,7 @@ const char *FrameGraph::CanonicalName(const char *name) const
 
 void FrameGraph::BeginBackendPass(int passIndex)
 {
+	AdvanceMaterialReadScope();
 	mActivePass = -1;
 	if (passIndex >= 0 && passIndex < (int)mPasses.Size())
 	{
@@ -704,8 +739,8 @@ void FrameGraph::Dump(FString *out) const
 		for (const UploadObservation &upload : mUploads)
 		{
 			const char *resource = upload.resource.GetChars();
-			const uint64_t *readSequence = mResourceReads.CheckKey(upload.resource);
-			bool readAfter = readSequence && *readSequence > upload.sequence;
+			const auto *read = mResourceReads.CheckKey(upload.resource.GetChars());
+			bool readAfter = read && read->sequence > upload.sequence;
 			out->AppendFormat("    %-28s owner=%s prepared=%s staging=%s transfer=%s ordered-before-read=%s read-after-upload=%s\n",
 				resource, upload.owner.GetChars(), PreparationName(upload.preparation),
 				upload.stagingRetained ? "yes" : "no",
@@ -935,6 +970,36 @@ CCMD(r_framegraph_selftest)
 	uploadGraph.Dump(&retiredUploadDump);
 	uploadOK = uploadOK &&
 		strstr(retiredUploadDump.GetChars(), "  uploads:") == nullptr;
+
+	// Lookups borrow their argument; stored keys must survive caller mutation,
+	// owner-array growth, and repeated equal-content strings at other addresses.
+	FrameGraph ownedReadGraph;
+	ownedReadGraph.RecordUpload({ "OwnedRead", "selftest",
+		FrameGraphPreparation::Worker, true, true, true });
+	char borrowedRead[] = "OwnedRead";
+	ownedReadGraph.ObserveResourceRead(borrowedRead);
+	borrowedRead[0] = 'X';
+	for (int i = 0; i < 256; ++i)
+		ownedReadGraph.ObserveResourceRead(FStringf("other-read-%d", i).GetChars());
+	FString ownedReadDump;
+	ownedReadGraph.Dump(&ownedReadDump);
+	bool ownedReadOK = strstr(ownedReadDump.GetChars(),
+		"read-after-upload=observed") != nullptr;
+	ownedReadGraph.Reset();
+	ownedReadGraph.RecordUpload({ "CaseRead", "selftest",
+		FrameGraphPreparation::Worker, true, true, true });
+	ownedReadGraph.ObserveResourceRead("caseread");
+	ownedReadGraph.ObserveResourceRead("");
+	ownedReadGraph.ObserveResourceRead(nullptr);
+	FString caseReadReport;
+	ownedReadOK &= ownedReadGraph.Build(&caseReadReport) && caseReadReport.Len() == 0;
+	FString caseReadDump;
+	ownedReadGraph.Dump(&caseReadDump);
+	ownedReadOK &= strstr(caseReadDump.GetChars(), "read-after-upload=not-observed") != nullptr;
+	ownedReadGraph.ObserveResourceRead("CaseRead");
+	caseReadDump = "";
+	ownedReadGraph.Dump(&caseReadDump);
+	ownedReadOK &= strstr(caseReadDump.GetChars(), "read-after-upload=observed") != nullptr;
 
 	FrameGraph badUploadGraph;
 	badUploadGraph.RecordUpload({ "MetalTexture.test", "selftest",
@@ -1399,15 +1464,64 @@ CCMD(r_framegraph_selftest)
 		aoComputeReportedDead |= strcmp(missingAOCompositeGraph.Pass(passIndex).name, "ssao.compute") == 0;
 	missingAOCompositeDetected = missingAOCompositeDetected && aoComputeReportedDead;
 
+	// Repeated material bindings must retain graph dependencies and still
+	// observe a new upload between two reads of the same material.
+	FrameGraph repeatedMaterialGraph;
+	repeatedMaterialGraph.AddPass({ "producer", "selftest", {}, { "Produced" } });
+	int repeatedPass = repeatedMaterialGraph.AddPass(
+		{ "scene.opaque", "selftest", {}, { "Output" } });
+	repeatedMaterialGraph.BeginBackendPass(repeatedPass);
+	char borrowedMaterial[] = "Imported";
+	repeatedMaterialGraph.ObserveSceneMaterialRead(borrowedMaterial);
+	borrowedMaterial[0] = 'X'; // cache and pass records must own their names
+	repeatedMaterialGraph.RecordUpload({ "Imported", "selftest",
+		FrameGraphPreparation::Worker, true, true, true });
+	FString repeatedName("Imported"); // equal contents, distinct storage
+	for (int i = 0; i < 100; ++i)
+		repeatedMaterialGraph.ObserveSceneMaterialRead(repeatedName.GetChars());
+	// Check before another pass can observe the upload and mask a skipped read.
+	FString repeatedUploadDump;
+	repeatedMaterialGraph.Dump(&repeatedUploadDump);
+	bool repeatedUploadObserved = strstr(repeatedUploadDump.GetChars(),
+		"read-after-upload=observed") != nullptr;
+	repeatedMaterialGraph.ObserveSceneMaterialRead("Produced");
+	repeatedMaterialGraph.EndBackendPass();
+	int nextRepeatedPass = repeatedMaterialGraph.AddPass(
+		{ "ui.2d", "selftest", {}, { "Backbuffer" } });
+	repeatedMaterialGraph.BeginBackendPass(nextRepeatedPass);
+	repeatedMaterialGraph.ObserveSceneMaterialRead("Imported");
+	repeatedMaterialGraph.ObserveSceneMaterialRead("Output");
+	repeatedMaterialGraph.EndBackendPass();
+	// Re-entering a previous pass must not duplicate its recorded reads/uses.
+	repeatedMaterialGraph.BeginBackendPass(repeatedPass);
+	repeatedMaterialGraph.ObserveSceneMaterialRead("Imported");
+	repeatedMaterialGraph.EndBackendPass();
+	repeatedMaterialGraph.DeclareOutput("Backbuffer");
+	FString repeatedMaterialReport;
+	bool repeatedMaterialOK = repeatedMaterialGraph.Build(&repeatedMaterialReport) &&
+		repeatedUploadObserved &&
+		repeatedMaterialGraph.Pass(repeatedPass).reads.Size() == 2 &&
+		repeatedMaterialGraph.Pass(repeatedPass).uses.Size() == 2 &&
+		repeatedMaterialGraph.Pass(nextRepeatedPass).reads.Size() == 2 &&
+		repeatedMaterialGraph.EdgeCount() == 2 &&
+		repeatedMaterialGraph.DeadPassCandidates().Size() == 0;
+	repeatedMaterialGraph.Reset();
+	int resetPass = repeatedMaterialGraph.AddPass(
+		{ "scene.opaque", "selftest", {}, { "Output" } });
+	repeatedMaterialGraph.BeginBackendPass(resetPass);
+	repeatedMaterialGraph.ObserveSceneMaterialRead("Imported");
+	repeatedMaterialGraph.EndBackendPass();
+	repeatedMaterialOK &= repeatedMaterialGraph.Pass(resetPass).reads.Size() == 1;
+
 	Printf(ok && orderMatchesDeclaration && hazardsOK && retainedShadowMapOK &&
 		missingShadowMapExternalDetected &&
 		producedShadowMapOK && useOK && aliasOK && customOK && badDetected &&
-		uploadOK && badUploadDetected && livenessOK && missingOutputDetected && wipeOK &&
+		uploadOK && ownedReadOK && badUploadDetected && livenessOK && missingOutputDetected && wipeOK &&
 		attachmentOK && missingAttachmentReadDetected && multisampleResolveOK &&
 		computeBloomLive &&
 		directComputeBloomLive && missingBloomCompositeDetected && missingBloomExposureDetected &&
 		computeAOCompositeLive && mipAOCompositeLive && baseAOClaimsNoPyramid &&
-		missingAOCompositeDetected && offscreenOK ?
+		missingAOCompositeDetected && offscreenOK && repeatedMaterialOK ?
 		"selftest: PASS\n" : "selftest: FAIL\n");
 	if (!hazardsOK)
 		Printf("RAW/WAR/WAW selftest failed: edges=%d report=%s\n",
@@ -1424,6 +1538,11 @@ CCMD(r_framegraph_selftest)
 	if (!offscreenOK)
 		Printf("offscreen/UI texture-read selftest failed: edges=%d report=%s\n",
 			offscreenGraph.EdgeCount(), offscreenReport.GetChars());
+	if (!repeatedMaterialOK)
+		Printf("repeated material/upload selftest failed: report=%s\n",
+			repeatedMaterialReport.GetChars());
+	if (!ownedReadOK)
+		Printf("owned resource-read identity selftest failed\n");
 	if (!multisampleResolveOK)
 		Printf("multisample resolve selftest failed: report=%s\n",
 			multisampleResolveReport.GetChars());

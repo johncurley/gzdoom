@@ -355,6 +355,8 @@ void S_PrecacheLevel(FLevelLocals* Level)
 			soundEngine->MarkUsed(snd);
 		}
 		soundEngine->CacheMarkedSounds();
+		// Additional preparation preserves the synchronous cache API above.
+		soundEngine->PrepareSound(soundEngine->FindSound(Level->LightningSound.GetChars()));
 	}
 }
 

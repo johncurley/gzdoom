@@ -110,6 +110,7 @@ public:
 
 	virtual int CopyPixels(FBitmap* bmp, int conversion, int frame = 0);
 
+	bool HasSharedPrecacheBitmap() const;
 	FBitmap GetCachedBitmap(const PalEntry *remap, int conversion, int *trans = nullptr, int frame = 0);
 
 	static void ClearImages() { ImageArena.FreeAll(); ImageForLump.Clear(); NextID = 0; }

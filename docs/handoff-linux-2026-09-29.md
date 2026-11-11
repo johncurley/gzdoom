@@ -321,6 +321,10 @@ happens before its detached snapshot reaches the worker. Do not move `FTexture*`
 access or `GetBgraBitmap()` onto a worker without a separate thread-safety and
 lifetime contract.
 
+The November Metal result and the matched Linux/Windows follow-up are in the
+[shared texture upload handover](handoff-framegraph-2026-09-28.md#texture-uploads-on-linux-and-windows).
+The Vulkan measurements below remain the local reference.
+
 ## Matched Vulkan cold-transition upload profile — 2026-10-05
 
 The prediction before the source/object split was under 8.5 ms of source access
@@ -696,3 +700,16 @@ that several consecutive wall fans enter one pending batch, while legitimate
 sub-draw state changes remain separate, then verify image correctness. Keep the
 camera consumer as an open fixture issue. The Linux sorting data still does
 not justify a default change.
+
+
+## Resource-preparation regression handoff — 2026-11-11
+
+The portable runner and synthetic fixtures are in
+[tools/regression](../tools/regression/README.md). Run the parser tests and
+native GL/Vulkan controls with a caller-owned DOOM2 IWAD. Use the explicit
+--allow-audio-skip option while CanPrepareSound remains gated to macOS;
+record the skip rather than treating it as decoder qualification. Metal
+PNG/upload controls do not apply to GL/Vulkan. Read the audit's platform
+limits before enabling the audio worker on another platform. A timing runner
+accepts local mod/save/config paths and preserves their hashes; do not assume
+the Mac Blackwater save or temporary scripts exist on Linux/Windows.

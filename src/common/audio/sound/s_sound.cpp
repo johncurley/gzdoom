@@ -36,6 +36,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <climits>
 
 #include "c_cvars.h"
 #include "gamestate.h"
@@ -52,6 +53,12 @@ CVAR(Bool, i_soundinbackground, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Bool, i_pauseinbackground, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 // killough 2/21/98: optionally use varying pitched sounds
 CVAR(Bool, snd_pitched, false, CVAR_ARCHIVE)
+// Extra idle payload retained at level precache points, KiB. Active/marked
+// buffers and driver overhead are outside this budget. Zero preserves eviction.
+CVAR(Int, snd_retainedcache, 0, 0)
+// Precache overlaps one eligible decode with the next owner-thread load.
+CVAR(Bool, snd_precache_async, true, 0)
+EXTERN_CVAR(Bool, snd_precache_audit)
 
 int SoundEnabled()
 {
@@ -138,25 +145,69 @@ void SoundEngine::MarkUsed(FSoundID sid)
 
 void SoundEngine::CacheMarkedSounds()
 {
+	if (snd_precache_audit) Printf("snd-cache-begin\n");
 	// Don't unload sounds that are playing right now.
 	for (FSoundChan* chan = Channels; chan != nullptr; chan = chan->NextChan)
 	{
 		MarkUsed(chan->SoundID);
 	}
 
+	int prepared = -1;
+	const bool prepare = snd_precache_async && GSnd && GSnd->CanPrepareSound();
 	for (unsigned i = 1; i < S_sfx.Size(); ++i)
 	{
-		if (S_sfx[i].bUsed)
+		if (!S_sfx[i].bUsed) continue;
+		const bool consume = prepared == int(i);
+		if (consume)
+			GSnd->WaitForSoundPreparation(prepared);
+		else if (prepare && prepared < 0)
 		{
-			CacheSound(&S_sfx[i]);
+			// Look ahead without snapshotting bUsed: caching an alias/random
+			// group can mark later entries, which must retain their usual turn.
+			unsigned next = i + 1;
+			while (next < S_sfx.Size() && !S_sfx[next].bUsed) ++next;
+			if (next < S_sfx.Size())
+			{
+				const auto &sfx = S_sfx[next];
+				if (!sfx.bTentative && !sfx.bRandomHeader && !sfx.bLoadRAW &&
+					sfx.link == sfxinfo_t::NO_LINK && !sfx.data.isValid() &&
+					sfx.lumpnum != sfx_empty)
+				{
+					prepared = int(next);
+					PrepareSound(FSoundID::fromInt(prepared), 1024 * 1024);
+				}
+			}
+		}
+		CacheSound(&S_sfx[i]);
+		if (consume)
+		{
+			// A prior sound may have supplied the same lump through the
+			// legacy sharing path. Discard any unused preparation as well.
+			GSnd->CancelSoundPreparation(prepared);
+			prepared = -1;
 		}
 	}
+	if (prepared >= 0)
+		GSnd->CancelSoundPreparation(prepared);
+	RetainRecentSounds();
 	for (unsigned i = 1; i < S_sfx.Size(); ++i)
 	{
 		if (!S_sfx[i].bUsed && S_sfx[i].link == sfxinfo_t::NO_LINK)
 		{
 			UnloadSound(&S_sfx[i]);
 		}
+	}
+	if (snd_precache_audit)
+	{
+		size_t bytes = 0;
+		unsigned buffers = 0;
+		for (const auto &sfx : S_sfx)
+			if (sfx.link == sfxinfo_t::NO_LINK && sfx.data.isValid())
+			{
+				bytes += GSnd->GetSoundBufferBytes(sfx.data);
+				++buffers;
+			}
+		Printf("snd-cache-resident buffers=%u bytes=%zu\nsnd-cache-end\n", buffers, bytes);
 	}
 }
 
@@ -192,8 +243,128 @@ void SoundEngine::CacheSound (sfxinfo_t *sfx)
 //
 //==========================================================================
 
+// Preparation follows aliases/random groups without selecting a random outcome.
+// The visited set also bounds malformed cyclic definitions without recursion.
+void SoundEngine::PrepareSound(FSoundID sound)
+{
+	PrepareSound(sound, 8 * 1024 * 1024);
+}
+
+void SoundEngine::PrepareSound(FSoundID sound, unsigned pcmCapacity)
+{
+	if (!GSnd || !GSnd->CanPrepareSound() || !S_sfx.Size()) return;
+	TArray<FSoundID> pending;
+	TArray<uint8_t> visited;
+	visited.Resize(S_sfx.Size());
+	memset(visited.Data(), 0, visited.Size());
+	pending.Push(sound);
+	while (pending.Size())
+	{
+		FSoundID id;
+		pending.Pop(id);
+		if (!isValidSoundId(id) || visited[id.index()]) continue;
+		visited[id.index()] = 1;
+		auto &sfx = S_sfx[id.index()];
+		if (sfx.bRandomHeader)
+		{
+			if (unsigned(sfx.link.index()) < S_rnd.Size())
+				for (auto choice : S_rnd[sfx.link.index()].Choices) pending.Push(choice);
+			continue;
+		}
+		if (isValidSoundId(sfx.link)) { pending.Push(sfx.link); continue; }
+		if (sfx.data.isValid() || sfx.bLoadRAW || sfx.lumpnum == sfx_empty) continue;
+		auto data = ReadSound(sfx.lumpnum);
+		if (data.Size() <= unsigned(INT_MAX))
+			GSnd->PrepareSound(id.index(), sfx.lumpnum, data.Data(), int(data.Size()), sfx.LoopStart, sfx.LoopEnd, pcmCapacity);
+	}
+}
+
+bool SoundEngine::RetainedSound::Matches(const sfxinfo_t &sfx) const
+{
+	return sfx.data.isValid() && sfx.data.data == Buffer.data &&
+		sfx.link == sfxinfo_t::NO_LINK && sfx.lumpnum == Lump &&
+		sfx.LoopStart == LoopStart && sfx.LoopEnd == LoopEnd &&
+		sfx.RawRate == RawRate && sfx.bLoadRAW == LoadRAW;
+}
+
+void SoundEngine::RememberSound(sfxinfo_t *sfx)
+{
+	if (snd_retainedcache <= 0 || !sfx->data.isValid()) return;
+	const auto id = FSoundID::fromInt(int(sfx - S_sfx.Data()));
+	for (unsigned i = 0; i < RecentSounds.Size(); ++i)
+	{
+		if (RecentSounds[i].Id != id) continue;
+		auto recent = RecentSounds[i];
+		RecentSounds.Delete(i);
+		if (!recent.Matches(*sfx)) break;
+		if (recent.AwaitingReuse) ++RetainedHits;
+		recent.AwaitingReuse = false;
+		RecentSounds.Push(recent);
+		return;
+	}
+	const unsigned bytes = GSnd->GetSoundBufferBytes(sfx->data);
+	if (!bytes || bytes > 64u * 1024u * 1024u) return;
+	if (RecentSounds.Size() == 128) RecentSounds.Delete(0);
+	RecentSounds.Push({id, sfx->data, sfx->lumpnum, sfx->LoopStart, sfx->LoopEnd,
+		sfx->RawRate, sfx->bLoadRAW, false, bytes});
+}
+
+bool SoundEngine::CanRetainSound(const sfxinfo_t &sfx) const
+{
+	// The legacy loaded-lump sharing path does not compare all loop/format
+	// settings. Do not extend a buffer's lifetime across conflicting definitions.
+	if (sfx.bLoadRAW || sfx.RawRate != 0 || sfx.LoopStart != -1 || sfx.LoopEnd != -1) return false;
+	for (const auto &other : S_sfx)
+		if (other.lumpnum == sfx.lumpnum &&
+			(other.bLoadRAW || other.RawRate != 0 || other.LoopStart != -1 || other.LoopEnd != -1))
+			return false;
+	return true;
+}
+
+void SoundEngine::RetainRecentSounds()
+{
+	const size_t budget = size_t(clamp(int(snd_retainedcache), 0, 65536)) * 1024;
+	LastRetainedBytes = 0;
+	LastRetainedCount = 0;
+	// Mandatory caching has already resolved active/marked aliases to their
+	// canonical buffers. Only otherwise-unmarked buffers consume this budget.
+	for (int i = int(RecentSounds.Size()) - 1; i >= 0; --i)
+	{
+		auto &recent = RecentSounds[i];
+		recent.AwaitingReuse = false;
+		const int index = recent.Id.index();
+		if (index <= 0 || unsigned(index) >= S_sfx.Size() ||
+			!recent.Matches(S_sfx[index]))
+		{
+			RecentSounds.Delete(i);
+			continue;
+		}
+		auto &sfx = S_sfx[index];
+		if (sfx.bUsed) continue;
+		if (recent.Bytes > budget - LastRetainedBytes || !CanRetainSound(sfx))
+		{
+			++RetainedRejected;
+			continue;
+		}
+		sfx.bUsed = true;
+		recent.AwaitingReuse = true;
+		LastRetainedBytes += recent.Bytes;
+		++LastRetainedCount;
+	}
+}
+
+void SoundEngine::PrintRetentionStats()
+{
+	Printf("snd_retention: kib=%d history=%u last-pass-count=%u last-pass-bytes=%zu hits=%llu rejected=%llu\n",
+		clamp(int(snd_retainedcache), 0, 65536), RecentSounds.Size(), LastRetainedCount,
+		LastRetainedBytes, (unsigned long long)RetainedHits, (unsigned long long)RetainedRejected);
+}
+
 void SoundEngine::UnloadSound (sfxinfo_t *sfx)
 {
+	for (int i = int(RecentSounds.Size()) - 1; i >= 0; --i)
+		if (RecentSounds[i].Id.index() == sfx - S_sfx.Data()) RecentSounds.Delete(i);
+	if (GSnd) GSnd->CancelSoundPreparation(int(sfx - S_sfx.Data()));
 	if (sfx->data.isValid())
 	{
 		GSnd->UnloadSound(sfx->data);
@@ -624,6 +795,7 @@ FSoundChan *SoundEngine::StartSound(int type, const void *source,
 	}
 	if (chan != NULL)
 	{
+		if (chan->SysChannel) RememberSound(sfx);
 		chan->SoundID = sound_id;
 		chan->OrgID = org_id;
 		chan->EntChannel = channel;
@@ -755,6 +927,11 @@ sfxinfo_t *SoundEngine::LoadSound(sfxinfo_t *sfx)
 			}
 		}
 
+		if (!sfx->bLoadRAW)
+		{
+			sfx->data = GSnd->LoadPreparedSound(int(sfx - S_sfx.Data()), sfx->lumpnum, sfx->LoopStart, sfx->LoopEnd);
+			if (sfx->data.isValid()) break;
+		}
 		DPrintf(DMSG_NOTIFY, "Loading sound \"%s\" (%td)\n", sfx->name.GetChars(), sfx - &S_sfx[0]);
 
 		auto sfxdata = ReadSound(sfx->lumpnum);
@@ -1449,6 +1626,9 @@ void SoundEngine::StopChannel(FSoundChan *chan)
 
 void SoundEngine::UnloadAllSounds()
 {
+	RecentSounds.Clear();
+	LastRetainedBytes = LastRetainedCount = 0;
+	if (GSnd) GSnd->CancelSoundPreparation(-1);
 	for (unsigned i = 0; i < S_sfx.Size(); i++)
 	{
 		UnloadSound(&S_sfx[i]);
@@ -1881,3 +2061,19 @@ ADD_STAT(sound)
 	return GSnd->GatherStats();
 }
 
+
+CCMD(snd_prepare)
+{
+	if (soundEngine && argv.argc() == 2) soundEngine->PrepareSound(soundEngine->FindSound(argv[1]));
+	else Printf("snd_prepare <sound name>: request nonblocking preparation\n");
+}
+
+CCMD(snd_prepare_stats)
+{
+	if (GSnd) GSnd->PrintPreparationStats();
+}
+
+CCMD(snd_retention_stats)
+{
+	if (soundEngine) soundEngine->PrintRetentionStats();
+}

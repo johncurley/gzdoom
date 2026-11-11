@@ -200,6 +200,24 @@ protected:
 	bool blockNewSounds = false;
 
 private:
+	// Owner-thread history of actual buffer use; no actor references or copied PCM.
+	struct RetainedSound
+	{
+		FSoundID Id;
+		SoundHandle Buffer;
+		int Lump, LoopStart, LoopEnd, RawRate;
+		bool LoadRAW, AwaitingReuse;
+		unsigned Bytes;
+		bool Matches(const sfxinfo_t &sfx) const;
+	};
+	TArray<RetainedSound> RecentSounds; // oldest first, at most 128
+	size_t LastRetainedBytes = 0;
+	unsigned LastRetainedCount = 0;
+	uint64_t RetainedHits = 0, RetainedRejected = 0;
+	void RememberSound(sfxinfo_t *sfx);
+	bool CanRetainSound(const sfxinfo_t &sfx) const;
+	void RetainRecentSounds();
+
 	void LinkChannel(FSoundChan* chan, FSoundChan** head);
 	void UnlinkChannel(FSoundChan* chan);
 	void ReturnChannel(FSoundChan* chan);
@@ -277,6 +295,8 @@ public:
 	// Loads a sound, including any random sounds it might reference.
 	virtual void CacheSound(sfxinfo_t* sfx);
 	void CacheSound(FSoundID sfx) { CacheSound(&S_sfx[sfx.index()]); }
+	void PrepareSound(FSoundID sfx);
+	void PrepareSound(FSoundID sfx, unsigned pcmCapacity); // nonblocking decode preparation, no RNG selection
 	void UnloadSound(sfxinfo_t* sfx);
 	void UnloadSound(int sfx)
 	{
@@ -305,6 +325,7 @@ public:
 	void Reset();
 	void MarkUsed(FSoundID num);
 	void CacheMarkedSounds();
+	void PrintRetentionStats();
 	TArray<FSoundChan*> AllActiveChannels();
 	virtual void SetSoundPaused(int state) {}
 

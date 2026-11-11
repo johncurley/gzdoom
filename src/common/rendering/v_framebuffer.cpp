@@ -50,6 +50,13 @@
 #include "flatvertices.h"
 #include "version.h"
 #include "hw_material.h"
+#include "doomstat.h"
+#include "gamestate.h"
+#include "menustate.h"
+
+#ifdef __APPLE__
+#include <os/signpost.h>
+#endif
 
 #include <algorithm>
 #include <chrono>
@@ -97,6 +104,10 @@ CVAR(Int, vid_frametrace, 0, 0)
 // A phase costing ~0 on a slow frame is as much of a result as one costing
 // 900ms -- it excludes a suspect.
 CVAR(Int, vid_stalltrace, 0, 0)
+
+// Native profiler correlation only. Non-archived, disabled by default; there
+// are no clock reads, log creation or counter updates while it is off.
+CVAR(Bool, vid_profilemarks, false, 0)
 
 // Nested-Update() context. Some code drives screen->Update() from its own inner
 // loop rather than returning to D_DoomLoop -- the screen wipe (wipe.cpp), the
@@ -394,6 +405,69 @@ void V_LoopTraceBoundary()
 	ResetLoopPhases();
 }
 
+namespace
+{
+#ifdef __APPLE__
+	// These markers are emitted only from the main thread. Native signposts
+	// supply timestamp correlation and buffering; no per-frame stderr output.
+	os_log_t ProfileLog()
+	{
+		static os_log_t log = os_log_create("org.gzdoom.engine", OS_LOG_CATEGORY_POINTS_OF_INTEREST);
+		return log;
+	}
+	uint64_t g_profileLoop = 0, g_profileTick = 0, g_profileUpdate = 0;
+	uint64_t g_profileActiveLoop = 0;
+#endif
+
+	void ProfileUpdate()
+	{
+		if (!vid_profilemarks) return;
+#ifdef __APPLE__
+		auto log = ProfileLog();
+		if (!os_signpost_enabled(log)) return;
+		os_signpost_event_emit(log, OS_SIGNPOST_ID_EXCLUSIVE, "EngineUpdate",
+			"update=%{public}llu loop=%{public}llu tic=%{public}d state=%{public}d menu=%{public}d paused=%{public}d active=%{public}d",
+			(unsigned long long)++g_profileUpdate, (unsigned long long)g_profileActiveLoop,
+			gametic, (int)gamestate, (int)menuactive, (int)paused, (int)LoopTraceAppIsActive());
+#endif
+	}
+}
+
+VProfileScope::VProfileScope(VProfileScopeType type, int tic) : mType(type)
+{
+	if (!vid_profilemarks) return;
+#ifdef __APPLE__
+	auto log = ProfileLog();
+	if (!os_signpost_enabled(log)) return;
+	auto id = os_signpost_id_generate(log);
+	if (id == OS_SIGNPOST_ID_INVALID || id == OS_SIGNPOST_ID_NULL) return;
+	mSignpostId = id;
+	if (mType == VProfileScopeType::Loop)
+	{
+		g_profileActiveLoop = ++g_profileLoop;
+		os_signpost_interval_begin(log, id, "EngineLoop", "loop=%{public}llu tic=%{public}d",
+			(unsigned long long)g_profileActiveLoop, tic);
+	}
+	else
+		os_signpost_interval_begin(log, id, "EngineTick", "tick=%{public}llu loop=%{public}llu tic=%{public}d",
+			(unsigned long long)++g_profileTick, (unsigned long long)g_profileActiveLoop, tic);
+#endif
+}
+
+VProfileScope::~VProfileScope()
+{
+	if (!mSignpostId) return;
+#ifdef __APPLE__
+	if (mType == VProfileScopeType::Loop)
+	{
+		os_signpost_interval_end(ProfileLog(), mSignpostId, "EngineLoop");
+		g_profileActiveLoop = 0;
+	}
+	else
+		os_signpost_interval_end(ProfileLog(), mSignpostId, "EngineTick");
+#endif
+}
+
 //==========================================================================
 //
 // DFrameBuffer Constructor
@@ -441,6 +515,7 @@ void DFrameBuffer::Update()
 	}
 
 	TraceFrameInterval();
+	ProfileUpdate();
 }
 
 // One frame's wall-clock interval, self-measured with steady_clock since the

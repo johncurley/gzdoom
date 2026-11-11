@@ -19,6 +19,7 @@
 #include "printf.h"
 
 #include "textures.h"
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <atomic>
@@ -293,6 +294,7 @@ MtTextureImage *MtHardwareTexture::GetDepthStencil(FCanvasTexture *tex) {
 }
 
 void MtHardwareTexture::Reset() {
+  mPngAwaitingFirstBind = false;
   if (fb && fb->GetTextureManager())
     fb->GetTextureManager()->CancelHardwareTextureLoad(this);
   if (mImage && mImage->GetTexture()) {
@@ -311,7 +313,7 @@ void MtHardwareTexture::CreateImage(FTexture *tex, int translation, int flags) {
   // A synchronous request supersedes any precache still in flight for this
   // wrapper. Its task remains loader-owned, but must not upload over this one.
   if (fb && fb->GetTextureManager())
-    fb->GetTextureManager()->CancelHardwareTextureLoad(this);
+    fb->GetTextureManager()->CancelHardwareTextureLoad(this, true);
 
   if (tex) {
     char buf[128];
@@ -923,68 +925,134 @@ void MtTextureManager::QueueHardwareTextureLoad(MtHardwareTexture *hwTex,
   // so a later precache gets a fresh wrapper and queues the required upload.
   if (hwTex->GetImage()->GetTexture()) return;
 
-  uint32_t taskId = mTextureLoader->QueueTextureLoad(tex, translation, flags);
+  PendingUpload pending;
+  uint32_t taskId = mTextureLoader->QueueTextureLoad(tex, translation, flags, pending.queuedPng);
   if (taskId == 0) return;
 
   hwTex->SetPendingLoadId(taskId);
-  PendingUpload pending;
   pending.hwTex = hwTex;
   pending.wantMipmap = wantMipmap;
   pending.sourceTexture = tex;
   mPendingUploads[taskId] = std::move(pending);
 }
 
-void MtTextureManager::CancelHardwareTextureLoad(MtHardwareTexture *hwTex) {
+void MtTextureManager::CancelHardwareTextureLoad(MtHardwareTexture *hwTex,
+                                                 bool firstUse) {
   if (!hwTex)
     return;
 
   // Normally the wrapper's task ID identifies exactly one entry. Scan as
   // well so a stale/mismatched ID can never leave a dangling raw pointer.
   for (auto it = mPendingUploads.begin(); it != mPendingUploads.end();) {
-    if (it->second.hwTex == hwTex)
+    if (it->second.hwTex == hwTex) {
+      if (firstUse && it->second.queuedPng)
+        mTextureLoader->RecordPngFirstUseFallback();
       it = mPendingUploads.erase(it);
-    else
+    } else {
       ++it;
+    }
   }
   hwTex->SetPendingLoadId(0);
 }
 
+CVAR(Bool, mt_batch_texture_uploads, true, 0)
+
+struct MtTextureManager::AsyncUploadBatch {
+  struct Upload {
+    const TextureLoadTask *task;
+    MTL::Buffer *staging;
+  };
+  std::array<Upload, 64> uploads;
+  size_t count = 0;
+  MTL::CommandBuffer *commands = nullptr;
+  MTL::BlitCommandEncoder *blit = nullptr;
+};
+
 void MtTextureManager::ProcessAsyncTextureLoads() {
-  // Process completed texture loads from GCD queue
   if (!mTextureLoader) return;
 
   auto completedTasks = mTextureLoader->GetCompletedTasks();
   if (completedTasks.empty()) return;
 
-  for (const auto &task : completedTasks) {
-    auto it = mPendingUploads.find(task.taskId);
-    if (it == mPendingUploads.end()) continue;
+  AsyncUploadBatch batch;
+  const size_t batchSize = mt_batch_texture_uploads ? batch.uploads.size() : 1;
+  auto debug = fb->GetDebugManager();
 
-    MtHardwareTexture *hwTex = it->second.hwTex;
-    bool wantMipmap = it->second.wantMipmap;
-
-    if (task.completed && it->second.sourceTexture.get())
-      it->second.sourceTexture->ApplyPixelSnapshotResult(task.result);
-
-    if (hwTex && task.completed && !task.result.pixels.empty()) {
-      PerformAsyncGPUUpload(hwTex, task, wantMipmap);
+  auto finish = [&](const TextureLoadTask &task, bool uploaded) {
+    auto pending = mPendingUploads.find(task.taskId);
+    auto hwTex = pending->second.hwTex;
+    if (task.pngBytes) {
+      mTextureLoader->RecordPngCompletion(uploaded);
+      if (uploaded)
+        hwTex->MarkPngPrecached();
     }
-    if (hwTex) {
+    if (hwTex)
       hwTex->SetPendingLoadId(0);
+    mPendingUploads.erase(pending);
+  };
+
+  auto submit = [&] {
+    if (!batch.count) return;
+
+    const auto start = std::chrono::steady_clock::now();
+    batch.blit->endEncoding();
+    batch.commands->commit();
+    batch.commands->release();
+    for (size_t i = 0; i < batch.count; ++i) {
+      const auto &upload = batch.uploads[i];
+      auto hwTex = mPendingUploads.find(upload.task->taskId)->second.hwTex;
+      auto texture = hwTex->GetImage()->GetTexture();
+      RegisterGraphTexture(texture, hwTex->GetFrameGraphResourceName());
+      fb->Graph().RecordUpload({hwTex->GetFrameGraphResourceName().c_str(),
+          "MtTextureManager::PerformAsyncGPUUpload", FrameGraphPreparation::Worker,
+          true, true, true});
+      fb->RecycleBuffer(upload.staging);
+      static_cast<MtRenderState *>(fb->RenderState())->MarkAsFilled(texture);
+      hwTex->ResetStagingBuffer();
+      finish(*upload.task, true);
     }
-    mPendingUploads.erase(it);
+    if (debug)
+      debug->RecordMetric(MtMetric::TextureUploadCPU,
+          std::chrono::duration<float, std::milli>(
+              std::chrono::steady_clock::now() - start).count());
+    batch.count = 0;
+    batch.commands = nullptr;
+    batch.blit = nullptr;
+  };
+
+  for (const auto &task : completedTasks) {
+    auto pending = mPendingUploads.find(task.taskId);
+    if (pending == mPendingUploads.end()) continue;
+
+    auto &entry = pending->second;
+    if (task.completed && entry.sourceTexture.get())
+      entry.sourceTexture->ApplyPixelSnapshotResult(task.result);
+
+    // Keep the pending wrapper and source alive through submission. The
+    // render thread finishes this drain before any material can sample it.
+    if (entry.hwTex && task.completed &&
+        EncodeAsyncTextureUpload(batch, entry.hwTex, task, entry.wantMipmap)) {
+      if (batch.count == batchSize)
+        submit();
+    } else {
+      finish(task, false);
+    }
   }
+
+  submit();
+  mTextureLoader->ReleaseCompletedTasks(completedTasks);
 }
 
-void MtTextureManager::PerformAsyncGPUUpload(MtHardwareTexture *hwTex,
-                                             const TextureLoadTask &task,
-                                             bool wantMipmap) {
+bool MtTextureManager::EncodeAsyncTextureUpload(AsyncUploadBatch &batch,
+                                                MtHardwareTexture *hwTex,
+                                                const TextureLoadTask &task,
+                                                bool wantMipmap) {
   const FTexturePixelResult &result = task.result;
   if (!hwTex || result.pixels.empty() || result.width <= 0 || result.height <= 0)
-    return;
+    return false;
 
   MtTextureImage *image = hwTex->GetImage();
-  if (!image) return;
+  if (!image) return false;
 
   MTL::PixelFormat format =
       result.indexed ? MTL::PixelFormatR8Unorm : MTL::PixelFormatBGRA8Unorm;
@@ -1023,20 +1091,18 @@ void MtTextureManager::PerformAsyncGPUUpload(MtHardwareTexture *hwTex,
     image->SetFormat((int)format);
     desc->release();
   }
+  if (!texture) return false;
 
-  // Timed for the same reason, and over the same span, as the synchronous
-  // path in CreateImage: staging memcpy + blit encode + commit of a separate
-  // command buffer is real render-thread CPU cost. This path was previously
-  // untimed, so TextureUploadCPU read zero through a precache cold load even
-  // though the work happened -- the extraCommandBuffers counter covered it
-  // (GetBlitCommandBuffer increments centrally) but the timer did not, which
-  // made the two disagree exactly when the metric mattered most.
-  auto uploadStart = std::chrono::high_resolution_clock::now();
+  const auto uploadStart = std::chrono::steady_clock::now();
 
   size_t alignedPitch = (pitch + 1023) & ~1023;
   size_t totalSize = alignedPitch * result.height;
   MTL::Buffer *staging = fb->GetStagingBuffer(totalSize);
-  if (!staging) return;
+  if (!staging) {
+    image->SetTexture(nullptr);
+    fb->RecycleTexture(texture);
+    return false;
+  }
 
   uint8_t *dst = (uint8_t *)staging->contents();
   const uint8_t *src = result.pixels.data();
@@ -1044,32 +1110,30 @@ void MtTextureManager::PerformAsyncGPUUpload(MtHardwareTexture *hwTex,
     memcpy(dst + y * alignedPitch, src + y * pitch, pitch);
   }
 
-  auto cmdBuf = fb->GetCommands()->GetBlitCommandBuffer();
-  if (cmdBuf) {
-    auto blit = cmdBuf->blitCommandEncoder();
-    blit->copyFromBuffer(staging, 0, alignedPitch, 0,
-                         MTL::Size::Make(result.width, result.height, 1),
-                         texture, 0, 0, MTL::Origin::Make(0, 0, 0));
-    if (desiredMipLevels > 1) {
-      blit->generateMipmaps(texture);
+  if (!batch.blit) {
+    auto commands = fb->GetCommands()->GetBlitCommandBuffer();
+    auto blit = commands ? commands->blitCommandEncoder() : nullptr;
+    if (!blit) {
+      if (commands)
+        commands->release();
+      fb->RecycleBuffer(staging);
+      image->SetTexture(nullptr);
+      fb->RecycleTexture(texture);
+      return false;
     }
-    blit->endEncoding();
-    cmdBuf->commit();
-    cmdBuf->release();
-	fb->GetTextureManager()->RegisterGraphTexture(
-		texture, hwTex->GetFrameGraphResourceName());
-	fb->Graph().RecordUpload({ hwTex->GetFrameGraphResourceName().c_str(),
-		"MtTextureManager::PerformAsyncGPUUpload", FrameGraphPreparation::Worker,
-		true, true, true });
-  }
-  fb->RecycleBuffer(staging);
-
-  if (fb->GetDebugManager()) {
-    auto uploadEnd = std::chrono::high_resolution_clock::now();
-    float uploadMs = std::chrono::duration<float, std::milli>(uploadEnd - uploadStart).count();
-    fb->GetDebugManager()->RecordTextureUpload(uploadMs);
+    batch.commands = commands;
+    batch.blit = blit;
   }
 
-  static_cast<MtRenderState *>(fb->RenderState())->MarkAsFilled(texture);
-  hwTex->ResetStagingBuffer(); // clears mNeedsUpload
+  batch.blit->copyFromBuffer(staging, 0, alignedPitch, 0,
+                             MTL::Size::Make(result.width, result.height, 1),
+                             texture, 0, 0, MTL::Origin::Make(0, 0, 0));
+  if (desiredMipLevels > 1)
+    batch.blit->generateMipmaps(texture);
+  batch.uploads[batch.count++] = {&task, staging};
+
+  if (auto debug = fb->GetDebugManager())
+    debug->RecordTextureUpload(std::chrono::duration<float, std::milli>(
+        std::chrono::steady_clock::now() - uploadStart).count());
+  return true;
 }

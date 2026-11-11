@@ -701,11 +701,7 @@ void MtRenderState::Apply(int dt) {
   ApplyScissor();
   ApplyCulling();
 
-  // Implement Depth Clamping (Depth Clip Mode)
-  if (mEncoder) {
-    mEncoder->setDepthClipMode(mDepthClamp ? MTL::DepthClipModeClamp
-                                           : MTL::DepthClipModeClip);
-  }
+  ApplyDepthClip();
 
   ApplyViewport();
   ApplyStencilRef();
@@ -828,6 +824,14 @@ void MtRenderState::ApplyRenderPass(int dt) {
       }
       mPipelineKey = pipelineKey;
     }
+  }
+}
+
+void MtRenderState::ApplyDepthClip() {
+  if (mEncoder && (!mDepthClipKnown || mAppliedDepthClamp != mDepthClamp)) {
+    mEncoder->setDepthClipMode(mDepthClamp ? MTL::DepthClipModeClamp : MTL::DepthClipModeClip);
+    mAppliedDepthClamp = mDepthClamp;
+    mDepthClipKnown = true;
   }
 }
 
@@ -1154,6 +1158,8 @@ void MtRenderState::ApplyMaterial() {
 
           MTL::Texture *mtlTexture = image->GetTexture();
           if (mtlTexture) {
+            if (mtHwTexture->TakePngFirstBind())
+              fb->GetTextureManager()->GetTextureLoader()->RecordPngReady();
             // Sampler
             MtSamplerKey samplerKey;
 
@@ -1389,6 +1395,9 @@ void MtRenderState::EndRenderPass() {
     mEncoder->endEncoding();
     mEncoder = nullptr;
   }
+  // Dynamic encoder state must be applied again even if a new encoder reuses
+  // the same address. BeginRenderPass always retires the previous pass here.
+  mDepthClipKnown = false;
 }
 
 void MtRenderState::EndFrame() {

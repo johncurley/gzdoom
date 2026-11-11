@@ -56,6 +56,7 @@ class FPNGTexture : public FImageSource
 public:
 	FPNGTexture (FileReader &lump, int lumpnum, int width, int height, uint8_t bitdepth, uint8_t colortype, uint8_t interlace);
 
+	size_t ReadSnapshot(size_t available, std::vector<uint8_t> &idat, int &channels);
 	int CopyPixels(FBitmap *bmp, int conversion, int frame = 0) override;
 	PalettedPixels CreatePalettedPixels(int conversion, int frame = 0) override;
 
@@ -667,6 +668,95 @@ int FPNGTexture::CopyPixels(FBitmap *bmp, int conversion, int frame)
 
 
 #include "textures.h"
+
+size_t FPNGTexture::ReadSnapshot(size_t available, std::vector<uint8_t> &idat, int &channels)
+{
+	if (BitDepth != 8 || Interlace || HaveTrans || (ColorType != 2 && ColorType != 6) ||
+		Width <= 0 || Height <= 0 || Width > 2048 || Height > 2048 ||
+		HasSharedPrecacheBitmap())
+		return 0;
+
+	const auto length = fileSystem.FileLength(SourceLump);
+	if (length <= 0 || size_t(length) <= StartOfIDAT || length > 1024 * 1024)
+		return 0;
+	channels = ColorType == 2 ? 3 : 4;
+	const auto bytes = M_PNGSnapshotBytes(length, Width, Height, channels);
+	if (bytes > available)
+		return 0;
+
+	auto file = fileSystem.OpenFileReader(SourceLump);
+	if (!file.isOpen() || file.Seek(StartOfIDAT, FileReader::SeekSet) != 0)
+		return 0;
+
+	std::vector<uint8_t> encoded(length);
+	size_t used = 0;
+	bool endedIDAT = false;
+	while (length - file.Tell() >= 12)
+	{
+		uint32_t header[2];
+		if (file.Read(header, sizeof(header)) != sizeof(header))
+			break;
+		const auto count = BigLong(header[0]);
+		if (count > length - file.Tell() - 4 || header[1] == MAKE_ID('t','R','N','S'))
+			break;
+		if (header[1] == MAKE_ID('I','D','A','T'))
+		{
+			if (endedIDAT || file.Read(encoded.data() + used, count) != count ||
+				file.Seek(4, FileReader::SeekCur) != 0)
+				break;
+			used += count;
+		}
+		else
+		{
+			if (header[1] == MAKE_ID('I','E','N','D') && count == 0 && used)
+			{
+				encoded.resize(used);
+				idat = std::move(encoded);
+				return bytes;
+			}
+			endedIDAT = true;
+			if (file.Seek(count + 4, FileReader::SeekCur) != 0)
+				break;
+		}
+	}
+	return 0;
+}
+
+size_t FImageTexture::ReadPngSnapshot(int translation, int flags, size_t available,
+	FTexturePixelSnapshot &snapshot, std::vector<uint8_t> &idat, int &channels)
+{
+	if (typeid(*this) != typeid(FImageTexture) || TexFrame != 0 || translation != 0 ||
+		(flags & (CTF_Indexed | CTF_Upscale | CTF_CheckOnly)))
+		return 0;
+	auto png = dynamic_cast<FPNGTexture *>(mImage);
+	if (!png || !InitPixelSnapshot(translation, flags, snapshot) ||
+		snapshot.width != png->GetWidth() || snapshot.height != png->GetHeight())
+		return 0;
+
+	const auto bytes = png->ReadSnapshot(available, idat, channels);
+	if (bytes)
+	{
+		snapshot.pitch = snapshot.width * 4;
+		snapshot.clipWidth = snapshot.width;
+		snapshot.clipHeight = snapshot.height;
+		snapshot.sourceTransparency = channels == 3 ? 0 : -1;
+	}
+	return bytes;
+}
+
+bool FImageTexture::DecodePngSnapshot(const std::vector<uint8_t> &idat, int channels,
+	FTexturePixelSnapshot &snapshot)
+{
+	std::vector<uint8_t> pixels;
+	if (!M_DecodePNGSnapshot(idat, channels, snapshot.width, snapshot.height, pixels))
+		return false;
+
+	snapshot.pixels.resize(size_t(snapshot.pitch) * snapshot.height);
+	FBitmap bgra(snapshot.pixels.data(), snapshot.pitch, snapshot.width, snapshot.height);
+	bgra.CopyPixelDataRGB(0, 0, pixels.data(), snapshot.width, snapshot.height,
+		channels, snapshot.width * channels, 0, channels == 3 ? CF_RGB : CF_RGBA);
+	return true;
+}
 
 //==========================================================================
 //

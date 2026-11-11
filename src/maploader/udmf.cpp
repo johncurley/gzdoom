@@ -202,10 +202,26 @@ void UDMFParserBase::Skip()
 //
 //===========================================================================
 
+FName UDMFParserBase::ResolveKey(const char *text)
+{
+	if (!text) return FName(text);
+	if (const FName *cached = KeyCache.CheckKey(text))
+		return *cached;
+
+	FName key(text);
+	// Bound transient storage even for maps with many custom/long keys.
+	if (KeyCache.CountUsed() < 256 && strlen(text) <= 128)
+	{
+		unsigned int index = KeyNames.Push(FString(text));
+		KeyCache.Insert(KeyNames[index].GetChars(), key);
+	}
+	return key;
+}
+
 FName UDMFParserBase::ParseKey(bool checkblock, bool *isblock)
 {
 	sc.MustGetString();
-	FName key = sc.String;
+	FName key = ResolveKey(sc.String);
 	if (checkblock)
 	{
 		if (sc.CheckToken('{'))

@@ -1265,6 +1265,7 @@ void D_DoomLoop ()
 	{
 		try
 		{
+			VProfileScope profileLoop(VProfileScopeType::Loop, gametic);
 			// vid_stalltrace boundary: top of the iteration, no phase open.
 			V_LoopTraceBoundary();
 

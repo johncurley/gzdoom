@@ -71,6 +71,12 @@ public:
   int GetNumChannels() const { return mNumChannels; }
   uint32_t GetPendingLoadId() const { return mPendingLoadId; }
   void SetPendingLoadId(uint32_t id) { mPendingLoadId = id; }
+  void MarkPngPrecached() { mPngAwaitingFirstBind = true; }
+  bool TakePngFirstBind() {
+    if (!mPngAwaitingFirstBind) return false;
+    mPngAwaitingFirstBind = false;
+    return true;
+  }
 
 private:
   std::unique_ptr<MtTextureImage> mImage;
@@ -83,7 +89,7 @@ private:
   std::string mFrameGraphResourceName;
   int mBufferPitch = 0;
   uint32_t mPendingLoadId = 0;       // GCD async load task ID
-  bool mNeedsAsyncUpload = false;    // Flag: async load completed, needs GPU upload
+  bool mPngAwaitingFirstBind = false;
 };
 
 // Texture manager
@@ -113,7 +119,7 @@ public:
   // Detach a wrapper from any queued/completed task before it is reset,
   // destroyed, or filled synchronously. The worker owns its pixel snapshot
   // and may finish; its result will be discarded when drained.
-  void CancelHardwareTextureLoad(MtHardwareTexture *hwTex);
+  void CancelHardwareTextureLoad(MtHardwareTexture *hwTex, bool firstUse = false);
 
   // Process completed async texture loads (call from render thread)
   void ProcessAsyncTextureLoads();
@@ -140,11 +146,13 @@ private:
   struct PendingUpload {
     MtHardwareTexture *hwTex = nullptr;
     bool wantMipmap = false;
+    bool queuedPng = false;
     RefCountedPtr<FTexture> sourceTexture;
   };
 
-  void PerformAsyncGPUUpload(MtHardwareTexture *hwTex,
-                             const TextureLoadTask &task, bool wantMipmap);
+  struct AsyncUploadBatch;
+  bool EncodeAsyncTextureUpload(AsyncUploadBatch &batch, MtHardwareTexture *hwTex,
+                                const TextureLoadTask &task, bool wantMipmap);
 
   MetalRenderDevice *fb = nullptr;
   std::unordered_map<PPTexture *, MTL::Texture *> mPPTextures;
