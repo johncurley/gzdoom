@@ -336,6 +336,16 @@ confirms no perceived frame lag, deaths or menu use. A separate mixed death/
 reload run retains one 623.83 ms interval requiring attribution. These scoped
 acceptance runs do not establish an incremental speedup without disabled-fix
 controls; longer soak and wider backend/platform gameplay remain open.
+The [reload attribution](audits/blackwater-reload-attribution-2026-11-12.md)
+now isolates two warm automatic-load gaps at 875/590 ms: scheduler running time
+is 86–89%, with 139–161 ms sampled under UDMF parsing and 325–369 ms under the
+broader map construction pipeline. Separate post-load tick catch-up retains
+36–38 ms of synchronous decode samples. The manual death trace failed to save;
+these are scoped background shared-loader observations, not exact attribution
+of the earlier 623.83 ms manual pause. Next inspect parser allocation/copy and
+content-identified map reuse boundaries; preserve simulation order and validate
+any proposed serial change before adding concurrency.
+
 
 
 

@@ -182,3 +182,29 @@ save-load runner now live in [tools/regression](../regression/README.md).
 They preserve asset hashes and distinguish first-visit and warm intervals.
 Use them for feature controls before adding another timer or changing worker
 ownership. They do not replay combat or replace an Instruments trace.
+
+
+### Reload capture finalization and identity follow-up
+
+The [2026-11-12 reload audit](../../docs/audits/blackwater-reload-attribution-2026-11-12.md)
+retains a failed 80-second combined recording: the wrapper stopped it after
+150 seconds while saving, leaving a bundle with `Document Missing Template
+Error`. A 25-second capture with 40-second retention and a longer finalization
+budget exported successfully after clean target exit. Earlier successful runners
+also scheduled target exit. Prefer short focused captures and allow completion
+with periodic progress checks; a time-limit message is not a saved trace.
+Keep failed bundles and reject them rather than interpreting partial metadata.
+
+On this host `vmmap` supplies load addresses, but does not print the executable
+UUID. A short paused `sample` provides a Binary Images UUID to compare against
+the retained binary's `dwarfdump --uuid`; it is an identity check outside the
+measured workload. Resolve sandboxed symbol-service failures with an authorized
+symbolication run, and retain the mapping/output comparison.
+
+Check native `active`, `paused` and `menu` context. Enabled background execution
+does not make an `active=0` automated probe a foreground gameplay benchmark.
+Retain trace issue records (including Time Mapping), check continuity and
+scheduler coverage of each selected interior window, and bound markers by the
+shared CPU/scheduler endpoint. Full interval coverage is useful evidence, not
+proof that every OS stream is loss-free. Automatic same-save loads can profile
+the shared loader while complete death/reborn validation remains separate.

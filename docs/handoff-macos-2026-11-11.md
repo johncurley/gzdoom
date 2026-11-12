@@ -241,3 +241,23 @@ reload run retains one 623.83 ms reload-adjacent interval. Audio counters add
 no late/failure results or waits in any section. See the audit for evidence.
 Next: longer soak, live sound reset/reload, matched GL gameplay and separate
 reload attribution. Use `snd_asyncsiblings 0` for matched controls.
+
+
+## Shared reload attribution — 2026-11-12
+
+See [the reload audit](audits/blackwater-reload-attribution-2026-11-12.md).
+The 80-second manual death trace was rejected after the runner's saving timeout;
+it cannot attribute the original 623.83 ms interval. A 25.403685-second recovery
+trace with two automated warm loads is usable with explicit quality/focus limits.
+Reloads spend 753/528 ms running in 875/590 ms gaps. UDMF parsing accounts for
+161/139 ms of inclusive sample weight, with 58/57 ms of memory-move leaf samples
+under that ancestry. Map construction, world restore and resource preparation
+are separate candidates; rows overlap. Post-load catch-up has 28/19 ticks with
+38/36 ms of synchronous decode samples. This is not ordinary actor/VM CPU cost.
+
+Next bounded investigation: UDMF array allocation/copy, then content-identified
+map acquisition/checksum reuse and remaining sound misses. Do not move the
+current parser or level setup onto a worker wholesale. No engine code changed.
+The test game has exited. Before another System Trace run, follow the audit's
+short capture, target-exit/finalization, PID/UUID, table coverage and active=0
+caveats; actual foreground normal-death/backend repeats remain open.
