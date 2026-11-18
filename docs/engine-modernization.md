@@ -7,6 +7,214 @@ preserving GZDoom mod, demo, savegame, and rendering compatibility.
 Metal renderer README and `gemini.md` are historical architecture references,
 not the active roadmap.
 
+## Current work
+
+Updated 2026-11-18.
+
+This checklist is the active work list. Dated handoffs and audits below provide
+evidence and background; their old task lists do not automatically reopen work.
+The long-term tracks are a candidate queue, not release requirements.
+
+**Next action: renderer follow-up on Mac while desktop toolchains are prepared.**
+Dynamic-light preparation now reuses accepted geometry within each call.
+Isolated timings improve 5.66–14.99%; no frame-rate gain is claimed. Packed
+light data, two-pose images and graph structure pass Intel Metal/GL controls;
+probes are removed and both builds pass. See the
+[renderer qualification](audits/renderer-sound-review-2026-11-17.md#dynamic-light-qualification--2026-11-18).
+Metal now records the scene clear against the active screen or save-thumbnail
+resources. The duplicate target-selection record is gone. The registry also
+uses the current screen viewport when scene buffers resize. Intel Metal/GL
+checks cover MSAA, cameras, thumbnails, the two-eye render loop, and
+resize/fullscreen/effect transitions. The combined camera/fullscreen test
+exposed a preexisting size warning and cross-run fullscreen image variation.
+See the [renderer audit](audits/renderer-sound-review-2026-11-17.md).
+Native desktop parity (step 6) follows the
+[transition sequence](#native-desktop-transition) below.
+
+Both scrolling fixes and the optional sidedef lookup are qualified on Intel GL/Metal. MAP09
+avoids 28,727 unused lookup allocation requests (2,298,080 bytes of array
+capacity). Two isolated conversion-stage timing passes favor the optimization;
+their median savings vary from 2.6–6.6 ms, with no whole-load or frame-rate
+claim. Wall-scrolling behavior and populated lookup counts match both ways.
+Temporary probes are removed and the production build is restored. See the
+[qualification record](audits/udmf-pending-validation-2026-11-17.md) for controls,
+noise and artifacts.
+
+The Intel macOS 12.7.6 test package passes automated GL/Metal acceptance.
+ZMusic, libvpx and OpenAL are statically linked; eleven remaining dylibs are
+bundled. The two approved vendored ZMusic compatibility fixes compile, and a
+comments-only plist correction permits strict XML parsing without changing
+settings. The default and isolated builds pass. Package data lives in Resources
+with internal adjacent-file symlinks; local signature verification passes.
+
+On each backend, save/load restores exact player state and pixels, fullscreen
+transition/return restores pixels, five resource/image controls and four cold-
+sound controls pass, and scrolling/sidedef fixtures pass. Captures and ordered
+PCM/loop results match the preceding qualified build. Loader auditing with an
+empty fallback-library directory observes no Homebrew library loads; the
+unbundled reference detects them. Archive extraction preserves payload hashes
+and signature, and the unpacked app loads a real map on both backends.
+
+Artifacts: `/private/tmp/gzdoom-package-static-k73z8tt4`; package:
+`gzdoom-intel-macos-test-20261118-87f8ee9e53-dirty.zip` (29,410,800 bytes).
+SHA-256: `f49880fa6fb71fe2756c377fcda075e33e158d5378294ef6d5a659bc22b77170`.
+The archive includes results, dependency/file hashes, licenses, source baseline
+and local build recipe, with no IWAD/mod. It is an ad-hoc signed local test
+candidate, not a notarized/public release. Physical input, varied-play audio
+soak, native Linux/Windows and Apple Silicon acceptance remain open. No runtime
+claim is made for other macOS versions or physical CoreMIDI devices.
+
+Manual Intel Metal Blackwater acceptance: 571.6 seconds including startup and
+exit, normal exit, operator reports fluid play with no anomalies. Across 548
+reported windows / 19,319 intervals, ten exceed 100 ms: nine in reload-adjacent
+windows and one exit-adjacent, zero in other recorded windows (maximum 48.30 ms).
+Sound adds 62 prepared hits with no added not-ready results, failures or waits;
+peak reservation is 55,861,213 bytes within the 64 MiB limit. This is scoped
+acceptance, not the full 20–30 minute soak or a controlled speed comparison.
+Evidence: `/private/tmp/gzdoom-playtest-metal-qagv09fb/acceptance-summary.json`.
+The OpenGL repeat also receives an operator report of smooth play: 146.4 seconds
+including startup/exit, normal exit, 130 reported windows / 4,484 intervals.
+Six intervals over 100 ms occur in reload-adjacent windows and one exit-adjacent;
+none appear in other recorded windows. Sound adds 35 prepared hits, zero
+failures or waits, and one not-ready result using the existing normal-decode
+fallback. Aggregate samples cannot identify its asset or precise timing; no
+audible anomaly was reported. Peak reservation remains 55,861,213 bytes.
+Evidence: `/private/tmp/gzdoom-playtest-gl-jequrzjd/acceptance-summary.json`.
+Both observations are scoped Mac acceptance. The longer varied-play soak,
+specific physical-input/fullscreen operator checks, and Linux/Windows parity
+remain open; the differing durations/routes do not support a backend ranking.
+
+Automated Blackwater audio lifetime stress also passes on Intel Metal and GL:
+eight alternating MAP09/MAP12 loads and eleven sound resets per backend,
+including nine checked looped resets. The test loop remains active after reset;
+the isolated final boundary has zero jobs/reserved bytes, with no decode failures
+and at most four jobs / 64 MiB throughout sampled checkpoints. The omitted-reset
+control correctly rejects a retained 16,818,463-byte prepared job. Blackwater
+precache/sibling discovery is disabled only for the final isolated boundary;
+the eight real-map cycles use shipping defaults. The initial unisolated control
+was rejected because the player precache legitimately populated the idle room.
+Each positive run lasts about 136 seconds and exits normally. This closes the
+scripted real-map reset/reload check, not a long varied-play or total-RSS soak.
+Evidence: `/private/tmp/gzdoom-audio-lifetime-z8j1kqdl/summary.json` and per-case
+manifests, logs and runner. No engine code or packaged binary was changed.
+
+### Resume sequence when CPU is available
+
+1. [x] Preserve the current source/patch and executable identities; confirm the
+   compiler and build configuration. Keep the same compiler/settings for both
+   timing arms. Do not infer that LLVM is finished from a responsive shell.
+2. [x] Run the default build and check the executable-adjacent packages. Use
+   `cmake --build build -j"$(getconf _NPROCESSORS_ONLN)"` on this Mac. A build
+   failure stops the sequence for diagnosis.
+3. [x] Validate behavior on Intel Metal and GL: floor/ceiling scroll modes,
+   wall-scroll and shared-side cases, permanent scanner/input/sidedef checks,
+   and relevant native resource/image regressions. Run the Python regression
+   and profiling-tool checks. Failures are investigated before timing.
+4. [x] Measure the optional side-lookup change separately. Keep the scroll fix
+   in both arms; verify allocation counts and interleave unprofiled timings
+   after establishing repeat noise. Preserve both results if there is no
+   measurable gain. Follow the
+   [pending-validation details](audits/udmf-pending-validation-2026-11-17.md).
+5. [x] Remove any temporary measurement probes and complete final production
+   checks for changed source. Prepare separately reviewable verified changes
+   for commit when authorized; keep housekeeping apart from engine fixes.
+6. [ ] Prepare identifiable native desktop packages from the same source baseline.
+   Test the Intel Mac package, then OpenGL/Vulkan builds on the RX 550 under Linux and Windows 10.
+   Check startup, ordinary play, save/load, sound, fullscreen and keyboard/mouse
+   input. Record actual OS/backend/driver results, not planned coverage.
+7. [ ] Complete a longer audio play/reset/reload check. Physical-controller and
+   Apple Silicon testing remain open and can be listed as limitations of an
+   experimental release.
+8. [ ] Write short release notes with actual results, known issues and runtime
+   dependencies. Verify the packaged build starts before publication. Tagging
+   and publishing are separate later actions.
+
+Housekeeping completed while waiting: active checklist and report form
+consolidated; local Markdown file targets checked; historical instruction and
+graph-status entry points clarified. The third pass corrected stale SDL/Vulkan,
+test-coverage and removed-diagnostic guidance, aligned the feature-request form,
+and separated renderer selfcheck from comparison commands. No engine build or
+runtime test ran during those housekeeping passes. Later renderer qualification
+is recorded above; remaining desktop acceptance follows the sequence here.
+
+After these steps, use the
+[stability priorities](audits/stability-priorities-2026-11-17.md) to choose one
+measured residual-stall or reproducible compatibility issue. Keep one active
+implementation at a time and link supporting evidence rather than repeating it.
+
+### Native desktop transition
+
+Run Linux/RX 550 first, then Windows 10/RX 550; qualify OpenGL and Vulkan
+separately on each OS. Historical Linux results apply to their earlier
+baseline. Use the branch commit containing this handoff for the current source
+and regression runners. The frozen Mac test ZIP predates the renderer changes.
+
+
+1. Build natively using the [README](../README.md) and existing
+   [CI configurations](../.github/workflows/continuous_integration.yml) as
+   starting points. Record compiler, configuration, source/package hashes,
+   OS, driver and confirmed backend. Verify executable-adjacent PK3s.
+2. Run the portable controls below on GL, then Vulkan. Replace the executable
+   and IWAD placeholders with native paths; retain each printed artifact
+   directory. Use `python3` on Linux or the installed Python launcher on Windows.
+
+   ~~~sh
+   python3 tools/regression/udmf_sides.py --binary /path/to/gzdoom --iwad /path/to/DOOM2.wad --backend gl
+   python3 tools/regression/udmf_scroll.py --binary /path/to/gzdoom --iwad /path/to/DOOM2.wad --backend gl
+   python3 tools/regression/run.py --binary /path/to/gzdoom --iwad /path/to/DOOM2.wad --backend gl --allow-audio-skip
+   ~~~
+
+3. Confirm graph self-tests, real effects-on/off frames, dynamic lights/shadows,
+   save/load, fullscreen, keyboard/mouse and sound on actual desktop sessions.
+   Test Linux Wayland and X11 separately. Compare original/candidate light data
+   and images within each backend before making any new timing claim. The light-
+   specific diagnostic fixture/runners currently reside in the audit's local
+   artifact directory; copy that evidence separately before cleaning it.
+4. Keep sound preparation gated off on Linux/Windows until native decoder,
+   lifetime and reset tests qualify it. `--allow-audio-skip` records graphics
+   coverage with an explicit worker skip; audible sound does not close that gate.
+5. Test redistributable packages without developer-library fallback. Windows
+   CMake currently selects the static MSVC runtime and `x64-windows-static`;
+   verify the resulting dependency closure. On Linux bundle selected user-space
+   libraries as needed while retaining the native system/graphics-driver ABI;
+   do not treat a fully static executable as the acceptance criterion.
+
+The [regression guide](../tools/regression/README.md) describes predictions,
+negative controls and output manifests. Intel Mac results do not close native
+Linux/Windows, physical-controller or Apple Silicon tasks.
+
+### Housekeeping queue
+
+The [engine overview](engine-overview.md) is the short introduction for readers
+who need the game-loop, threading and source map. It complements external
+modding references and does not add a new execution task to the sequence above.
+
+Keep the README for users, CONTRIBUTING for verification, AGENTS for working
+rules, and this checklist for active status. Retain evidence of failed trials.
+Reference inspection gives the following decisions for the later archive pass.
+Keep file locations stable until pending engine changes are validated:
+
+| Candidates | Review before changing |
+| --- | --- |
+| Completed `docs/handoff-*` and overlapping audit notes | Keep enduring findings, label historical status, and update incoming links before moving |
+| `handoff.txt` | Retain: cited by the capture runbook and historical audit. Marked historical; update those references before an eventual move |
+| `debug_instructions.txt` | Historical January 2026 debug request, now labeled; not evidence of the current build or a current test instruction |
+| `trace*.txt`, `pso-cold.txt`, `pso-warm.txt` | Retain evidence; AGENTS cites `trace.txt`. Keep paired controls together if archived |
+| `off`, `doom.wad.stub-bak` | Likely scratch: a 39-byte old console log and a 12-byte empty IWAD stub. Check build/test references before removal; leave unchanged now |
+| `options.checklist` | Retain for provenance: compatibility mapping present in 2022 history, not a newly generated test dump |
+| `CLAUDE.md`, `gemini.md`, `GEMINI_POSIX.md` | Consolidate unique guidance before retiring historical material; active entry points are listed above |
+
+### Deferred editor idea
+
+The maintainer is interested in a native C++/ZWidget map editor for Linux and
+macOS. Initial Ultimate Doom Builder source review shows managed map/editing,
+rendering and plugin APIs as well as WinForms UI, so removing C#/Mono would
+require a substantial port, not just replacing window controls. Keep this a
+separate project after the current engine validation/release milestone. A
+first feasibility slice would load/save existing UDMF without losing custom
+fields, edit simple geometry with undo, and launch the engine for testing.
+Existing managed plugins would require a separate compatibility decision.
+
 ## Targets and principles
 
 - Treat the Intel MacBookAir7,2 as the minimum compute-performance target.
@@ -345,6 +553,25 @@ these are scoped background shared-loader observations, not exact attribution
 of the earlier 623.83 ms manual pause. Next inspect parser allocation/copy and
 content-identified map reuse boundaries; preserve simulation order and validate
 any proposed serial change before adding concurrency.
+The [UDMF input boundary follow-up](audits/udmf-input-boundary-2026-11-12.md)
+first exposed a shared quoted-token EOF over-read; a legacy guard-page control
+faults while the bounded lexer preserves the valid token corpus and rejects
+unterminated input safely. The input reader now eliminates one full TEXTMAP
+staging array/copy. Three interleaved Intel Metal processes reduce acquisition
+medians from about 7.4 to 3.4 ms (54%); full parser-body ranges overlap, so no
+precise whole-parser/reload gain is established. Real MAP09 byte oracles and
+rendered UDMF parity pass on Metal/GL; final native qualification is recorded
+in the audit. Parser array growth/copy remains the next bounded investigation.
+
+The [temporary-array investigation](audits/udmf-array-boundaries-2026-11-17.md)
+finds 15–20 capacity increases per MAP09 geometry array in a TArray probe;
+these are allocation requests, not measured copy bytes or timing savings.
+It also exposed a source-sidedef index-domain defect, corrected after explicit
+maintainer approval. Seven native geometry fixtures pass on Intel Metal/GL;
+the original binary fails sparse and invalid-index controls. Source bounds
+and temporary index arithmetic are now corrected; allocation tuning remains
+separate and needs live parser/timing qualification.
+
 
 
 
