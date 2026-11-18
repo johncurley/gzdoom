@@ -45,6 +45,7 @@ thread_local FDynLightData lightdata;
 CVAR (Bool, gl_light_sprites, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG);
 CVAR (Bool, gl_light_particles, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG);
 
+static void PackLight(FDynLightData &dld, FDynamicLight *light, float x, float y, float z, float radius, bool forceAttenuate);
 
 //==========================================================================
 //
@@ -65,7 +66,7 @@ bool GetLight(FDynLightData& dld, int group, Plane & p, FDynamicLight * light, b
 		return false;
 	}
 
-	AddLightToList(dld, group, light, false);
+	PackLight(dld, light, float(pos.X), float(pos.Y), float(pos.Z), radius, false);
 	return true;
 }
 
@@ -74,12 +75,9 @@ bool GetLight(FDynLightData& dld, int group, Plane & p, FDynamicLight * light, b
 // Add one dynamic light to the light data list
 //
 //==========================================================================
-void AddLightToList(FDynLightData &dld, int group, FDynamicLight * light, bool forceAttenuate)
+static void PackLight(FDynLightData &dld, FDynamicLight *light, float x, float y, float z, float radius, bool forceAttenuate)
 {
 	int i = 0;
-
-	DVector3 pos = light->PosRelative(group);
-	float radius = light->GetRadius();
 
 	float cs;
 	if (light->IsAdditive()) 
@@ -143,9 +141,9 @@ void AddLightToList(FDynLightData &dld, int group, FDynamicLight * light, bool f
 	}
 
 	float *data = &dld.arrays[i][dld.arrays[i].Reserve(16)];
-	data[0] = float(pos.X);
-	data[1] = float(pos.Z);
-	data[2] = float(pos.Y);
+	data[0] = x;
+	data[1] = z;
+	data[2] = y;
 	data[3] = radius;
 	data[4] = r;
 	data[5] = g;
@@ -161,3 +159,9 @@ void AddLightToList(FDynLightData &dld, int group, FDynamicLight * light, bool f
 	data[15] = 0.0f; // unused
 }
 
+void AddLightToList(FDynLightData &dld, int group, FDynamicLight *light, bool forceAttenuate)
+{
+	DVector3 pos = light->PosRelative(group);
+	float radius = light->GetRadius();
+	PackLight(dld, light, float(pos.X), float(pos.Y), float(pos.Z), radius, forceAttenuate);
+}
