@@ -29,20 +29,20 @@
 	     when launched as a bundle" and that running Contents/MacOS/gzdoom
 	     directly needs METAL_CAPTURE_ENABLED=1 instead. Both halves are false.
 	     Executing the binary inside the bundle still resolves the main bundle,
-	     so this key applies there too -- measured by the framework's own
+	     so this key applies there too, measured by the framework's own
 	     "Metal GPU Frame Capture Enabled" line appearing on every direct
 	     launch, and by unset METAL_CAPTURE_ENABLED having no effect.
 
 	     Set FALSE as of 2026-08-17. With it true the capture layer was active
 	     for every run of this build, benchmarks included, instrumenting command
-	     buffers and drawables -- a standing contaminant in every measurement
+	     buffers and drawables, a standing contaminant in every measurement
 	     this fork has ever recorded. Its in-frame cost measured at 0.00ms
 	     (capture_end phase, vid_stalltrace), so this is hygiene rather than a
 	     performance fix, but a contaminant that cheap to remove should not be
 	     left switched on by default.
 
 	     To take a capture, set METAL_CAPTURE_ENABLED=1 in the environment for
-	     that launch -- see docs/gpu-capture-protocol.md. That path is verified;
+	     that launch; see docs/gpu-capture-protocol.md. That path is verified;
 	     do not assume from this comment alone, since an earlier version of it
 	     claimed the key applied only to bundle launches and was wrong. -->
 	<key>MetalCaptureEnabled</key>

@@ -733,6 +733,7 @@ void CoreMIDIDevice::HandleCurrentEvent()
 		SendMIDIData(CurrentEvent.EventMsg.MidiMsg, CurrentEvent.length, AudioConvertNanosToHostTime(CurrentEvTimeStamp));
 		break;
 	default:
+		break;
 	}
 }
 
