@@ -1007,7 +1007,11 @@ void HWDrawInfo::Clear3DViewport(FRenderState &state, bool graphSceneTarget)
 	// This is faster on newer hardware because it allows the GPU to skip
 	// reading from slower memory where the full buffers are stored.
 	state.SetScissor(0, 0, -1, -1);
-	if (graphSceneTarget)
+	if (graphSceneTarget && screen->RecordFrameGraphSceneClear(state.GetPassType() == GBUFFER_PASS))
+	{
+		state.Clear(CT_Color | CT_Depth | CT_Stencil);
+	}
+	else if (graphSceneTarget)
 	{
 		const bool gbuffer = state.GetPassType() == GBUFFER_PASS;
 		PassDesc desc;

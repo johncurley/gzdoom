@@ -306,6 +306,9 @@ public:
 	// their existing ordering.
 	virtual bool CanFlushSceneClear() const { return false; }
 	virtual void FlushSceneClear() {}
+	// Return true after recording a clear against backend-specific scene names.
+	// The caller still performs the clear; false uses the shared graph record.
+	virtual bool RecordFrameGraphSceneClear(bool gbuffer) { return false; }
 	// Framegraph-only scene boundaries. Backends that have not adopted scene
 	// observation yet keep the default no-op behavior.
 	virtual void BeginFrameGraphScenePass(const char *name, bool gbuffer, bool depthWrite,

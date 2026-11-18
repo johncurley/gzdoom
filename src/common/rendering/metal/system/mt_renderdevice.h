@@ -185,6 +185,7 @@ public:
       const std::function<void()> &afterBloomDrawEndScene2D) override;
   void AmbientOccludeScene(float m5, const HWViewpointUniforms* currentViewpoint) override;
   void SetSceneRenderTarget(bool useSSAO) override;
+  bool RecordFrameGraphSceneClear(bool gbuffer) override;
   void BeginFrameGraphScenePass(const char *name, bool gbuffer, bool depthWrite,
                                 bool keepAlive) override;
   void EndFrameGraphScenePass() override;

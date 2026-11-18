@@ -527,17 +527,6 @@ void MetalRenderDevice::PresentFrame(void *drawablePtr) {
 }
 
 void MetalRenderDevice::BeginFrame() {
-  // Registry frame boundary. It lives HERE, not in MtRenderBuffers::BeginFrame,
-  // because that runs again for every render-to-texture: measured 2026-08-16, a
-  // dump taken mid-frame reported "scene 216x162" -- the last small target
-  // rendered -- and flagged every main-scene resource STALE against it. The
-  // device's frame is the only boundary that means one displayed frame.
-  // mScreenBuffers specifically, not the active set: mSaveBuffers renders the
-  // savegame thumbnail through the same path at its own small size, which is
-  // what produced the bogus "scene 216x162" reference on the first run.
-  Resources().BeginFrame(
-      mScreenBuffers ? mScreenBuffers->GetSceneWidth() : 0,
-      mScreenBuffers ? mScreenBuffers->GetSceneHeight() : 0);
   if (mInFrame)
     return;
   Graph().Reset();
@@ -692,6 +681,9 @@ void MetalRenderDevice::BeginFrame() {
 
   // Pipeline buffers are physical drawable-sized. Scene buffers use the
   // logical screen viewport, matching the GL/Vulkan postprocess contract.
+  // Use the current screen viewport for the registry and the allocations.
+  // Save thumbnails have fixed dimensions and do not reset this boundary.
+  Resources().BeginFrame(mScreenViewport.width, mScreenViewport.height);
   mScreenBuffers->BeginFrame(physicalWidth, physicalHeight,
                              mScreenViewport.width, mScreenViewport.height);
   mSaveBuffers->BeginFrame(SAVEPICWIDTH, SAVEPICHEIGHT, SAVEPICWIDTH,
@@ -1012,10 +1004,12 @@ void MetalRenderDevice::AmbientOccludeScene(float m5, const HWViewpointUniforms*
 void MetalRenderDevice::SetSceneRenderTarget(bool useSSAO) {
   if (mPostprocess)
     mPostprocess->SetSceneRenderTarget(useSSAO);
-
+  // Target selection defers GPU work; the clear/draw scopes record writes.
+}
+bool MetalRenderDevice::RecordFrameGraphSceneClear(bool gbuffer) {
   auto *buffers = GetBuffers();
   if (!buffers)
-    return;
+    return false;
 
   const char *sceneColor = buffers->ResName(MtRenderBuffers::RES_SceneColor);
   const bool multisampleScene = buffers->GetSceneSamples() > 1;
@@ -1024,11 +1018,10 @@ void MetalRenderDevice::SetSceneRenderTarget(bool useSSAO) {
   const char *sceneDepth = buffers->ResName(MtRenderBuffers::RES_SceneDepth);
   const char *sceneFog = buffers->ResName(MtRenderBuffers::RES_SceneFog);
   const char *sceneNormal = buffers->ResName(MtRenderBuffers::RES_SceneNormal);
-  const char *shadowMap = buffers->ShadowMapResourceName();
 
   PassDesc desc;
   desc.name = "scene.target";
-  desc.owner = "MetalRenderDevice";
+  desc.owner = "HWDrawInfo::Clear3DViewport";
   desc.writes = { sceneColor, sceneDepth };
   if (multisampleScene)
     desc.writes.Push(sceneColorResolve);
@@ -1039,18 +1032,13 @@ void MetalRenderDevice::SetSceneRenderTarget(bool useSSAO) {
   if (multisampleScene)
     desc.uses.Push({ sceneColorResolve, FrameGraphAccess::Write,
                      FrameGraphUsage::ColorAttachment });
-  if (useSSAO) {
+  if (gbuffer) {
     desc.writes.Push(sceneFog);
     desc.writes.Push(sceneNormal);
     desc.uses.Push({ sceneFog, FrameGraphAccess::Write,
                      FrameGraphUsage::ColorAttachment });
     desc.uses.Push({ sceneNormal, FrameGraphAccess::Write,
                      FrameGraphUsage::ColorAttachment });
-  }
-  if (mShadowMap.Enabled()) {
-    desc.reads.Push(shadowMap);
-    desc.uses.Push({ shadowMap, FrameGraphAccess::Read,
-                     FrameGraphUsage::Sampled });
   }
 
   int graphPass = Graph().AddPass(desc);
@@ -1066,7 +1054,7 @@ void MetalRenderDevice::SetSceneRenderTarget(bool useSSAO) {
     Graph().ObserveBackendUse(sceneColorResolve, FrameGraphAccess::Write,
                               FrameGraphUsage::ColorAttachment);
   }
-  if (useSSAO) {
+  if (gbuffer) {
     Resources().Touch(sceneFog, true);
     Graph().ObserveBackendUse(sceneFog, FrameGraphAccess::Write,
                               FrameGraphUsage::ColorAttachment);
@@ -1074,12 +1062,8 @@ void MetalRenderDevice::SetSceneRenderTarget(bool useSSAO) {
     Graph().ObserveBackendUse(sceneNormal, FrameGraphAccess::Write,
                               FrameGraphUsage::ColorAttachment);
   }
-  if (mShadowMap.Enabled()) {
-    Resources().Touch(shadowMap, false);
-    Graph().ObserveBackendUse(shadowMap, FrameGraphAccess::Read,
-                              FrameGraphUsage::Sampled);
-  }
   Graph().EndBackendPass();
+  return true;
 }
 void MetalRenderDevice::BeginFrameGraphScenePass(const char *name, bool gbuffer,
                                                  bool depthWrite,
