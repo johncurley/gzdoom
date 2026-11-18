@@ -151,6 +151,7 @@ def run_case(args, root, fixture, stage, name):
     elif name == "single-upload" and args.backend == "metal":
         command += ["+mt_batch_texture_uploads", "0"]
     if name in ("defaults", "defaults-repeat"):
+        command += ["+scanner_quoted_selftest", "+udmf_input_selftest", "1", "+udmf_input_selftest", "0"]
         command += ["+snd_preparation_selftest", "reg.a", "reg.b"]
         command += ["+snd_siblings_selftest", "reg.random", "reg.b", "reg.c",
                     "reg.corrupt", "reg.huge", "reg.long"]
@@ -184,6 +185,13 @@ def run_case(args, root, fixture, stage, name):
     require("snapshot self-test: PASS" in log and "selftest: PASS" in log,
             "native texture/graph test failed")
     if name in ("defaults", "defaults-repeat"):
+        guard = 0 if sys.platform == "win32" else 1
+        require("scanner-quoted-corpus valid=28 failures=0 hash=936d9fb9e39868b8" in log and
+                "scanner-quoted-selftest: PASS valid=28 rejected=12 bounded=8 guarded=%d failures=0" % guard in log,
+                "scanner quoted-token corpus/bounded EOF regression")
+        require("udmf-input-selftest: PASS comparisons=20 failures=0 rejected=5 fault=0" in log and
+                re.search(r"udmf-input-selftest: FAIL comparisons=\d+ failures=[1-9]\d* rejected=5 fault=1", log),
+                "UDMF input parity/negative control failed")
         if "snd-preparation-selftest: SKIP" in log:
             require(args.allow_audio_skip, "audio worker unavailable; explicit --allow-audio-skip required")
         else:

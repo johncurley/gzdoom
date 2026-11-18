@@ -34,7 +34,10 @@
 **
 */
 
+#include <climits>
 #include "doomstat.h"
+#include "c_dispatch.h"
+#include "engineerrors.h"
 #include "p_setup.h"
 #include "p_lnspec.h"
 
@@ -452,6 +455,116 @@ struct UDMFScroll
 	double x, y;
 	int scrolltype;
 };
+
+// Own the input before handing it to FScanner. Avoid the intermediate byte
+// array and its full TEXTMAP copy; scanner normalization remains unchanged.
+static FString ReadUDMFText(FileReader &reader, const char *name)
+{
+	if (!reader.isOpen()) I_Error("%s: TEXTMAP reader is not open.", name);
+	const auto length = reader.GetLength();
+	if (length < 0 || length > INT_MAX) I_Error("%s: Invalid TEXTMAP length.", name);
+	if (reader.Seek(0, FileReader::SeekSet) != 0) I_Error("%s: Cannot seek TEXTMAP.", name);
+	if (length == 0) return {};
+
+	FString text;
+	auto buffer = text.LockNewBuffer(size_t(length));
+	const auto read = reader.Read(buffer, length);
+	buffer[length] = 0;
+	text.UnlockBuffer();
+	if (read != length) I_Error("%s: Incomplete TEXTMAP read.", name);
+	return text;
+}
+
+// Explicit scanner/input oracle; no game state or RNG is used.
+CCMD(udmf_input_selftest)
+{
+	if (argv.argc() != 2 || (strcmp(argv[1], "0") && strcmp(argv[1], "1")))
+	{
+		Printf("Usage: udmf_input_selftest <fault 0|1>\n");
+		return;
+	}
+	const bool fault = argv[1][0] == '1';
+	auto capture = [](FScanner &scanner, bool tokens)
+	{
+		FString result;
+		try
+		{
+			while (tokens ? scanner.GetToken() : scanner.GetString())
+			{
+				result.AppendFormat("%d:%d:%d:", scanner.Line, int(scanner.Crossed), scanner.StringLen);
+				result += FString(scanner.String, scanner.StringLen);
+				if (tokens)
+				{
+					result.AppendFormat(":%d", scanner.TokenType);
+					if (scanner.TokenType == TK_IntConst) result.AppendFormat(":%lld", (long long)scanner.BigNumber);
+					if (scanner.TokenType == TK_FloatConst) result.AppendFormat(":%.17g", scanner.Float);
+				}
+				result += '\n';
+			}
+		}
+		catch (const CRecoverableError &error) { result += error.GetMessage(); }
+		return result;
+	};
+	auto equal = [](const FString &a, const FString &b)
+	{
+		return a.Len() == b.Len() && memcmp(a.GetChars(), b.GetChars(), a.Len()) == 0;
+	};
+	const FString cases[] = {
+		"", "x=1;", "x=1;\n", "x=-1.5; y=+2; name=\"a\\\"b\"; // tail\n",
+		"\xef\xbb\xbfnamespace=\"ZDoom\";\nvertex { x=1; y=2; }\n",
+		FString("\xef\xbb\xbf", 3), FString("x=1;\0", 5),
+		FString("x=\"a\0b\";", 8), "x=\"unterminated", "/* unterminated"
+	};
+	unsigned comparisons = 0, failures = 0, rejected = 0;
+	for (const auto &input : cases) for (bool tokens : {false, true})
+	{
+		TArray<uint8_t> source(input.Len(), true);
+		if (input.Len()) memcpy(source.Data(), input.GetChars(), input.Len());
+		FileReader legacy, direct;
+		legacy.OpenMemory(source.Data(), source.Size());
+		direct.OpenMemory(source.Data(), source.Size());
+		auto bytes = legacy.Read();
+		FScanner original, candidate;
+		original.OpenMem("udmf-input-test", bytes);
+		auto text = ReadUDMFText(direct, "udmf-input-test");
+		if (fault) text += " input_fault=9;";
+		candidate.OpenString("udmf-input-test", std::move(text));
+		legacy.Close(); direct.Close();
+		if (source.Size()) memset(source.Data(), 0xcc, source.Size());
+		original.SetCMode(true); candidate.SetCMode(true);
+		auto position = candidate.SavePos();
+		auto expected = capture(original, tokens), actual = capture(candidate, tokens);
+		candidate.RestorePos(position);
+		if (!equal(expected, actual) || !equal(actual, capture(candidate, tokens))) ++failures;
+		else ++comparisons;
+	}
+	class BadReader : public FileSys::FileReaderInterface
+	{
+		bool badSeek;
+	public:
+		BadReader(ptrdiff_t length, bool seek = false) : badSeek(seek) { Length = length; }
+		ptrdiff_t Tell() const override { return 0; }
+		ptrdiff_t Seek(ptrdiff_t, int) override { return badSeek ? -1 : 0; }
+		ptrdiff_t Read(void *data, ptrdiff_t length) override
+		{
+			if (length > 0) { *(char *)data = 'x'; return 1; }
+			return 0;
+		}
+		char *Gets(char *, ptrdiff_t) override { return nullptr; }
+	};
+	auto reject = [&](FileReader reader)
+	{
+		try { ReadUDMFText(reader, "udmf-input-error-test"); ++failures; }
+		catch (const CRecoverableError &) { ++rejected; }
+	};
+	reject(FileReader());
+	reject(FileReader(new BadReader(-1)));
+	reject(FileReader(new BadReader(2, true)));
+	reject(FileReader(new BadReader(2)));
+	if (sizeof(ptrdiff_t) > sizeof(int)) reject(FileReader(new BadReader(ptrdiff_t(uint64_t(INT_MAX) + 1))));
+	Printf("udmf-input-selftest: %s comparisons=%u failures=%u rejected=%u fault=%d\n",
+		failures ? "FAIL" : "PASS", comparisons, failures, rejected, int(fault));
+}
 
 class UDMFParser : public UDMFParserBase
 {
@@ -928,11 +1041,11 @@ public:
 				continue;
 
 			case NAME_Sidefront:
-				ld->sidedef[0] = (side_t*)(intptr_t)(1 + CheckInt(key));
+				ld->sidedef[0] = (side_t*)(uintptr_t(CheckInt(key)) + 1);
 				continue;
 
 			case NAME_Sideback:
-				ld->sidedef[1] = (side_t*)(intptr_t)(1 + CheckInt(key));
+				ld->sidedef[1] = (side_t*)(uintptr_t(CheckInt(key)) + 1);
 				continue;
 
 			case NAME_Arg0:
@@ -2122,7 +2235,7 @@ public:
 					const char* val = CheckString(key);
 					if (!stricmp(val, "both")) scroll_ceil_type = SCROLL_All;
 					else if (!stricmp(val, "visual")) scroll_ceil_type = SCROLL_Textures;
-					if (!stricmp(val, "physical")) scroll_ceil_type = SCROLL_All & ~SCROLL_Textures;
+					else if (!stricmp(val, "physical")) scroll_ceil_type = SCROLL_All & ~SCROLL_Textures;
 					else scroll_ceil_type = 0;
 					break;
 				}
@@ -2152,7 +2265,7 @@ public:
 					const char* val = CheckString(key);
 					if (!stricmp(val, "both")) scroll_floor_type = SCROLL_All;
 					else if (!stricmp(val, "visual")) scroll_floor_type = SCROLL_Textures;
-					if (!stricmp(val, "physical")) scroll_floor_type = SCROLL_All & ~SCROLL_Textures;
+					else if (!stricmp(val, "physical")) scroll_floor_type = SCROLL_All & ~SCROLL_Textures;
 					else scroll_floor_type = 0;
 					break;
 				}
@@ -2428,7 +2541,9 @@ public:
 			}
 		}
 		unsigned numlines = ParsedLines.Size();
-		siderefs.Resize(ParsedSides.Size());
+		// Only wall scrollers consume the source-to-expanded-side lookup.
+		const bool needSideRefs = UDMFWallScrollers.Size() != 0;
+		if (needSideRefs) siderefs.Resize(ParsedSides.Size());
 		Level->sides.Alloc(sidecount);
 		Level->lines.Alloc(numlines);
 		int line, side;
@@ -2445,10 +2560,12 @@ public:
 			{
 				if (lines[line].sidedef[sd] != NULL)
 				{
-					int mapside = int(intptr_t(lines[line].sidedef[sd]))-1;
-					if (mapside < sidecount)
+					// Decode in unsigned pointer width, preserving -1 as the null sentinel.
+					// Source indices address ParsedSides, not the expanded destination sides.
+					uintptr_t mapside = uintptr_t(lines[line].sidedef[sd]) - 1;
+					if (mapside < ParsedSides.Size())
 					{
-						siderefs[mapside].Push(side);
+						if (needSideRefs) siderefs[mapside].Push(side);
 						sides[side] = ParsedSides[mapside];
 						sides[side].linedef = &lines[line];
 						sides[side].sector = &Level->sectors[intptr_t(sides[side].sector)];
@@ -2508,7 +2625,8 @@ public:
 		isExtended = false;
 		floordrop = false;
 
-		sc.OpenMem(fileSystem.GetFileFullName(map->lumpnum), map->Read(ML_TEXTMAP));
+		sc.OpenString(fileSystem.GetFileFullName(map->lumpnum),
+			ReadUDMFText(map->Reader(ML_TEXTMAP), fileSystem.GetFileFullName(map->lumpnum)));
 		sc.SetCMode(true);
 		if (sc.CheckString("namespace"))
 		{
@@ -2677,7 +2795,7 @@ public:
 		{
 			for(auto sd : siderefs[scroll.index])
 			{
-				loader->CreateScroller(EScroll::sc_side, scroll.x, scroll.y, nullptr, &Level->sides[sd], 0);
+				loader->CreateScroller(EScroll::sc_side, scroll.x, scroll.y, nullptr, &Level->sides[sd], 0, EScrollPos(scroll.where));
 			}
 		}
 		for (auto& scroll : UDMFThrusters)

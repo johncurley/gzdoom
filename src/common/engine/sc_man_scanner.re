@@ -94,7 +94,7 @@ std2:
 		("#region"|"#endregion") (any\"\n")* "\n"
 									{ goto newline; }	/* Region blocks [mxd] */
 
-		(["](([\\]["])|[^"])*["])	{ goto string_const; }
+		[\"]						{ goto quoted_token; }
 		'stop'						{ RET(TK_Stop); }
 		'wait'						{ RET(TK_Wait); }
 		'fail'						{ RET(TK_Fail); }
@@ -241,8 +241,7 @@ std2:
 		(D+ E FS?) | (D* "." D+ E? FS?) | (D+ "." D* E? FS?)
 									{ RET(TK_FloatConst); }
 
-		(["](([\\]["])|[^"])*["])
-									{ goto string_const; }
+		[\"]						{ goto quoted_token; }
 
 		(['] (any\[\n'])* ['])
 									{ RET(TK_NameConst); }
@@ -474,7 +473,30 @@ normal_token:
 	return_val = true;
 	goto end;
 
-string_const:
+quoted_token:
+	{
+		// No refill buffer: quoted tokens may contain both newlines and NULs.
+		// Preserve the longest finite match: an escaped quote can close the
+		// token or continue it; an unescaped quote always ends it.
+		const char *closing = nullptr;
+		for (const char *c = cursor; c < ScriptEndPtr; ++c)
+		{
+			if (*c == '"')
+			{
+				closing = c + 1;
+				if (c == cursor || c[-1] != '\\') break;
+			}
+		}
+		if (!closing)
+		{
+			ScriptPtr = ScriptEndPtr;
+			End = true;
+			ScriptError("Unterminated string constant");
+			return_val = false; // ScriptError can return with NoFatalErrors.
+			goto end;
+		}
+		cursor = closing;
+	}
 	for (const char *c = tok; c < YYCURSOR; ++c)
 	{
 		if (*c == '\n') ++Line;

@@ -39,6 +39,11 @@
 #include <stdlib.h>
 #include "engineerrors.h"
 #include "sc_man.h"
+#include "c_dispatch.h"
+#ifndef _WIN32
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 #include "cmdlib.h"
 
 #include "printf.h"
@@ -1386,3 +1391,128 @@ int ParseHex(const char* hex, FScriptPosition* sc)
 	return num;
 }
 
+
+
+// Explicit native oracle: valid token records and quoted EOF at a protected
+// page boundary. The diagnostic never borrows a gameplay scanner's storage.
+CCMD(scanner_quoted_selftest)
+{
+	class Probe : public FScanner
+	{
+	public:
+		void OpenRange(const char *data, size_t length, bool guarded)
+		{
+			OpenMem("quoted-scanner-test", data, int(length));
+			if (guarded) { ScriptPtr = data; ScriptEndPtr = data + length; }
+		}
+	};
+	TArray<FString> cases;
+	for (const char *text : {"\"\" tail\n", "\"a\nb\" tail\n", "'name' tail\n",
+		"/* comment */ \"value\" tail\n", "\"a\\\"b\" tail\n", "\"one\" \"two\"\n"}) cases.Push(text);
+	for (unsigned slashes = 1; slashes <= 6; ++slashes)
+	{
+		FString text = "\"a";
+		for (unsigned i = 0; i < slashes; ++i) text += '\\';
+		text += "\"b\" tail\n";
+		cases.Push(text);
+	}
+	cases.Push(FString("\"a\0b\" tail\n", 11));
+	FString longText = "\"";
+	for (unsigned i = 0; i < 256; ++i) longText += 'x';
+	longText += "\" tail\n"; cases.Push(longText);
+	unsigned valid = 0, failures = 0, rejected = 0;
+	uint64_t hash = UINT64_C(14695981039346656037);
+	for (const auto &text : cases) for (bool state : {false, true})
+	{
+		Probe scanner;
+		scanner.OpenRange(text.GetChars(), text.Len(), false);
+		scanner.SetCMode(true); scanner.SetStateMode(state);
+		FString record;
+		try
+		{
+			unsigned tokens = 0;
+			while (scanner.GetToken() && tokens++ < 64)
+			{
+				record.AppendFormat("%d:%d:%d:%d:", scanner.TokenType, scanner.Line, int(scanner.Crossed), scanner.StringLen);
+				record += FString(scanner.String, scanner.StringLen);
+				record += '\n';
+			}
+			if (tokens >= 64) ++failures;
+			else ++valid;
+		}
+		catch (const CRecoverableError &) { ++failures; }
+		for (unsigned i = 0; i < record.Len(); ++i) { hash ^= uint8_t(record[i]); hash *= UINT64_C(1099511628211); }
+	}
+	Printf("scanner-quoted-corpus valid=%u failures=%u hash=%016llx\n", valid, failures, (unsigned long long)hash);
+	bool guarded = false;
+	char *memory = nullptr;
+	size_t page = 0;
+#ifndef _WIN32
+	const auto systemPage = sysconf(_SC_PAGESIZE);
+	if (systemPage > 0)
+	{
+		page = size_t(systemPage);
+		void *region = mmap(nullptr, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+		if (region != MAP_FAILED)
+		{
+			memory = (char *)region;
+			guarded = mprotect(memory + page, page, PROT_NONE) == 0;
+		}
+	}
+	if (!guarded) ++failures;
+#endif
+	struct Release
+	{
+		char *memory; size_t page;
+		~Release()
+		{
+#ifndef _WIN32
+			if (memory) munmap(memory, 2 * page);
+#endif
+		}
+	} release{memory, page};
+	for (const char *text : {"\"unterminated\n", "\"trailing\\\n", "\"multi\nline\n"})
+		for (bool state : {false, true}) for (bool nonfatal : {false, true})
+		{
+			const auto length = strlen(text);
+			const char *input = text;
+			if (guarded) { input = memory + page - length; memcpy((void *)input, text, length); }
+			Probe scanner;
+			scanner.OpenRange(input, length, guarded);
+			scanner.SetCMode(true); scanner.SetStateMode(state); scanner.SetNoFatalErrors(nonfatal);
+			Printf("scanner-quoted-eof-begin state=%d nonfatal=%d guarded=%d\n", int(state), int(nonfatal), int(guarded));
+			fflush(stdout);
+			bool failed = false;
+			try { failed = !scanner.GetToken() && scanner.ParseError && scanner.End; }
+			catch (const CRecoverableError &error)
+			{ failed = !nonfatal && strstr(error.GetMessage(), "Unterminated string constant") != nullptr; }
+			if (failed && !scanner.GetToken()) ++rejected;
+			else ++failures;
+		}
+	unsigned bounded = 0;
+	for (const char *text : {"\"closed\"\n", "\"a\nb\"\n", "\"last\\\"\n", "'name'\n"})
+		for (bool state : {false, true})
+		{
+			const auto length = strlen(text);
+			const char *input = text;
+			if (guarded) { input = memory + page - length; memcpy((void *)input, text, length); }
+			Probe scanner;
+			scanner.OpenRange(input, length, guarded);
+			scanner.SetCMode(true); scanner.SetStateMode(state);
+			try
+			{
+				const bool first = scanner.GetToken();
+				const int type = scanner.TokenType;
+				// A final newline returns false before End becomes true on the
+				// next call. Preserve and exercise that existing scanner behavior.
+				const bool eof = !scanner.GetToken() && !scanner.GetToken();
+				const int expected = state ? TK_NonWhitespace : (text[0] == '\'' ? TK_NameConst : TK_StringConst);
+				if (first && type == expected && eof && scanner.End && !scanner.ParseError) ++bounded;
+				else ++failures;
+			}
+			catch (const CRecoverableError &) { ++failures; }
+		}
+	Printf("scanner-quoted-selftest: %s valid=%u rejected=%u bounded=%u guarded=%d failures=%u\n",
+		!failures && valid == cases.Size() * 2 && rejected == 12 && bounded == 8 ? "PASS" : "FAIL",
+		valid, rejected, bounded, int(guarded), failures);
+}

@@ -123,3 +123,62 @@ qualification steps.
 
 Apple Silicon, Linux and Windows worker/runtime qualification must be recorded
 on their actual machines. An Intel macOS pass cannot close those tasks.
+
+
+## Scanner and UDMF input boundaries
+
+The two default-mode runs also require `scanner_quoted_selftest` and the normal/
+fault `udmf_input_selftest` pair. The scanner preserves the legacy hash of 28
+valid token records and rejects 12 unterminated cases safely, with 8 accepted
+boundary cases. POSIX uses an inaccessible trailing page; Windows reports
+`guarded=0` and still runs the logical-boundary cases. The separate retained
+legacy macOS control faults at that guard, proving the check detects over-read.
+The UDMF oracle compares copied versus directly owned input for 20 scanner
+cases, including buffer lifetime, BOM/NUL/newline, tokens and saved positions;
+five invalid readers reject on the qualified 64-bit host. Its explicit fault
+argument must produce FAIL while normal mode produces PASS. These diagnostics
+do not consume gameplay RNG or modify a live world. See the
+[input boundary audit](../../docs/audits/udmf-input-boundary-2026-11-12.md).
+
+## UDMF source-side bounds
+
+Run the separate map-loading controls with a built engine and its adjacent
+gzdoom.pk3 and game_support.pk3 packages:
+
+~~~sh
+python3 tools/regression/udmf_sides.py \
+  --binary build/gzdoom.app/Contents/MacOS/gzdoom \
+  --iwad "/path/to/DOOM2.wad" --backend gl
+~~~
+
+Use --backend metal on macOS or --backend vulkan on a qualified native host.
+Seven generated maps cover sparse/shared source sides, oversized/negative
+indices, INT_MIN/INT_MAX and the absent-side sentinel. A ZScript WorldLoaded
+handler requires five fronts, no backs, five expected texture offsets and
+five correct side-to-line links. Backend/IWAD/map entry and successful exit
+are mandatory. Delayed exit allows actual map loading; this is a geometry
+check, not a rendered-image or performance comparison. Each run owns its
+config/save directories and retains manifests, per-case logs and summary.json.
+--output requires a new directory; --cases selects individual fixtures.
+Intel Metal/GL pass all seven; the retained original binary fails sparse,
+oversized and negative controls. See the
+[array/bounds audit](../../docs/audits/udmf-array-boundaries-2026-11-17.md).
+
+## UDMF scrolling
+
+~~~sh
+python3 tools/regression/udmf_scroll.py \
+  --binary build/gzdoom.app/Contents/MacOS/gzdoom \
+  --iwad "/path/to/DOOM2.wad" --backend gl
+~~~
+
+Use Metal on macOS or Vulkan on a qualified native host. The generated map
+checks 28 floor/ceiling modes through texture movement and physical actor carry
+after twenty game ticks: text, mixed case, numeric aliases and repeated keys.
+Four walls share a source side with distinct top/middle/global fallback rates;
+every expanded copy must preserve the per-part rate ratios and stationary axes.
+The original binary fails ten sector cases and the wall-part checks. No timing
+claim follows from this functional test. Backend, IWAD, map entry and clean exit
+are required. Each run owns its config/save directories and retains hashes,
+logs and `summary.json`; `--output` requires a new directory. See the
+[qualification record](../../docs/audits/udmf-pending-validation-2026-11-17.md).
